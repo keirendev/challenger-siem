@@ -1,0 +1,50 @@
+@page "/events/detail"
+@model Challenger.Siem.Api.Pages.Events.DetailModel
+@{
+    ViewData["Title"] = "Event detail";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Event detail</h1>
+        <p class="muted">Normalized fields and original raw event payload.</p>
+    </div>
+    <a class="button secondary" asp-page="/Events/Index">Back to search</a>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+else if (Model.Envelope is not null)
+{
+    <section class="card">
+        <h2>Normalized fields</h2>
+        <dl class="detail-grid">
+            <dt>Event ID</dt><dd>@Model.Envelope.EventId</dd>
+            <dt>Agent ID</dt><dd>@Model.Envelope.AgentId</dd>
+            <dt>Hostname</dt><dd>@Model.Envelope.Hostname</dd>
+            <dt>Source</dt><dd>@Model.Envelope.Source</dd>
+            <dt>Channel</dt><dd>@Model.Envelope.Channel</dd>
+            <dt>Provider</dt><dd>@Model.Envelope.Provider</dd>
+            <dt>Windows Event ID</dt><dd>@Model.Envelope.WindowsEventId</dd>
+            <dt>Record ID</dt><dd>@Model.Envelope.RecordId</dd>
+            <dt>Event time</dt><dd>@Model.Envelope.EventTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</dd>
+            <dt>Ingest time</dt><dd>@(Model.Envelope.IngestTime.HasValue ? Model.Envelope.IngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") : "—")</dd>
+            <dt>Severity</dt><dd><span class="badge">@Model.Envelope.Severity</span></dd>
+        </dl>
+    </section>
+
+    <section class="card">
+        <h2>Message</h2>
+        <pre class="message-box">@Model.Envelope.Message</pre>
+    </section>
+
+    <section class="card">
+        <div class="page-header">
+            <h2>Raw JSON</h2>
+            <button type="button" class="secondary" onclick="navigator.clipboard?.writeText(document.getElementById('raw-json').value)">Copy</button>
+        </div>
+        <textarea id="raw-json" class="raw-json" readonly>@Model.RawJson</textarea>
+    </section>
+}

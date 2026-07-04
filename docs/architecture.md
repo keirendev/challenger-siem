@@ -10,13 +10,14 @@ Windows Endpoint
   -> HTTPS Log Ingestion Server
   -> PostgreSQL Event Storage
   -> Search / Review API
+  -> Web Review Console
 ```
 
 ## MVP scope
 
 - Windows endpoints only.
 - Custom C#/.NET Windows service agent.
-- Custom ASP.NET Core ingestion and review API.
+- Custom ASP.NET Core ingestion, review API, and server-hosted web console.
 - PostgreSQL storage with structured columns plus JSONB raw event data.
 - No Docker and no proprietary SIEM/logging products.
 
@@ -35,10 +36,16 @@ Event ingestion
   -> assign server ingest_time
   -> store structured fields and raw JSON
 
-Search/review
+Search/review API
   -> validate review API token
   -> apply filters
   -> return normalized event envelopes
+
+Web review console
+  -> validate review token on login
+  -> issue HTTP-only operator session cookie
+  -> query PostgreSQL-backed repositories
+  -> render dashboard, agent inventory, event search, event detail, and about pages
 ```
 
 ## Agent flow
@@ -81,4 +88,5 @@ Planned optional channels:
 - Registration returns a per-agent API token.
 - Agent API tokens are stored hashed server-side.
 - Review/search API uses a separate review token for the MVP.
+- Web review login uses the same review token and stores only an HTTP-only session cookie in the browser.
 - Secrets must not be logged or committed.

@@ -2,7 +2,9 @@ using System.Text.Json;
 using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
+using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,10 +36,35 @@ builder.Services.AddScoped<AgentRepository>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
+builder.Services.AddScoped<ReviewRepository>();
+builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
+builder.Services.AddRazorPages(options =>
+{
+    options.Conventions.AuthorizeFolder("/");
+    options.Conventions.AllowAnonymousToPage("/Login");
+});
+builder.Services
+    .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/login";
+        options.LogoutPath = "/logout";
+        options.AccessDeniedPath = "/login";
+        options.Cookie.Name = ".ChallengerSiem.Review";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.SlidingExpiration = true;
+    });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.Use(async (context, next) =>
 {
     if (!app.Environment.IsDevelopment() && !context.Request.IsHttps)
@@ -49,6 +76,8 @@ app.Use(async (context, next) =>
 
     await next();
 });
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
@@ -158,6 +187,8 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     var results = await events.SearchEventsAsync(query, cancellationToken);
     return Results.Ok(new EventSearchResponse { Events = results });
 });
+
+app.MapRazorPages();
 
 app.Run();
 

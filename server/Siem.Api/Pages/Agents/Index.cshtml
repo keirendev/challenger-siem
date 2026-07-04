@@ -1,0 +1,98 @@
+@page "/agents"
+@model Agents.IndexModel
+@{
+    ViewData["Title"] = "Agents";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Agent inventory</h1>
+        <p class="muted">Search endpoints and review latest heartbeat queue health.</p>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<form method="get" class="card filters">
+    <div class="form-row">
+        <label for="hostname">Hostname</label>
+        <input id="hostname" name="hostname" value="@Model.Hostname" />
+    </div>
+    <div class="form-row">
+        <label for="agent_id">Agent ID</label>
+        <input id="agent_id" name="agent_id" value="@Model.AgentId" />
+    </div>
+    <div class="form-row">
+        <label for="health">Health</label>
+        <select id="health" asp-for="Health">
+            <option value="">Any</option>
+            <option value="recent">Recent</option>
+            <option value="stale">Stale</option>
+            <option value="queued">Queued events</option>
+        </select>
+    </div>
+    <div class="actions">
+        <button type="submit">Search</button>
+        <a class="button secondary" asp-page="/Agents/Index">Clear</a>
+    </div>
+</form>
+
+<section class="table-card">
+    @if (Model.Agents.Count == 0)
+    {
+        <div class="empty">No agents match the current filters.</div>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Agent ID</th>
+                    <th>Hostname</th>
+                    <th>OS version</th>
+                    <th>Agent version</th>
+                    <th>First seen</th>
+                    <th>Last seen</th>
+                    <th>Latest queue depth</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var agent in Model.Agents)
+                {
+                    <tr>
+                        <td>@agent.AgentId</td>
+                        <td>@agent.Hostname</td>
+                        <td>@agent.OsVersion</td>
+                        <td>@agent.AgentVersion</td>
+                        <td>@agent.FirstSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>
+                            @agent.LastSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                            @if (agent.LatestHeartbeatTime.HasValue)
+                            {
+                                <div class="muted">heartbeat @agent.LatestHeartbeatTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                            }
+                        </td>
+                        <td>
+                            @if (agent.LatestQueueDepth.GetValueOrDefault() > 0)
+                            {
+                                <span class="badge warning">@agent.LatestQueueDepth</span>
+                            }
+                            else
+                            {
+                                <span>@(agent.LatestQueueDepth?.ToString() ?? "—")</span>
+                            }
+                        </td>
+                        <td>
+                            <span class="badge @(agent.IsStale ? "danger" : "ok")">@(agent.IsStale ? "stale" : "recent")</span>
+                            <div class="muted">@agent.Status</div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>

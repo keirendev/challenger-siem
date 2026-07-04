@@ -2,7 +2,7 @@
 
 Base path: `/api/v1`.
 
-All production traffic must use HTTPS.
+All production traffic must use HTTPS. The operator web review console is hosted by the same ASP.NET Core process outside the `/api/v1` API contract; see `docs/web.md`.
 
 ## Register agent
 

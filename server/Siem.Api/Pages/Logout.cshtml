@@ -1,0 +1,14 @@
+@page "/logout"
+@model LogoutModel
+@{
+    ViewData["Title"] = "Logout";
+}
+
+<section class="card narrow">
+    <h1>Logout</h1>
+    <p class="muted">Use the button below to end this operator session.</p>
+    <form method="post">
+        <button type="submit">Logout</button>
+        <a class="button secondary" asp-page="/Index">Cancel</a>
+    </form>
+</section>

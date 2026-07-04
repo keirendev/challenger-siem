@@ -1,0 +1,101 @@
+@page "/events"
+@model Challenger.Siem.Api.Pages.Events.IndexModel
+@{
+    ViewData["Title"] = "Event search";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Event search</h1>
+        <p class="muted">Search normalized Windows Event Log envelopes with bounded results.</p>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<form method="get" class="card filters">
+    <div class="form-row">
+        <label for="from">From</label>
+        <input id="from" name="from" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.From)" />
+    </div>
+    <div class="form-row">
+        <label for="to">To</label>
+        <input id="to" name="to" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.To)" />
+    </div>
+    <div class="form-row">
+        <label for="hostname">Hostname</label>
+        <input id="hostname" name="hostname" value="@Model.Query.Hostname" />
+    </div>
+    <div class="form-row">
+        <label for="agent_id">Agent ID</label>
+        <input id="agent_id" name="agent_id" value="@Model.Query.AgentId" />
+    </div>
+    <div class="form-row">
+        <label for="channel">Channel</label>
+        <input id="channel" name="channel" value="@Model.Query.Channel" />
+    </div>
+    <div class="form-row">
+        <label for="windows_event_id">Windows Event ID</label>
+        <input id="windows_event_id" name="windows_event_id" type="number" min="0" max="65535" value="@Model.Query.WindowsEventId" />
+    </div>
+    <div class="form-row">
+        <label for="keyword">Keyword</label>
+        <input id="keyword" name="keyword" value="@Model.Query.Keyword" />
+    </div>
+    <div class="form-row">
+        <label for="limit">Limit</label>
+        <input id="limit" name="limit" type="number" min="1" max="500" value="@Model.Query.Limit" />
+    </div>
+    <div class="actions">
+        <button type="submit">Search</button>
+        <a class="button secondary" asp-page="/Events/Index">Clear</a>
+    </div>
+</form>
+
+<section class="table-card">
+    @if (Model.Events.Count == 0)
+    {
+        <div class="empty">No events match the current filters.</div>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Event time</th>
+                    <th>Ingest time</th>
+                    <th>Hostname</th>
+                    <th>Agent ID</th>
+                    <th>Channel</th>
+                    <th>Provider</th>
+                    <th>Event ID</th>
+                    <th>Severity</th>
+                    <th>Message</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Model.Events)
+                {
+                    <tr>
+                        <td>@item.EventTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td>@(item.IngestTime.HasValue ? item.IngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—")</td>
+                        <td>@item.Hostname</td>
+                        <td>@item.AgentId</td>
+                        <td>@item.Channel</td>
+                        <td>@item.Provider</td>
+                        <td>@item.WindowsEventId</td>
+                        <td><span class="badge">@item.Severity</span></td>
+                        <td>@Model.Preview(item.Message)</td>
+                        <td>
+                            <a asp-page="/Events/Detail" asp-route-agent_id="@item.AgentId" asp-route-event_id="@item.EventId">Open</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>

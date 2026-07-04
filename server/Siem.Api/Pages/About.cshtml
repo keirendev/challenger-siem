@@ -1,0 +1,25 @@
+@page "/about"
+@model AboutModel
+@{
+    ViewData["Title"] = "About";
+}
+
+<div class="page-header">
+    <div>
+        <h1>System/about</h1>
+        <p class="muted">Runtime and compatibility information without secret values.</p>
+    </div>
+</div>
+
+<section class="card">
+    <dl class="detail-grid">
+        <dt>Application version</dt><dd>@Model.ApplicationVersion</dd>
+        <dt>API version</dt><dd>v1</dd>
+        <dt>Schema contract version</dt><dd>contracts/v1</dd>
+        <dt>Environment</dt><dd>@Model.EnvironmentName</dd>
+        <dt>Database connectivity</dt>
+        <dd>
+            <span class="badge @(Model.Database.IsConnected ? "ok" : "danger")">@Model.Database.Message</span>
+        </dd>
+    </dl>
+</section>
