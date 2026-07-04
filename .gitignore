@@ -10,11 +10,63 @@ dist/
 
 # Local configuration, secrets, and coding-agent state
 *.Development.local.json
+*.Production.local.json
+appsettings.*.local.json
+agentsettings*.local.json
+*.secrets.json
+*.env
+*.secret
+*.secrets
+*.token
+*.tokens
 .env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+*.ppk
+*.kdbx
+id_rsa*
+id_ed25519*
 .local/
 .pi/
 AGENTS.md
 secrets.json
+
+# Private client/agent collections and exported endpoint data
+collections/
+collection/
+client-data/
+agent-data/
+collected-data/
+private-data/
+raw-data/
+telemetry/
+captures/
+exports/
+evidence/
+eventlogs/
+event-logs/
+events-raw/
+*.evtx
+*.etl
+*.wevt
+*.jsonl
+*.ndjson
+*.har
+*.pcap
+*.pcapng
+*.dmp
+*.dump
+*.trace
+*.diag
+*.zip
+*.7z
+*.tar
+*.tgz
+*.tar.gz
 
 # Agent/runtime state
 *.db
@@ -22,6 +74,7 @@ secrets.json
 *.db-wal
 *.sqlite
 *.sqlite3
+*.log
 queue/
 state/
 logs/
