@@ -88,7 +88,7 @@ Current authorized local lab topology:
 - Windows VM for WinRM/E2E validation: `192.168.122.240`
 - API callback URL from the VM to this host: `http://192.168.122.1:4444`
 
-Pi can use project-local WinRM support for authorized Windows lab validation. The helper requires the Python `pypsrp` package on the Pi host. Copy the example env file and fill in lab-only values:
+Pi/coding-agent local files such as `.pi/` and `AGENTS.md` are intentionally ignored and are not versioned project artifacts. If the operator provides local WinRM helper tooling, it should read credentials from environment variables or ignored files. Copy the example env file and fill in lab-only values:
 
 ```bash
 mkdir -p .local
@@ -96,13 +96,7 @@ cp examples/winrm.env.example .local/winrm.env
 $EDITOR .local/winrm.env
 ```
 
-Test connectivity without printing secrets:
-
-```bash
-python3 .pi/skills/winrm/scripts/winrm.py test
-```
-
-After restarting Pi or running `/reload`, the project-local `winrm` tool is available for PowerShell, cmd, copy, and fetch operations. Use it only against authorized lab hosts, and do not commit `.local/winrm.env`.
+Test connectivity only with operator-authorized local tooling, without printing secrets. Use WinRM only against authorized lab hosts, and do not commit `.local/winrm.env`.
 
 ## Smoke test with fake data
 

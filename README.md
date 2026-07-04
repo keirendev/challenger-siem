@@ -19,8 +19,6 @@ server/Siem.Api/        ASP.NET Core ingestion/search API
 shared/Contracts/       Versioned C# API contracts
 contracts/v1/           JSON schema contracts for external clients
 docs/                   Architecture, API, schema, auth, and agent config docs
-.pi/                    Project-local Pi prompts, skills, and WinRM helper
-AGENTS.md               Coding-agent project guidance
 VERSION                 Project version source of truth
 CHANGELOG.md            Release notes and operator-visible changes
 ```

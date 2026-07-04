@@ -5,7 +5,7 @@ All notable project changes should be recorded here.
 ## Unreleased
 
 - Documented the current WinRM lab VM and VM-to-host API callback address for Pi-managed E2E validation.
-- Added project-local Pi WinRM helper/skill files for authorized lab validation.
+- Clarified that Pi/coding-agent local files remain ignored and are not versioned project artifacts.
 - Added project versioning workflow for Pi-managed changes.
 - Centralized project version metadata in `VERSION` and .NET assembly metadata.
 

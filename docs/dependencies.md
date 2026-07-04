@@ -31,7 +31,7 @@ The project should remain open-source and custom-built.
 
 | Component | Purpose | License / status |
 | --- | --- | --- |
-| pypsrp | Project-local Pi WinRM helper for authorized Windows lab validation | MIT, open-source |
+| pypsrp | Optional local WinRM helper support for authorized Windows lab validation | MIT, open-source |
 
 ## Not in scope for MVP
 

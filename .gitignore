@@ -8,10 +8,12 @@ TestResults/
 coverage/
 dist/
 
-# Local configuration and secrets
+# Local configuration, secrets, and coding-agent state
 *.Development.local.json
 .env
 .local/
+.pi/
+AGENTS.md
 secrets.json
 
 # Agent/runtime state
