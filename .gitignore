@@ -24,6 +24,10 @@ queue/
 state/
 logs/
 
+# Python helper caches
+__pycache__/
+*.py[cod]
+
 # OS/editor
 .DS_Store
 Thumbs.db

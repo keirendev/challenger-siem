@@ -19,6 +19,10 @@ server/Siem.Api/        ASP.NET Core ingestion/search API
 shared/Contracts/       Versioned C# API contracts
 contracts/v1/           JSON schema contracts for external clients
 docs/                   Architecture, API, schema, auth, and agent config docs
+.pi/                    Project-local Pi prompts, skills, and WinRM helper
+AGENTS.md               Coding-agent project guidance
+VERSION                 Project version source of truth
+CHANGELOG.md            Release notes and operator-visible changes
 ```
 
 ## Build
@@ -37,6 +41,8 @@ dist/windows-agent-win-x64/WindowsAgent.exe
 
 ## Current lab run target
 
+Authorized WinRM validation VM: `192.168.122.240`.
+
 Run the server on this machine for Windows agents:
 
 ```bash
@@ -52,10 +58,20 @@ http://192.168.122.1:4444
 Prepare copy-ready Windows agent files, including a registered `agentsettings.json`:
 
 ```bash
-./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11" 0.1.0
+./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11"
 ```
 
 Copy both files from `dist/windows-agent-copy/` to the Windows host and run `./WindowsAgent.exe`.
+
+## Versioning
+
+Project version is managed in `VERSION` and can be checked with:
+
+```bash
+./scripts/current-version.sh
+```
+
+See `docs/versioning.md` for the version bump and changelog workflow.
 
 ## Current build target
 
@@ -76,6 +92,7 @@ See:
 - `docs/dependencies.md`
 - `docs/development.md`
 - `docs/milestones.md`
+- `docs/versioning.md`
 - `server/Siem.Api/Database/001_initial.sql`
 - `examples/agent-registration.json`
 - `examples/fake-event-batch.json`

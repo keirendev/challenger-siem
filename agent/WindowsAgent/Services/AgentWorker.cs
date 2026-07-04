@@ -20,7 +20,10 @@ public sealed class AgentWorker(
 {
     private readonly AgentOptions options = options.Value;
     private readonly string hostname = Environment.MachineName;
-    private readonly string agentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.1.0";
+    private readonly string agentVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "0.0.0";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
