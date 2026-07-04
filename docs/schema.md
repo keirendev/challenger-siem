@@ -45,7 +45,16 @@ Stores heartbeat observations and queue health metrics.
 
 ### `ingestion_errors`
 
-Reserved for validation/storage errors that should be reviewed without dropping context.
+Stores reviewable ingest validation failures after an agent has authenticated successfully. Rows include agent ID, batch ID, event ID when it can be safely identified, an error code/message, and bounded JSON context. The context intentionally omits authorization headers, bearer tokens, rendered event messages, and full raw event payloads.
+
+Operators can inspect recent failures with a bounded query such as:
+
+```sql
+select error_time, agent_id, batch_id, event_id, error_code, error_message
+from ingestion_errors
+order by error_time desc
+limit 25;
+```
 
 ## Core indexes
 
@@ -56,3 +65,16 @@ Reserved for validation/storage errors that should be reviewed without dropping 
 - `events(channel)`
 - `events(provider)`
 - GIN index on `events(raw_json)`
+- `agent_heartbeats(agent_id)` and `agent_heartbeats(heartbeat_time desc)`
+- `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
+
+## Applying and validating the schema
+
+No Docker workflow is required. With PostgreSQL client tools installed and `ConnectionStrings__SiemDatabase` set in an ignored `.local/dev.env`, run:
+
+```bash
+./scripts/apply-schema.sh
+./scripts/validate-schema.sh
+```
+
+Both scripts accept an explicit connection string as their first argument, but do not echo it. The validation script checks required tables, the `(agent_id, event_id)` uniqueness constraint, and the key search/review indexes.

@@ -39,6 +39,16 @@ Optional configuration values under `Review` tune dashboard and default search b
 
 ## Local smoke path
 
+Automated smoke path without Docker:
+
+```bash
+./scripts/smoke-test-web.sh
+```
+
+The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, and event detail HTML. Temporary HTML/cookies/responses stay under ignored `.local/`.
+
+Manual path:
+
 1. Start the API with the required database and auth environment variables.
 2. Register an agent and ingest fake or real events.
 3. Open the API base URL in a browser.

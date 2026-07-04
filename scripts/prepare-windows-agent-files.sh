@@ -60,6 +60,7 @@ config = {
         "AgentId": response["agent_id"],
         "ServerBaseUrl": server_base_url,
         "ApiToken": response["api_token"],
+        "Enrollment": {"Enabled": False, "EnrollmentToken": "", "MachineGuid": None},
         "Channels": ["Security", "System", "Application"],
         "OptionalChannels": [
             "Windows PowerShell",
@@ -74,6 +75,9 @@ config = {
         "Queue": {
             "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\queue.sqlite",
             "MaxSizeMb": 512,
+            "MaxSendAttempts": 10,
+            "MaxBackoffSeconds": 300,
+            "WarningSizePercent": 80,
         },
         "State": {
             "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json",

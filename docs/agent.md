@@ -11,10 +11,12 @@ Project: `agent/WindowsAgent`
 - Uses deterministic event IDs based on agent/channel/record/provider/event ID for server-side deduplication.
 - Persists channel position state to JSON.
 - Persists unsent events to a local SQLite queue before forwarding.
+- Supports first-run enrollment with `POST /api/v1/agents/register` and persists the returned per-agent token.
 - Sends batches to `POST /api/v1/ingest/events`.
-- Deletes queued events only after server acknowledgement.
+- Deletes queued events only after server acknowledgement, using event-id acknowledgement arrays when present.
 - Sends heartbeat data to `POST /api/v1/agents/heartbeat`.
-- Retries with exponential backoff when collection or forwarding fails.
+- Retries with bounded exponential backoff when collection or forwarding fails.
+- Quarantines repeatedly failing queued events in a local `poison_events` table so later events can continue draining.
 
 ## Build
 
@@ -42,6 +44,12 @@ Running and validating real event collection requires Windows.
 
 ## Install on Windows
 
+Preview the service install plan without changing the host:
+
+```powershell
+.\scripts\install-windows-agent.ps1 -PublishPath .\dist\windows-agent-win-x64 -PlanOnly
+```
+
 Run from an elevated PowerShell session after publishing:
 
 ```powershell
@@ -50,15 +58,24 @@ Run from an elevated PowerShell session after publishing:
 
 The script creates:
 
-- service: `ChallengerSiemAgent`
+- service: `ChallengerSiemAgent` with display name `Challenger SIEM Agent`
+- default MVP service account: LocalSystem
 - install directory: `C:\Program Files\ChallengerSIEM\Agent`
 - protected data/config directory: `C:\ProgramData\ChallengerSIEM\Agent`
 - template config: `C:\ProgramData\ChallengerSIEM\Agent\agentsettings.json`
 
-Edit the config with the registered `AgentId` and `ApiToken`, then start the service:
+The install and data directories are ACL-restricted to `BUILTIN\\Administrators` and `NT AUTHORITY\\SYSTEM`. LocalSystem is the MVP default because it can run as a service and read the protected `Security` event log on standard Windows installations. If a custom service account is used later, grant only the specific Windows Event Log permissions it needs and validate Security-log access explicitly.
+
+Edit the config with either the registered `AgentId` and `ApiToken` or a first-run enrollment token, then start the service:
 
 ```powershell
 Start-Service ChallengerSiemAgent
+```
+
+Preview the uninstall plan without changing the host:
+
+```powershell
+.\scripts\uninstall-windows-agent.ps1 -PlanOnly
 ```
 
 Uninstall while preserving queued data and state:
@@ -88,7 +105,7 @@ Required fields:
 
 - `AgentId`
 - `ServerBaseUrl`
-- `ApiToken`
+- `ApiToken` **or** `Enrollment.EnrollmentToken`
 - at least one channel in `Channels`
 
 For the current lab server binding, set:
@@ -99,7 +116,21 @@ For the current lab server binding, set:
 
 A ready-to-edit example is available at `examples/windows-agentsettings-192.168.122.1-4444.json`.
 
-Do not log or commit `ApiToken`.
+Do not log or commit `ApiToken` or `Enrollment.EnrollmentToken`.
+
+### First-run enrollment
+
+To enroll from the endpoint, leave `ApiToken` blank and set:
+
+```json
+"Enrollment": {
+  "Enabled": true,
+  "EnrollmentToken": "<temporary-enrollment-token>",
+  "MachineGuid": null
+}
+```
+
+On successful registration the agent stores the returned per-agent token in the configured `agentsettings.json`, clears the enrollment token in that file, and continues with normal ingest/heartbeat authentication. Existing configs that already contain `ApiToken` continue to work and skip enrollment.
 
 ## State and queue files
 
@@ -110,11 +141,15 @@ C:\ProgramData\ChallengerSIEM\Agent\state.json
 C:\ProgramData\ChallengerSIEM\Agent\queue.sqlite
 ```
 
-These files should be protected to Administrators and SYSTEM when installed.
+These files should be protected to Administrators and SYSTEM when installed. Use this read-only helper on Windows to summarize ACLs and Security-log read access without changing service state:
 
-## Next Windows validation tasks
+```powershell
+.\scripts\test-windows-agent-acls.ps1
+```
 
-- Verify permissions required for reading `Security` channel.
-- Validate service install/start/stop behavior.
-- Confirm rendered messages are available on target hosts.
-- Confirm optional channels are skipped cleanly when missing.
+## Windows validation notes
+
+- Required channels are `Security`, `System`, and `Application`. Security access depends on the service account; LocalSystem is expected to work in the MVP lab.
+- Optional channels are skipped cleanly and logged once when absent.
+- Default `StartAtEndWhenNoState: true` prevents a first-run flood. For bounded lab collection tests, set it to `false` only in ignored temporary configs.
+- The safety runbook avoids reboots, firewall/authentication changes, event-log clearing, and deleting operator data. If a service uninstall must be demonstrated, use a disposable lab and explicit operator approval; the default uninstall script preserves data unless `-RemoveData` is supplied.

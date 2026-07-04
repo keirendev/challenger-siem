@@ -14,13 +14,27 @@ Example Linux commands using local PostgreSQL administration tools:
 ```bash
 sudo -u postgres createuser --pwprompt siem
 sudo -u postgres createdb --owner siem challenger_siem
-psql "host=localhost port=5432 dbname=challenger_siem user=siem password=<password>" \
-  --file server/Siem.Api/Database/001_initial.sql
+cat > .local/dev.env <<'EOF'
+ConnectionStrings__SiemDatabase='Host=localhost;Port=5432;Database=challenger_siem;Username=siem;Password=<password>'
+Auth__EnrollmentToken='<long-random-enrollment-token>'
+Auth__ReviewToken='<long-random-review-token>'
+EOF
+
+./scripts/apply-schema.sh
+./scripts/validate-schema.sh
 ```
+
+To reset a disposable local lab database, drop and recreate the database with PostgreSQL admin tools, then rerun the two schema scripts. Do not run destructive reset commands against shared or client databases.
 
 ## Configure secrets via environment variables
 
-Do not commit real tokens or passwords.
+Do not commit real tokens or passwords. The API validates these required settings at startup and fails with key names only if any are missing or blank:
+
+- `ConnectionStrings__SiemDatabase`
+- `Auth__EnrollmentToken`
+- `Auth__ReviewToken`
+
+For shell-only runs you can export them directly:
 
 ```bash
 export ConnectionStrings__SiemDatabase='Host=localhost;Port=5432;Database=challenger_siem;Username=siem;Password=<password>'
@@ -46,6 +60,16 @@ dotnet test Challenger.Siem.sln
 ```
 
 The Windows agent targets `net8.0-windows` and is configured to compile on this Linux development host. Running real event collection still requires Windows.
+
+PostgreSQL-backed integration tests are opt-in so contributors do not need Docker or a shared test database. Set one of these ignored/local environment variables to run them:
+
+```bash
+export CHALLENGER_SIEM_TEST_DATABASE='Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=<password>'
+# or
+export ConnectionStrings__SiemTestDatabase='Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=<password>'
+```
+
+When absent, the integration tests report a skip reason and unit/web-auth tests still run.
 
 ## Run the API and web review console
 
@@ -109,6 +133,14 @@ After creating `.local/dev.env` or exporting the required environment variables,
 ```
 
 The script starts the API on local HTTP in `Development`, registers the example agent, ingests `examples/fake-event-batch.json`, queries it back, and writes temporary responses/logs under `.local/`. After it has ingested data, you can also start the API normally and use the web console to review the same events.
+
+To smoke-test the web console against seeded SIEM data without Docker, run:
+
+```bash
+./scripts/smoke-test-web.sh
+```
+
+It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, and verifies the dashboard, agent inventory, event search, and event detail pages. Temporary HTML and API responses remain under `.local/`.
 
 Manual equivalent:
 

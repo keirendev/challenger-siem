@@ -25,28 +25,35 @@ builder.Services
     .AddOptions<AgentOptions>()
     .Configure<IConfiguration>((options, configuration) =>
     {
+        // Support agentsettings.json files that place AgentOptions fields either at the root
+        // or under an "Agent" section. The section wins when both shapes are present.
+        configuration.Bind(options);
         var section = configuration.GetSection(AgentOptions.SectionName);
         if (section.Exists())
         {
             section.Bind(options);
         }
-
-        // Also support agentsettings.json files that place AgentOptions fields at the root.
-        configuration.Bind(options);
     })
     .Validate(options => !string.IsNullOrWhiteSpace(options.AgentId), "Agent:AgentId is required.")
     .Validate(options => options.ServerBaseUrl is not null, "Agent:ServerBaseUrl is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.ApiToken), "Agent:ApiToken is required.")
+    .Validate(
+        options => !string.IsNullOrWhiteSpace(options.ApiToken) || !string.IsNullOrWhiteSpace(options.Enrollment.EnrollmentToken),
+        "Agent:ApiToken or Agent:Enrollment:EnrollmentToken is required.")
     .Validate(options => options.Channels.Count > 0, "At least one required channel is required.")
     .Validate(options => options.Batching.MaxEvents is > 0 and <= 500, "Batching:MaxEvents must be between 1 and 500.")
     .Validate(options => options.PollIntervalSeconds > 0, "PollIntervalSeconds must be greater than zero.")
     .Validate(options => options.HeartbeatIntervalSeconds > 0, "HeartbeatIntervalSeconds must be greater than zero.")
+    .Validate(options => options.Queue.MaxSizeMb > 0, "Queue:MaxSizeMb must be greater than zero.")
+    .Validate(options => options.Queue.MaxSendAttempts > 0, "Queue:MaxSendAttempts must be greater than zero.")
+    .Validate(options => options.Queue.MaxBackoffSeconds > 0, "Queue:MaxBackoffSeconds must be greater than zero.")
     .ValidateOnStart();
 
+builder.Services.AddSingleton(new AgentConfigFile(configPath));
 builder.Services.AddSingleton<IWindowsEventCollector, WindowsEventCollector>();
 builder.Services.AddSingleton<IChannelStateStore, JsonChannelStateStore>();
 builder.Services.AddSingleton<IEventQueue, SqliteEventQueue>();
 builder.Services.AddSingleton<AgentRuntimeState>();
+builder.Services.AddSingleton<AgentEnrollmentService>();
 builder.Services.AddHttpClient<SiemIngestClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<AgentOptions>>().Value;

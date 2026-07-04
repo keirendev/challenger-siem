@@ -30,4 +30,13 @@ public sealed record IngestBatchResponse
 
     [JsonPropertyName("duplicates")]
     public int Duplicates { get; init; }
+
+    [JsonPropertyName("accepted_event_ids")]
+    public IReadOnlyList<Guid> AcceptedEventIds { get; init; } = Array.Empty<Guid>();
+
+    [JsonPropertyName("duplicate_event_ids")]
+    public IReadOnlyList<Guid> DuplicateEventIds { get; init; } = Array.Empty<Guid>();
+
+    [JsonPropertyName("rejected_event_ids")]
+    public IReadOnlyList<Guid> RejectedEventIds { get; init; } = Array.Empty<Guid>();
 }

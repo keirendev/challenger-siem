@@ -6,7 +6,11 @@ using NpgsqlTypes;
 
 namespace Challenger.Siem.Api.Database;
 
-public sealed record StoreEventsResult(int Accepted, int Duplicates);
+public sealed record StoreEventsResult(
+    int Accepted,
+    int Duplicates,
+    IReadOnlyList<Guid> AcceptedEventIds,
+    IReadOnlyList<Guid> DuplicateEventIds);
 
 public sealed class EventRepository(NpgsqlDataSource dataSource)
 {
@@ -14,6 +18,8 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
     {
         var accepted = 0;
         var duplicates = 0;
+        var acceptedEventIds = new List<Guid>();
+        var duplicateEventIds = new List<Guid>();
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -74,15 +80,17 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             if (result is null || result == DBNull.Value)
             {
                 duplicates++;
+                duplicateEventIds.Add(envelope.EventId);
             }
             else
             {
                 accepted++;
+                acceptedEventIds.Add(envelope.EventId);
             }
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new StoreEventsResult(accepted, duplicates);
+        return new StoreEventsResult(accepted, duplicates, acceptedEventIds, duplicateEventIds);
     }
 
     public async Task<IReadOnlyList<EventEnvelope>> SearchEventsAsync(EventSearchQuery query, CancellationToken cancellationToken)
