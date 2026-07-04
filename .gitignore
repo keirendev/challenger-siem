@@ -12,7 +12,14 @@ dist/
 *.Development.local.json
 *.Production.local.json
 appsettings.*.local.json
-agentsettings*.local.json
+agentsettings*.json
+credentials.json
+credentials.*
+*.credentials.json
+passwords.*
+tokens.*
+connectionstrings*.json
+connection-strings*.json
 *.secrets.json
 *.env
 *.secret
