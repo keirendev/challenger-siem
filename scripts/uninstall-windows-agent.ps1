@@ -4,7 +4,8 @@ param(
     [string]$InstallDir = "C:\Program Files\ChallengerSIEM\Agent",
     [string]$DataDir = "C:\ProgramData\ChallengerSIEM\Agent",
     [string]$ServiceName = "ChallengerSiemAgent",
-    [switch]$RemoveData
+    [switch]$RemoveData,
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,20 @@ function Assert-Administrator {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw "Run this script from an elevated PowerShell session."
     }
+}
+
+if ($PlanOnly) {
+    Write-Output "Plan: stop service '$ServiceName' if it is running."
+    Write-Output "Plan: delete service '$ServiceName'."
+    Write-Output "Plan: remove install directory '$InstallDir'."
+    if ($RemoveData) {
+        Write-Output "Plan: remove data directory '$DataDir' because -RemoveData was specified."
+    }
+    else {
+        Write-Output "Plan: preserve data directory '$DataDir'."
+    }
+    Write-Output "Plan complete. No changes were made."
+    return
 }
 
 Assert-Administrator

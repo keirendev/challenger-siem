@@ -6,7 +6,9 @@ param(
     [string]$DataDir = "C:\ProgramData\ChallengerSIEM\Agent",
     [string]$ServiceName = "ChallengerSiemAgent",
     [string]$DisplayName = "Challenger SIEM Agent",
-    [switch]$Start
+    [string]$ServiceAccount = "LocalSystem",
+    [switch]$Start,
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,6 +37,19 @@ function Protect-Directory {
     Set-Acl -Path $Path -AclObject $acl
 }
 
+if ($PlanOnly) {
+    Write-Output "Plan: validate publish path and WindowsAgent.exe."
+    Write-Output "Plan: protect install directory '$InstallDir' for BUILTIN\\Administrators and NT AUTHORITY\\SYSTEM."
+    Write-Output "Plan: protect data directory '$DataDir' for BUILTIN\\Administrators and NT AUTHORITY\\SYSTEM."
+    Write-Output "Plan: copy published agent files to '$InstallDir'."
+    Write-Output "Plan: create or update service '$ServiceName' ('$DisplayName') as '$ServiceAccount'."
+    if ($Start) {
+        Write-Output "Plan: start service '$ServiceName'."
+    }
+    Write-Output "Plan complete. No changes were made."
+    return
+}
+
 Assert-Administrator
 
 if ([string]::IsNullOrWhiteSpace($PublishPath) -or -not (Test-Path $PublishPath)) {
@@ -58,7 +73,12 @@ if (-not (Test-Path $configPath)) {
   "Agent": {
     "AgentId": "CHANGE-ME",
     "ServerBaseUrl": "https://siem.example.local",
-    "ApiToken": "CHANGE-ME",
+    "ApiToken": "CHANGE-ME-OR-LEAVE-BLANK-FOR-ENROLLMENT",
+    "Enrollment": {
+      "Enabled": false,
+      "EnrollmentToken": "CHANGE-ME-ONLY-FOR-FIRST-RUN",
+      "MachineGuid": null
+    },
     "Channels": [
       "Security",
       "System",
@@ -79,7 +99,10 @@ if (-not (Test-Path $configPath)) {
     },
     "Queue": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\queue.sqlite",
-      "MaxSizeMb": 512
+      "MaxSizeMb": 512,
+      "MaxSendAttempts": 10,
+      "MaxBackoffSeconds": 300,
+      "WarningSizePercent": 80
     },
     "State": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json"
@@ -93,12 +116,13 @@ Protect-Directory -Path $DataDir
 
 $imagePath = '"{0}"' -f (Join-Path $InstallDir "WindowsAgent.exe")
 $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+$scAccount = if ($ServiceAccount -eq "LocalSystem") { "LocalSystem" } else { $ServiceAccount }
 
 if ($existingService) {
-    & sc.exe config $ServiceName binPath= $imagePath start= delayed-auto DisplayName= $DisplayName | Out-Null
+    & sc.exe config $ServiceName binPath= $imagePath start= delayed-auto DisplayName= $DisplayName obj= $scAccount | Out-Null
 }
 else {
-    & sc.exe create $ServiceName binPath= $imagePath start= delayed-auto DisplayName= $DisplayName | Out-Null
+    & sc.exe create $ServiceName binPath= $imagePath start= delayed-auto DisplayName= $DisplayName obj= $scAccount | Out-Null
 }
 
 & sc.exe description $ServiceName "Collects Windows endpoint events and forwards them to the Challenger SIEM ingestion API." | Out-Null
@@ -107,6 +131,6 @@ if ($Start) {
     Start-Service -Name $ServiceName
 }
 
-Write-Host "Installed $DisplayName as service '$ServiceName'."
+Write-Host "Installed $DisplayName as service '$ServiceName' using account '$ServiceAccount'."
 Write-Host "Config path: $configPath"
-Write-Host "Edit agentsettings.json with the registered AgentId and ApiToken before starting the service."
+Write-Host "Edit agentsettings.json with either a registered ApiToken or a first-run enrollment token before starting the service."

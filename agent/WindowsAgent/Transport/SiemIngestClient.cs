@@ -11,6 +11,29 @@ public sealed class SiemIngestClient(HttpClient httpClient, IOptions<AgentOption
 {
     private readonly AgentOptions options = options.Value;
 
+    public async Task<AgentRegistrationResponse> RegisterAsync(
+        AgentRegistrationRequest registration,
+        string enrollmentToken,
+        CancellationToken cancellationToken)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/register")
+        {
+            Content = JsonContent.Create(registration, options: JsonDefaults.Options)
+        };
+        httpRequest.Headers.Add("X-Enrollment-Token", enrollmentToken);
+
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Server returned {(int)response.StatusCode} {response.ReasonPhrase} for agent registration. Body: {Truncate(responseBody, 500)}");
+        }
+
+        var registrationResponse = await response.Content.ReadFromJsonAsync<AgentRegistrationResponse>(JsonDefaults.Options, cancellationToken);
+        return registrationResponse ?? throw new InvalidOperationException("Server returned an empty registration response.");
+    }
+
     public async Task<IngestBatchResponse> SendBatchAsync(
         IReadOnlyList<EventEnvelope> events,
         CancellationToken cancellationToken)

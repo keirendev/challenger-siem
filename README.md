@@ -96,6 +96,9 @@ See:
 - `docs/milestones.md`
 - `docs/versioning.md`
 - `docs/web.md`
+- `docs/runbooks.md`
+- `docs/tls.md`
+- `docs/release-readiness.md`
 - `server/Siem.Api/Database/001_initial.sql`
 - `examples/agent-registration.json`
 - `examples/fake-event-batch.json`

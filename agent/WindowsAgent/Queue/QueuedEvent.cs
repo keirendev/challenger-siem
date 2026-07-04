@@ -2,4 +2,4 @@ using Challenger.Siem.Contracts.V1;
 
 namespace Challenger.Siem.WindowsAgent.Queue;
 
-public sealed record QueuedEvent(long QueueId, EventEnvelope Envelope);
+public sealed record QueuedEvent(long QueueId, EventEnvelope Envelope, int SendAttempts, DateTimeOffset? LastAttemptAt);

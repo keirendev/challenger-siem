@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Api.Review;
@@ -36,6 +37,7 @@ builder.Services.AddScoped<AgentRepository>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
+builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<ReviewRepository>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
 builder.Services.AddRazorPages(options =>
@@ -62,6 +64,8 @@ builder.Services
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
 
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
@@ -146,6 +150,7 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     IngestBatchRequest request,
     AgentAuthenticator authenticator,
     EventRepository events,
+    IngestionErrorRepository ingestionErrors,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
@@ -158,6 +163,7 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     var validationErrors = RequestValidation.ValidateBatch(request, maxEventsPerBatch);
     if (validationErrors.Count > 0)
     {
+        await ingestionErrors.RecordValidationErrorsAsync(request, validationErrors, cancellationToken);
         return Results.ValidationProblem(validationErrors);
     }
 
@@ -167,7 +173,10 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
         BatchId = request.BatchId,
         Accepted = result.Accepted,
         Rejected = 0,
-        Duplicates = result.Duplicates
+        Duplicates = result.Duplicates,
+        AcceptedEventIds = result.AcceptedEventIds,
+        DuplicateEventIds = result.DuplicateEventIds,
+        RejectedEventIds = Array.Empty<Guid>()
     });
 });
 

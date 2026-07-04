@@ -3,6 +3,11 @@
     "AgentId": "win11-test-001",
     "ServerBaseUrl": "http://192.168.122.1:4444",
     "ApiToken": "CHANGE-ME-FROM-REGISTRATION",
+    "Enrollment": {
+      "Enabled": false,
+      "EnrollmentToken": "CHANGE-ME-ONLY-FOR-FIRST-RUN-ENROLLMENT",
+      "MachineGuid": null
+    },
     "Channels": [
       "Security",
       "System",
@@ -23,7 +28,10 @@
     },
     "Queue": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\queue.sqlite",
-      "MaxSizeMb": 512
+      "MaxSizeMb": 512,
+      "MaxSendAttempts": 10,
+      "MaxBackoffSeconds": 300,
+      "WarningSizePercent": 80
     },
     "State": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json"

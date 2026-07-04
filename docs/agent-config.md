@@ -18,6 +18,11 @@ Permissions should be restricted to Administrators and SYSTEM.
     "AgentId": "win11-test-001",
     "ServerBaseUrl": "https://siem.example.local",
     "ApiToken": "stored-after-registration",
+    "Enrollment": {
+      "Enabled": false,
+      "EnrollmentToken": "only-used-for-first-run-enrollment",
+      "MachineGuid": null
+    },
     "Channels": [
       "Security",
       "System",
@@ -38,7 +43,10 @@ Permissions should be restricted to Administrators and SYSTEM.
     },
     "Queue": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\queue.sqlite",
-      "MaxSizeMb": 512
+      "MaxSizeMb": 512,
+      "MaxSendAttempts": 10,
+      "MaxBackoffSeconds": 300,
+      "WarningSizePercent": 80
     },
     "State": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json"
@@ -47,7 +55,20 @@ Permissions should be restricted to Administrators and SYSTEM.
 }
 ```
 
-The agent also accepts the same fields at the JSON root for simple deployments.
+The agent also accepts the same fields at the JSON root for simple deployments. If both root fields and an `Agent` section are present, the `Agent` section wins.
+
+## Enrollment modes
+
+Existing deployments can continue to provide a per-agent `ApiToken` directly. A fresh endpoint can instead set `ApiToken` to an empty string and provide `Enrollment.EnrollmentToken`. On startup the agent calls `POST /api/v1/agents/register`, receives a per-agent API token, persists it to the configured `agentsettings.json`, clears the enrollment token in that file, and uses the API token for ingest and heartbeat requests.
+
+Never place enrollment or per-agent tokens in committed examples. Use ignored local files or protected Windows paths only.
+
+## Queue reliability fields
+
+- `Queue.MaxSizeMb` caps the SQLite queue file.
+- `Queue.WarningSizePercent` emits operator-visible warnings before the cap.
+- `Queue.MaxSendAttempts` controls when repeatedly failing events are moved to the local `poison_events` table so future events can continue draining.
+- `Queue.MaxBackoffSeconds` caps per-event retry backoff.
 
 ## Channel position state
 

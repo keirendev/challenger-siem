@@ -16,6 +16,7 @@ public sealed class AgentWorker(
     IEventQueue queue,
     SiemIngestClient client,
     AgentRuntimeState runtimeState,
+    AgentEnrollmentService enrollmentService,
     ILogger<AgentWorker> logger) : BackgroundService
 {
     private readonly AgentOptions options = options.Value;
@@ -28,6 +29,7 @@ public sealed class AgentWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Challenger SIEM agent starting for agent {AgentId}.", options.AgentId);
+        await enrollmentService.EnsureEnrolledAsync(agentVersion, stoppingToken);
         await queue.InitializeAsync(stoppingToken);
 
         var nextHeartbeat = DateTimeOffset.MinValue;
@@ -120,25 +122,118 @@ public sealed class AgentWorker(
                 break;
             }
 
-            var acknowledgement = await client.SendBatchAsync(batch.Select(item => item.Envelope).ToArray(), cancellationToken);
+            var queueIds = batch.Select(item => item.QueueId).ToArray();
+            await queue.MarkAttemptAsync(queueIds, cancellationToken);
+
+            IngestBatchResponse acknowledgement;
+            try
+            {
+                acknowledgement = await client.SendBatchAsync(batch.Select(item => item.Envelope).ToArray(), cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await QuarantineExhaustedEventsAsync(batch, "send_failed", cancellationToken);
+                throw;
+            }
+
+            var deleted = await DeleteAcknowledgedEventsAsync(batch, acknowledgement, cancellationToken);
+            sentOrDeduplicated += deleted;
+
+            var rejected = await QuarantineRejectedEventsAsync(batch, acknowledgement, cancellationToken);
+            var exhausted = await QuarantineExhaustedEventsAsync(batch, "max_send_attempts_exceeded", cancellationToken);
+
             var acknowledged = acknowledgement.Accepted + acknowledgement.Duplicates;
             if (acknowledgement.Rejected == 0 && acknowledged >= batch.Count)
             {
-                await queue.DeleteAsync(batch.Select(item => item.QueueId).ToArray(), cancellationToken);
-                sentOrDeduplicated += acknowledged;
                 continue;
             }
 
             logger.LogWarning(
-                "Server did not acknowledge the full batch. Accepted={Accepted}, Duplicates={Duplicates}, Rejected={Rejected}, BatchSize={BatchSize}.",
+                "Server did not acknowledge the full batch. Accepted={Accepted}, Duplicates={Duplicates}, Rejected={Rejected}, BatchSize={BatchSize}, Deleted={Deleted}, Quarantined={Quarantined}.",
                 acknowledgement.Accepted,
                 acknowledgement.Duplicates,
                 acknowledgement.Rejected,
-                batch.Count);
+                batch.Count,
+                deleted,
+                rejected + exhausted);
             break;
         }
 
         return sentOrDeduplicated;
+    }
+
+    private async Task<int> DeleteAcknowledgedEventsAsync(
+        IReadOnlyList<QueuedEvent> batch,
+        IngestBatchResponse acknowledgement,
+        CancellationToken cancellationToken)
+    {
+        var acknowledgedEventIds = acknowledgement.AcceptedEventIds
+            .Concat(acknowledgement.DuplicateEventIds)
+            .ToHashSet();
+
+        long[] queueIds;
+        if (acknowledgedEventIds.Count > 0)
+        {
+            queueIds = batch
+                .Where(item => acknowledgedEventIds.Contains(item.Envelope.EventId))
+                .Select(item => item.QueueId)
+                .ToArray();
+        }
+        else if (acknowledgement.Rejected == 0 && acknowledgement.Accepted + acknowledgement.Duplicates >= batch.Count)
+        {
+            // Backward-compatible fallback for older v1 servers that return counts but not event IDs.
+            queueIds = batch.Select(item => item.QueueId).ToArray();
+        }
+        else
+        {
+            queueIds = Array.Empty<long>();
+        }
+
+        await queue.DeleteAsync(queueIds, cancellationToken);
+        return queueIds.Length;
+    }
+
+    private async Task<int> QuarantineRejectedEventsAsync(
+        IReadOnlyList<QueuedEvent> batch,
+        IngestBatchResponse acknowledgement,
+        CancellationToken cancellationToken)
+    {
+        if (acknowledgement.RejectedEventIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var rejectedEventIds = acknowledgement.RejectedEventIds.ToHashSet();
+        var rejectedQueueIds = batch
+            .Where(item => rejectedEventIds.Contains(item.Envelope.EventId))
+            .Select(item => item.QueueId)
+            .ToArray();
+        await queue.MarkPoisonAsync(rejectedQueueIds, "server_rejected", cancellationToken);
+        return rejectedQueueIds.Length;
+    }
+
+    private async Task<int> QuarantineExhaustedEventsAsync(
+        IReadOnlyList<QueuedEvent> batch,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var exhaustedQueueIds = batch
+            .Where(item => item.SendAttempts + 1 >= options.Queue.MaxSendAttempts)
+            .Select(item => item.QueueId)
+            .ToArray();
+
+        if (exhaustedQueueIds.Length == 0)
+        {
+            return 0;
+        }
+
+        logger.LogWarning(
+            "Quarantining {Count} queued events after reaching MaxSendAttempts={MaxSendAttempts}. Reason={Reason}.",
+            exhaustedQueueIds.Length,
+            options.Queue.MaxSendAttempts,
+            reason);
+        await queue.MarkPoisonAsync(exhaustedQueueIds, reason, cancellationToken);
+        return exhaustedQueueIds.Length;
     }
 
     private async Task TrySendHeartbeatAsync(CancellationToken cancellationToken)

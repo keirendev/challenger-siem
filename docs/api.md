@@ -78,9 +78,16 @@ Response:
   "batch_id": "4c5e958b-7c8d-42e7-b060-75374c2fb2b1",
   "accepted": 1,
   "rejected": 0,
-  "duplicates": 0
+  "duplicates": 0,
+  "accepted_event_ids": ["3af457f2-a61f-4f95-9da0-4697d00f76e7"],
+  "duplicate_event_ids": [],
+  "rejected_event_ids": []
 }
 ```
+
+The event-ID arrays are additive v1 response fields. Agents use them to delete only accepted or duplicate queue rows after acknowledgement. Older clients can continue to rely on the count fields.
+
+Validation failures after successful agent authentication are also persisted to `ingestion_errors` with bounded payload context that omits authorization headers, bearer tokens, rendered event messages, and raw event payloads.
 
 ## Agent heartbeat
 
