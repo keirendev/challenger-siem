@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+coverage/
+dist/
+
+# Local configuration and secrets
+*.Development.local.json
+.env
+.local/
+secrets.json
+
+# Agent/runtime state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+queue/
+state/
+logs/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,27 @@
+{
+  "agent_id": "win11-test-001",
+  "batch_id": "4c5e958b-7c8d-42e7-b060-75374c2fb2b1",
+  "sent_at": "2026-07-04T12:00:00Z",
+  "events": [
+    {
+      "event_id": "3af457f2-a61f-4f95-9da0-4697d00f76e7",
+      "agent_id": "win11-test-001",
+      "hostname": "WIN11-TEST",
+      "source": "windows_event_log",
+      "channel": "Security",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "windows_event_id": 4625,
+      "record_id": 123456,
+      "event_time": "2026-07-04T12:00:00Z",
+      "ingest_time": null,
+      "severity": "audit_failure",
+      "message": "An account failed to log on.",
+      "raw": {
+        "event_data": {
+          "TargetUserName": "alice",
+          "IpAddress": "192.0.2.10"
+        }
+      }
+    }
+  ]
+}
