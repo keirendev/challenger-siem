@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/event-envelope.schema.json",
+  "title": "Challenger SIEM Event Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "agent_id",
+    "hostname",
+    "source",
+    "channel",
+    "provider",
+    "windows_event_id",
+    "record_id",
+    "event_time",
+    "severity",
+    "message",
+    "raw"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "source": {
+      "type": "string",
+      "const": "windows_event_log"
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "windows_event_id": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "record_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ingest_time": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["verbose", "information", "warning", "error", "critical", "audit_success", "audit_failure"]
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 20000
+    },
+    "raw": {
+      "type": "object"
+    }
+  }
+}

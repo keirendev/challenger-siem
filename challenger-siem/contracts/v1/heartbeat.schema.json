@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/heartbeat.schema.json",
+  "title": "Challenger SIEM Agent Heartbeat v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "hostname", "agent_version", "os", "queue_depth"],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "agent_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "os": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "last_event_time": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "queue_depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cpu_percent": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "memory_mb": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    }
+  }
+}

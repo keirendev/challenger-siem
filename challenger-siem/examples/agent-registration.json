@@ -1,0 +1,7 @@
+{
+  "agent_id": "win11-test-001",
+  "hostname": "WIN11-TEST",
+  "machine_guid": "example-machine-guid",
+  "os_version": "Windows 11 23H2",
+  "agent_version": "0.1.0"
+}
