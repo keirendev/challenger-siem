@@ -4,12 +4,13 @@ Custom SIEM capability focused first on Windows endpoints.
 
 The MVP is custom-built from open-source components only. Docker is intentionally not used.
 
-## v0.1 goal
+## MVP goal
 
 1. A Windows endpoint agent normalizes Windows Event Log records.
 2. The agent buffers events locally and sends batches over HTTPS.
 3. The ASP.NET Core ingestion API validates, deduplicates, and stores events in PostgreSQL.
 4. A basic review API can query recent events by host, agent, channel, event ID, time range, or keyword.
+5. A server-hosted web review console supports operator login, dashboard review, agent inventory, event search, and event detail inspection.
 
 ## Repository layout
 
@@ -73,12 +74,15 @@ See `docs/versioning.md` for the version bump and changelog workflow.
 
 ## Current build target
 
-The first practical target was the server MVP:
+The current MVP baseline can:
 
 - receive a fake Windows event JSON batch
 - authenticate the agent using a per-agent token
 - store events in PostgreSQL with JSONB raw payloads
 - return stored events from `GET /api/v1/events`
+- host a review-token-protected web console from the API process
+
+Open the API base URL in a browser and log in with `Auth__ReviewToken` to use the web console.
 
 See:
 
@@ -91,6 +95,7 @@ See:
 - `docs/development.md`
 - `docs/milestones.md`
 - `docs/versioning.md`
+- `docs/web.md`
 - `server/Siem.Api/Database/001_initial.sql`
 - `examples/agent-registration.json`
 - `examples/fake-event-batch.json`

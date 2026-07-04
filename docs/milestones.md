@@ -48,6 +48,17 @@
 - [ ] Queue size monitoring and operator-visible warnings
 - [ ] More granular batch acknowledgement handling
 
+## Phase 5: Web review application
+
+- [x] Server-hosted web console in the ASP.NET Core API process
+- [x] Review-token login with HTTP-only operator cookie
+- [x] Dashboard with agent and ingestion health metrics
+- [x] Agent inventory with hostname, agent ID, health, and queue-depth filters
+- [x] Event search page using the MVP review API filters
+- [x] Event detail page with normalized fields, message, and formatted raw JSON
+- [x] System/about page with version, API/schema version, environment, and database connectivity status
+- [x] Web auth/session tests
+
 ## Next action
 
-Validate the agent on Windows, then add tests for queue/state behavior.
+Validate the agent on Windows, then add tests for queue/state behavior and web smoke coverage against a populated PostgreSQL database.

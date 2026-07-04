@@ -20,10 +20,13 @@ Issued by the server during registration.
 
 ### Review token
 
-Protects the initial search/review API.
+Protects the initial search/review API and web review console.
 
-- Client uses `Authorization: Bearer <review-token>` for `GET /api/v1/events`.
+- API clients use `Authorization: Bearer <review-token>` for `GET /api/v1/events`.
+- Browser operators submit the token to `/login` for the web console.
 - Server compares it to `Auth:ReviewToken` from configuration.
+- A successful web login issues an HTTP-only same-origin cookie; the review token is not stored in browser local storage.
+- Logout clears the operator session cookie.
 
 ## Future improvements
 

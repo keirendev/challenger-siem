@@ -1,0 +1,53 @@
+@page "/"
+@model IndexModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Dashboard</h1>
+        <p class="muted">Current ingestion and endpoint health summary.</p>
+    </div>
+    <a class="button secondary" asp-page="/Events/Index">Review events</a>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<section class="metrics" aria-label="Dashboard metrics">
+    <article class="card">
+        <span class="metric-value">@Model.Summary.TotalAgents</span>
+        <span class="metric-label">total agents</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.RecentAgents</span>
+        <span class="metric-label">recent agents</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.StaleAgents</span>
+        <span class="metric-label">stale agents</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.AgentsWithQueuedEvents</span>
+        <span class="metric-label">agents with queued events</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.RecentEventCount</span>
+        <span class="metric-label">events ingested in last @Model.RecentEventWindowHours h</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@(Model.Summary.LatestIngestTime.HasValue ? Model.Summary.LatestIngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—")</span>
+        <span class="metric-label">latest ingest time</span>
+    </article>
+</section>
+
+<section class="card">
+    <h2>Health interpretation</h2>
+    <p>
+        Agents are marked stale when they have not been seen for @Model.StaleAgentMinutes minutes.
+        Non-zero queue depth is taken from the latest heartbeat observation.
+    </p>
+</section>

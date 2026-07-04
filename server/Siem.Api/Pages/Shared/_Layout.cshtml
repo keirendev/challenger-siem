@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - Challenger SIEM</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" asp-page="/Index">Challenger SIEM</a>
+        @if (User.Identity?.IsAuthenticated == true)
+        {
+            <nav class="nav" aria-label="Primary">
+                <a asp-page="/Index">Dashboard</a>
+                <a asp-page="/Agents/Index">Agents</a>
+                <a asp-page="/Events/Index">Events</a>
+                <a asp-page="/About">About</a>
+            </nav>
+            <form class="logout" method="post" asp-page="/Logout">
+                <button type="submit">Logout</button>
+            </form>
+        }
+    </header>
+    <main class="container">
+        @RenderBody()
+    </main>
+</body>
+</html>

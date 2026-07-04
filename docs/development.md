@@ -47,13 +47,15 @@ dotnet test Challenger.Siem.sln
 
 The Windows agent targets `net8.0-windows` and is configured to compile on this Linux development host. Running real event collection still requires Windows.
 
-## Run the API
+## Run the API and web review console
 
 Default local development:
 
 ```bash
 dotnet run --project server/Siem.Api
 ```
+
+The web review console is hosted by the API process at the API base URL. Open the base URL in a browser and log in with `Auth__ReviewToken`. The login creates an HTTP-only same-origin cookie and does not store the review token in browser local storage.
 
 Current lab binding for Windows agents:
 
@@ -106,7 +108,7 @@ After creating `.local/dev.env` or exporting the required environment variables,
 ./scripts/smoke-test-server.sh
 ```
 
-The script starts the API on local HTTP in `Development`, registers the example agent, ingests `examples/fake-event-batch.json`, queries it back, and writes temporary responses/logs under `.local/`.
+The script starts the API on local HTTP in `Development`, registers the example agent, ingests `examples/fake-event-batch.json`, queries it back, and writes temporary responses/logs under `.local/`. After it has ingested data, you can also start the API normally and use the web console to review the same events.
 
 Manual equivalent:
 

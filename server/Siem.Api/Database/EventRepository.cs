@@ -168,28 +168,64 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var rawJson = reader.GetString(reader.GetOrdinal("raw_json"));
-            using var rawDocument = JsonDocument.Parse(rawJson);
-
-            results.Add(new EventEnvelope
-            {
-                EventId = reader.GetGuid(reader.GetOrdinal("event_id")),
-                AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
-                Hostname = reader.GetString(reader.GetOrdinal("hostname")),
-                Source = reader.GetString(reader.GetOrdinal("source")),
-                Channel = reader.GetString(reader.GetOrdinal("channel")),
-                Provider = reader.GetString(reader.GetOrdinal("provider")),
-                WindowsEventId = reader.GetInt32(reader.GetOrdinal("windows_event_id")),
-                RecordId = reader.GetInt64(reader.GetOrdinal("record_id")),
-                EventTime = ReadDateTimeOffset(reader, "event_time"),
-                IngestTime = ReadDateTimeOffset(reader, "ingest_time"),
-                Severity = reader.GetString(reader.GetOrdinal("severity")),
-                Message = reader.GetString(reader.GetOrdinal("message")),
-                Raw = rawDocument.RootElement.Clone()
-            });
+            results.Add(ReadEventEnvelope(reader));
         }
 
         return results;
+    }
+
+    public async Task<EventEnvelope?> GetEventAsync(string agentId, Guid eventId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select
+                event_id,
+                agent_id,
+                hostname,
+                source,
+                channel,
+                provider,
+                windows_event_id,
+                record_id,
+                event_time,
+                ingest_time,
+                severity,
+                message,
+                raw_json
+            from events
+            where agent_id = @agent_id
+              and event_id = @event_id
+            limit 1;
+            """;
+        command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("event_id", eventId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadEventEnvelope(reader) : null;
+    }
+
+    private static EventEnvelope ReadEventEnvelope(NpgsqlDataReader reader)
+    {
+        var rawJson = reader.GetString(reader.GetOrdinal("raw_json"));
+        using var rawDocument = JsonDocument.Parse(rawJson);
+
+        return new EventEnvelope
+        {
+            EventId = reader.GetGuid(reader.GetOrdinal("event_id")),
+            AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
+            Hostname = reader.GetString(reader.GetOrdinal("hostname")),
+            Source = reader.GetString(reader.GetOrdinal("source")),
+            Channel = reader.GetString(reader.GetOrdinal("channel")),
+            Provider = reader.GetString(reader.GetOrdinal("provider")),
+            WindowsEventId = reader.GetInt32(reader.GetOrdinal("windows_event_id")),
+            RecordId = reader.GetInt64(reader.GetOrdinal("record_id")),
+            EventTime = ReadDateTimeOffset(reader, "event_time"),
+            IngestTime = ReadDateTimeOffset(reader, "ingest_time"),
+            Severity = reader.GetString(reader.GetOrdinal("severity")),
+            Message = reader.GetString(reader.GetOrdinal("message")),
+            Raw = rawDocument.RootElement.Clone()
+        };
     }
 
     private static DateTimeOffset ReadDateTimeOffset(NpgsqlDataReader reader, string columnName)

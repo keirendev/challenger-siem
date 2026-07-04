@@ -15,7 +15,7 @@ The project should remain open-source and custom-built.
 | Component | Purpose | License / status |
 | --- | --- | --- |
 | .NET 8 SDK/runtime | Windows agent and API runtime | MIT, open-source |
-| ASP.NET Core | HTTPS API server | MIT, open-source |
+| ASP.NET Core | HTTPS API server and Razor Pages web review console | MIT, open-source |
 | PostgreSQL | Server event storage | PostgreSQL License, open-source |
 | Npgsql | .NET PostgreSQL driver | PostgreSQL License, open-source |
 | Microsoft.Data.Sqlite | Agent local queue driver | MIT, open-source |
@@ -26,6 +26,7 @@ The project should remain open-source and custom-built.
 | System.Diagnostics.EventLog | Windows Event Log reader APIs | MIT, open-source |
 | xUnit.net | Unit test framework | Apache 2.0, open-source |
 | Microsoft.NET.Test.Sdk | .NET test runner integration | MIT, open-source |
+| Microsoft.AspNetCore.Mvc.Testing | ASP.NET Core web auth/session tests | MIT, open-source |
 
 ## Optional project tooling
 

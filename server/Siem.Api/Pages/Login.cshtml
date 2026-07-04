@@ -1,0 +1,26 @@
+@page "/login"
+@model LoginModel
+@{
+    ViewData["Title"] = "Operator login";
+}
+
+<section class="card narrow">
+    <h1>Operator login</h1>
+    <p class="muted">Enter the configured review token to access the SIEM review console.</p>
+
+    @if (Model.ErrorMessage is not null)
+    {
+        <div class="alert" role="alert">@Model.ErrorMessage</div>
+    }
+
+    <form method="post">
+        <input type="hidden" asp-for="ReturnUrl" />
+        <div class="form-row">
+            <label for="review-token">Review token</label>
+            <input id="review-token" name="ReviewToken" type="password" autocomplete="current-password" autofocus />
+        </div>
+        <p>
+            <button type="submit">Sign in</button>
+        </p>
+    </form>
+</section>
