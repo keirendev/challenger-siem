@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <ChallengerSiemVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</ChallengerSiemVersion>
+    <Version>$(ChallengerSiemVersion)</Version>
+    <PackageVersion>$(ChallengerSiemVersion)</PackageVersion>
+    <InformationalVersion>$(ChallengerSiemVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

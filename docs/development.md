@@ -28,6 +28,16 @@ export Auth__EnrollmentToken='<long-random-enrollment-token>'
 export Auth__ReviewToken='<long-random-review-token>'
 ```
 
+## Project version
+
+The project version source of truth is `VERSION`:
+
+```bash
+./scripts/current-version.sh
+```
+
+Follow `docs/versioning.md` when a change needs a version bump or changelog entry.
+
 ## Build and test
 
 ```bash
@@ -60,7 +70,7 @@ http://192.168.122.1:4444
 Prepare copy-ready Windows agent files, including a registered API token in `agentsettings.json`:
 
 ```bash
-./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11" 0.1.0
+./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11"
 ```
 
 Copy both files from `dist/windows-agent-copy/` to the Windows host and run `./WindowsAgent.exe` from that folder.
@@ -70,6 +80,29 @@ Use HTTPS for all non-local production testing. For local ASP.NET Core developme
 ```bash
 dotnet dev-certs https --trust
 ```
+
+## Optional WinRM lab access
+
+Current authorized local lab topology:
+
+- Windows VM for WinRM/E2E validation: `192.168.122.240`
+- API callback URL from the VM to this host: `http://192.168.122.1:4444`
+
+Pi can use project-local WinRM support for authorized Windows lab validation. The helper requires the Python `pypsrp` package on the Pi host. Copy the example env file and fill in lab-only values:
+
+```bash
+mkdir -p .local
+cp examples/winrm.env.example .local/winrm.env
+$EDITOR .local/winrm.env
+```
+
+Test connectivity without printing secrets:
+
+```bash
+python3 .pi/skills/winrm/scripts/winrm.py test
+```
+
+After restarting Pi or running `/reload`, the project-local `winrm` tool is available for PowerShell, cmd, copy, and fetch operations. Use it only against authorized lab hosts, and do not commit `.local/winrm.env`.
 
 ## Smoke test with fake data
 

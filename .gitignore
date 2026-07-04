@@ -12,6 +12,8 @@ dist/
 *.Development.local.json
 .env
 .local/
+.pi/
+AGENTS.md
 secrets.json
 
 # Agent/runtime state
@@ -23,6 +25,10 @@ secrets.json
 queue/
 state/
 logs/
+
+# Python helper caches
+__pycache__/
+*.py[cod]
 
 # OS/editor
 .DS_Store

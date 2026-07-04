@@ -11,12 +11,14 @@ fi
 
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
 
+PROJECT_VERSION="$(./scripts/current-version.sh)"
+
 API_BASE_URL="${1:-${SIEM_PREPARE_API_BASE_URL:-http://127.0.0.1:4444}}"
 AGENT_SERVER_BASE_URL="${2:-${SIEM_PREPARE_AGENT_SERVER_BASE_URL:-http://192.168.122.1:4444}}"
 AGENT_ID="${3:-${SIEM_PREPARE_AGENT_ID:-win11-test-001}}"
 HOSTNAME="${4:-${SIEM_PREPARE_HOSTNAME:-WIN11-TEST}}"
 OS_VERSION="${5:-${SIEM_PREPARE_OS_VERSION:-Windows 11}}"
-AGENT_VERSION="${6:-${SIEM_PREPARE_AGENT_VERSION:-0.1.0}}"
+AGENT_VERSION="${6:-${SIEM_PREPARE_AGENT_VERSION:-$PROJECT_VERSION}}"
 OUTPUT_DIR="${SIEM_PREPARE_OUTPUT_DIR:-dist/windows-agent-copy}"
 
 ./scripts/publish-windows-agent.sh >/dev/null

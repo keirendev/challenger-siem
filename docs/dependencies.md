@@ -27,6 +27,12 @@ The project should remain open-source and custom-built.
 | xUnit.net | Unit test framework | Apache 2.0, open-source |
 | Microsoft.NET.Test.Sdk | .NET test runner integration | MIT, open-source |
 
+## Optional project tooling
+
+| Component | Purpose | License / status |
+| --- | --- | --- |
+| pypsrp | Project-local Pi WinRM helper for authorized Windows lab validation | MIT, open-source |
+
 ## Not in scope for MVP
 
 - Docker / Compose-based development or deployment.
