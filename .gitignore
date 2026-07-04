@@ -12,8 +12,6 @@ dist/
 *.Development.local.json
 .env
 .local/
-.pi/
-AGENTS.md
 secrets.json
 
 # Agent/runtime state
