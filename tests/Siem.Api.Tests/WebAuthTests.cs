@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Xunit;
@@ -86,6 +87,22 @@ public sealed class WebAuthTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains(setCookieHeaders, cookie =>
             cookie.Contains(".ChallengerSiem.Review", StringComparison.Ordinal)
             && cookie.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task StaticAssetsRequireHttpsOutsideDevelopment()
+    {
+        using var productionFactory = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
+        using var client = productionFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        using var response = await client.GetAsync("/css/site.css");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("https_required", body, StringComparison.Ordinal);
     }
 
     private static async Task<string> GetAntiForgeryTokenAsync(HttpClient client)

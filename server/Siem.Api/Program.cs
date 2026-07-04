@@ -64,7 +64,6 @@ builder.Services.AddAuthorization();
 var app = builder.Build();
 
 app.UseHttpsRedirection();
-app.UseStaticFiles();
 app.Use(async (context, next) =>
 {
     if (!app.Environment.IsDevelopment() && !context.Request.IsHttps)
@@ -76,6 +75,7 @@ app.Use(async (context, next) =>
 
     await next();
 });
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 
