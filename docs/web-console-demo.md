@@ -11,7 +11,7 @@ Tracked screenshots must satisfy all of these rules:
 - Browser page screenshots only; avoid browser chrome or OS UI that might reveal local account or path information.
 - Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, and logs stay under ignored `.local/` paths.
 
-The current gallery uses a synthetic agent similar to `issue-146-demo-agent` on `DEMO-WIN11` with a synthetic System event and source-health heartbeat.
+The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph.
 
 ## Gallery
 
@@ -106,7 +106,7 @@ Use this process whenever web UI changes make the screenshots stale:
 
 ## Browser E2E coverage used for this gallery
 
-The gallery was validated with a headless browser against the real app and covered:
+The gallery was validated with a headless browser against the real redesigned app and covered:
 
 - `/login` unauthenticated page and successful login redirect.
 - Dashboard `/`.
@@ -116,5 +116,6 @@ The gallery was validated with a headless browser against the real app and cover
 - `/graphs` and `/graphs/detail` with a synthetic graph.
 - `/soc-agent`, `/audit-policy`, and `/about`.
 - Logout and unauthenticated redirect/denial behavior.
+- Responsive-width smoke coverage, visible focus behavior, active navigation state, and lightweight CSS/page budget checks.
 
 See [web.md](web.md) for page behavior and [contributors.md](contributors.md#documentation-maintenance-checklist) for the screenshot maintenance checklist.

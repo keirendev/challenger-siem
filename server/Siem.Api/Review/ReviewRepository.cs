@@ -61,9 +61,13 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
     public async Task<IReadOnlyList<AgentInventoryItem>> SearchAgentsAsync(
         AgentInventoryQuery query,
         TimeSpan staleAgentAfter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int limit = 500,
+        int offset = 0)
     {
         var staleCutoff = DateTimeOffset.UtcNow.Subtract(staleAgentAfter);
+        var clampedLimit = Math.Clamp(limit, 1, 500);
+        var clampedOffset = Math.Max(0, offset);
         var where = new List<string>();
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -158,7 +162,10 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             sql.Append(string.Join(" and ", where));
         }
 
-        sql.Append(" order by a.last_seen desc, a.agent_id asc limit 500;");
+        command.Parameters.AddWithValue("limit", clampedLimit);
+        command.Parameters.AddWithValue("offset", clampedOffset);
+
+        sql.Append(" order by a.last_seen desc, a.agent_id asc limit @limit offset @offset;");
         command.CommandText = sql.ToString();
 
         var results = new List<AgentInventoryItem>();

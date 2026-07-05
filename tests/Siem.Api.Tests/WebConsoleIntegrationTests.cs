@@ -82,12 +82,16 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var dashboard = await GetHtmlAsync(client, "/");
         Assert.Contains("Dashboard", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Skip to main content", dashboard, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Primary\"", dashboard, StringComparison.Ordinal);
         Assert.Contains("active agents", dashboard, StringComparison.Ordinal);
         Assert.Contains("retired agents", dashboard, StringComparison.Ordinal);
 
         var agents = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(agentId)}");
         Assert.Contains(agentId, agents, StringComparison.Ordinal);
         Assert.Contains(hostname, agents, StringComparison.Ordinal);
+        Assert.Contains("Agent results", agents, StringComparison.Ordinal);
+        Assert.Contains("Page 1", agents, StringComparison.Ordinal);
         Assert.Contains("3", agents, StringComparison.Ordinal);
         Assert.Contains("L1", agents, StringComparison.Ordinal);
 
@@ -97,6 +101,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&category=system&limit=10");
         Assert.Contains(agentId, events, StringComparison.Ordinal);
+        Assert.Contains("Event results", events, StringComparison.Ordinal);
+        Assert.Contains("Agent:", events, StringComparison.Ordinal);
         Assert.Contains("WebSmokeProvider", events, StringComparison.Ordinal);
 
         var detail = await GetHtmlAsync(client, $"/events/detail?agent_id={Uri.EscapeDataString(agentId)}&event_id={eventId}");
@@ -107,6 +113,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var alerts = await GetHtmlAsync(client, "/alerts");
         Assert.Contains("Alerts", alerts, StringComparison.Ordinal);
+        Assert.Contains("Alert results", alerts, StringComparison.Ordinal);
 
         var auditPolicy = await GetHtmlAsync(client, "/audit-policy");
         Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
@@ -115,6 +122,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("soc-agent chat", socAgent, StringComparison.Ordinal);
         Assert.Contains("Provider status", socAgent, StringComparison.Ordinal);
         Assert.Contains("Chat history", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Send a soc-agent message", socAgent, StringComparison.Ordinal);
         var socAgentToken = ExtractAntiforgeryToken(socAgent);
         using (var chatResponse = await client.PostAsync("/soc-agent?handler=Send", new FormUrlEncodedContent(new Dictionary<string, string>
         {

@@ -7,8 +7,13 @@ namespace Challenger.Siem.Api.Pages.Graphs;
 
 public sealed class IndexModel(InvestigationGraphRepository graphs, ILogger<IndexModel> logger) : PageModel
 {
+    public const int PageSize = 25;
+
     [BindProperty(SupportsGet = true, Name = "status")]
     public string? Status { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "page")]
+    public int PageNumber { get; set; } = 1;
 
     [BindProperty]
     public string Title { get; set; } = string.Empty;
@@ -27,9 +32,20 @@ public sealed class IndexModel(InvestigationGraphRepository graphs, ILogger<Inde
 
     public IReadOnlyList<InvestigationGraphSummary> Graphs { get; private set; } = Array.Empty<InvestigationGraphSummary>();
 
+    public bool HasPreviousPage => PageNumber > 1;
+
+    public bool HasNextPage { get; private set; }
+
+    public int FirstResultNumber => Graphs.Count == 0 ? 0 : ((PageNumber - 1) * PageSize) + 1;
+
+    public int LastResultNumber => ((PageNumber - 1) * PageSize) + Graphs.Count;
+
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
-        Graphs = await graphs.ListAsync(Status, cancellationToken);
+        PageNumber = Math.Max(1, PageNumber);
+        var loadedGraphs = await graphs.ListAsync(Status, cancellationToken, PageSize + 1, (PageNumber - 1) * PageSize);
+        HasNextPage = loadedGraphs.Count > PageSize;
+        Graphs = loadedGraphs.Take(PageSize).ToArray();
     }
 
     public async Task<IActionResult> OnPostCreateAsync(CancellationToken cancellationToken)

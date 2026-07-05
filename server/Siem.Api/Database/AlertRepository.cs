@@ -7,8 +7,10 @@ namespace Challenger.Siem.Api.Database;
 
 public sealed class AlertRepository(NpgsqlDataSource dataSource)
 {
-    public async Task<IReadOnlyList<AlertRecord>> SearchAlertsAsync(string? status, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AlertRecord>> SearchAlertsAsync(string? status, CancellationToken cancellationToken, int limit = 500, int offset = 0)
     {
+        var clampedLimit = Math.Clamp(limit, 1, 500);
+        var clampedOffset = Math.Max(0, offset);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -21,7 +23,9 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("status", status);
         }
 
-        command.CommandText += " order by created_at desc limit 500;";
+        command.Parameters.AddWithValue("limit", clampedLimit);
+        command.Parameters.AddWithValue("offset", clampedOffset);
+        command.CommandText += " order by created_at desc limit @limit offset @offset;";
         var alerts = new List<AlertRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

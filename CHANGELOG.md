@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Revamped the web review console with a cohesive dark operator shell, active navigation, accessible focus/skip-link behavior, responsive cards/tables, visible filter/result state, bounded pagination for list workflows, and updated web validation/docs.
 - Refreshed the public documentation into a wiki-style docs set with a concise README, operator/contributor/troubleshooting guides, sanitized web-console screenshots, and a documentation-maintenance checklist.
 - Added a platform capability foundation catalog and authenticated API covering SPEC-GAP-001 through SPEC-GAP-019 with documented implementation guardrails and contracts.
 - Added operator-managed investigation graphs with v1 APIs, PostgreSQL storage, web workflows, bounded `soc-agent` graph context, and approval-gated graph proposals.

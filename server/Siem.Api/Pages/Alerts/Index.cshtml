@@ -6,8 +6,9 @@
 
 <div class="page-header">
     <div>
+        <p class="page-kicker">Detection review</p>
         <h1>Alerts</h1>
-        <p class="muted">Detection alert review skeleton with evidence links and empty-state handling.</p>
+        <p class="muted">Detection alert review skeleton with bounded result pages, evidence links, and empty-state handling.</p>
     </div>
 </div>
 
@@ -16,10 +17,10 @@
     <div class="alert" role="alert">@Model.ErrorMessage</div>
 }
 
-<form method="get" class="card filters">
+<form method="get" class="card filters filter-panel" aria-label="Alert filters">
     <div class="form-row">
         <label for="status">Status</label>
-        <select id="status" name="status">
+        <select id="status" asp-for="Status">
             <option value="">Any</option>
             <option value="new">New</option>
             <option value="triaged">Triaged</option>
@@ -27,16 +28,24 @@
             <option value="suppressed">Suppressed</option>
         </select>
     </div>
-    <div class="actions"><button type="submit">Search</button><a class="button secondary" asp-page="/Alerts/Index">Clear</a></div>
+    <div class="actions"><button type="submit">Search alerts</button><a class="button secondary" asp-page="/Alerts/Index">Clear</a></div>
 </form>
 
-<section class="table-card">
+<section class="table-card" aria-labelledby="alerts-results-title">
+<div class="table-title">
+    <div>
+        <h2 id="alerts-results-title">Alert results</h2>
+        <p class="muted">Showing @Model.FirstResultNumber-@Model.LastResultNumber from a bounded @Challenger.Siem.Api.Pages.Alerts.IndexModel.PageSize-row page.</p>
+    </div>
+    <span class="pill">status: @(string.IsNullOrWhiteSpace(Model.Status) ? "any" : Model.Status)</span>
+</div>
 @if (Model.Alerts.Count == 0)
 {
     <div class="empty">No alerts match the current filters.</div>
 }
 else
 {
+    <div class="table-scroll">
     <table>
         <thead>
             <tr><th>Created</th><th>Title</th><th>Severity</th><th>Confidence</th><th>Status</th><th>Rule</th><th>Host</th><th></th></tr>
@@ -46,10 +55,10 @@ else
             {
                 <tr>
                     <td>@alert.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                    <td>@alert.Title</td>
+                    <td class="compact-cell"><strong>@alert.Title</strong><div class="muted">@alert.Summary</div></td>
                     <td><span class="badge danger">@alert.Severity</span></td>
                     <td>@alert.Confidence</td>
-                    <td>@alert.Status</td>
+                    <td><span class="badge">@alert.Status</span></td>
                     <td>@alert.RuleId v@alert.RuleVersion</td>
                     <td>@(alert.Hostname ?? alert.AgentId ?? "—")</td>
                     <td><a asp-page="/Alerts/Detail" asp-route-alert_id="@alert.AlertId">Open</a></td>
@@ -57,5 +66,13 @@ else
             }
         </tbody>
     </table>
+    </div>
 }
+<nav class="pagination" aria-label="Alert result pages">
+    <span class="muted">Page @Model.PageNumber · newest alerts first</span>
+    <div class="actions">
+        <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Alerts/Index" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
+        <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Alerts/Index" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber + 1)">Next</a>
+    </div>
+</nav>
 </section>
