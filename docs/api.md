@@ -188,6 +188,15 @@ Authorization: Bearer <review-token>
 
 Returns bounded asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, and role detection.
 
+## Platform capabilities
+
+```http
+GET /api/v1/platform/capabilities
+Authorization: Bearer <review-token>
+```
+
+Returns a bounded catalog of specification-gap foundation status and documentation links for authenticated operators. See `docs/spec-gap-foundations.md`.
+
 ## Investigation graphs
 
 ```http

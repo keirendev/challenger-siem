@@ -4,6 +4,7 @@ using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
+using Challenger.Siem.Api.Platform;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
@@ -239,6 +240,16 @@ app.MapGet("/api/v1/inventory", async Task<IResult> (
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
     var snapshotType = context.Request.Query["snapshot_type"].FirstOrDefault();
     return Results.Ok(new { snapshots = await inventory.SearchAsync(agentId, snapshotType, cancellationToken) });
+});
+
+app.MapGet("/api/v1/platform/capabilities", (HttpContext context, TokenService tokens, IConfiguration configuration) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new PlatformCapabilitiesResponse { Capabilities = PlatformCapabilityCatalog.All });
 });
 
 app.MapGet("/api/v1/alerts", async Task<IResult> (

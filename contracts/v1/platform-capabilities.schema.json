@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/platform-capabilities.schema.json",
+  "title": "Challenger SIEM platform capabilities v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "capability_id": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "string" },
+          "summary": { "type": "string" },
+          "documentation_url": { "type": "string" },
+          "controls": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["capability_id", "title", "status", "summary", "documentation_url", "controls"]
+      }
+    }
+  },
+  "required": ["capabilities"]
+}
