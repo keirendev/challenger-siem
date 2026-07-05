@@ -34,6 +34,15 @@ Optional PostgreSQL tests run when `CHALLENGER_SIEM_TEST_DATABASE` or `Connectio
 
 ## 3. Run API and web console
 
+For the default local background lifecycle:
+
+```bash
+./scripts/platform.sh start
+./scripts/platform.sh status
+```
+
+Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. For the Windows lab callback binding, run the foreground helper instead:
+
 ```bash
 ./scripts/run-server-4444.sh
 ```

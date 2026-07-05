@@ -41,14 +41,16 @@ dotnet test Challenger.Siem.sln
 ./scripts/smoke-test-web.sh
 ```
 
-Run the API and web console locally:
+Run the API and web console locally with the lifecycle helper:
 
 ```bash
-# loads .local/dev.env when present
-ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile
+./scripts/platform.sh start
+./scripts/platform.sh status
+# when finished:
+./scripts/platform.sh stop
 ```
 
-Open `http://127.0.0.1:5081/login` and sign in with the configured `Auth__ReviewToken`.
+For a foreground run, use `ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile`. Open `http://127.0.0.1:5081/login` and sign in with the configured `Auth__ReviewToken`.
 
 ## Windows agent lab path
 

@@ -73,7 +73,18 @@ When absent, the integration tests report a skip reason and unit/web-auth tests 
 
 ## Run the API and web review console
 
-Default local development:
+Default local background lifecycle:
+
+```bash
+./scripts/platform.sh start
+./scripts/platform.sh status
+./scripts/platform.sh restart
+./scripts/platform.sh stop
+```
+
+The helper loads `.local/dev.env` when present, starts the API/web-console process in the background, records PID/log state under `.local/platform/`, and checks `/health` without printing secrets. It binds to `http://127.0.0.1:5081` by default; set `CHALLENGER_SIEM_PLATFORM_URLS` or `ASPNETCORE_URLS` to override.
+
+For a foreground development run:
 
 ```bash
 dotnet run --project server/Siem.Api
@@ -81,7 +92,7 @@ dotnet run --project server/Siem.Api
 
 The web review console is hosted by the API process at the API base URL. Open the base URL in a browser and log in with `Auth__ReviewToken`. The login creates an HTTP-only same-origin cookie and does not store the review token in browser local storage.
 
-Current lab binding for Windows agents:
+Current foreground lab binding for Windows agents:
 
 ```bash
 ./scripts/run-server-4444.sh

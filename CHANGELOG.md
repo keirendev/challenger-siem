@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added a local platform lifecycle helper for starting, stopping, restarting, and checking the Challenger SIEM API/web console process without printing secrets.
 - Updated the `/soc-agent` chat workspace to use browser/page-level scrolling instead of nested scroll panels while preserving live send, activity, provider status, and scroll-to-latest behavior.
 - Refined the `/soc-agent` chat workspace with hidden manual agent context, a non-editable context chip, reliable activity-panel collapse/expand controls, user-controlled auto-follow scrolling, and Ctrl/Cmd+Enter send support.
 - Added a live `soc-agent` workspace with same-origin event-stream run transport, no-reload chat sends, tool/progress events, cancellation, reconnect recovery, compact provider/activity panels, and docs/tests for the additive browser workflow.
