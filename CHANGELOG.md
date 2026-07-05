@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Updated the `/soc-agent` chat workspace to use browser/page-level scrolling instead of nested scroll panels while preserving live send, activity, provider status, and scroll-to-latest behavior.
 - Refined the `/soc-agent` chat workspace with hidden manual agent context, a non-editable context chip, reliable activity-panel collapse/expand controls, user-controlled auto-follow scrolling, and Ctrl/Cmd+Enter send support.
 - Added a live `soc-agent` workspace with same-origin event-stream run transport, no-reload chat sends, tool/progress events, cancellation, reconnect recovery, compact provider/activity panels, and docs/tests for the additive browser workflow.
 - Added ChatGPT Codex Responses support for `soc-agent` Pi `openai-codex` auth-file mode so ChatGPT subscription credentials from `~/.pi/agent/auth.json` can call plan-allowed models such as `gpt-5.5` without requiring OpenAI API `model.request` scope.

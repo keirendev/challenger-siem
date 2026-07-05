@@ -512,6 +512,12 @@ pre,
     padding: var(--space-4);
 }
 
+.soc-agent-workspace .message-box {
+    max-height: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+}
+
 .raw-json {
     min-height: 22rem;
 }
@@ -712,6 +718,17 @@ pre,
     justify-content: flex-end;
 }
 
+.soc-agent-title-actions,
+.rail-header,
+.thread-header,
+.activity-panel-header,
+.composer-context-row,
+.composer-actions,
+.run-state,
+.message-meta {
+    flex-wrap: wrap;
+}
+
 .context-indicator {
     flex-wrap: wrap;
 }
@@ -732,11 +749,35 @@ pre,
 }
 
 .soc-agent-workspace {
-    align-items: stretch;
+    align-items: start;
     display: grid;
     gap: var(--space-4);
     grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(260px, 340px);
-    min-height: calc(100vh - 11rem);
+    min-height: 0;
+    min-width: 0;
+}
+
+.soc-agent-workspace > *,
+.soc-agent-workspace .card,
+.soc-agent-workspace .message-bubble,
+.soc-agent-workspace .context-indicator,
+.soc-agent-workspace .provider-metadata dd {
+    min-width: 0;
+}
+
+.soc-agent-workspace .muted,
+.soc-agent-workspace .pill,
+.soc-agent-workspace .badge,
+.soc-agent-workspace .session-link,
+.soc-agent-workspace .message-meta,
+.soc-agent-workspace .provider-metadata dd {
+    overflow-wrap: anywhere;
+}
+
+.soc-agent-workspace .pill,
+.soc-agent-workspace .badge {
+    max-width: 100%;
+    white-space: normal;
 }
 
 .soc-agent-rail,
@@ -747,14 +788,10 @@ pre,
 
 .soc-agent-rail,
 .soc-agent-activity {
-    align-self: stretch;
+    align-self: start;
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-    max-height: calc(100vh - 8rem);
-    overflow: auto;
-    position: sticky;
-    top: 5.25rem;
 }
 
 .rail-header,
@@ -801,11 +838,10 @@ pre,
 }
 
 .live-thread {
-    display: flex;
-    flex-direction: column;
-    height: min(74vh, 52rem);
+    display: grid;
+    grid-template-rows: auto auto 1fr;
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .thread-header,
@@ -825,11 +861,9 @@ pre,
 }
 
 .thread-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    overflow: visible;
     padding: var(--space-5);
-    scroll-behavior: smooth;
+    scroll-margin-bottom: 9rem;
 }
 
 .live-message-list {
@@ -1008,12 +1042,7 @@ pre,
 
     .soc-agent-rail,
     .soc-agent-activity {
-        max-height: none;
         position: static;
-    }
-
-    .live-thread {
-        height: 68vh;
     }
 
     .composer-grid {
