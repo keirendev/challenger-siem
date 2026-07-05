@@ -423,6 +423,28 @@ pre,
     position: sticky;
 }
 
+.graph-canvas {
+    margin-bottom: 1rem;
+}
+
+.graph-node-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin: 1rem 0;
+}
+
+.graph-node-card {
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 1rem;
+}
+
+.graph-node-card h3 {
+    margin-top: 0;
+}
+
 @media (max-width: 700px) {
     .topbar,
     .page-header {

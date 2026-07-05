@@ -1,0 +1,64 @@
+@page "/graphs"
+@model Challenger.Siem.Api.Pages.Graphs.IndexModel
+@{
+    ViewData["Title"] = "Investigation graphs";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Investigation graphs</h1>
+        <p class="muted">Create and reuse bounded operator-managed relationship graphs for investigations.</p>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null) { <div class="alert" role="alert">@Model.ErrorMessage</div> }
+@if (Model.Message is not null) { <div class="notice" role="status">@Model.Message</div> }
+
+<section class="card">
+    <h2>Create graph</h2>
+    <form method="post" asp-page-handler="Create" class="filters">
+        <div class="form-row"><label for="Title">Title</label><input id="Title" asp-for="Title" maxlength="160" required /></div>
+        <div class="form-row"><label for="Description">Description</label><input id="Description" asp-for="Description" maxlength="4000" /></div>
+        <div class="form-row"><label for="Tags">Tags</label><input id="Tags" asp-for="Tags" placeholder="incident, lateral-movement" /></div>
+        <div class="actions"><button type="submit">Create graph</button></div>
+    </form>
+</section>
+
+<form method="get" class="card filters">
+    <div class="form-row">
+        <label for="status">Status</label>
+        <select id="status" asp-for="Status">
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+            <option value="all">All</option>
+        </select>
+    </div>
+    <div class="actions"><button type="submit">Filter</button><a class="button secondary" asp-page="/Graphs/Index">Clear</a></div>
+</form>
+
+<section class="table-card">
+@if (Model.Graphs.Count == 0)
+{
+    <div class="empty">No investigation graphs match the current filters.</div>
+}
+else
+{
+    <table>
+        <thead><tr><th>Title</th><th>Status</th><th>Nodes</th><th>Edges</th><th>Tags</th><th>Updated</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var graph in Model.Graphs)
+        {
+            <tr>
+                <td>@graph.Title<div class="muted">@graph.Description</div></td>
+                <td><span class="badge @(graph.Status == "active" ? "ok" : "warning")">@graph.Status</span></td>
+                <td>@graph.NodeCount</td>
+                <td>@graph.EdgeCount</td>
+                <td>@string.Join(", ", graph.Tags)</td>
+                <td>@graph.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                <td><a asp-page="/Graphs/Detail" asp-route-graph_id="@graph.GraphId">Open</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+</section>

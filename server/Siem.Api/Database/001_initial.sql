@@ -236,6 +236,90 @@ create table if not exists soc_agent_messages (
 );
 create index if not exists idx_soc_agent_messages_session on soc_agent_messages(session_id, created_at asc, id asc);
 
+create table if not exists investigation_graphs (
+    graph_id uuid primary key,
+    title text not null,
+    description text null,
+    status text not null default 'active',
+    owner text null,
+    tags text[] not null default '{}',
+    version integer not null default 1,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint ck_investigation_graph_status check (status in ('active', 'archived')),
+    constraint ck_investigation_graph_title check (length(title) between 1 and 160)
+);
+create index if not exists idx_investigation_graphs_status_updated on investigation_graphs(status, updated_at desc);
+create index if not exists idx_investigation_graphs_tags on investigation_graphs using gin(tags);
+
+create table if not exists investigation_graph_nodes (
+    node_id uuid not null,
+    graph_id uuid not null references investigation_graphs(graph_id),
+    node_type text not null,
+    label text not null,
+    reference_kind text null,
+    reference_id text null,
+    link_url text null,
+    notes text null,
+    metadata jsonb not null default '{}'::jsonb,
+    x numeric(10, 2) null,
+    y numeric(10, 2) null,
+    status text not null default 'active',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (node_id),
+    unique (graph_id, node_id),
+    constraint ck_investigation_graph_node_status check (status in ('active', 'archived')),
+    constraint ck_investigation_graph_node_label check (length(label) between 1 and 200)
+);
+create index if not exists idx_investigation_graph_nodes_graph on investigation_graph_nodes(graph_id, status);
+create index if not exists idx_investigation_graph_nodes_reference on investigation_graph_nodes(reference_kind, reference_id);
+
+create table if not exists investigation_graph_edges (
+    edge_id uuid not null,
+    graph_id uuid not null references investigation_graphs(graph_id),
+    source_node_id uuid not null,
+    target_node_id uuid not null,
+    edge_type text not null,
+    label text null,
+    notes text null,
+    metadata jsonb not null default '{}'::jsonb,
+    status text not null default 'active',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (edge_id),
+    foreign key (graph_id, source_node_id) references investigation_graph_nodes(graph_id, node_id),
+    foreign key (graph_id, target_node_id) references investigation_graph_nodes(graph_id, node_id),
+    constraint ck_investigation_graph_edge_status check (status in ('active', 'archived'))
+);
+create index if not exists idx_investigation_graph_edges_graph on investigation_graph_edges(graph_id, status);
+
+create table if not exists investigation_graph_proposals (
+    proposal_id uuid primary key,
+    graph_id uuid not null references investigation_graphs(graph_id),
+    status text not null default 'pending',
+    instruction text not null,
+    rationale text not null,
+    proposed_nodes jsonb not null default '[]'::jsonb,
+    proposed_edges jsonb not null default '[]'::jsonb,
+    created_by text null,
+    approved_by text null,
+    created_at timestamptz not null default now(),
+    applied_at timestamptz null,
+    constraint ck_investigation_graph_proposal_status check (status in ('pending', 'applied', 'rejected'))
+);
+create index if not exists idx_investigation_graph_proposals_graph on investigation_graph_proposals(graph_id, status, created_at desc);
+
+create table if not exists investigation_graph_audit (
+    id bigserial primary key,
+    graph_id uuid not null references investigation_graphs(graph_id),
+    action text not null,
+    actor text null,
+    summary text not null,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_investigation_graph_audit_graph on investigation_graph_audit(graph_id, created_at desc);
+
 create table if not exists ingestion_errors (
     id bigserial primary key,
     agent_id text null,

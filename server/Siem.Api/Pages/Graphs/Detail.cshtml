@@ -1,0 +1,134 @@
+@page "/graphs/detail"
+@model Challenger.Siem.Api.Pages.Graphs.DetailModel
+@{
+    ViewData["Title"] = "Investigation graph";
+    var detail = Model.Detail!;
+}
+
+<div class="page-header">
+    <div>
+        <h1>@detail.Graph.Title</h1>
+        <p class="muted">Investigation graph · version @detail.Graph.Version · @detail.Graph.Status</p>
+    </div>
+    <a class="button secondary" asp-page="/Graphs/Index">Back to graphs</a>
+</div>
+@if (Model.ErrorMessage is not null) { <div class="alert" role="alert">@Model.ErrorMessage</div> }
+@if (Model.Message is not null) { <div class="notice" role="status">@Model.Message</div> }
+
+<section class="card">
+    <h2>Graph metadata</h2>
+    <form method="post" asp-page-handler="Update" class="filters">
+        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+        <input type="hidden" asp-for="ExpectedVersion" />
+        <div class="form-row"><label for="Title">Title</label><input id="Title" asp-for="Title" maxlength="160" required /></div>
+        <div class="form-row"><label for="Description">Description</label><input id="Description" asp-for="Description" maxlength="4000" /></div>
+        <div class="form-row"><label for="Tags">Tags</label><input id="Tags" asp-for="Tags" /></div>
+        <div class="actions"><button type="submit">Save metadata</button></div>
+    </form>
+</section>
+
+<section class="card graph-canvas" aria-label="Investigation graph canvas">
+    <h2>Relationship canvas</h2>
+    @if (detail.Nodes.Count == 0)
+    {
+        <p class="empty">No nodes yet. Add a node to start the investigation graph.</p>
+    }
+    else
+    {
+        <div class="graph-node-grid">
+            @foreach (var node in detail.Nodes.Where(n => n.Status == "active"))
+            {
+                <article class="graph-node-card">
+                    <h3>@node.Label</h3>
+                    <p><span class="badge">@node.NodeType</span></p>
+                    @if (!string.IsNullOrWhiteSpace(node.LinkUrl)) { <p><a href="@node.LinkUrl">Open source</a></p> }
+                    @if (!string.IsNullOrWhiteSpace(node.ReferenceKind)) { <p class="muted">@node.ReferenceKind: @node.ReferenceId</p> }
+                    @if (!string.IsNullOrWhiteSpace(node.Notes)) { <p>@node.Notes</p> }
+                    <p class="muted">@node.NodeId</p>
+                </article>
+            }
+        </div>
+        <h3>Edges</h3>
+        @if (detail.Edges.Count == 0) { <p class="muted">No edges yet.</p> }
+        else
+        {
+            <ul>
+            @foreach (var edge in detail.Edges.Where(e => e.Status == "active"))
+            {
+                var source = detail.Nodes.FirstOrDefault(n => n.NodeId == edge.SourceNodeId)?.Label ?? edge.SourceNodeId.ToString();
+                var target = detail.Nodes.FirstOrDefault(n => n.NodeId == edge.TargetNodeId)?.Label ?? edge.TargetNodeId.ToString();
+                <li><strong>@source</strong> — @edge.EdgeType @(!string.IsNullOrWhiteSpace(edge.Label) ? $"({edge.Label})" : "") — <strong>@target</strong> <span class="muted">@edge.Notes</span></li>
+            }
+            </ul>
+        }
+    }
+</section>
+
+<section class="card">
+    <h2>Add node</h2>
+    <form method="post" asp-page-handler="AddNode" class="filters">
+        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+        <div class="form-row"><label for="NodeType">Type</label><input id="NodeType" asp-for="NodeType" /></div>
+        <div class="form-row"><label for="NodeLabel">Label</label><input id="NodeLabel" asp-for="NodeLabel" maxlength="200" required /></div>
+        <div class="form-row"><label for="NodeReferenceKind">Reference kind</label><input id="NodeReferenceKind" asp-for="NodeReferenceKind" placeholder="agent, event, alert" /></div>
+        <div class="form-row"><label for="NodeReferenceId">Reference ID</label><input id="NodeReferenceId" asp-for="NodeReferenceId" /></div>
+        <div class="form-row"><label for="NodeLinkUrl">Link URL</label><input id="NodeLinkUrl" asp-for="NodeLinkUrl" placeholder="/agents?agent_id=..." /></div>
+        <div class="form-row"><label for="NodeNotes">Notes</label><textarea id="NodeNotes" asp-for="NodeNotes" rows="3" maxlength="4000"></textarea></div>
+        <div class="actions"><button type="submit">Add node</button></div>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Add edge</h2>
+    <form method="post" asp-page-handler="AddEdge" class="filters">
+        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+        <div class="form-row"><label for="SourceNodeId">Source node</label><select id="SourceNodeId" asp-for="SourceNodeId">@foreach (var node in detail.Nodes.Where(n => n.Status == "active")) { <option value="@node.NodeId">@node.Label</option> }</select></div>
+        <div class="form-row"><label for="TargetNodeId">Target node</label><select id="TargetNodeId" asp-for="TargetNodeId">@foreach (var node in detail.Nodes.Where(n => n.Status == "active")) { <option value="@node.NodeId">@node.Label</option> }</select></div>
+        <div class="form-row"><label for="EdgeType">Type</label><input id="EdgeType" asp-for="EdgeType" /></div>
+        <div class="form-row"><label for="EdgeLabel">Label</label><input id="EdgeLabel" asp-for="EdgeLabel" /></div>
+        <div class="form-row"><label for="EdgeNotes">Notes</label><input id="EdgeNotes" asp-for="EdgeNotes" /></div>
+        <div class="actions"><button type="submit">Add edge</button></div>
+    </form>
+</section>
+
+<section class="card">
+    <h2>soc-agent proposals</h2>
+    <p class="muted">soc-agent can propose graph updates, but applying a proposal requires explicit operator approval.</p>
+    <form method="post" asp-page-handler="Propose" class="filters">
+        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+        <div class="form-row"><label for="ProposalInstruction">Proposal instruction</label><input id="ProposalInstruction" asp-for="ProposalInstruction" maxlength="4000" placeholder="Add a note about why these events are related" /></div>
+        <div class="actions"><button type="submit">Ask soc-agent for proposal</button></div>
+    </form>
+    @if (detail.Proposals.Count == 0) { <p class="muted">No proposals yet.</p> }
+    else
+    {
+        <table><thead><tr><th>Status</th><th>Instruction</th><th>Rationale</th><th>Proposed nodes</th><th></th></tr></thead><tbody>
+        @foreach (var proposal in detail.Proposals)
+        {
+            <tr>
+                <td><span class="badge @(proposal.Status == "pending" ? "warning" : "ok")">@proposal.Status</span></td>
+                <td>@proposal.Instruction</td><td>@proposal.Rationale</td><td>@proposal.ProposedNodes.Count</td>
+                <td>
+                @if (proposal.Status == "pending")
+                {
+                    <form method="post" asp-page-handler="ApplyProposal" class="actions">
+                        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+                        <input type="hidden" name="ProposalId" value="@proposal.ProposalId" />
+                        <label class="inline-check"><input type="checkbox" name="ConfirmApplyProposal" value="true" required /> Approve and apply</label>
+                        <button type="submit">Apply proposal</button>
+                    </form>
+                }
+                </td>
+            </tr>
+        }
+        </tbody></table>
+    }
+</section>
+
+<section class="card">
+    <h2>Lifecycle</h2>
+    <form method="post" asp-page-handler="Archive" class="actions">
+        <input type="hidden" name="graph_id" value="@Model.GraphId" />
+        <button type="submit" class="danger">Archive graph</button>
+    </form>
+</section>

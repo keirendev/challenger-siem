@@ -77,6 +77,7 @@ Supported status values are `local`, `disabled`, `provider_not_configured`, `aut
 - `alert_review` - current alert review rows and alert page citations.
 - `detection_rule_metadata` - built-in detection rule metadata and prerequisites.
 - `inventory_summary` - bounded inventory/audit-policy snapshot summaries.
+- `graph_search` - active investigation graph summaries and citations for operator-managed context.
 
 Responses include tool-run summaries and citations back to review pages such as agent inventory, host coverage, event detail, alerts, and audit-policy drift.
 
@@ -106,6 +107,8 @@ Provider credentials must never be committed, rendered into browser local storag
 ## Mutation policy
 
 The current `soc-agent` implementation is read-only. It does not activate detections, change configuration, delete data, reconfigure agents, or modify repository files.
+
+Investigation graph assistance follows this policy today: `soc-agent` may read graph summaries and create a bounded pending proposal on a graph page, but nodes/edges are not changed until an operator checks the approval control and applies the proposal.
 
 Future mutating workflows must remain proposal-first and require explicit authorized operator approval. The approval flow should include:
 

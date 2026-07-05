@@ -21,6 +21,7 @@ The submitted token is compared server-side, is not logged, and is not stored in
 - `/events` - event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, and bounded limit.
 - `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
 - `/alerts` and `/alerts/detail?alert_id=<uuid>` - alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
+- `/graphs` and `/graphs/detail?graph_id=<uuid>` - operator-managed investigation graphs with bounded metadata, typed nodes/edges, source links, archive lifecycle, and approval-gated `soc-agent` proposals.
 - `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering chat workspace with provider status/connect UX, bounded session history, server-side tools for agents, source health, events, alerts, detection rules, and inventory, plus citations back to review pages.
 - `/audit-policy` - audit-policy drift snapshot review skeleton.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.
@@ -74,7 +75,7 @@ Automated smoke path without Docker:
 ./scripts/smoke-test-web.sh
 ```
 
-The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, event detail, and `soc-agent` status HTML. For web-app issue validation, supplement this smoke script with Playwright browser E2E covering the relevant pages. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
+The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` status HTML. For web-app issue validation, supplement this smoke script with Playwright browser E2E covering the relevant pages. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
 
 Manual path:
 
