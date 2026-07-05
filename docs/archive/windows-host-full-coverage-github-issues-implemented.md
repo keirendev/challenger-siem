@@ -1,3 +1,7 @@
+# Archived: Windows host full-coverage GitHub issue backlog
+
+> Archived after implementation. The issue series described in this file was implemented and closed by the Windows host full-coverage foundation work. Use live docs such as `docs/windows-host-full-coverage-spec.md`, `docs/api.md`, `docs/schema.md`, `docs/agent.md`, and `docs/web.md` for current behavior.
+
 # Windows host full-coverage GitHub issue backlog
 
 Status: draft issue series
