@@ -35,7 +35,7 @@ public sealed class SocAgentService(
         var answer = new StringBuilder();
 
         var agents = await review.SearchAgentsAsync(
-            new AgentInventoryQuery(null, request.ContextAgentId, null),
+            new AgentInventoryQuery(null, request.ContextAgentId, null, "active"),
             TimeSpan.FromMinutes(15),
             cancellationToken);
         var selectedAgents = agents.Take(Math.Clamp(options.MaxAgents, 1, 50)).ToArray();

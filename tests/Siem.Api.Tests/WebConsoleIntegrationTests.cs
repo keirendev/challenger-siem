@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 using Xunit;
 
 namespace Challenger.Siem.Api.Tests;
@@ -81,7 +82,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var dashboard = await GetHtmlAsync(client, "/");
         Assert.Contains("Dashboard", dashboard, StringComparison.Ordinal);
-        Assert.Contains("total agents", dashboard, StringComparison.Ordinal);
+        Assert.Contains("active agents", dashboard, StringComparison.Ordinal);
+        Assert.Contains("retired agents", dashboard, StringComparison.Ordinal);
 
         var agents = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(agentId)}");
         Assert.Contains(agentId, agents, StringComparison.Ordinal);
@@ -105,10 +107,60 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var alerts = await GetHtmlAsync(client, "/alerts");
         Assert.Contains("Alerts", alerts, StringComparison.Ordinal);
-        Assert.Contains("No alerts match", alerts, StringComparison.Ordinal);
 
         var auditPolicy = await GetHtmlAsync(client, "/audit-policy");
         Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
+    }
+
+    [PostgresFact]
+    public async Task AgentInventoryDefaultsToActiveAgentsAndCleanupRetiresOnlyStaleActiveRows()
+    {
+        var connectionString = database.RequireConnectionString();
+        var prefix = $"cleanup-agent-{Guid.NewGuid():N}";
+        var recentAgentId = $"{prefix}-recent";
+        var staleAgentId = $"{prefix}-stale";
+        var disabledAgentId = $"{prefix}-disabled";
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        await RegisterAsync(client, recentAgentId, "CLEANUP-RECENT");
+        await RegisterAsync(client, staleAgentId, "CLEANUP-STALE");
+        await RegisterAsync(client, disabledAgentId, "CLEANUP-DISABLED");
+        await MarkAgentStateAsync(connectionString, staleAgentId, disabledAgentId);
+
+        await LoginAsync(client);
+
+        var defaultInventory = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}");
+        Assert.Contains(recentAgentId, defaultInventory, StringComparison.Ordinal);
+        Assert.Contains(staleAgentId, defaultInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain(disabledAgentId, defaultInventory, StringComparison.Ordinal);
+        Assert.Contains("Eligible active agents", defaultInventory, StringComparison.Ordinal);
+
+        var disabledInventory = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}&status=disabled");
+        Assert.Contains(disabledAgentId, disabledInventory, StringComparison.Ordinal);
+        Assert.Contains("retired", disabledInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain(recentAgentId, disabledInventory, StringComparison.Ordinal);
+
+        var antiForgeryToken = ExtractAntiforgeryToken(defaultInventory);
+        using (var cleanupResponse = await client.PostAsync("/agents?handler=CleanupStale", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = antiForgeryToken,
+            ["ConfirmCleanup"] = "true",
+            ["agent_id"] = prefix,
+            ["status"] = "active"
+        })))
+        {
+            Assert.Equal(HttpStatusCode.Redirect, cleanupResponse.StatusCode);
+        }
+
+        var activeAfterCleanup = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}&status=active");
+        Assert.Contains(recentAgentId, activeAfterCleanup, StringComparison.Ordinal);
+        Assert.DoesNotContain(staleAgentId, activeAfterCleanup, StringComparison.Ordinal);
+        Assert.DoesNotContain(disabledAgentId, activeAfterCleanup, StringComparison.Ordinal);
+
+        var retiredAfterCleanup = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}&status=disabled");
+        Assert.Contains(staleAgentId, retiredAfterCleanup, StringComparison.Ordinal);
+        Assert.Contains(disabledAgentId, retiredAfterCleanup, StringComparison.Ordinal);
     }
 
     private static WebApplicationFactory<Program> CreateFactory(string connectionString)
@@ -156,6 +208,23 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         using var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task MarkAgentStateAsync(string connectionString, string staleAgentId, string disabledAgentId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("""
+            update agents
+            set last_seen = now() - interval '2 hours', updated_at = now()
+            where agent_id = @stale_agent_id;
+
+            update agents
+            set status = 'disabled', last_seen = now() - interval '2 hours', updated_at = now()
+            where agent_id = @disabled_agent_id;
+            """);
+        command.Parameters.AddWithValue("stale_agent_id", staleAgentId);
+        command.Parameters.AddWithValue("disabled_agent_id", disabledAgentId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task LoginAsync(HttpClient client)

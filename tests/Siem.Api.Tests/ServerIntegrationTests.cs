@@ -106,6 +106,38 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await AssertDatabaseStateAsync(dataSource, agentId, invalidBatchId);
     }
 
+    [PostgresFact]
+    public async Task DisabledAgentTokenIsRejectedUntilRegistrationReactivatesAgent()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"reactivate-agent-{Guid.NewGuid():N}";
+        var hostname = "REACTIVATE-HOST";
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var disabledToken = await RegisterAsync(client, agentId, hostname, "0.3.0-test");
+        await SetAgentStatusAsync(connectionString, agentId, "disabled");
+
+        using (var disabledHeartbeat = await SendJsonWithBearerAsync(
+            client,
+            "/api/v1/agents/heartbeat",
+            CreateHeartbeat(agentId, hostname, queueDepth: 0),
+            disabledToken))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, disabledHeartbeat.StatusCode);
+        }
+
+        var reactivatedToken = await RegisterAsync(client, agentId, hostname, "0.3.1-test");
+        Assert.NotEqual(disabledToken, reactivatedToken);
+        await PostJsonWithBearerAsync<JsonElement>(client, "/api/v1/agents/heartbeat", CreateHeartbeat(agentId, hostname, queueDepth: 1), reactivatedToken);
+
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("select status from agents where agent_id = @agent_id;");
+        command.Parameters.AddWithValue("agent_id", agentId);
+        var status = Convert.ToString(await command.ExecuteScalarAsync(CancellationToken.None));
+        Assert.Equal("active", status);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(string connectionString)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -170,6 +202,19 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task SetAgentStatusAsync(string connectionString, string agentId, string status)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("""
+            update agents
+            set status = @status, updated_at = now()
+            where agent_id = @agent_id;
+            """);
+        command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("status", status);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     private static HeartbeatRequest CreateHeartbeat(string agentId, string hostname, int queueDepth)

@@ -27,10 +27,12 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 order by agent_id, heartbeat_time desc
             )
             select
-                count(*)::bigint as total_agents,
-                count(*) filter (where a.last_seen >= @stale_cutoff)::bigint as recent_agents,
-                count(*) filter (where a.last_seen < @stale_cutoff)::bigint as stale_agents,
-                count(*) filter (where coalesce(lh.queue_depth, 0) > 0)::bigint as agents_with_queued_events,
+                count(*) filter (where a.status = 'active')::bigint as active_agents,
+                count(*) filter (where a.status = 'active' and a.last_seen >= @stale_cutoff)::bigint as recent_active_agents,
+                count(*) filter (where a.status = 'active' and a.last_seen < @stale_cutoff)::bigint as stale_active_agents,
+                count(*) filter (where a.status = 'disabled')::bigint as retired_agents,
+                count(*)::bigint as historical_agents,
+                count(*) filter (where a.status = 'active' and coalesce(lh.queue_depth, 0) > 0)::bigint as agents_with_queued_events,
                 (select count(*)::bigint from events where ingest_time >= @recent_event_cutoff) as recent_event_count,
                 (select max(ingest_time) from events) as latest_ingest_time
             from agents a
@@ -46,9 +48,11 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         }
 
         return new DashboardSummary(
-            ReadInt64(reader, "total_agents"),
-            ReadInt64(reader, "recent_agents"),
-            ReadInt64(reader, "stale_agents"),
+            ReadInt64(reader, "active_agents"),
+            ReadInt64(reader, "recent_active_agents"),
+            ReadInt64(reader, "stale_active_agents"),
+            ReadInt64(reader, "retired_agents"),
+            ReadInt64(reader, "historical_agents"),
             ReadInt64(reader, "agents_with_queued_events"),
             ReadInt64(reader, "recent_event_count"),
             ReadNullableDateTimeOffset(reader, "latest_ingest_time"));
@@ -76,6 +80,16 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         {
             where.Add("a.agent_id ilike @agent_id");
             command.Parameters.AddWithValue("agent_id", $"%{query.AgentId.Trim()}%");
+        }
+
+        switch (NormalizeStatusFilter(query.Status))
+        {
+            case "active":
+                where.Add("a.status = 'active'");
+                break;
+            case "disabled":
+                where.Add("a.status = 'disabled'");
+                break;
         }
 
         switch (query.Health?.Trim().ToLowerInvariant())
@@ -174,6 +188,129 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         return results;
     }
 
+    public async Task<StaleAgentCleanupPreview> GetStaleAgentCleanupPreviewAsync(
+        TimeSpan staleAgentAfter,
+        int sampleLimit,
+        CancellationToken cancellationToken)
+    {
+        var cutoff = DateTimeOffset.UtcNow.Subtract(staleAgentAfter);
+        var clampedSampleLimit = Math.Clamp(sampleLimit, 0, 50);
+        var sampleAgentIds = new List<string>();
+        long candidateCount = 0;
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            with candidates as (
+                select agent_id, last_seen
+                from agents
+                where status = 'active'
+                  and last_seen < @cutoff
+            ), counted as (
+                select count(*)::bigint as candidate_count
+                from candidates
+            ), sampled as (
+                select agent_id
+                from candidates
+                order by last_seen asc, agent_id asc
+                limit @sample_limit
+            )
+            select counted.candidate_count, sampled.agent_id
+            from counted
+            left join sampled on true;
+            """;
+        command.Parameters.AddWithValue("cutoff", cutoff.ToUniversalTime());
+        command.Parameters.AddWithValue("sample_limit", clampedSampleLimit);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            candidateCount = ReadInt64(reader, "candidate_count");
+            var agentId = ReadNullableString(reader, "agent_id");
+            if (!string.IsNullOrWhiteSpace(agentId))
+            {
+                sampleAgentIds.Add(agentId);
+            }
+        }
+
+        return new StaleAgentCleanupPreview(cutoff, candidateCount, sampleAgentIds);
+    }
+
+    public async Task<StaleAgentCleanupSummary> DisableStaleAgentsAsync(
+        TimeSpan staleAgentAfter,
+        int sampleLimit,
+        CancellationToken cancellationToken)
+    {
+        var cutoff = DateTimeOffset.UtcNow.Subtract(staleAgentAfter);
+        var clampedSampleLimit = Math.Clamp(sampleLimit, 0, 50);
+        var sampleAgentIds = new List<string>();
+        long candidateCount = 0;
+        long skippedRecentCount = 0;
+        long disabledCount = 0;
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var countCommand = connection.CreateCommand())
+        {
+            countCommand.Transaction = transaction;
+            countCommand.CommandText = """
+                select
+                    count(*) filter (where status = 'active' and last_seen < @cutoff)::bigint as candidate_count,
+                    count(*) filter (where status = 'active' and last_seen >= @cutoff)::bigint as skipped_recent_count
+                from agents;
+                """;
+            countCommand.Parameters.AddWithValue("cutoff", cutoff.ToUniversalTime());
+            await using var countReader = await countCommand.ExecuteReaderAsync(cancellationToken);
+            if (await countReader.ReadAsync(cancellationToken))
+            {
+                candidateCount = ReadInt64(countReader, "candidate_count");
+                skippedRecentCount = ReadInt64(countReader, "skipped_recent_count");
+            }
+        }
+
+        await using (var updateCommand = connection.CreateCommand())
+        {
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = """
+                with disabled as (
+                    update agents
+                    set status = 'disabled', updated_at = now()
+                    where status = 'active'
+                      and last_seen < @cutoff
+                    returning agent_id
+                ), counted as (
+                    select count(*)::bigint as disabled_count
+                    from disabled
+                ), sampled as (
+                    select agent_id
+                    from disabled
+                    order by agent_id asc
+                    limit @sample_limit
+                )
+                select counted.disabled_count, sampled.agent_id
+                from counted
+                left join sampled on true;
+                """;
+            updateCommand.Parameters.AddWithValue("cutoff", cutoff.ToUniversalTime());
+            updateCommand.Parameters.AddWithValue("sample_limit", clampedSampleLimit);
+
+            await using var updateReader = await updateCommand.ExecuteReaderAsync(cancellationToken);
+            while (await updateReader.ReadAsync(cancellationToken))
+            {
+                disabledCount = ReadInt64(updateReader, "disabled_count");
+                var agentId = ReadNullableString(updateReader, "agent_id");
+                if (!string.IsNullOrWhiteSpace(agentId))
+                {
+                    sampleAgentIds.Add(agentId);
+                }
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new StaleAgentCleanupSummary(cutoff, candidateCount, disabledCount, skippedRecentCount, sampleAgentIds);
+    }
+
     public async Task<DatabaseStatus> CheckDatabaseAsync(CancellationToken cancellationToken)
     {
         try
@@ -188,6 +325,16 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         {
             return new DatabaseStatus(false, ex.GetType().Name);
         }
+    }
+
+    private static string NormalizeStatusFilter(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
+        {
+            "all" => "all",
+            "disabled" => "disabled",
+            _ => "active"
+        };
     }
 
     private static long ReadInt64(NpgsqlDataReader reader, string columnName)
