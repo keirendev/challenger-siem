@@ -2,6 +2,8 @@
 
 The MVP review console is hosted by the ASP.NET Core API process. It uses the same PostgreSQL-backed repositories as the ingestion and review APIs, so the UI displays the same agent, heartbeat, and event data available to the server.
 
+For public-safe visual examples, see the [sanitized web-console demo](web-console-demo.md). The demo screenshots are generated from synthetic data only and must be refreshed whenever user-visible web behavior changes.
+
 ## Authentication
 
 Browse to the API base URL and sign in with the configured review token:
@@ -80,7 +82,16 @@ The script starts the API, seeds a synthetic agent/event through the v1 API, aut
 Manual path:
 
 1. Start the API with the required database and auth environment variables.
-2. Register an agent and ingest fake or real events.
+2. Register an agent and ingest synthetic or approved lab events.
 3. Open the API base URL in a browser.
 4. Log in with `Auth__ReviewToken`.
-5. Confirm the dashboard, agent inventory, event search, and event detail pages show the ingested data.
+5. Confirm the dashboard, agent inventory, event search, and event detail pages show the expected data.
+
+## Screenshot and browser-validation maintenance
+
+When a change affects Razor Pages, web auth/session/CSRF/cookies, review-console routes or view models, web smoke scripts, `docs/web.md`, `docs/web-console-demo.md`, or user-visible browser behavior:
+
+- Run browser E2E against the real app; curl/API/HTML checks can supplement but do not replace Playwright or equivalent browser validation.
+- Update the [web-console demo](web-console-demo.md) text or screenshots if page layout, navigation, filters, or visible data changes.
+- Regenerate screenshots only from synthetic data and inspect them for tokens, cookies, connection strings, real host/user identifiers, private lab telemetry, and browser/OS UI leaks before staging.
+- Keep raw Playwright artifacts, browser caches, seeded API responses, cookies, and temporary captures under ignored `.local/` paths.

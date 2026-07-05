@@ -1,113 +1,109 @@
 # Challenger SIEM
 
-Custom SIEM capability focused first on Windows endpoints.
+Challenger SIEM is a custom, no-Docker SIEM prototype focused first on Windows endpoints. It pairs a C# Windows agent with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
 
-The MVP is custom-built from open-source components only. Docker is intentionally not used.
+## Current capabilities
 
-## MVP goal
+- Windows Event Log collection with local agent queueing, retries, channel position state, and heartbeat/source-health reporting.
+- Agent registration with an enrollment token and per-agent API token authentication.
+- PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
+- Authenticated `/api/v1` review APIs for events, agents/source health, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`.
+- Review-token-protected web console for dashboard review, agent inventory, host coverage/source health, event search/detail, alert skeletons, investigation graphs, `soc-agent`, audit-policy snapshots, and system/about status.
+- Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
 
-1. A Windows endpoint agent normalizes Windows Event Log records.
-2. The agent buffers events locally and sends batches over HTTPS.
-3. The ASP.NET Core ingestion API validates, deduplicates, and stores events in PostgreSQL.
-4. A basic review API can query recent events by host, agent, channel, event ID, time range, or keyword.
-5. A server-hosted web review console supports operator login, dashboard review, agent inventory, event search, and event detail inspection.
+## Architecture
+
+```text
+Windows endpoint
+  -> WindowsAgent.exe
+  -> HTTPS/HTTP-in-lab ingestion API
+  -> PostgreSQL storage
+  -> Review API + web console + soc-agent workspace
+```
+
+See [docs/architecture.md](docs/architecture.md) and the [documentation index](docs/index.md) for the full design.
+
+## Public repository safety
+
+This repository is public. Do not commit tokens, passwords, connection strings, private keys, real agent settings, raw endpoint telemetry, Windows Event Log exports, queue/state databases, captures, dumps, screenshots with real host/user data, or local coding-agent files. Use synthetic examples and keep local validation artifacts under ignored `.local/` paths.
+
+## Quickstart without Docker
+
+Prerequisites: .NET SDK, PostgreSQL, Bash-compatible shell for helper scripts, and a private local environment file such as `.local/dev.env` containing `ConnectionStrings__SiemDatabase`, `Auth__EnrollmentToken`, and `Auth__ReviewToken`.
+
+```bash
+./scripts/apply-schema.sh
+
+dotnet build Challenger.Siem.sln
+dotnet test Challenger.Siem.sln
+
+./scripts/smoke-test-server.sh
+./scripts/smoke-test-web.sh
+```
+
+Run the API and web console locally:
+
+```bash
+# loads .local/dev.env when present
+ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile
+```
+
+Open `http://127.0.0.1:5081/login` and sign in with the configured `Auth__ReviewToken`.
+
+## Windows agent lab path
+
+Build/publish the standalone Windows agent:
+
+```bash
+./scripts/publish-windows-agent.sh
+```
+
+For the authorized local WinRM validation VM, start the API on this host and prepare copy-ready agent files:
+
+```bash
+./scripts/run-server-4444.sh
+./scripts/prepare-windows-agent-files.sh \
+  http://127.0.0.1:4444 \
+  http://192.168.122.1:4444 \
+  demo-agent-001 DEMO-WIN11 "Windows 11"
+```
+
+Copy `dist/windows-agent-copy/WindowsAgent.exe` and the generated `agentsettings.json` to the Windows host together. The generated settings file contains an API token; do not print or commit it.
 
 ## Repository layout
 
 ```text
 agent/WindowsAgent/     Windows endpoint agent
-server/Siem.Api/        ASP.NET Core ingestion/search API
+server/Siem.Api/        ASP.NET Core ingestion/search API and Razor Pages console
 shared/Contracts/       Versioned C# API contracts
-contracts/v1/           JSON schema contracts for external clients
-docs/                   Architecture, API, schema, auth, and agent config docs
+contracts/v1/           JSON Schema contracts for external clients
+docs/                   Versioned wiki/operator/developer documentation
+examples/               Minimal synthetic API examples
+scripts/                Local build, schema, smoke, and agent packaging helpers
 VERSION                 Project version source of truth
 CHANGELOG.md            Release notes and operator-visible changes
 ```
 
-## Build
+## Documentation index
 
-```bash
-dotnet build Challenger.Siem.sln
-dotnet test Challenger.Siem.sln
-./scripts/publish-windows-agent.sh
-```
+Start with [docs/index.md](docs/index.md). Key pages:
 
-Standalone Windows agent output:
-
-```text
-dist/windows-agent-win-x64/WindowsAgent.exe
-```
-
-## Current lab run target
-
-Authorized WinRM validation VM: `192.168.122.240`.
-
-Run the server on this machine for Windows agents:
-
-```bash
-./scripts/run-server-4444.sh
-```
-
-Agent `ServerBaseUrl` for the Windows host:
-
-```text
-http://192.168.122.1:4444
-```
-
-Prepare copy-ready Windows agent files, including a registered `agentsettings.json`:
-
-```bash
-./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11"
-```
-
-Copy both files from `dist/windows-agent-copy/` to the Windows host and run `./WindowsAgent.exe`.
+- [Operator guide](docs/operators.md)
+- [Architecture](docs/architecture.md)
+- [API contract v1](docs/api.md) and [schema design](docs/schema.md)
+- [Windows agent](docs/agent.md) and [agent configuration](docs/agent-config.md)
+- [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
+- [Web review console](docs/web.md) and [sanitized screenshot demo](docs/web-console-demo.md)
+- [soc-agent](docs/soc-agent.md)
+- [Runbooks](docs/runbooks.md) and [troubleshooting](docs/troubleshooting.md)
+- [Contributor guide](docs/contributors.md), [development](docs/development.md), and [versioning](docs/versioning.md)
 
 ## Versioning
 
-Project version is managed in `VERSION` and can be checked with:
+Check the current version with:
 
 ```bash
 ./scripts/current-version.sh
 ```
 
-See `docs/versioning.md` for the version bump and changelog workflow.
-
-## Current build target
-
-The current MVP baseline can:
-
-- receive a fake Windows event JSON batch
-- authenticate the agent using a per-agent token
-- store events in PostgreSQL with JSONB raw payloads
-- return stored events from `GET /api/v1/events`
-- report source health and coverage posture from agent heartbeats
-- expose starter alert, detection-rule, asset-inventory, source-health, and `soc-agent` review APIs
-- host a review-token-protected web console from the API process with a local SIEM-aware `soc-agent` workspace
-
-Open the API base URL in a browser and log in with `Auth__ReviewToken` to use the web console.
-
-See:
-
-- `docs/architecture.md`
-- `docs/api.md`
-- `docs/schema.md`
-- `docs/auth.md`
-- `docs/agent.md`
-- `docs/dependencies.md`
-- `docs/development.md`
-- `docs/milestones.md`
-- `docs/soc-agent.md`
-- `docs/versioning.md`
-- `docs/web.md`
-- `docs/runbooks.md`
-- `docs/tls.md`
-- `docs/security-hardening-roadmap.md`
-- `docs/windows-host-full-coverage-spec.md`
-- `docs/windows-l2-validation-runbook.md`
-- `docs/sysmon-l3-validation-runbook.md`
-- `docs/windows-role-packs.md`
-- `docs/release-readiness.md`
-- `docs/archive/README.md`
-- `server/Siem.Api/Database/001_initial.sql`
-- `examples/agent-registration.json`
-- `examples/fake-event-batch.json`
+`VERSION` drives .NET assembly metadata and local helper defaults. Follow [docs/versioning.md](docs/versioning.md) and update [CHANGELOG.md](CHANGELOG.md) for notable operator-visible changes.

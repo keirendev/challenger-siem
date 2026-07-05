@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Refreshed the public documentation into a wiki-style docs set with a concise README, operator/contributor/troubleshooting guides, sanitized web-console screenshots, and a documentation-maintenance checklist.
 - Added a platform capability foundation catalog and authenticated API covering SPEC-GAP-001 through SPEC-GAP-019 with documented implementation guardrails and contracts.
 - Added operator-managed investigation graphs with v1 APIs, PostgreSQL storage, web workflows, bounded `soc-agent` graph context, and approval-gated graph proposals.
 - Added a guarded synthetic web/API test-data cleanup script with dry-run defaults, explicit execution confirmation, smoke-script cleanup hooks, docs, and integration coverage.

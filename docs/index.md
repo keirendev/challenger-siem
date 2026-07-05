@@ -1,0 +1,61 @@
+# Challenger SIEM documentation wiki
+
+This directory is the canonical, versioned documentation set for Challenger SIEM. It is safe to mirror into a GitHub Wiki, but repository docs remain the source of truth so documentation changes can be reviewed with code, contracts, schemas, screenshots, and release notes.
+
+## Start here
+
+- [README landing page](../README.md) - concise project summary, safe quickstart, and repository layout.
+- [Operator guide](operators.md) - end-to-end setup and day-two operation overview.
+- [Contributor guide](contributors.md) - development workflow, review expectations, and documentation-maintenance checklist.
+- [Troubleshooting and FAQ](troubleshooting.md) - common local, API, agent, web-console, and lab validation issues.
+
+## Architecture and design
+
+- [Architecture](architecture.md) - pipeline, agent/server flow, reliability, and security decisions.
+- [Schema design](schema.md) - PostgreSQL tables, indexes, and schema application/validation.
+- [Windows host full-coverage SIEM specification](windows-host-full-coverage-spec.md) - target coverage model and implementation status.
+- [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
+- [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
+- [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
+
+## Server, APIs, and contracts
+
+- [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
+- [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
+- [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
+- [Authentication design](auth.md) - enrollment token, per-agent token, review token, and external `soc-agent` provider guardrails.
+- [HTTPS/TLS deployment path](tls.md) - local HTTP exception, production HTTPS options, and agent trust expectations.
+
+## Windows endpoint agent
+
+- [Windows agent](agent.md) - current capabilities, build, install, state/queue behavior, and Windows validation notes.
+- [Agent configuration format](agent-config.md) - configuration keys, enrollment modes, queue fields, and channel state paths.
+- [L2 Windows validation runbook](windows-l2-validation-runbook.md) - safe L2 source-health validation.
+- [Sysmon L3 validation runbook](sysmon-l3-validation-runbook.md) - safe Sysmon validation path.
+
+## Web console and operator workflows
+
+- [Web review application](web.md) - auth model, pages, lifecycle semantics, settings, and smoke path.
+- [Sanitized web-console demo](web-console-demo.md) - screenshot gallery, synthetic data rules, and regeneration checklist.
+- [Operator runbooks](runbooks.md) - database setup, smoke tests, graph/`soc-agent` use, stale-agent retirement, packaging, and Windows lab E2E.
+- [soc-agent](soc-agent.md) - local/external provider model, tools, persistence, citations, and mutation policy.
+
+## Development, validation, and release
+
+- [Local development without Docker](development.md) - prerequisites, environment variables, schema, build/test, API run, optional WinRM, and smoke tests.
+- [Dependencies and ownership policy](dependencies.md) - approved components and optional tooling boundaries.
+- [MVP release readiness checklist](release-readiness.md) - required checks, Windows evidence, repository hygiene, and issue disposition.
+- [Milestone status](milestones.md) - implemented baseline and next milestone themes.
+- [Versioning](versioning.md) - SemVer policy, `VERSION`, changelog, and compatibility tracks.
+- [Archived planning docs](archive/README.md) - completed planning records kept for historical context.
+
+## Public-data rules for docs and screenshots
+
+- Use only synthetic hostnames, users, IDs, IPs, event messages, prompts, graph nodes, and screenshots in tracked docs.
+- Keep raw API responses, cookies, browser traces, generated agent settings, queue/state databases, endpoint telemetry, event-log exports, and lab evidence under ignored `.local/` paths.
+- Never paste review tokens, enrollment tokens, per-agent API tokens, connection strings, private keys, cookies, real Windows usernames/hostnames, or collected client data into docs, examples, screenshots, issues, or pull requests.
+- If a screenshot or example might contain private data, discard it locally and regenerate from synthetic fixtures before committing.
+
+## Maintaining the wiki
+
+When implementation changes affect behavior, contracts, setup, validation, screenshots, or operator workflows, update the relevant docs in the same change set. Use the checklist in [contributors.md](contributors.md#documentation-maintenance-checklist) before opening a pull request.
