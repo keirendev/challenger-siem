@@ -75,6 +75,95 @@ public sealed class SocAgentModelProviderTests
     }
 
     [Fact]
+    public async Task OpenAiProviderRefreshesSubscriptionOAuthCredentialBeforeModelCall()
+    {
+        SequencedHandler.Calls.Clear();
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-expiring-subscription-token",
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            refreshToken: "synthetic-refresh-token"));
+        using var httpClient = new HttpClient(new SequencedHandler(request =>
+        {
+            if (request.RequestUri?.AbsolutePath.Equals("/oauth/token", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($$"""
+                    {
+                      "access_token": "synthetic-refreshed-subscription-token",
+                      "refresh_token": "synthetic-next-refresh-token",
+                      "token_type": "Bearer",
+                      "expires_in": 3600,
+                      "scope": "openid profile offline_access model.request"
+                    }
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                {
+                  "choices": [
+                    { "message": { "content": "Subscription OAuth provider answer" } }
+                  ]
+                }
+                """)
+            };
+        }));
+        var provider = CreateProvider(httpClient, new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            AuthFileExpirySkewSeconds = 300
+        });
+
+        var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse { Status = "connected", Provider = "ChatGPT", Model = "gpt-test", AuthMode = "subscription_oauth" },
+            "bounded prompt",
+            2000), CancellationToken.None);
+
+        Assert.Equal("Subscription OAuth provider answer", result.Answer);
+        Assert.Equal(2, SequencedHandler.Calls.Count);
+        Assert.Equal(new Uri("https://auth.openai.com/oauth/token"), SequencedHandler.Calls[0].Uri);
+        Assert.Equal(new Uri("https://api.openai.com/v1/chat/completions"), SequencedHandler.Calls[1].Uri);
+        Assert.Equal("Bearer", SequencedHandler.Calls[1].AuthorizationScheme);
+        Assert.Equal("synthetic-refreshed-subscription-token", SequencedHandler.Calls[1].AuthorizationParameter);
+        Assert.DoesNotContain("synthetic-refreshed-subscription-token", SequencedHandler.Calls[1].Body, StringComparison.Ordinal);
+        Assert.Contains("synthetic-refreshed-subscription-token", File.ReadAllText(authFile.FilePath), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SubscriptionOAuthForbiddenProviderResponseMapsToScopeMissing()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-token",
+            DateTimeOffset.UtcNow.AddHours(2)));
+        using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("{\"error\":{\"message\":\"synthetic provider scope detail\"}}")
+        }));
+        var provider = CreateProvider(httpClient, new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            MaxRetries = 0
+        });
+
+        var ex = await Assert.ThrowsAsync<SocAgentModelProviderException>(() => provider.CompleteAsync(new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse { Status = "connected", Provider = "ChatGPT", Model = "gpt-test", AuthMode = "subscription_oauth" },
+            "bounded prompt",
+            2000), CancellationToken.None));
+
+        Assert.Equal("scope_missing", ex.ErrorCode);
+        Assert.DoesNotContain("synthetic provider scope detail", ex.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task OpenAiProviderMapsRateLimitToSafeErrorCode()
     {
         using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
@@ -118,6 +207,29 @@ public sealed class SocAgentModelProviderTests
         """;
     }
 
+    private static string ValidSubscriptionAuthJson(string accessToken, DateTimeOffset expiresAt, string? refreshToken = null)
+    {
+        var refreshLine = refreshToken is null ? string.Empty : $",\n        \"refresh_token\": \"{refreshToken}\"";
+        return $$"""
+        {
+          "providers": {
+            "chatgpt": {
+              "provider": "ChatGPT",
+              "auth_type": "subscription_oauth",
+              "token_type": "Bearer",
+              "access_token": "{{accessToken}}",
+              "expires_at": "{{expiresAt:O}}",
+              "audience": "https://api.openai.com/v1",
+              "issuer": "https://auth.openai.com/",
+              "scope": "openid profile offline_access model.request",
+              "token_endpoint": "https://auth.openai.com/oauth/token",
+              "entitlement_status": "available"{{refreshLine}}
+            }
+          }
+        }
+        """;
+    }
+
     private static OpenAiSocAgentModelProvider CreateProvider(HttpClient httpClient, SocAgentOptions? options = null)
     {
         options ??= new SocAgentOptions
@@ -153,6 +265,22 @@ public sealed class SocAgentModelProviderTests
             return responseFactory(request);
         }
     }
+
+    private sealed class SequencedHandler(Func<HttpRequestMessage, HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        public static List<RecordedCall> Calls { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            Calls.Add(new RecordedCall(request.RequestUri, request.Headers.Authorization?.Scheme, request.Headers.Authorization?.Parameter, body));
+            return responseFactory(request);
+        }
+    }
+
+    private sealed record RecordedCall(Uri? Uri, string? AuthorizationScheme, string? AuthorizationParameter, string Body);
 
     private sealed class SyntheticAuthFile : IDisposable
     {

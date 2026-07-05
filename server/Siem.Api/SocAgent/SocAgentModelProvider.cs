@@ -42,7 +42,7 @@ public sealed class OpenAiSocAgentModelProvider(
 
     public async Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
     {
-        var bearerCredential = GetBearerCredential();
+        var bearerCredential = await GetBearerCredentialAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(bearerCredential))
         {
             throw new SocAgentModelProviderException(
@@ -62,7 +62,7 @@ public sealed class OpenAiSocAgentModelProvider(
                 return new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, answer);
             }
 
-            var errorCode = MapStatusCode(response.StatusCode);
+            var errorCode = MapStatusCode(response.StatusCode, request.Status.AuthMode);
             if (IsRetryable(response.StatusCode) && attempt < maxRetries)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken);
@@ -204,8 +204,24 @@ public sealed class OpenAiSocAgentModelProvider(
         }
     }
 
-    private string? GetBearerCredential()
+    private async Task<string?> GetBearerCredentialAsync(CancellationToken cancellationToken)
     {
+        if (UsesSubscriptionOAuth(options.AuthMode))
+        {
+            var fileStatus = SocAgentSubscriptionOAuthCredentialLoader.Load(options, configuration, includeSecret: true);
+            if (fileStatus.ShouldRefresh())
+            {
+                fileStatus = await SocAgentSubscriptionOAuthCredentialLoader.RefreshAsync(fileStatus, options, httpClient, cancellationToken);
+            }
+
+            if (fileStatus.CanUseCredential)
+            {
+                return fileStatus.AccessToken;
+            }
+
+            throw new SocAgentModelProviderException(fileStatus.Status, fileStatus.OperatorMessage);
+        }
+
         if (UsesDelegatedAuthFile(options.AuthMode))
         {
             var fileStatus = SocAgentDelegatedAuthFileLoader.Load(options, configuration, includeSecret: true);
@@ -234,6 +250,17 @@ public sealed class OpenAiSocAgentModelProvider(
         return null;
     }
 
+    private static bool UsesSubscriptionOAuth(string? authMode)
+    {
+        return authMode?.Trim().Equals("subscription_oauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("subscription-oauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("subscriptionoauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("chatgpt_subscription_oauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("chatgpt-subscription-oauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("chatgpt_oauth", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("chatgpt-oauth", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     private static bool UsesDelegatedAuthFile(string? authMode)
     {
         return authMode?.Trim().Equals("delegated_file", StringComparison.OrdinalIgnoreCase) == true
@@ -257,11 +284,14 @@ public sealed class OpenAiSocAgentModelProvider(
         return statusCode == HttpStatusCode.TooManyRequests || numeric is >= 500 and <= 599;
     }
 
-    private static string MapStatusCode(HttpStatusCode statusCode)
+    private static string MapStatusCode(HttpStatusCode statusCode, string? authMode)
     {
         return statusCode switch
         {
-            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "auth_failed",
+            HttpStatusCode.Unauthorized => "auth_failed",
+            HttpStatusCode.Forbidden when UsesSubscriptionOAuth(authMode) => "scope_missing",
+            HttpStatusCode.Forbidden => "auth_failed",
+            HttpStatusCode.PaymentRequired when UsesSubscriptionOAuth(authMode) => "plan_limited",
             HttpStatusCode.PaymentRequired => "budget_limited",
             HttpStatusCode.TooManyRequests => "rate_limited",
             _ => "provider_error"
@@ -273,7 +303,9 @@ public sealed class OpenAiSocAgentModelProvider(
         return errorCode switch
         {
             "auth_failed" => "The external provider rejected the server-side credentials. Ask an admin to rotate or reconnect official provider credentials.",
+            "scope_missing" => "The external provider reported that the server-side OAuth credential lacks the required model-invocation scope.",
             "budget_limited" => "The external provider reported that budget or quota is unavailable.",
+            "plan_limited" => "The external provider reported that the subscription plan or entitlement does not permit this model request.",
             "rate_limited" => "The external provider rate limit was reached. Try again later or use local fallback.",
             _ => "The external provider returned an error. No provider secrets were exposed to the browser."
         };

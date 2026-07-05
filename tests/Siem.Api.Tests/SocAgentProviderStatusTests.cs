@@ -184,6 +184,159 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
+    public void SubscriptionOAuthWithSyntheticBundleReportsConnectedWithoutSecrets()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddHours(2),
+            refreshToken: "synthetic-subscription-refresh-token",
+            accountId: "acct_synthetic_private"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            Model = "gpt-test",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            SubscriptionAuthFileProviderKey = "chatgpt"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("connected", status.Status);
+        Assert.Equal("ChatGPT", status.Provider);
+        Assert.Equal("subscription_oauth", status.AuthMode);
+        Assert.Equal("chatgpt_subscription_oauth", status.ProviderPath);
+        Assert.Equal("subscription_oauth", status.AuthFileMode);
+        Assert.Equal("primary", status.SetupPriority);
+        Assert.Equal("model_scope_present", status.ScopeStatus);
+        Assert.Equal("available", status.EntitlementStatus);
+        Assert.Equal("available", status.RefreshStatus);
+        Assert.Equal("configured ChatGPT subscription OAuth file", status.CredentialSource);
+        Assert.False(status.RequiresConnection);
+        Assert.True(status.DataMayLeaveLocalSiem);
+        Assert.DoesNotContain("synthetic-subscription-access-token", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-subscription-refresh-token", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("acct_synthetic_private", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(authFile.FilePath, status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthMissingModelScopeFailsClosed()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddHours(2),
+            scopes: "openid profile offline_access"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("scope_missing", status.Status);
+        Assert.Equal("model_scope_missing", status.ScopeStatus);
+        Assert.True(status.RequiresConnection);
+        Assert.DoesNotContain("synthetic-subscription-access-token", status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthUnsupportedAudienceFailsClosed()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddHours(2),
+            audience: "https://chatgpt.com"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("unsupported_subscription_oauth", status.Status);
+        Assert.Contains("official OpenAI API audience", status.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(status.RequiresConnection);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthPlanLimitedFailsClosedWithoutConnectionPrompt()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddHours(2),
+            entitlementStatus: "plan_limited"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("plan_limited", status.Status);
+        Assert.Equal("plan_limited", status.EntitlementStatus);
+        Assert.False(status.RequiresConnection);
+        Assert.DoesNotContain("synthetic-subscription-access-token", status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthUnsupportedEntitlementFailsClosed()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddHours(2),
+            entitlementStatus: "unsupported"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("unsupported_subscription_oauth", status.Status);
+        Assert.Equal("unsupported", status.EntitlementStatus);
+        Assert.True(status.RequiresConnection);
+        Assert.DoesNotContain("synthetic-subscription-access-token", status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthNearExpiryWithRefreshTokenReportsRefreshRequired()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
+            "synthetic-subscription-access-token",
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            refreshToken: "synthetic-subscription-refresh-token"));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            AuthFileExpirySkewSeconds = 300
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("connected", status.Status);
+        Assert.Equal("refresh_required", status.RefreshStatus);
+        Assert.False(status.RequiresConnection);
+        Assert.DoesNotContain("synthetic-subscription-refresh-token", status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DelegatedAuthFileMissingPathFailsClosedWithAuthRequired()
     {
         var service = CreateService(new SocAgentOptions
@@ -294,6 +447,37 @@ public sealed class SocAgentProviderStatusTests
               "expires_at": "{{expiresAt:O}}",
               "audience": "{{audience}}",
               "issuer": "https://auth.openai.com/"{{refreshLine}}
+            }
+          }
+        }
+        """;
+    }
+
+    private static string ValidSubscriptionAuthJson(
+        string accessToken,
+        DateTimeOffset expiresAt,
+        string audience = "https://api.openai.com/v1",
+        string scopes = "openid profile offline_access model.request",
+        string entitlementStatus = "available",
+        string? refreshToken = null,
+        string? accountId = null)
+    {
+        var refreshLine = refreshToken is null ? string.Empty : $",\n        \"refresh_token\": \"{refreshToken}\"";
+        var accountLine = accountId is null ? string.Empty : $",\n        \"account\": {{ \"id\": \"{accountId}\", \"email\": \"synthetic@example.invalid\" }}";
+        return $$"""
+        {
+          "providers": {
+            "chatgpt": {
+              "provider": "ChatGPT",
+              "auth_type": "subscription_oauth",
+              "token_type": "Bearer",
+              "access_token": "{{accessToken}}",
+              "expires_at": "{{expiresAt:O}}",
+              "audience": "{{audience}}",
+              "issuer": "https://auth.openai.com/",
+              "scope": "{{scopes}}",
+              "token_endpoint": "https://auth.openai.com/oauth/token",
+              "entitlement_status": "{{entitlementStatus}}"{{refreshLine}}{{accountLine}}
             }
           }
         }

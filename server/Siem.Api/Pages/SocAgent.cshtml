@@ -28,9 +28,19 @@
             <span class="muted">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</span>
         </p>
         <p>@Model.ProviderStatus.Message</p>
-        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
+        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
         {
             <dl class="provider-metadata">
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath))
+                {
+                    <dt>Provider path</dt>
+                    <dd>@Model.ProviderStatus.ProviderPath</dd>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.AuthFileMode))
+                {
+                    <dt>Auth-file mode</dt>
+                    <dd>@Model.ProviderStatus.AuthFileMode</dd>
+                }
                 @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
                 {
                     <dt>Credential source</dt>
@@ -45,6 +55,16 @@
                 {
                     <dt>Refresh</dt>
                     <dd>@Model.ProviderStatus.RefreshStatus</dd>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus))
+                {
+                    <dt>Scope</dt>
+                    <dd>@Model.ProviderStatus.ScopeStatus</dd>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
+                {
+                    <dt>Entitlement</dt>
+                    <dd>@Model.ProviderStatus.EntitlementStatus</dd>
                 }
             </dl>
         }
@@ -63,6 +83,23 @@
             <p class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</p>
         </div>
     }
+</section>
+
+<section class="card provider-setup" aria-labelledby="provider-setup-title">
+    <h2 id="provider-setup-title">External provider setup</h2>
+    <div class="setup-grid">
+        <div>
+            <p class="page-kicker">Primary external path</p>
+            <h3>ChatGPT subscription OAuth</h3>
+            <p>Configure <code>SocAgent:AuthMode=SubscriptionOAuth</code> with a server-side, ignored <code>auth.json</code>-style credential file. Challenger SIEM validates official issuer/audience/scope metadata, refresh state, and entitlement hints before any bounded prompt can leave the local SIEM.</p>
+        </div>
+        <div>
+            <p class="page-kicker">Advanced alternatives</p>
+            <h3>API key or delegated API bearer</h3>
+            <p>Server-side OpenAI API-key and delegated API-bearer modes remain available for administrators who manage those credentials through ignored environment variables, ignored auth files, or secret stores.</p>
+        </div>
+    </div>
+    <p class="muted">Provider credentials, account identifiers, raw auth files, cookies, and full private paths are never rendered in the browser.</p>
 </section>
 
 <div class="chat-layout">

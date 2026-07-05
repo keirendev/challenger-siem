@@ -76,9 +76,15 @@ Optional configuration values under `Review` tune dashboard and default search b
     "Model": "soc-agent-local-v1",
     "FallbackToLocalWhenUnavailable": true,
     "ExternalCallsEnabled": false,
+    "PreferredExternalAuthMode": "SubscriptionOAuth",
     "ProviderSetupUrl": "https://platform.openai.com/api-keys",
+    "SubscriptionProviderSetupUrl": "https://help.openai.com/",
     "AuthFilePath": null,
     "AuthFileProviderKey": "openai",
+    "SubscriptionAuthFilePath": null,
+    "SubscriptionAuthFileProviderKey": "chatgpt",
+    "SubscriptionRequiredScopes": "model.request",
+    "SubscriptionTokenEndpoint": "https://auth.openai.com/oauth/token",
     "AuthFileExpirySkewSeconds": 300,
     "OpenAiBaseUrl": "https://api.openai.com/v1",
     "OpenAiChatCompletionsPath": "chat/completions",
@@ -92,7 +98,7 @@ Optional configuration values under `Review` tune dashboard and default search b
 }
 ```
 
-`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default; when OpenAI provider mode is explicitly enabled with server-side API-key or delegated auth-file credentials, the status card states that bounded/redacted tool context may leave the local SIEM, shows only safe credential-source/expiry/refresh metadata, and never exposes provider secrets or full auth-file paths to the browser.
+`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default while presenting ChatGPT subscription OAuth as the primary external setup path and API-key/delegated bearer modes as advanced alternatives. When an external provider mode is explicitly enabled with server-side credentials, the status card states that bounded/redacted tool context may leave the local SIEM, shows only safe credential-source/expiry/refresh/scope/entitlement metadata, and never exposes provider secrets, account identifiers, raw auth files, or full auth-file paths to the browser.
 
 ## Local smoke path
 

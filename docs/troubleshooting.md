@@ -68,13 +68,14 @@ For browser behavior, run a Playwright harness against the real app. Curl/HTML s
 
 ## soc-agent external provider remains unavailable
 
-If `/soc-agent` or `GET /api/v1/soc-agent/status` reports `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, or `provider_error`:
+If `/soc-agent` or `GET /api/v1/soc-agent/status` reports `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `plan_limited`, or `provider_error`:
 
-- Confirm `SocAgent__Provider=OpenAI` and `SocAgent__ExternalCallsEnabled=true` are set only in ignored local/server configuration.
+- Confirm `SocAgent__Provider=ChatGPT` (subscription OAuth) or `SocAgent__Provider=OpenAI` (API-key/delegated bearer) and `SocAgent__ExternalCallsEnabled=true` are set only in ignored local/server configuration.
+- For subscription OAuth mode, confirm `SocAgent__AuthMode=SubscriptionOAuth`, `SocAgent__SubscriptionAuthFilePath`, and `SocAgent__SubscriptionAuthFileProviderKey` point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository. The credential must declare the official OpenAI API audience, an allowlisted issuer when present, expiry, and the required model scope such as `model.request`.
 - For API-key mode, confirm an ignored server-side key source such as `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY` exists without printing it.
 - For delegated auth-file mode, confirm `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and `SocAgent__AuthFileProviderKey` point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository.
-- Reconnect/replace the file if status is `expired` or `refresh_failed`; this build does not refresh delegated tokens automatically.
-- Treat `unsupported_delegated_auth` as fail-closed: do not use browser cookie exports, consumer website session files, passwords, or unofficial endpoints.
+- Reconnect/replace the file if status is `expired` or `refresh_failed`; subscription OAuth refresh is attempted only for near-expiry tokens with an allowlisted official token endpoint, and delegated API-bearer tokens are not refreshed automatically.
+- Treat `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, and `plan_limited` as fail-closed: do not use browser cookie exports, consumer website session files, passwords, ungranted scopes, plan-bypassing workarounds, or unofficial endpoints.
 
 Never paste raw auth files, tokens, account IDs, email addresses, provider error bodies, or full local paths into issues, logs, screenshots, or PRs.
 
