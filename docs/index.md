@@ -7,6 +7,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [README landing page](../README.md) - concise project summary, safe quickstart, and repository layout.
 - [Operator guide](operators.md) - end-to-end setup and day-two operation overview.
 - [Contributor guide](contributors.md) - development workflow, review expectations, and documentation-maintenance checklist.
+- [Challenger family alignment](challenger-family-alignment.md) - shared branding, UX, engineering, safety, and contract-boundary expectations.
 - [Troubleshooting and FAQ](troubleshooting.md) - common local, API, agent, web-console, and lab validation issues.
 
 ## Architecture and design

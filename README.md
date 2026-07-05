@@ -89,6 +89,7 @@ CHANGELOG.md            Release notes and operator-visible changes
 Start with [docs/index.md](docs/index.md). Key pages:
 
 - [Operator guide](docs/operators.md)
+- [Challenger family alignment](docs/challenger-family-alignment.md)
 - [Architecture](docs/architecture.md)
 - [API contract v1](docs/api.md) and [schema design](docs/schema.md)
 - [Windows agent](docs/agent.md) and [agent configuration](docs/agent-config.md)
