@@ -132,7 +132,7 @@ After creating `.local/dev.env` or exporting the required environment variables,
 ./scripts/smoke-test-server.sh
 ```
 
-The script starts the API on local HTTP in `Development`, registers the example agent, ingests `examples/fake-event-batch.json`, queries it back, and writes temporary responses/logs under `.local/`. After it has ingested data, you can also start the API normally and use the web console to review the same events.
+The script starts the API on local HTTP in `Development`, registers the example agent, ingests `examples/fake-event-batch.json`, queries it back, and writes temporary responses/logs under `.local/`. After it has ingested data, you can also start the API normally and use the web console to review the same events. Set `SIEM_SMOKE_CLEANUP=1` to remove only that documented example agent data after a successful smoke run.
 
 To smoke-test the web console against seeded SIEM data without Docker, run:
 
@@ -140,7 +140,22 @@ To smoke-test the web console against seeded SIEM data without Docker, run:
 ./scripts/smoke-test-web.sh
 ```
 
-It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, and verifies the dashboard, agent inventory, event search, and event detail pages. Temporary HTML and API responses remain under `.local/`.
+It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, and verifies the dashboard, agent inventory, event search, event detail, and `soc-agent` status pages. Temporary HTML and API responses remain under `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` to remove only the per-run `web-smoke-*` agent data after a successful smoke run.
+
+To inspect or clean accumulated synthetic records without running a smoke test, use the guarded cleanup script. Dry-run is the default and prints only aggregate table counts:
+
+```bash
+./scripts/cleanup-synthetic-data.sh
+./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id web-smoke-12345
+```
+
+Execute mode requires an explicit confirmation phrase:
+
+```bash
+./scripts/cleanup-synthetic-data.sh --execute --confirm DELETE-SYNTHETIC-DATA
+```
+
+Do not use broad selectors or run cleanup against shared/client databases. Prefer exact `--agent-id` values for manual validation records.
 
 Manual equivalent:
 
