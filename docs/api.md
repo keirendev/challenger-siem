@@ -256,7 +256,7 @@ Content-Type: application/json
 }
 ```
 
-Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the official Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
 ## Alerts and detections
 

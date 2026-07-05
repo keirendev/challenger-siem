@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -23,6 +24,7 @@ internal sealed record SocAgentSubscriptionOAuthResult
     public string? RefreshToken { get; init; }
     public string? TokenEndpoint { get; init; }
     public string? ClientId { get; init; }
+    public string? AccountId { get; init; }
     public string? FilePath { get; init; }
     public string? ProviderKey { get; init; }
     public IReadOnlyList<string> Scopes { get; init; } = Array.Empty<string>();
@@ -265,6 +267,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             }
 
             var refreshToken = GetString(entry, "refresh_token", "refreshToken", "refresh");
+            var accountId = GetAccountId(entry, accessToken);
             var tokenEndpoint = isPiAuthJson ? null : ResolveTokenEndpoint(entry, options, configuration);
             var now = checkedAt ?? DateTimeOffset.UtcNow;
             var skewSeconds = Math.Clamp(options.AuthFileExpirySkewSeconds, 0, 3600);
@@ -323,7 +326,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             {
                 Status = "connected",
                 OperatorMessage = isPiAuthJson
-                    ? "Pi auth.json OpenAI Codex OAuth credentials are available server-side. Challenger SIEM will use only the configured official provider endpoint; browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths."
+                    ? "Pi auth.json OpenAI Codex OAuth credentials are available server-side. Challenger SIEM will use the ChatGPT Codex Responses backend for the configured model; browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths."
                     : "Server-side ChatGPT subscription OAuth credentials are available for an official OpenAI API model path. Browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths.",
                 RequiresConnection = false,
                 ConnectLabel = null,
@@ -338,6 +341,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 RefreshToken = includeSecret ? refreshToken?.Trim() : null,
                 TokenEndpoint = tokenEndpoint,
                 ClientId = includeSecret ? GetString(entry, "client_id", "clientId") : null,
+                AccountId = includeSecret ? accountId : null,
                 FilePath = fullPath,
                 ProviderKey = entryKey,
                 Scopes = scopes,
@@ -716,6 +720,64 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             JsonValueKind.False => "false",
             _ => null
         };
+    }
+
+    private static string? GetAccountId(JsonElement entry, string accessToken)
+    {
+        var direct = GetString(entry, "accountId", "account_id", "chatgpt_account_id", "chatgptAccountId");
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct.Trim();
+        }
+
+        if (TryGetObjectProperty(entry, out var account, "account") && account.ValueKind == JsonValueKind.Object)
+        {
+            var nested = GetString(account, "id", "accountId", "account_id", "chatgpt_account_id");
+            if (!string.IsNullOrWhiteSpace(nested))
+            {
+                return nested.Trim();
+            }
+        }
+
+        using var payload = DecodeJwtPayload(accessToken);
+        if (payload is null)
+        {
+            return null;
+        }
+
+        if (TryGetObjectProperty(payload.RootElement, out var auth, "https://api.openai.com/auth")
+            && auth.ValueKind == JsonValueKind.Object)
+        {
+            return GetString(auth, "chatgpt_account_id", "account_id", "accountId");
+        }
+
+        return null;
+    }
+
+    private static JsonDocument? DecodeJwtPayload(string token)
+    {
+        var parts = token.Split('.');
+        if (parts.Length < 2)
+        {
+            return null;
+        }
+
+        try
+        {
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            var padding = payload.Length % 4;
+            if (padding > 0)
+            {
+                payload = payload.PadRight(payload.Length + (4 - padding), '=');
+            }
+
+            var bytes = Convert.FromBase64String(payload);
+            return JsonDocument.Parse(Encoding.UTF8.GetString(bytes));
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     private static int? GetInt(JsonElement parent, params string[] names)
