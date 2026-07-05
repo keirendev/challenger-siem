@@ -191,6 +191,21 @@ create table if not exists alert_evidence (
 );
 create index if not exists idx_alert_evidence_alert on alert_evidence(alert_id);
 
+create table if not exists soc_agent_turns (
+    id bigserial primary key,
+    created_at timestamptz not null default now(),
+    provider text not null,
+    model text not null,
+    question text not null,
+    answer text not null,
+    tool_runs jsonb not null default '[]'::jsonb,
+    citations jsonb not null default '[]'::jsonb,
+    context_agent_id text null,
+    context_event_id uuid null
+);
+create index if not exists idx_soc_agent_turns_created on soc_agent_turns(created_at desc);
+create index if not exists idx_soc_agent_turns_context_agent on soc_agent_turns(context_agent_id);
+
 create table if not exists ingestion_errors (
     id bigserial primary key,
     agent_id text null,

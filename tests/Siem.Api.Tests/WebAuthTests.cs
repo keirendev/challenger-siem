@@ -43,6 +43,20 @@ public sealed class WebAuthTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task SocAgentWorkspaceRequiresOperatorLogin()
+    {
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        using var response = await client.GetAsync("/soc-agent");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Contains("/login", response.Headers.Location?.OriginalString, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task LoginRejectsInvalidReviewTokenWithoutSettingReviewCookie()
     {
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions

@@ -1,0 +1,91 @@
+@page "/soc-agent"
+@model Challenger.Siem.Api.Pages.SocAgentModel
+@{
+    ViewData["Title"] = "soc-agent";
+}
+
+<div class="page-header">
+    <div>
+        <h1>soc-agent</h1>
+        <p class="muted">Local SIEM-aware SOC analyst and detection-engineering harness. Tool-backed, bounded, and approval-gated for mutations.</p>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<form method="post" class="card filters">
+    <div class="form-row">
+        <label for="Question">Question</label>
+        <textarea id="Question" name="Question" rows="4" maxlength="4000">@Model.Question</textarea>
+    </div>
+    <div class="form-row">
+        <label for="ContextAgentId">Optional agent ID context</label>
+        <input id="ContextAgentId" name="ContextAgentId" value="@Model.ContextAgentId" />
+    </div>
+    <div class="actions">
+        <button type="submit">Ask soc-agent</button>
+    </div>
+</form>
+
+@if (Model.AgentResponse is not null)
+{
+    <section class="card">
+        <div class="page-header">
+            <h2>Answer</h2>
+            <span class="badge">@Model.AgentResponse.Provider / @Model.AgentResponse.Model</span>
+        </div>
+        <pre class="message-box">@Model.AgentResponse.Answer</pre>
+    </section>
+
+    <section class="table-card">
+        <h2>Tool activity</h2>
+        <table>
+            <thead><tr><th>Tool</th><th>Rows</th><th>Summary</th></tr></thead>
+            <tbody>
+                @foreach (var tool in Model.AgentResponse.ToolRuns)
+                {
+                    <tr><td>@tool.ToolName</td><td>@tool.RowCount</td><td>@tool.Summary</td></tr>
+                }
+            </tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <h2>Citations</h2>
+        @if (Model.AgentResponse.Citations.Count == 0)
+        {
+            <p class="muted">No citations were produced.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var citation in Model.AgentResponse.Citations)
+                {
+                    <li><a href="@citation.Url">@citation.Label</a> <span class="muted">@citation.Kind</span></li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section class="card">
+        <h2>Mutation safety</h2>
+        <p>soc-agent does not activate detections, change configuration, delete data, or edit source code. Detection engineering output remains a proposal until an authorized operator explicitly approves a future mutating workflow.</p>
+    </section>
+}
+else
+{
+    <section class="card">
+        <h2>Available local tools</h2>
+        <ul>
+            <li>agent inventory and coverage summary</li>
+            <li>source-health detail</li>
+            <li>recent event search and event detail citations</li>
+            <li>alert review and evidence links</li>
+            <li>detection rule metadata and prerequisites</li>
+            <li>inventory/audit-policy snapshot summaries</li>
+        </ul>
+    </section>
+}

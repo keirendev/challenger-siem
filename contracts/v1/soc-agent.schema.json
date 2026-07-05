@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/soc-agent.schema.json",
+  "title": "Challenger SIEM soc-agent Ask v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question"],
+  "properties": {
+    "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "context_agent_id": { "type": ["string", "null"], "maxLength": 128 },
+    "context_event_id": { "type": ["string", "null"], "format": "uuid" }
+  }
+}

@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added an authenticated local `soc-agent` web/API workspace with SIEM-aware tool orchestration, citations, bounded audit persistence, and current coverage/event/alert/detection/inventory context.
 - Added a Windows host full-coverage foundation with source-health contracts/storage/API/web review, coverage and inventory models, parser/detection catalogs, alert and detection skeletons, validation runbooks, and role-pack designs.
 - Documented the planned `soc-agent` web-console harness, official provider-auth guardrails, tool/approval model, and phased roadmap.
 - Added a comprehensive Windows host full-coverage SIEM target specification and a bite-sized GitHub issue backlog covering sources, telemetry requirements, normalization, health, detections, validation, and roadmap.

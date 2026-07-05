@@ -125,6 +125,21 @@ public sealed class FullCoverageServerTests
     }
 
     [Fact]
+    public void SocAgentContractsSerializeToolRunsAndCitations()
+    {
+        var response = new SocAgentAskResponse
+        {
+            Answer = "Synthetic answer",
+            ToolRuns = new[] { new SocAgentToolRunSummary { ToolName = "event_search", RowCount = 1, Summary = "one event" } },
+            Citations = new[] { new SocAgentCitation { Kind = "event_detail", Label = "Event", Url = "/events/detail" } }
+        };
+
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains("tool_runs", json, StringComparison.Ordinal);
+        Assert.Contains("citations", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AlertAndDetectionContractsSerializeWithSnakeCaseFields()
     {
         var alert = new AlertRecord

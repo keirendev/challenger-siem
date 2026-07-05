@@ -5,6 +5,7 @@ using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Api.Review;
+using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Npgsql;
@@ -41,10 +42,13 @@ builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<SourceHealthRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
 builder.Services.AddScoped<AlertRepository>();
+builder.Services.AddScoped<SocAgentRepository>();
+builder.Services.AddScoped<SocAgentService>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<ReviewRepository>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
+builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");
@@ -266,6 +270,30 @@ app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
 
     var alert = await alerts.GetAlertAsync(alertId, cancellationToken);
     return alert is null ? Results.NotFound() : Results.Ok(alert);
+});
+
+app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
+    HttpContext context,
+    SocAgentAskRequest request,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Question) || request.Question.Length > 4000)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["question"] = new[] { "Question is required and must be 4000 characters or less." }
+        });
+    }
+
+    return Results.Ok(await socAgent.AskAsync(request, cancellationToken));
 });
 
 app.MapGet("/api/v1/detections/rules", async Task<IResult> (

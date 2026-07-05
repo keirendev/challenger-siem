@@ -60,6 +60,10 @@ Stores bounded inventory snapshots for host identity, network, users/groups, ser
 
 Stores detection rule metadata, source prerequisites, normalized field prerequisites, severity/confidence, ATT&CK tags, and enabled state.
 
+### `soc_agent_turns`
+
+Stores bounded local `soc-agent` question/answer metadata, provider/model, tool-run summaries, citations, and optional context identifiers. It must not store provider secrets or unbounded raw telemetry.
+
 ### `alerts` and `alert_evidence`
 
 Stores detection alert review skeleton data and links alerts to event evidence.
@@ -93,6 +97,7 @@ limit 25;
 - `detection_rules(category)`
 - `alerts(status)`, `alerts(agent_id)`, and `alerts(created_at desc)`
 - `alert_evidence(alert_id)`
+- `soc_agent_turns(created_at desc)` and `soc_agent_turns(context_agent_id)`
 - `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
 
 ## Applying and validating the schema

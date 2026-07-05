@@ -21,6 +21,7 @@ The submitted token is compared server-side, is not logged, and is not stored in
 - `/events` - event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, and bounded limit.
 - `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
 - `/alerts` and `/alerts/detail?alert_id=<uuid>` - alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
+- `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering workspace that runs bounded server-side tools for agents, source health, events, alerts, detection rules, and inventory, then renders citations back to review pages.
 - `/audit-policy` - audit-policy drift snapshot review skeleton.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.
 
@@ -34,6 +35,15 @@ Optional configuration values under `Review` tune dashboard and default search b
     "StaleAgentMinutes": 15,
     "RecentEventHours": 24,
     "DefaultEventLimit": 100
+  },
+  "SocAgent": {
+    "Enabled": true,
+    "Provider": "Local",
+    "Model": "soc-agent-local-v1",
+    "MaxEvents": 5,
+    "MaxAgents": 10,
+    "MaxAlerts": 10,
+    "RequireApprovalForMutations": true
   }
 }
 ```
