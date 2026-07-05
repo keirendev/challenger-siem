@@ -91,6 +91,15 @@ public sealed record SocAgentProviderStatusResponse
     [JsonPropertyName("data_may_leave_local_siem")]
     public bool DataMayLeaveLocalSiem { get; init; }
 
+    [JsonPropertyName("credential_source")]
+    public string? CredentialSource { get; init; }
+
+    [JsonPropertyName("expires_at")]
+    public DateTimeOffset? ExpiresAt { get; init; }
+
+    [JsonPropertyName("refresh_status")]
+    public string? RefreshStatus { get; init; }
+
     [JsonPropertyName("checked_at")]
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
 }

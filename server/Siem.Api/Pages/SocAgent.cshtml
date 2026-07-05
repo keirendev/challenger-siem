@@ -28,6 +28,26 @@
             <span class="muted">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</span>
         </p>
         <p>@Model.ProviderStatus.Message</p>
+        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
+        {
+            <dl class="provider-metadata">
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
+                {
+                    <dt>Credential source</dt>
+                    <dd>@Model.ProviderStatus.CredentialSource</dd>
+                }
+                @if (Model.ProviderStatus.ExpiresAt is not null)
+                {
+                    <dt>Access token expires</dt>
+                    <dd>@Model.ProviderStatus.ExpiresAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</dd>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
+                {
+                    <dt>Refresh</dt>
+                    <dd>@Model.ProviderStatus.RefreshStatus</dd>
+                }
+            </dl>
+        }
         @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
         {
             <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>

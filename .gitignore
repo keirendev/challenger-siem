@@ -16,6 +16,9 @@ agentsettings*.json
 credentials.json
 credentials.*
 *.credentials.json
+auth.json
+auth.*.json
+*.auth.json
 passwords.*
 tokens.*
 connectionstrings*.json

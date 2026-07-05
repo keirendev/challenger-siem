@@ -41,6 +41,40 @@ public sealed class SocAgentModelProviderTests
     }
 
     [Fact]
+    public async Task OpenAiProviderUsesDelegatedAuthFileBearerWithoutPuttingSecretInBody()
+    {
+        using var authFile = SyntheticAuthFile.Create(ValidAuthJson("synthetic-delegated-provider-token", DateTimeOffset.UtcNow.AddHours(2)));
+        using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            {
+              "choices": [
+                { "message": { "content": "Delegated provider answer" } }
+              ]
+            }
+            """)
+        }));
+        var provider = CreateProvider(httpClient, new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "DelegatedFile",
+            ExternalCallsEnabled = true,
+            AuthFilePath = authFile.FilePath,
+            AuthFileProviderKey = "openai"
+        });
+
+        var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse { Status = "connected", Provider = "OpenAI", Model = "gpt-test", AuthMode = "delegated_file" },
+            "bounded prompt",
+            2000), CancellationToken.None);
+
+        Assert.Equal("Delegated provider answer", result.Answer);
+        Assert.Equal("Bearer", RecordingHandler.LastAuthorizationScheme);
+        Assert.Equal("synthetic-delegated-provider-token", RecordingHandler.LastAuthorizationParameter);
+        Assert.DoesNotContain("synthetic-delegated-provider-token", RecordingHandler.LastRequestBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task OpenAiProviderMapsRateLimitToSafeErrorCode()
     {
         using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
@@ -65,6 +99,25 @@ public sealed class SocAgentModelProviderTests
         Assert.DoesNotContain("synthetic rate limit", ex.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string ValidAuthJson(string accessToken, DateTimeOffset expiresAt)
+    {
+        return $$"""
+        {
+          "providers": {
+            "openai": {
+              "provider": "OpenAI",
+              "auth_type": "delegated_bearer",
+              "token_type": "Bearer",
+              "access_token": "{{accessToken}}",
+              "expires_at": "{{expiresAt:O}}",
+              "audience": "https://api.openai.com/v1",
+              "issuer": "https://auth.openai.com/"
+            }
+          }
+        }
+        """;
+    }
+
     private static OpenAiSocAgentModelProvider CreateProvider(HttpClient httpClient, SocAgentOptions? options = null)
     {
         options ??= new SocAgentOptions
@@ -86,16 +139,48 @@ public sealed class SocAgentModelProviderTests
     {
         public static Uri? LastRequestUri { get; private set; }
         public static string? LastAuthorizationScheme { get; private set; }
+        public static string? LastAuthorizationParameter { get; private set; }
         public static string LastRequestBody { get; private set; } = string.Empty;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
             LastAuthorizationScheme = request.Headers.Authorization?.Scheme;
+            LastAuthorizationParameter = request.Headers.Authorization?.Parameter;
             LastRequestBody = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             return responseFactory(request);
+        }
+    }
+
+    private sealed class SyntheticAuthFile : IDisposable
+    {
+        private readonly string directory;
+
+        private SyntheticAuthFile(string directory, string filePath)
+        {
+            this.directory = directory;
+            FilePath = filePath;
+        }
+
+        public string FilePath { get; }
+
+        public static SyntheticAuthFile Create(string content)
+        {
+            var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "challenger-siem-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var filePath = System.IO.Path.Combine(directory, "auth.json");
+            File.WriteAllText(filePath, content);
+            return new SyntheticAuthFile(directory, filePath);
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
         }
     }
 }

@@ -42,8 +42,8 @@ public sealed class OpenAiSocAgentModelProvider(
 
     public async Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
     {
-        var apiKey = GetApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var bearerCredential = GetBearerCredential();
+        if (string.IsNullOrWhiteSpace(bearerCredential))
         {
             throw new SocAgentModelProviderException(
                 "provider_not_configured",
@@ -54,7 +54,7 @@ public sealed class OpenAiSocAgentModelProvider(
         var maxRetries = Math.Clamp(options.MaxRetries, 0, 3);
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            using var httpRequest = CreateRequest(endpoint, apiKey, request);
+            using var httpRequest = CreateRequest(endpoint, bearerCredential, request);
             using var response = await SendAsync(httpRequest, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
@@ -101,7 +101,7 @@ public sealed class OpenAiSocAgentModelProvider(
         }
     }
 
-    private HttpRequestMessage CreateRequest(Uri endpoint, string apiKey, SocAgentModelProviderRequest request)
+    private HttpRequestMessage CreateRequest(Uri endpoint, string bearerCredential, SocAgentModelProviderRequest request)
     {
         var payload = new
         {
@@ -127,7 +127,7 @@ public sealed class OpenAiSocAgentModelProvider(
         {
             Content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json")
         };
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerCredential);
         AddOptionalHeader(httpRequest, "OpenAI-Organization", configuration["OpenAI:OrganizationId"] ?? configuration["OPENAI_ORGANIZATION"]);
         AddOptionalHeader(httpRequest, "OpenAI-Project", configuration["OpenAI:ProjectId"] ?? configuration["OPENAI_PROJECT"]);
         return httpRequest;
@@ -204,8 +204,19 @@ public sealed class OpenAiSocAgentModelProvider(
         }
     }
 
-    private string? GetApiKey()
+    private string? GetBearerCredential()
     {
+        if (UsesDelegatedAuthFile(options.AuthMode))
+        {
+            var fileStatus = SocAgentDelegatedAuthFileLoader.Load(options, configuration, includeSecret: true);
+            if (fileStatus.CanUseCredential)
+            {
+                return fileStatus.AccessToken;
+            }
+
+            throw new SocAgentModelProviderException(fileStatus.Status, fileStatus.OperatorMessage);
+        }
+
         foreach (var candidate in new[]
         {
             options.OpenAiApiKey,
@@ -221,6 +232,15 @@ public sealed class OpenAiSocAgentModelProvider(
         }
 
         return null;
+    }
+
+    private static bool UsesDelegatedAuthFile(string? authMode)
+    {
+        return authMode?.Trim().Equals("delegated_file", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("delegated-file", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("delegatedfile", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("auth_file", StringComparison.OrdinalIgnoreCase) == true
+            || authMode?.Trim().Equals("auth-file", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static void AddOptionalHeader(HttpRequestMessage request, string name, string? value)

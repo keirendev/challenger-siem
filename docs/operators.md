@@ -100,7 +100,7 @@ Common operator path:
 4. Open event detail to inspect normalized fields, entities, message text, and raw JSON for that event.
 5. Use **Alerts** to review the current alert foundation and empty-state handling until detection execution is expanded.
 6. Use **Graphs** to create operator-managed relationship graphs and optionally request proposal-only `soc-agent` graph updates.
-7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use official server-side provider authentication only.
+7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use official server-side provider authentication only, either API-key credentials or a documented delegated auth file kept out of git.
 8. Use **Audit policy** and **About** for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot examples generated from synthetic data.

@@ -15,6 +15,9 @@ public sealed class SocAgentOptions
     public bool ExternalCallsEnabled { get; set; }
     public string? ProviderSetupUrl { get; set; } = "https://platform.openai.com/api-keys";
     public string? AuthorizationUrl { get; set; }
+    public string? AuthFilePath { get; set; }
+    public string AuthFileProviderKey { get; set; } = "openai";
+    public int AuthFileExpirySkewSeconds { get; set; } = 300;
     public string? OpenAiApiKey { get; set; }
     public string OpenAiBaseUrl { get; set; } = "https://api.openai.com/v1";
     public string OpenAiChatCompletionsPath { get; set; } = "chat/completions";

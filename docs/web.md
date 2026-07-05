@@ -77,6 +77,9 @@ Optional configuration values under `Review` tune dashboard and default search b
     "FallbackToLocalWhenUnavailable": true,
     "ExternalCallsEnabled": false,
     "ProviderSetupUrl": "https://platform.openai.com/api-keys",
+    "AuthFilePath": null,
+    "AuthFileProviderKey": "openai",
+    "AuthFileExpirySkewSeconds": 300,
     "OpenAiBaseUrl": "https://api.openai.com/v1",
     "OpenAiChatCompletionsPath": "chat/completions",
     "MaxProviderOutputTokens": 1200,
@@ -89,7 +92,7 @@ Optional configuration values under `Review` tune dashboard and default search b
 }
 ```
 
-`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default; when OpenAI provider mode is explicitly enabled with server-side credentials, the status card states that bounded/redacted tool context may leave the local SIEM and the browser never receives provider secrets.
+`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default; when OpenAI provider mode is explicitly enabled with server-side API-key or delegated auth-file credentials, the status card states that bounded/redacted tool context may leave the local SIEM, shows only safe credential-source/expiry/refresh metadata, and never exposes provider secrets or full auth-file paths to the browser.
 
 ## Local smoke path
 

@@ -66,6 +66,18 @@ Then inspect only the needed bounded files under `.local/`, such as the smoke AP
 
 For browser behavior, run a Playwright harness against the real app. Curl/HTML smoke checks do not validate redirects, cookies, form behavior, or user-visible navigation as fully as a browser.
 
+## soc-agent external provider remains unavailable
+
+If `/soc-agent` or `GET /api/v1/soc-agent/status` reports `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, or `provider_error`:
+
+- Confirm `SocAgent__Provider=OpenAI` and `SocAgent__ExternalCallsEnabled=true` are set only in ignored local/server configuration.
+- For API-key mode, confirm an ignored server-side key source such as `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY` exists without printing it.
+- For delegated auth-file mode, confirm `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and `SocAgent__AuthFileProviderKey` point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository.
+- Reconnect/replace the file if status is `expired` or `refresh_failed`; this build does not refresh delegated tokens automatically.
+- Treat `unsupported_delegated_auth` as fail-closed: do not use browser cookie exports, consumer website session files, passwords, or unofficial endpoints.
+
+Never paste raw auth files, tokens, account IDs, email addresses, provider error bodies, or full local paths into issues, logs, screenshots, or PRs.
+
 ## Dashboard or agent inventory shows unexpected stale agents
 
 `stale` is computed for active registrations whose `last_seen` exceeds `Review:StaleAgentMinutes`. Retiring stale lab registrations through the web console sets registration status to `disabled` and preserves historical telemetry. Do not delete database rows to hide stale agents unless an operator explicitly approves a data cleanup path.
