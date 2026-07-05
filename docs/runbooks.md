@@ -56,6 +56,26 @@ Open the API base URL in a browser, log in with `Auth__ReviewToken`, and use:
 
 The scripts write temporary logs and responses under `.local/` only.
 
+To remove only allowlisted synthetic smoke data after validation, first run the dry-run cleanup and review aggregate counts:
+
+```bash
+./scripts/cleanup-synthetic-data.sh
+```
+
+Execute deletion only when the selectors are correct and the target database is disposable/local:
+
+```bash
+./scripts/cleanup-synthetic-data.sh --execute --confirm DELETE-SYNTHETIC-DATA
+```
+
+For a one-off manual run, prefer exact IDs:
+
+```bash
+./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id web-smoke-12345 --execute --confirm DELETE-SYNTHETIC-DATA
+```
+
+The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Cleanup output remains under `.local/`.
+
 ## 5. Use soc-agent chat safely
 
 1. Start the API and sign in to the review console.

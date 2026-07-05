@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added a guarded synthetic web/API test-data cleanup script with dry-run defaults, explicit execution confirmation, smoke-script cleanup hooks, docs, and integration coverage.
 - Added a persistent `soc-agent` chat workspace with provider status/connect UX, additive chat APIs, bounded session/message persistence, and official ChatGPT/OpenAI setup guardrails.
 - Added authenticated stale-agent cleanup controls that retire inactive registrations from default dashboard/inventory views without deleting telemetry.
 - Added an authenticated local `soc-agent` web/API workspace with SIEM-aware tool orchestration, citations, bounded audit persistence, and current coverage/event/alert/detection/inventory context.

@@ -84,3 +84,9 @@ print('Smoke test passed')
 print(f'accepted={accepted} duplicates={duplicates} rejected={rejected}')
 print(f'events_returned={events_returned}')
 PY
+
+if [[ "${SIEM_SMOKE_CLEANUP:-0}" == "1" ]]; then
+  ./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id "win11-test-001" --execute --confirm DELETE-SYNTHETIC-DATA \
+    > .local/smoke-cleanup.txt
+  echo "smoke_cleanup=.local/smoke-cleanup.txt"
+fi

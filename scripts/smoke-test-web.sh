@@ -164,3 +164,9 @@ if 'soc-agent chat' not in soc_agent or 'Provider status' not in soc_agent:
 print('Web smoke test passed')
 print(f'agent_id={agent_id}')
 PY
+
+if [[ "${SIEM_WEB_SMOKE_CLEANUP:-0}" == "1" ]]; then
+  ./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id "$AGENT_ID" --execute --confirm DELETE-SYNTHETIC-DATA \
+    > .local/web-smoke-cleanup.txt
+  echo "web_smoke_cleanup=.local/web-smoke-cleanup.txt"
+fi
