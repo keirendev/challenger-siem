@@ -94,6 +94,7 @@ See:
 - `docs/dependencies.md`
 - `docs/development.md`
 - `docs/milestones.md`
+- `docs/soc-agent.md`
 - `docs/versioning.md`
 - `docs/web.md`
 - `docs/runbooks.md`

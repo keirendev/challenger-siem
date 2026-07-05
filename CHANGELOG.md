@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Documented the planned `soc-agent` web-console harness, official provider-auth guardrails, tool/approval model, and phased roadmap.
 - Added startup validation for required database, enrollment-token, and review-token configuration with non-secret error messages.
 - Added PostgreSQL schema apply/validation scripts plus opt-in PostgreSQL integration coverage for registration, token rotation, ingest/dedup/search, heartbeat persistence, ingestion error recording, and web console data display.
 - Persisted authenticated ingest validation failures to `ingestion_errors` with bounded secret-safe context.
