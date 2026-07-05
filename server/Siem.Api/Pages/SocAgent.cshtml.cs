@@ -5,43 +5,114 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Challenger.Siem.Api.Pages;
 
-public sealed class SocAgentModel(SocAgentService socAgent) : PageModel
+public sealed class SocAgentModel(
+    SocAgentService socAgent,
+    ILogger<SocAgentModel> logger) : PageModel
 {
-    [BindProperty]
-    public string Question { get; set; } = "Summarize current coverage, alerts, and recent events.";
+    [BindProperty(SupportsGet = true, Name = "session_id")]
+    public Guid? SessionId { get; set; }
 
-    [BindProperty]
+    [BindProperty(SupportsGet = true, Name = "agent_id")]
     public string? ContextAgentId { get; set; }
 
-    public SocAgentAskResponse? AgentResponse { get; private set; }
-    public string? ErrorMessage { get; private set; }
+    [BindProperty]
+    public string Message { get; set; } = string.Empty;
 
-    public void OnGet([FromQuery(Name = "agent_id")] string? agentId)
+    [BindProperty]
+    public string? ComposerContextAgentId { get; set; }
+
+    [TempData]
+    public string? ErrorMessage { get; set; }
+
+    public SocAgentProviderStatusResponse ProviderStatus { get; private set; } = new();
+
+    public IReadOnlyList<SocAgentSessionSummary> Sessions { get; private set; } = Array.Empty<SocAgentSessionSummary>();
+
+    public SocAgentSessionSummary? CurrentSession { get; private set; }
+
+    public IReadOnlyList<SocAgentChatMessageDto> Messages { get; private set; } = Array.Empty<SocAgentChatMessageDto>();
+
+    public bool HasCurrentSession => CurrentSession is not null;
+
+    public async Task OnGetAsync(CancellationToken cancellationToken)
     {
-        ContextAgentId = agentId;
+        await LoadPageAsync(cancellationToken);
     }
 
-    public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
+    public async Task<IActionResult> OnPostSendAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(Question) || Question.Length > 4000)
+        var contextAgentId = string.IsNullOrWhiteSpace(ComposerContextAgentId)
+            ? ContextAgentId
+            : ComposerContextAgentId;
+
+        if (string.IsNullOrWhiteSpace(Message) || Message.Length > 4000)
         {
-            ErrorMessage = "Enter a question up to 4000 characters.";
-            return Page();
+            ErrorMessage = "Enter a message up to 4000 characters.";
+            return RedirectToPage(new { session_id = SessionId, agent_id = contextAgentId });
         }
 
         try
         {
-            AgentResponse = await socAgent.AskAsync(new SocAgentAskRequest
+            var response = await socAgent.SendChatMessageAsync(SessionId, new SocAgentChatRequest
             {
-                Question = Question,
-                ContextAgentId = string.IsNullOrWhiteSpace(ContextAgentId) ? null : ContextAgentId.Trim()
+                Message = Message,
+                ContextAgentId = string.IsNullOrWhiteSpace(contextAgentId) ? null : contextAgentId.Trim()
             }, cancellationToken);
+
+            return RedirectToPage(new { session_id = response.Session.SessionId });
+        }
+        catch (KeyNotFoundException)
+        {
+            ErrorMessage = "The selected soc-agent chat session was not found. Start a new chat and try again.";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            ErrorMessage = "soc-agent could not complete the request. Confirm the database schema is applied and try again.";
+            logger.LogWarning(ex, "soc-agent chat message could not be completed.");
+            ErrorMessage = "soc-agent could not complete the chat request. Confirm the database schema is applied and try again.";
         }
 
-        return Page();
+        return RedirectToPage(new { session_id = SessionId, agent_id = contextAgentId });
+    }
+
+    public string StatusBadgeClass()
+    {
+        return ProviderStatus.Status switch
+        {
+            "local" => "ok",
+            "connected" => "ok",
+            "disabled" => "warning",
+            "provider_not_configured" => "warning",
+            "auth_required" => "warning",
+            _ => "danger"
+        };
+    }
+
+    public string RoleLabel(SocAgentChatMessageDto message)
+    {
+        return string.Equals(message.Role, "operator", StringComparison.OrdinalIgnoreCase)
+            ? "Operator"
+            : "soc-agent";
+    }
+
+    private async Task LoadPageAsync(CancellationToken cancellationToken)
+    {
+        ProviderStatus = socAgent.GetProviderStatus();
+        Sessions = await socAgent.GetRecentSessionsAsync(cancellationToken);
+        if (SessionId.HasValue)
+        {
+            var detail = await socAgent.GetSessionDetailAsync(SessionId.Value, cancellationToken);
+            if (detail is null)
+            {
+                ErrorMessage = "The selected soc-agent chat session was not found.";
+                SessionId = null;
+            }
+            else
+            {
+                CurrentSession = detail.Session;
+                Messages = detail.Messages;
+                ProviderStatus = detail.ProviderStatus;
+                ContextAgentId = detail.Session.ContextAgentId ?? ContextAgentId;
+            }
+        }
     }
 }

@@ -45,6 +45,7 @@ Open the API base URL in a browser, log in with `Auth__ReviewToken`, and use:
 - `/events` for event search.
 - `/events/detail?agent_id=<id>&event_id=<uuid>` for raw JSON and normalized fields.
 - `/about` for version/environment/database status.
+- `/soc-agent` for bounded chat-based SIEM investigation with provider status and citations.
 
 ## 4. Fake ingest/search smoke test
 
@@ -55,7 +56,15 @@ Open the API base URL in a browser, log in with `Auth__ReviewToken`, and use:
 
 The scripts write temporary logs and responses under `.local/` only.
 
-## 5. Retire stale lab agents safely
+## 5. Use soc-agent chat safely
+
+1. Start the API and sign in to the review console.
+2. Open `/soc-agent` and confirm the provider status banner.
+3. For the default `Local` provider, ask a bounded investigation question and follow citations back to review pages.
+4. If an external ChatGPT/OpenAI provider is selected but not configured, use only the official setup/connect action shown by the page. Do not paste provider passwords, browser cookies, or unofficial tokens into Challenger SIEM.
+5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
+
+## 6. Retire stale lab agents safely
 
 Use the web console instead of destructive database deletes when old smoke-test or lab registrations inflate inventory counts:
 
@@ -67,7 +76,7 @@ Use the web console instead of destructive database deletes when old smoke-test 
 
 Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
 
-## 6. Prepare Windows agent package
+## 7. Prepare Windows agent package
 
 ```bash
 ./scripts/publish-windows-agent.sh
@@ -81,7 +90,7 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
 
 Copy only the generated executable and ignored generated `agentsettings.json` from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
 
-## 7. Windows service install/start/stop
+## 8. Windows service install/start/stop
 
 Preview without changing the host:
 
@@ -107,7 +116,7 @@ The uninstall script preserves data by default:
 
 Use `-RemoveData` only for disposable lab cleanup after explicit approval.
 
-## 8. Windows lab E2E validation
+## 9. Windows lab E2E validation
 
 Authorized current lab VM: `192.168.122.240`.
 

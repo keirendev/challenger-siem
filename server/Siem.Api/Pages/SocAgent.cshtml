@@ -2,13 +2,15 @@
 @model Challenger.Siem.Api.Pages.SocAgentModel
 @{
     ViewData["Title"] = "soc-agent";
+    var composerContextAgentId = Model.ContextAgentId ?? Model.CurrentSession?.ContextAgentId;
 }
 
 <div class="page-header">
     <div>
-        <h1>soc-agent</h1>
-        <p class="muted">Local SIEM-aware SOC analyst and detection-engineering harness. Tool-backed, bounded, and approval-gated for mutations.</p>
+        <h1>soc-agent chat</h1>
+        <p class="muted">Conversational SIEM investigation with bounded server-side tools, citations, and proposal-only safety boundaries.</p>
     </div>
+    <a class="button secondary" asp-page="/SocAgent">New chat</a>
 </div>
 
 @if (Model.ErrorMessage is not null)
@@ -16,76 +18,150 @@
     <div class="alert" role="alert">@Model.ErrorMessage</div>
 }
 
-<form method="post" class="card filters">
-    <div class="form-row">
-        <label for="Question">Question</label>
-        <textarea id="Question" name="Question" rows="4" maxlength="4000">@Model.Question</textarea>
-    </div>
-    <div class="form-row">
-        <label for="ContextAgentId">Optional agent ID context</label>
-        <input id="ContextAgentId" name="ContextAgentId" value="@Model.ContextAgentId" />
-    </div>
-    <div class="actions">
-        <button type="submit">Ask soc-agent</button>
-    </div>
-</form>
-
-@if (Model.AgentResponse is not null)
-{
-    <section class="card">
-        <div class="page-header">
-            <h2>Answer</h2>
-            <span class="badge">@Model.AgentResponse.Provider / @Model.AgentResponse.Model</span>
-        </div>
-        <pre class="message-box">@Model.AgentResponse.Answer</pre>
-    </section>
-
-    <section class="table-card">
-        <h2>Tool activity</h2>
-        <table>
-            <thead><tr><th>Tool</th><th>Rows</th><th>Summary</th></tr></thead>
-            <tbody>
-                @foreach (var tool in Model.AgentResponse.ToolRuns)
-                {
-                    <tr><td>@tool.ToolName</td><td>@tool.RowCount</td><td>@tool.Summary</td></tr>
-                }
-            </tbody>
-        </table>
-    </section>
-
-    <section class="card">
-        <h2>Citations</h2>
-        @if (Model.AgentResponse.Citations.Count == 0)
+<section class="card provider-status" aria-labelledby="provider-status-title">
+    <div>
+        <h2 id="provider-status-title">Provider status</h2>
+        <p>
+            <span class="badge @Model.StatusBadgeClass()">@Model.ProviderStatus.Status</span>
+            <strong>@Model.ProviderStatus.DisplayName</strong>
+            <span class="muted">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</span>
+        </p>
+        <p>@Model.ProviderStatus.Message</p>
+        @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
         {
-            <p class="muted">No citations were produced.</p>
+            <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
+        }
+    </div>
+    @if (Model.ProviderStatus.RequiresConnection)
+    {
+        <div class="provider-action">
+            @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
+            {
+                <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
+            }
+            <p class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</p>
+        </div>
+    }
+</section>
+
+<div class="chat-layout">
+    <aside class="card chat-sessions" aria-labelledby="sessions-title">
+        <h2 id="sessions-title">Chat history</h2>
+        @if (Model.Sessions.Count == 0)
+        {
+            <p class="muted">No saved chats yet.</p>
         }
         else
         {
             <ul>
-                @foreach (var citation in Model.AgentResponse.Citations)
+                @foreach (var session in Model.Sessions)
                 {
-                    <li><a href="@citation.Url">@citation.Label</a> <span class="muted">@citation.Kind</span></li>
+                    <li>
+                        <a class="@(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId">
+                            <span>@session.Title</span>
+                            <span class="muted">@session.MessageCount messages · @session.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                        </a>
+                    </li>
                 }
             </ul>
         }
-    </section>
+    </aside>
 
-    <section class="card">
-        <h2>Mutation safety</h2>
-        <p>soc-agent does not activate detections, change configuration, delete data, or edit source code. Detection engineering output remains a proposal until an authorized operator explicitly approves a future mutating workflow.</p>
+    <section class="chat-main" aria-labelledby="thread-title">
+        <div class="card chat-thread">
+            <div class="page-header">
+                <div>
+                    <h2 id="thread-title">@(Model.CurrentSession?.Title ?? "New investigation")</h2>
+                    @if (Model.CurrentSession is not null)
+                    {
+                        <p class="muted">Session @Model.CurrentSession.SessionId · @Model.CurrentSession.MessageCount messages</p>
+                    }
+                    else
+                    {
+                        <p class="muted">Ask a question to start a persisted investigation thread.</p>
+                    }
+                </div>
+            </div>
+
+            @if (Model.Messages.Count == 0)
+            {
+                <div class="empty chat-empty">
+                    <h3>Start a SOC investigation</h3>
+                    <p>Try: “Summarize active coverage gaps and recent alerts” or open an agent context from inventory.</p>
+                </div>
+            }
+            else
+            {
+                <ol class="message-list" aria-label="soc-agent message thread">
+                    @foreach (var message in Model.Messages)
+                    {
+                        <li class="message-bubble @(message.Role == "operator" ? "operator" : "assistant")" id="message-@message.MessageId">
+                            <div class="message-meta">
+                                <strong>@Model.RoleLabel(message)</strong>
+                                <span>@message.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
+                                @if (!string.IsNullOrWhiteSpace(message.Provider))
+                                {
+                                    <span class="badge">@message.Provider / @message.Model</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(message.ErrorCode))
+                                {
+                                    <span class="badge danger">@message.ErrorCode</span>
+                                }
+                            </div>
+                            <pre class="message-box">@message.Content</pre>
+
+                            @if (message.ToolRuns.Count > 0)
+                            {
+                                <details class="tool-details" open>
+                                    <summary>Tool activity (@message.ToolRuns.Count)</summary>
+                                    <table>
+                                        <thead><tr><th>Tool</th><th>Rows</th><th>Summary</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var tool in message.ToolRuns)
+                                            {
+                                                <tr><td>@tool.ToolName</td><td>@tool.RowCount</td><td>@tool.Summary</td></tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </details>
+                            }
+
+                            @if (message.Citations.Count > 0)
+                            {
+                                <div class="citations">
+                                    <h3>Citations</h3>
+                                    <ul>
+                                        @foreach (var citation in message.Citations)
+                                        {
+                                            <li><a href="@citation.Url">@citation.Label</a> <span class="muted">@citation.Kind</span></li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </li>
+                    }
+                </ol>
+            }
+        </div>
+
+        <form method="post" asp-page-handler="Send" class="card chat-composer" aria-label="Send a soc-agent message">
+            <input type="hidden" asp-for="SessionId" />
+            <div class="form-row">
+                <label for="Message">Message</label>
+                <textarea id="Message" asp-for="Message" rows="4" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, or a host investigation." required></textarea>
+            </div>
+            <div class="form-row">
+                <label for="ComposerContextAgentId">Optional agent ID context</label>
+                <input id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" />
+            </div>
+            <div class="actions">
+                <button type="submit">Send message</button>
+                @if (Model.HasCurrentSession)
+                {
+                    <a class="button secondary" asp-page="/SocAgent">Start new chat</a>
+                }
+            </div>
+            <p class="muted">soc-agent can summarize and cite SIEM data, but it cannot mutate detections, configuration, agents, stored data, or repository files.</p>
+        </form>
     </section>
-}
-else
-{
-    <section class="card">
-        <h2>Available local tools</h2>
-        <ul>
-            <li>agent inventory and coverage summary</li>
-            <li>source-health detail</li>
-            <li>recent event search and event detail citations</li>
-            <li>alert review and evidence links</li>
-            <li>detection rule metadata and prerequisites</li>
-            <li>inventory/audit-policy snapshot summaries</li>
-        </ul>
-    </section>
-}
+</div>

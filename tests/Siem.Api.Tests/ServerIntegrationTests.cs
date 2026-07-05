@@ -107,6 +107,69 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task SocAgentChatEndpointsPersistSessionAndKeepOneShotAskCompatible()
+    {
+        var connectionString = database.RequireConnectionString();
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+        Assert.Equal("local", status.Status);
+        Assert.False(status.RequiresConnection);
+
+        var oneShot = await PostJsonWithReviewTokenAsync<SocAgentAskResponse>(client, "/api/v1/soc-agent/ask", new SocAgentAskRequest
+        {
+            Question = "Summarize current SIEM posture."
+        });
+        Assert.Contains("soc-agent local SIEM assessment", oneShot.Answer, StringComparison.Ordinal);
+        Assert.NotEmpty(oneShot.ToolRuns);
+
+        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        {
+            Title = "Synthetic investigation"
+        });
+        Assert.NotEqual(Guid.Empty, session.SessionId);
+
+        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        {
+            Message = "List current coverage and alert priorities."
+        });
+        Assert.Equal(session.SessionId, chat.Session.SessionId);
+        Assert.Equal("operator", chat.UserMessage.Role);
+        Assert.Equal("soc_agent", chat.AssistantMessage.Role);
+        Assert.NotEmpty(chat.AssistantMessage.ToolRuns);
+        Assert.Contains("Recommended next steps", chat.AssistantMessage.Content, StringComparison.Ordinal);
+
+        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        Assert.Equal(session.SessionId, detail.Session.SessionId);
+        Assert.True(detail.Messages.Count >= 2);
+        Assert.Contains(detail.Messages, message => message.Role == "operator");
+        Assert.Contains(detail.Messages, message => message.Role == "soc_agent");
+    }
+
+    [Fact]
+    public async Task SocAgentStatusReportsOfficialSetupWhenExternalProviderIsNotConfigured()
+    {
+        using var factory = CreateFactory(
+            "Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=test",
+            new Dictionary<string, string?>
+            {
+                ["SocAgent:Provider"] = "OpenAI",
+                ["SocAgent:ProviderDisplayName"] = "OpenAI ChatGPT",
+                ["SocAgent:AuthMode"] = "ApiKey",
+                ["SocAgent:ExternalCallsEnabled"] = "true",
+                ["SocAgent:ProviderSetupUrl"] = "https://platform.openai.com/api-keys"
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+
+        Assert.Equal("provider_not_configured", status.Status);
+        Assert.True(status.RequiresConnection);
+        Assert.Equal("https://platform.openai.com/api-keys", status.ConnectUrl);
+    }
+
+    [PostgresFact]
     public async Task DisabledAgentTokenIsRejectedUntilRegistrationReactivatesAgent()
     {
         var connectionString = database.RequireConnectionString();
@@ -138,19 +201,31 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Equal("active", status);
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(string connectionString)
+    private static WebApplicationFactory<Program> CreateFactory(
+        string connectionString,
+        IReadOnlyDictionary<string, string?>? overrides = null)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                var values = new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:SiemDatabase"] = connectionString,
                     ["Auth:EnrollmentToken"] = EnrollmentToken,
                     ["Auth:ReviewToken"] = ReviewToken,
                     ["Ingestion:MaxEventsPerBatch"] = "500"
-                });
+                };
+
+                if (overrides is not null)
+                {
+                    foreach (var item in overrides)
+                    {
+                        values[item.Key] = item.Value;
+                    }
+                }
+
+                configuration.AddInMemoryCollection(values);
             });
         });
     }
@@ -197,6 +272,19 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     private static async Task<T> GetJsonWithReviewTokenAsync<T>(HttpClient client, string path)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        using var response = await client.SendAsync(request, CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
+        return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task<T> PostJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body, options: JsonOptions.Default)
+        };
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
         using var response = await client.SendAsync(request, CancellationToken.None);
         response.EnsureSuccessStatusCode();

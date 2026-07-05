@@ -43,6 +43,7 @@ builder.Services.AddScoped<SourceHealthRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
 builder.Services.AddScoped<AlertRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
+builder.Services.AddScoped<SocAgentProviderStatusService>();
 builder.Services.AddScoped<SocAgentService>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
@@ -294,6 +295,97 @@ app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
     }
 
     return Results.Ok(await socAgent.AskAsync(request, cancellationToken));
+});
+
+app.MapGet("/api/v1/soc-agent/status", (HttpContext context, SocAgentService socAgent, TokenService tokens, IConfiguration configuration) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(socAgent.GetProviderStatus());
+});
+
+app.MapGet("/api/v1/soc-agent/sessions", async Task<IResult> (
+    HttpContext context,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new { sessions = await socAgent.GetRecentSessionsAsync(cancellationToken) });
+});
+
+app.MapPost("/api/v1/soc-agent/sessions", async Task<IResult> (
+    HttpContext context,
+    SocAgentSessionCreateRequest request,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var session = await socAgent.CreateSessionAsync(request, cancellationToken);
+    return Results.Ok(session);
+});
+
+app.MapGet("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
+    Guid sessionId,
+    HttpContext context,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var detail = await socAgent.GetSessionDetailAsync(sessionId, cancellationToken);
+    return detail is null ? Results.NotFound() : Results.Ok(detail);
+});
+
+app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<IResult> (
+    Guid sessionId,
+    HttpContext context,
+    SocAgentChatRequest request,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > 4000)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["message"] = new[] { "Message is required and must be 4000 characters or less." }
+        });
+    }
+
+    try
+    {
+        return Results.Ok(await socAgent.SendChatMessageAsync(sessionId, request, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
 });
 
 app.MapGet("/api/v1/detections/rules", async Task<IResult> (

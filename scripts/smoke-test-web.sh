@@ -24,6 +24,7 @@ DASHBOARD_HTML=".local/web-smoke-dashboard.html"
 AGENTS_HTML=".local/web-smoke-agents.html"
 EVENTS_HTML=".local/web-smoke-events.html"
 DETAIL_HTML=".local/web-smoke-detail.html"
+SOC_AGENT_HTML=".local/web-smoke-soc-agent.html"
 REGISTER_REQUEST=".local/web-smoke-register-request.json"
 REGISTER_RESPONSE=".local/web-smoke-register-response.json"
 INGEST_REQUEST=".local/web-smoke-ingest-request.json"
@@ -31,7 +32,7 @@ INGEST_RESPONSE=".local/web-smoke-ingest-response.json"
 QUERY_RESPONSE=".local/web-smoke-query-response.json"
 
 mkdir -p .local
-rm -f "$COOKIE_JAR" "$LOGIN_HTML" "$DASHBOARD_HTML" "$AGENTS_HTML" "$EVENTS_HTML" "$DETAIL_HTML" \
+rm -f "$COOKIE_JAR" "$LOGIN_HTML" "$DASHBOARD_HTML" "$AGENTS_HTML" "$EVENTS_HTML" "$DETAIL_HTML" "$SOC_AGENT_HTML" \
   "$REGISTER_REQUEST" "$REGISTER_RESPONSE" "$INGEST_REQUEST" "$INGEST_RESPONSE" "$QUERY_RESPONSE" "$LOG_FILE"
 
 API_PID=""
@@ -140,6 +141,7 @@ print(f"/events/detail?agent_id={event['agent_id']}&event_id={event['event_id']}
 PY
 )"
 curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL$DETAIL_URL" > "$DETAIL_HTML"
+curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL/soc-agent?agent_id=$AGENT_ID" > "$SOC_AGENT_HTML"
 
 python - <<PY
 from pathlib import Path
@@ -148,6 +150,7 @@ checks = {
     'agents': Path('$AGENTS_HTML').read_text(encoding='utf-8'),
     'events': Path('$EVENTS_HTML').read_text(encoding='utf-8'),
     'detail': Path('$DETAIL_HTML').read_text(encoding='utf-8'),
+    'soc-agent': Path('$SOC_AGENT_HTML').read_text(encoding='utf-8'),
 }
 missing = [name for name, body in checks.items() if agent_id not in body]
 if missing:
@@ -155,6 +158,9 @@ if missing:
 dashboard = Path('$DASHBOARD_HTML').read_text(encoding='utf-8')
 if 'Dashboard' not in dashboard or 'active agents' not in dashboard:
     raise SystemExit('web smoke failed; dashboard did not render expected metrics')
+soc_agent = Path('$SOC_AGENT_HTML').read_text(encoding='utf-8')
+if 'soc-agent chat' not in soc_agent or 'Provider status' not in soc_agent:
+    raise SystemExit('web smoke failed; soc-agent chat did not render expected status')
 print('Web smoke test passed')
 print(f'agent_id={agent_id}')
 PY
