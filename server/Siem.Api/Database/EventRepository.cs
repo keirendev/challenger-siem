@@ -41,7 +41,19 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     event_time,
                     severity,
                     message,
-                    raw_json
+                    raw_json,
+                    event_category,
+                    event_action,
+                    normalized_json,
+                    user_name,
+                    target_user_name,
+                    process_image,
+                    process_command_line,
+                    source_ip,
+                    destination_ip,
+                    service_name,
+                    file_path,
+                    registry_key
                 )
                 values (
                     @event_id,
@@ -55,7 +67,19 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     @event_time,
                     @severity,
                     @message,
-                    @raw_json
+                    @raw_json,
+                    @event_category,
+                    @event_action,
+                    @normalized_json,
+                    @user_name,
+                    @target_user_name,
+                    @process_image,
+                    @process_command_line,
+                    @source_ip,
+                    @destination_ip,
+                    @service_name,
+                    @file_path,
+                    @registry_key
                 )
                 on conflict (agent_id, event_id) do nothing
                 returning id;
@@ -75,6 +99,19 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             var rawJson = envelope.Raw.ValueKind == JsonValueKind.Undefined ? "{}" : envelope.Raw.GetRawText();
             var rawParameter = command.Parameters.Add("raw_json", NpgsqlDbType.Jsonb);
             rawParameter.Value = rawJson;
+            command.Parameters.AddWithValue("event_category", DbValue(envelope.Normalized?.Category));
+            command.Parameters.AddWithValue("event_action", DbValue(envelope.Normalized?.Action));
+            var normalizedParameter = command.Parameters.Add("normalized_json", NpgsqlDbType.Jsonb);
+            normalizedParameter.Value = envelope.Normalized is null ? DBNull.Value : JsonSerializer.Serialize(envelope.Normalized, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            command.Parameters.AddWithValue("user_name", DbValue(envelope.Normalized?.UserName));
+            command.Parameters.AddWithValue("target_user_name", DbValue(envelope.Normalized?.TargetUserName));
+            command.Parameters.AddWithValue("process_image", DbValue(envelope.Normalized?.ProcessImage));
+            command.Parameters.AddWithValue("process_command_line", DbValue(Truncate(envelope.Normalized?.ProcessCommandLine, 4096)));
+            command.Parameters.AddWithValue("source_ip", DbValue(envelope.Normalized?.SourceIp));
+            command.Parameters.AddWithValue("destination_ip", DbValue(envelope.Normalized?.DestinationIp));
+            command.Parameters.AddWithValue("service_name", DbValue(envelope.Normalized?.ServiceName));
+            command.Parameters.AddWithValue("file_path", DbValue(envelope.Normalized?.FilePath));
+            command.Parameters.AddWithValue("registry_key", DbValue(envelope.Normalized?.RegistryKey));
 
             var result = await command.ExecuteScalarAsync(cancellationToken);
             if (result is null || result == DBNull.Value)
@@ -139,9 +176,19 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
 
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
-            where.Add("(message ilike @keyword or raw_json::text ilike @keyword)");
+            where.Add("(message ilike @keyword or raw_json::text ilike @keyword or normalized_json::text ilike @keyword)");
             command.Parameters.AddWithValue("keyword", $"%{query.Keyword.Trim()}%");
         }
+
+        AddTextFilter(where, command, "event_category", "category", query.Category, exact: true);
+        AddTextFilter(where, command, "event_action", "action", query.Action, exact: true);
+        AddTextFilter(where, command, "user_name", "user_name", query.UserName, exact: false);
+        AddTextFilter(where, command, "process_image", "process_image", query.ProcessImage, exact: false);
+        AddTextFilter(where, command, "source_ip", "source_ip", query.SourceIp, exact: true);
+        AddTextFilter(where, command, "destination_ip", "destination_ip", query.DestinationIp, exact: true);
+        AddTextFilter(where, command, "service_name", "service_name", query.ServiceName, exact: false);
+        AddTextFilter(where, command, "file_path", "file_path", query.FilePath, exact: false);
+        AddTextFilter(where, command, "registry_key", "registry_key", query.RegistryKey, exact: false);
 
         command.Parameters.AddWithValue("limit", limit);
 
@@ -159,7 +206,8 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 ingest_time,
                 severity,
                 message,
-                raw_json
+                raw_json,
+                normalized_json
             from events
             """);
 
@@ -200,7 +248,8 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 ingest_time,
                 severity,
                 message,
-                raw_json
+                raw_json,
+                normalized_json
             from events
             where agent_id = @agent_id
               and event_id = @event_id
@@ -217,6 +266,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
     {
         var rawJson = reader.GetString(reader.GetOrdinal("raw_json"));
         using var rawDocument = JsonDocument.Parse(rawJson);
+        var normalized = ReadNormalized(reader);
 
         return new EventEnvelope
         {
@@ -232,8 +282,54 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             IngestTime = ReadDateTimeOffset(reader, "ingest_time"),
             Severity = reader.GetString(reader.GetOrdinal("severity")),
             Message = reader.GetString(reader.GetOrdinal("message")),
+            Normalized = normalized,
             Raw = rawDocument.RootElement.Clone()
         };
+    }
+
+    private static void AddTextFilter(List<string> where, NpgsqlCommand command, string column, string parameterName, string? value, bool exact)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (exact)
+        {
+            where.Add($"{column} = @{parameterName}");
+            command.Parameters.AddWithValue(parameterName, value.Trim());
+        }
+        else
+        {
+            where.Add($"{column} ilike @{parameterName}");
+            command.Parameters.AddWithValue(parameterName, $"%{value.Trim()}%");
+        }
+    }
+
+    private static object DbValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private static NormalizedEventFields? ReadNormalized(NpgsqlDataReader reader)
+    {
+        var ordinal = reader.GetOrdinal("normalized_json");
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<NormalizedEventFields>(reader.GetString(ordinal), new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 
     private static DateTimeOffset ReadDateTimeOffset(NpgsqlDataReader reader, string columnName)

@@ -6,41 +6,99 @@
   "additionalProperties": false,
   "required": ["agent_id", "hostname", "agent_version", "os", "queue_depth"],
   "properties": {
-    "agent_id": {
+    "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "agent_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "os": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "last_event_time": { "type": ["string", "null"], "format": "date-time" },
+    "queue_depth": { "type": "integer", "minimum": 0 },
+    "cpu_percent": { "type": ["number", "null"], "minimum": 0 },
+    "memory_mb": { "type": ["integer", "null"], "minimum": 0 },
+    "config_hash": { "type": ["string", "null"], "maxLength": 128 },
+    "queue_metrics": { "$ref": "#/$defs/queue_metrics" },
+    "source_manifest": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/source_manifest_entry" }
+    },
+    "source_health": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/source_health_report" }
+    },
+    "tamper_checks": { "$ref": "#/$defs/tamper_checks" }
+  },
+  "$defs": {
+    "coverage_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
+    "source_status": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"]
     },
-    "hostname": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 255
+    "source_manifest_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "channel", "display_name", "coverage_level", "required"],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "coverage_level": { "$ref": "#/$defs/coverage_level" },
+        "required": { "type": "boolean" },
+        "enabled_by_default": { "type": "boolean" },
+        "source_pack": { "type": "string", "maxLength": 128 },
+        "parser_id": { "type": "string", "maxLength": 128 }
+      }
     },
-    "agent_version": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64
+    "source_health_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "display_name", "channel", "coverage_level", "status", "required", "enabled"],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "coverage_level": { "$ref": "#/$defs/coverage_level" },
+        "status": { "$ref": "#/$defs/source_status" },
+        "required": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "last_event_time": { "type": ["string", "null"], "format": "date-time" },
+        "last_record_id": { "type": ["integer", "null"], "minimum": 0 },
+        "oldest_record_id": { "type": ["integer", "null"], "minimum": 0 },
+        "newest_record_id": { "type": ["integer", "null"], "minimum": 0 },
+        "log_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "retention_days": { "type": ["integer", "null"], "minimum": 0 },
+        "lag_seconds": { "type": ["integer", "null"] },
+        "error_code": { "type": ["string", "null"], "maxLength": 128 },
+        "error_message": { "type": ["string", "null"], "maxLength": 1000 },
+        "gap_detected": { "type": "boolean" },
+        "cleared_detected": { "type": "boolean" },
+        "bookmark_gap_detected": { "type": "boolean" },
+        "config_hash": { "type": ["string", "null"], "maxLength": 128 },
+        "source_version": { "type": ["string", "null"], "maxLength": 128 },
+        "details": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
     },
-    "os": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 255
+    "queue_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queue_depth": { "type": "integer", "minimum": 0 },
+        "poison_depth": { "type": "integer", "minimum": 0 },
+        "oldest_queued_age_seconds": { "type": ["integer", "null"], "minimum": 0 },
+        "last_successful_send_time": { "type": ["string", "null"], "format": "date-time" },
+        "max_size_mb": { "type": "integer", "minimum": 1 },
+        "warning_size_percent": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
     },
-    "last_event_time": {
-      "type": ["string", "null"],
-      "format": "date-time"
-    },
-    "queue_depth": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "cpu_percent": {
-      "type": ["number", "null"],
-      "minimum": 0
-    },
-    "memory_mb": {
-      "type": ["integer", "null"],
-      "minimum": 0
+    "tamper_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binary_hash": { "type": ["string", "null"] },
+        "config_hash": { "type": ["string", "null"] },
+        "signature_status": { "type": ["string", "null"] },
+        "acl_status": { "type": ["string", "null"] }
+      }
     }
   }
 }

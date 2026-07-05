@@ -1,0 +1,39 @@
+@page "/audit-policy"
+@model Challenger.Siem.Api.Pages.AuditPolicyModel
+@{
+    ViewData["Title"] = "Audit policy drift";
+}
+
+<div class="page-header">
+    <div><h1>Audit policy drift</h1><p class="muted">Review audit-policy baseline snapshots and drift indicators.</p></div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<section class="table-card">
+@if (Model.Snapshots.Count == 0)
+{
+    <div class="empty">No audit-policy snapshots have been reported yet.</div>
+}
+else
+{
+    <table>
+        <thead><tr><th>Collected</th><th>Agent</th><th>Host</th><th>Summary</th><th>Items</th></tr></thead>
+        <tbody>
+            @foreach (var snapshot in Model.Snapshots)
+            {
+                <tr>
+                    <td>@snapshot.CollectedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>@snapshot.AgentId</td>
+                    <td>@snapshot.Hostname</td>
+                    <td>@string.Join(", ", snapshot.Summary.Select(pair => $"{pair.Key}={pair.Value}"))</td>
+                    <td>@snapshot.Items.Count</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+</section>

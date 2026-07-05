@@ -1,0 +1,61 @@
+@page "/alerts"
+@model Challenger.Siem.Api.Pages.Alerts.IndexModel
+@{
+    ViewData["Title"] = "Alerts";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Alerts</h1>
+        <p class="muted">Detection alert review skeleton with evidence links and empty-state handling.</p>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+<form method="get" class="card filters">
+    <div class="form-row">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+            <option value="">Any</option>
+            <option value="new">New</option>
+            <option value="triaged">Triaged</option>
+            <option value="closed">Closed</option>
+            <option value="suppressed">Suppressed</option>
+        </select>
+    </div>
+    <div class="actions"><button type="submit">Search</button><a class="button secondary" asp-page="/Alerts/Index">Clear</a></div>
+</form>
+
+<section class="table-card">
+@if (Model.Alerts.Count == 0)
+{
+    <div class="empty">No alerts match the current filters.</div>
+}
+else
+{
+    <table>
+        <thead>
+            <tr><th>Created</th><th>Title</th><th>Severity</th><th>Confidence</th><th>Status</th><th>Rule</th><th>Host</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var alert in Model.Alerts)
+            {
+                <tr>
+                    <td>@alert.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>@alert.Title</td>
+                    <td><span class="badge danger">@alert.Severity</span></td>
+                    <td>@alert.Confidence</td>
+                    <td>@alert.Status</td>
+                    <td>@alert.RuleId v@alert.RuleVersion</td>
+                    <td>@(alert.Hostname ?? alert.AgentId ?? "—")</td>
+                    <td><a asp-page="/Alerts/Detail" asp-route-alert_id="@alert.AlertId">Open</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+</section>

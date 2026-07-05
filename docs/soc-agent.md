@@ -6,7 +6,7 @@
 
 - Add an authenticated web-console workspace, expected to be `/soc-agent`, using the existing operator authentication/session model or a future RBAC model.
 - Ground every answer in Challenger SIEM data returned by explicit, allowlisted tools.
-- Let operators investigate stored Windows endpoint telemetry, agents, heartbeats, source health, ingestion errors, and future alerts.
+- Let operators investigate stored Windows endpoint telemetry, agents, heartbeats, source health, inventory snapshots, ingestion errors, detection rules, and alerts.
 - Support an official OpenAI-compatible provider/model configuration, including `gpt-5.5` when an official provider supports that model.
 - Require explicit operator approval before any mutating action such as detection activation, saved-query changes, notes, or configuration changes.
 - Persist bounded conversation, tool, artifact, approval, and audit metadata without storing secrets or unnecessary raw endpoint telemetry.
@@ -37,8 +37,9 @@ Initial tool outputs must be bounded, redacted according to policy, and cite rec
 
 - `event_search`: time range, host, agent ID, channel, Windows Event ID, keyword, and limit filters.
 - `event_detail`: one normalized event by `agent_id` and `event_id`.
-- `agent_inventory_search`: host/agent filters, stale/recent state, version, and queue depth.
-- `heartbeat_summary`: agent health and telemetry recency.
+- `agent_inventory_search`: host/agent filters, stale/recent state, version, coverage level, source issue counts, and queue depth.
+- `heartbeat_summary`: agent health, queue SLOs, source health, configuration hash, and telemetry recency.
+- `coverage_summary`: host coverage level, missing/stale/error source counts, and exception state.
 - `ingestion_health_summary`: recent validation errors, duplicates, accepted counts, rejected counts, and stale agents.
 - `timeline_build`: chronological view from event search results.
 - `entity_pivot`: pivots from host, user, process, IP, provider, or event ID when the data is available.

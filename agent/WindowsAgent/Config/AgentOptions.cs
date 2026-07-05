@@ -7,6 +7,7 @@ public sealed class AgentOptions
     public string AgentId { get; set; } = string.Empty;
     public Uri? ServerBaseUrl { get; set; }
     public string ApiToken { get; set; } = string.Empty;
+    public string ProtectedApiToken { get; set; } = string.Empty;
     public EnrollmentOptions Enrollment { get; set; } = new();
     public IReadOnlyList<string> Channels { get; set; } = Array.Empty<string>();
     public IReadOnlyList<string> OptionalChannels { get; set; } = Array.Empty<string>();

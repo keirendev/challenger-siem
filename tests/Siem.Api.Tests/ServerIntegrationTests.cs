@@ -76,11 +76,20 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await PostJsonWithBearerAsync<JsonElement>(client, "/api/v1/agents/heartbeat", CreateHeartbeat(agentId, hostname, queueDepth: 7), secondToken);
 
         var search = await GetJsonWithReviewTokenAsync<EventSearchResponse>(client,
-            $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&hostname={hostname}&channel=System&windows_event_id=6005&from={Uri.EscapeDataString(now.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}&keyword=unique&limit=999");
+            $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&hostname={hostname}&channel=System&windows_event_id=6005&category=system&action=observed&from={Uri.EscapeDataString(now.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}&keyword=unique&limit=999");
         Assert.InRange(search.Events.Count, 1, 500);
         var stored = Assert.Single(search.Events, item => item.EventId == eventId);
         Assert.NotNull(stored.IngestTime);
         Assert.Equal("System", stored.Channel);
+        Assert.Equal("system", stored.Normalized?.Category);
+
+        var sourceHealth = await GetJsonWithReviewTokenAsync<SourceHealthResponse>(client,
+            $"/api/v1/source-health?agent_id={Uri.EscapeDataString(agentId)}");
+        Assert.Contains(sourceHealth.Summaries, summary => summary.AgentId == agentId);
+        Assert.Contains(sourceHealth.Sources, source => source.SourceId == "system");
+
+        var rules = await GetJsonWithReviewTokenAsync<JsonElement>(client, "/api/v1/detections/rules");
+        Assert.True(rules.GetProperty("rules").GetArrayLength() >= 10);
 
         var invalidBatchId = Guid.NewGuid();
         var invalidBatch = batch with
@@ -174,7 +183,29 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             LastEventTime = DateTimeOffset.UtcNow,
             QueueDepth = queueDepth,
             CpuPercent = null,
-            MemoryMb = 123
+            MemoryMb = 123,
+            ConfigHash = "synthetic-config-hash",
+            QueueMetrics = new QueueSloMetrics
+            {
+                QueueDepth = queueDepth,
+                PoisonDepth = 0,
+                MaxSizeMb = 512,
+                WarningSizePercent = 80
+            },
+            SourceHealth = new[]
+            {
+                new SourceHealthReport
+                {
+                    SourceId = "system",
+                    DisplayName = "Windows System",
+                    Channel = "System",
+                    CoverageLevel = WindowsCoverageLevel.L1,
+                    Status = SourceHealthStatuses.Healthy,
+                    Required = true,
+                    Enabled = true,
+                    NewestRecordId = 1234
+                }
+            }
         };
     }
 
@@ -200,6 +231,12 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             EventTime = eventTime,
             Severity = "information",
             Message = $"Integration event {marker}",
+            Normalized = new NormalizedEventFields
+            {
+                Category = channel == "System" ? "system" : "application",
+                Action = "observed",
+                Entities = new[] { new EventEntity { Type = "host", Value = hostname, Role = "observed" } }
+            },
             Raw = JsonSerializer.SerializeToElement(new { marker, agentId })
         };
     }

@@ -10,6 +10,15 @@ public sealed record EventSearchQuery(
     DateTimeOffset? From,
     DateTimeOffset? To,
     string? Keyword,
+    string? Category,
+    string? Action,
+    string? UserName,
+    string? ProcessImage,
+    string? SourceIp,
+    string? DestinationIp,
+    string? ServiceName,
+    string? FilePath,
+    string? RegistryKey,
     int Limit)
 {
     public static EventSearchQuery FromQuery(IQueryCollection query)
@@ -22,6 +31,15 @@ public sealed record EventSearchQuery(
             ReadDateTimeOffset(query, "from"),
             ReadDateTimeOffset(query, "to"),
             ReadString(query, "keyword"),
+            ReadString(query, "category"),
+            ReadString(query, "action"),
+            ReadString(query, "user_name"),
+            ReadString(query, "process_image"),
+            ReadString(query, "source_ip"),
+            ReadString(query, "destination_ip"),
+            ReadString(query, "service_name"),
+            ReadString(query, "file_path"),
+            ReadString(query, "registry_key"),
             ReadInt(query, "limit") ?? 100);
     }
 

@@ -1,0 +1,74 @@
+@page "/agents/detail"
+@model Challenger.Siem.Api.Pages.Agents.DetailModel
+@{
+    ViewData["Title"] = "Host coverage";
+}
+
+<div class="page-header">
+    <div>
+        <h1>Host coverage</h1>
+        <p class="muted">Coverage level, source health, queue state, and source-gap indicators for one agent.</p>
+    </div>
+    <a class="button secondary" asp-page="/Agents/Index">Back to agents</a>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+else if (Model.Summary is null)
+{
+    <section class="card"><p>No source-health data is available for @Model.AgentId.</p></section>
+}
+else
+{
+    <section class="metrics" aria-label="Coverage metrics">
+        <article class="card"><span class="metric-value">@Model.Summary.CurrentLevel</span><span class="metric-label">current coverage</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.OverallStatus</span><span class="metric-label">coverage status</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.MissingMandatorySources</span><span class="metric-label">missing mandatory</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.StaleSources</span><span class="metric-label">stale sources</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.ErrorSources</span><span class="metric-label">error sources</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.QueueDepth</span><span class="metric-label">queue depth</span></article>
+    </section>
+
+    <section class="table-card">
+        @if (Model.Sources.Count == 0)
+        {
+            <div class="empty">No source-health rows have been reported by this agent.</div>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Level</th>
+                        <th>Status</th>
+                        <th>Required</th>
+                        <th>Last record</th>
+                        <th>Record range</th>
+                        <th>Log size</th>
+                        <th>Gaps</th>
+                        <th>Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var source in Model.Sources)
+                    {
+                        <tr>
+                            <td><strong>@source.DisplayName</strong><div class="muted">@source.Channel</div></td>
+                            <td>@source.CoverageLevel</td>
+                            <td><span class="badge @(source.Status == "healthy" ? "ok" : source.Status == "stale" || source.Status == "missing" ? "warning" : "danger")">@source.Status</span></td>
+                            <td>@(source.Required ? "yes" : "no")</td>
+                            <td>@(source.LastRecordId?.ToString() ?? "—")</td>
+                            <td>@(source.OldestRecordId?.ToString() ?? "—") → @(source.NewestRecordId?.ToString() ?? "—")</td>
+                            <td>@(source.LogSizeBytes?.ToString() ?? "—")</td>
+                            <td>@(source.GapDetected || source.ClearedDetected || source.BookmarkGapDetected ? "gap/clear detected" : "none")</td>
+                            <td>@(source.ErrorMessage ?? source.ErrorCode ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}

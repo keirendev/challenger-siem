@@ -46,6 +46,26 @@
         <input id="keyword" name="keyword" value="@Model.Query.Keyword" />
     </div>
     <div class="form-row">
+        <label for="category">Category</label>
+        <input id="category" name="category" value="@Model.Query.Category" />
+    </div>
+    <div class="form-row">
+        <label for="action">Action</label>
+        <input id="action" name="action" value="@Model.Query.Action" />
+    </div>
+    <div class="form-row">
+        <label for="user_name">User</label>
+        <input id="user_name" name="user_name" value="@Model.Query.UserName" />
+    </div>
+    <div class="form-row">
+        <label for="process_image">Process image</label>
+        <input id="process_image" name="process_image" value="@Model.Query.ProcessImage" />
+    </div>
+    <div class="form-row">
+        <label for="destination_ip">Destination IP</label>
+        <input id="destination_ip" name="destination_ip" value="@Model.Query.DestinationIp" />
+    </div>
+    <div class="form-row">
         <label for="limit">Limit</label>
         <input id="limit" name="limit" type="number" min="1" max="500" value="@Model.Query.Limit" />
     </div>
@@ -72,6 +92,8 @@
                     <th>Channel</th>
                     <th>Provider</th>
                     <th>Event ID</th>
+                    <th>Category</th>
+                    <th>Action</th>
                     <th>Severity</th>
                     <th>Message</th>
                     <th></th>
@@ -88,6 +110,8 @@
                         <td>@item.Channel</td>
                         <td>@item.Provider</td>
                         <td>@item.WindowsEventId</td>
+                        <td>@(item.Normalized?.Category ?? "—")</td>
+                        <td>@(item.Normalized?.Action ?? "—")</td>
                         <td><span class="badge">@item.Severity</span></td>
                         <td>@Model.Preview(item.Message)</td>
                         <td>

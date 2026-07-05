@@ -12,7 +12,7 @@ public sealed class IndexModel(
     IOptions<ReviewOptions> reviewOptions,
     ILogger<IndexModel> logger) : PageModel
 {
-    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, 100);
+    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
 
     public IReadOnlyList<EventEnvelope> Events { get; private set; } = Array.Empty<EventEnvelope>();
 

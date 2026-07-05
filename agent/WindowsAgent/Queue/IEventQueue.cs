@@ -17,4 +17,6 @@ public interface IEventQueue
     Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken);
 
     Task<int> CountAsync(CancellationToken cancellationToken);
+
+    Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken);
 }

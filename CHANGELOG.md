@@ -4,7 +4,9 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added a Windows host full-coverage foundation with source-health contracts/storage/API/web review, coverage and inventory models, parser/detection catalogs, alert and detection skeletons, validation runbooks, and role-pack designs.
 - Documented the planned `soc-agent` web-console harness, official provider-auth guardrails, tool/approval model, and phased roadmap.
+- Added a comprehensive Windows host full-coverage SIEM target specification and a bite-sized GitHub issue backlog covering sources, telemetry requirements, normalization, health, detections, validation, and roadmap.
 - Added startup validation for required database, enrollment-token, and review-token configuration with non-secret error messages.
 - Added PostgreSQL schema apply/validation scripts plus opt-in PostgreSQL integration coverage for registration, token rotation, ingest/dedup/search, heartbeat persistence, ingestion error recording, and web console data display.
 - Persisted authenticated ingest validation failures to `ingestion_errors` with bounded secret-safe context.

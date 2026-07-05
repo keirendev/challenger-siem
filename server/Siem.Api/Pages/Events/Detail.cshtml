@@ -32,7 +32,28 @@ else if (Model.Envelope is not null)
             <dt>Event time</dt><dd>@Model.Envelope.EventTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</dd>
             <dt>Ingest time</dt><dd>@(Model.Envelope.IngestTime.HasValue ? Model.Envelope.IngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") : "—")</dd>
             <dt>Severity</dt><dd><span class="badge">@Model.Envelope.Severity</span></dd>
+            <dt>Category</dt><dd>@(Model.Envelope.Normalized?.Category ?? "—")</dd>
+            <dt>Action</dt><dd>@(Model.Envelope.Normalized?.Action ?? "—")</dd>
+            <dt>User</dt><dd>@(Model.Envelope.Normalized?.UserName ?? Model.Envelope.Normalized?.TargetUserName ?? "—")</dd>
+            <dt>Process</dt><dd>@(Model.Envelope.Normalized?.ProcessImage ?? "—")</dd>
         </dl>
+    </section>
+
+    <section class="card">
+        <h2>Entities</h2>
+        @if (Model.Envelope.Normalized?.Entities.Count > 0)
+        {
+            <ul>
+                @foreach (var entity in Model.Envelope.Normalized.Entities)
+                {
+                    <li><strong>@entity.Type</strong> @entity.Value <span class="muted">@entity.Role</span></li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p class="muted">No normalized entities were reported.</p>
+        }
     </section>
 
     <section class="card">

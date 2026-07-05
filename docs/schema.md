@@ -17,9 +17,10 @@ Required structured fields:
 - `event_time` - event timestamp from Windows.
 - `severity` - normalized severity string.
 - `message` - rendered or synthesized event message.
+- `normalized` - optional normalized category/action/entity/search fields.
 - `raw` - original parsed event payload.
 
-`ingest_time` is set by the server when stored.
+`ingest_time` is set by the server when stored. Server storage extracts selected normalized fields such as category, action, user, process image, IPs, service, file path, and registry key into searchable columns while retaining `normalized_json` and `raw_json`.
 
 ## Database tables
 
@@ -41,7 +42,27 @@ unique (agent_id, event_id)
 
 ### `agent_heartbeats`
 
-Stores heartbeat observations and queue health metrics.
+Stores heartbeat observations, queue SLO metrics, source manifest, source-health summaries, configuration hash, and tamper-check summaries.
+
+### `source_health`
+
+Stores the latest per-agent source-health row keyed by `(agent_id, source_id)`, including coverage level, status, required/enabled flags, record ranges, log-size metrics, stale/gap/clear indicators, source version/config hash, and bounded details.
+
+### `coverage_exceptions`
+
+Stores approved coverage exceptions for missing/not-applicable sources.
+
+### `asset_inventory_snapshots`
+
+Stores bounded inventory snapshots for host identity, network, users/groups, services/drivers, scheduled tasks/autoruns, installed software, patches/features, security-control state, audit policy, and Windows role detection.
+
+### `detection_rules`
+
+Stores detection rule metadata, source prerequisites, normalized field prerequisites, severity/confidence, ATT&CK tags, and enabled state.
+
+### `alerts` and `alert_evidence`
+
+Stores detection alert review skeleton data and links alerts to event evidence.
 
 ### `ingestion_errors`
 
@@ -65,7 +86,13 @@ limit 25;
 - `events(channel)`
 - `events(provider)`
 - GIN index on `events(raw_json)`
+- normalized event indexes for category, action, user, process image, and destination IP
 - `agent_heartbeats(agent_id)` and `agent_heartbeats(heartbeat_time desc)`
+- `source_health(agent_id)` and `source_health(status)`
+- `asset_inventory_snapshots(agent_id, snapshot_type, collected_at desc)`
+- `detection_rules(category)`
+- `alerts(status)`, `alerts(agent_id)`, and `alerts(created_at desc)`
+- `alert_evidence(alert_id)`
 - `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
 
 ## Applying and validating the schema

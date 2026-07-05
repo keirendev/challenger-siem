@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/source-health.schema.json",
+  "title": "Challenger SIEM Source Health Response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summaries", "sources"],
+  "properties": {
+    "summaries": { "type": "array", "items": { "$ref": "#/$defs/coverage_summary" } },
+    "sources": { "type": "array", "items": { "$ref": "heartbeat.schema.json#/$defs/source_health_report" } }
+  },
+  "$defs": {
+    "coverage_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "hostname", "target_level", "current_level", "overall_status", "missing_mandatory_sources", "stale_sources", "error_sources", "queue_depth"],
+      "properties": {
+        "agent_id": { "type": "string" },
+        "hostname": { "type": "string" },
+        "target_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
+        "current_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
+        "overall_status": { "type": "string" },
+        "missing_mandatory_sources": { "type": "integer", "minimum": 0 },
+        "stale_sources": { "type": "integer", "minimum": 0 },
+        "error_sources": { "type": "integer", "minimum": 0 },
+        "queue_depth": { "type": "integer", "minimum": 0 },
+        "last_heartbeat_time": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}
