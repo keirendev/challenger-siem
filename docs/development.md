@@ -1,6 +1,6 @@
 # Local development without Docker
 
-This project intentionally does not use Docker for the MVP.
+This project intentionally does not use Docker for the MVP. Start with the [documentation index](index.md) for the wiki-style map of operator, API, agent, web-console, and release docs.
 
 ## Prerequisites
 
@@ -123,6 +123,12 @@ $EDITOR .local/winrm.env
 ```
 
 Test connectivity only with operator-authorized local tooling, without printing secrets. Use WinRM only against authorized lab hosts, and do not commit `.local/winrm.env`.
+
+## Documentation and PR checklist
+
+Before opening a pull request, review the [documentation-maintenance checklist](contributors.md#documentation-maintenance-checklist). Update README/wiki/operator docs, API/schema docs, web-console screenshots, changelog, and versioning metadata in the same change set when behavior or public workflows change.
+
+For web-app related changes, run browser E2E against the real app and update [web-console-demo.md](web-console-demo.md) if visible pages, routes, filters, or screenshots change.
 
 ## Smoke test with fake data
 
