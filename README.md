@@ -81,8 +81,8 @@ The current MVP baseline can:
 - store events in PostgreSQL with JSONB raw payloads
 - return stored events from `GET /api/v1/events`
 - report source health and coverage posture from agent heartbeats
-- expose starter alert, detection-rule, asset-inventory, and source-health review APIs
-- host a review-token-protected web console from the API process
+- expose starter alert, detection-rule, asset-inventory, source-health, and `soc-agent` review APIs
+- host a review-token-protected web console from the API process with a local SIEM-aware `soc-agent` workspace
 
 Open the API base URL in a browser and log in with `Auth__ReviewToken` to use the web console.
 

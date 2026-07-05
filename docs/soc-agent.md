@@ -1,6 +1,13 @@
 # soc-agent planning record
 
-`soc-agent` is the project name for the future AI SOC analyst and detection-engineer harness in Challenger SIEM. This document records the planning decisions for the harness only; it does not add a runtime model provider, web route, database schema, or detection execution path.
+`soc-agent` is the project name for the AI SOC analyst and detection-engineer harness in Challenger SIEM. The current implementation is a safe local provider/tool harness: it runs server-side SIEM tools, returns bounded answers with citations, and persists bounded turn metadata. It does not automate ChatGPT web login, call unofficial provider endpoints, activate detections, change configuration, delete data, or edit source code.
+
+Current routes:
+
+- `/soc-agent` - authenticated web workspace.
+- `POST /api/v1/soc-agent/ask` - review-token-protected API for local tool-backed answers.
+
+Current local tools cover agent inventory, source health/coverage, recent events, alert review, detection-rule metadata, and inventory/audit-policy summaries.
 
 ## Goals
 
@@ -21,7 +28,15 @@ Only official provider authentication paths are acceptable:
 
 Provider credentials must never be committed, rendered into browser local storage, logged, copied into prompts, or included in tool-call transcripts.
 
-## Proposed server components
+## Implemented server components
+
+- `SocAgentOptions`: local provider/model and bounded row limits.
+- `SocAgentService`: server-side orchestration over SIEM repositories.
+- `SocAgentRepository`: bounded audit persistence in `soc_agent_turns` without provider secrets or raw telemetry dumps.
+- `/soc-agent` Razor Page: authenticated operator UI with answer, tool activity, citations, and mutation-safety notice.
+- `/api/v1/soc-agent/ask`: review-token-protected JSON endpoint.
+
+## Proposed future server components
 
 - `SocAgentOptions`: enabled flag, provider, model, endpoint/base URL, auth mode, timeout, retry, budget, redaction, and tool-call limits.
 - `IModelProvider`: provider abstraction for chat/responses, structured tool calls, optional streaming, and provider-specific authentication.

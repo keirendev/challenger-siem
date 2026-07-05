@@ -188,6 +188,21 @@ Authorization: Bearer <review-token>
 
 Returns bounded asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, and role detection.
 
+## soc-agent
+
+```http
+POST /api/v1/soc-agent/ask
+Authorization: Bearer <review-token>
+Content-Type: application/json
+
+{
+  "question": "Summarize current coverage and alerts",
+  "context_agent_id": "win11-test-001"
+}
+```
+
+Returns a bounded local `soc-agent` answer with tool-run summaries and citations back to SIEM review pages. The MVP provider is `Local`; it does not send data to an external model provider and does not perform mutating actions.
+
 ## Alerts and detections
 
 ```http
