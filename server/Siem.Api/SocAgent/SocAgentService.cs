@@ -12,6 +12,7 @@ public sealed class SocAgentService(
     SourceHealthRepository sourceHealth,
     AlertRepository alerts,
     AssetInventoryRepository inventory,
+    InvestigationGraphRepository graphs,
     SocAgentRepository audit,
     SocAgentProviderStatusService providerStatus,
     IOptions<SocAgentOptions> options)
@@ -237,6 +238,15 @@ public sealed class SocAgentService(
         toolRuns.Add(new SocAgentToolRunSummary { ToolName = "inventory_summary", RowCount = inventoryRows.Count, Summary = "Loaded bounded inventory snapshot summaries." });
         citations.Add(new SocAgentCitation { Kind = "audit_policy", Label = "Audit policy drift", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/audit-policy" : $"/audit-policy?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
 
+        var graphRows = await graphs.ListAsync("active", cancellationToken);
+        var selectedGraphs = graphRows.Take(5).ToArray();
+        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "graph_search", RowCount = selectedGraphs.Length, Summary = "Loaded active investigation graph summaries for operator-managed context." });
+        citations.Add(new SocAgentCitation { Kind = "graph_search", Label = "Investigation graphs", Url = "/graphs" });
+        foreach (var graph in selectedGraphs.Take(3))
+        {
+            citations.Add(new SocAgentCitation { Kind = "graph_detail", Label = graph.Title, Url = $"/graphs/detail?graph_id={graph.GraphId}" });
+        }
+
         answer.AppendLine("soc-agent local SIEM assessment");
         answer.AppendLine();
         if (usingLocalFallback)
@@ -248,7 +258,7 @@ public sealed class SocAgentService(
 
         answer.AppendLine($"Question: {question}");
         answer.AppendLine();
-        answer.AppendLine($"Observed {selectedAgents.Length} active agent(s), {sourceHealthResponse.Sources.Count} source-health row(s), {recentEvents.Count} recent event(s), {selectedAlerts.Length} alert(s), {detectionRules.Count} detection rule(s), and {inventoryRows.Count} inventory snapshot(s) in scope.");
+        answer.AppendLine($"Observed {selectedAgents.Length} active agent(s), {sourceHealthResponse.Sources.Count} source-health row(s), {recentEvents.Count} recent event(s), {selectedAlerts.Length} alert(s), {detectionRules.Count} detection rule(s), {inventoryRows.Count} inventory snapshot(s), and {selectedGraphs.Length} active investigation graph(s) in scope.");
 
         var unhealthySummaries = sourceHealthResponse.Summaries
             .Where(summary => !string.Equals(summary.OverallStatus, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase))
@@ -281,6 +291,16 @@ public sealed class SocAgentService(
             foreach (var evt in recentEvents.Take(5))
             {
                 answer.AppendLine($"- {evt.EventTime:u} {evt.Hostname} {evt.Channel}/{evt.WindowsEventId} {evt.Normalized?.Category ?? "windows_event"}/{evt.Normalized?.Action ?? "observed"}: {Preview(evt.Message)}");
+            }
+        }
+
+        if (selectedGraphs.Length > 0)
+        {
+            answer.AppendLine();
+            answer.AppendLine("Investigation graph context:");
+            foreach (var graph in selectedGraphs)
+            {
+                answer.AppendLine($"- {graph.Title} ({graph.NodeCount} node(s), {graph.EdgeCount} edge(s), status={graph.Status}) can preserve explicit operator context. Use the graph page's soc-agent proposal workflow for approval-gated updates.");
             }
         }
 

@@ -47,6 +47,7 @@ builder.Services.AddScoped<SocAgentProviderStatusService>();
 builder.Services.AddScoped<SocAgentService>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
+builder.Services.AddScoped<InvestigationGraphRepository>();
 builder.Services.AddScoped<ReviewRepository>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
 builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
@@ -271,6 +272,194 @@ app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
 
     var alert = await alerts.GetAlertAsync(alertId, cancellationToken);
     return alert is null ? Results.NotFound() : Results.Ok(alert);
+});
+
+app.MapGet("/api/v1/graphs", async Task<IResult> (
+    HttpContext context,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var status = context.Request.Query["status"].FirstOrDefault();
+    return Results.Ok(new { graphs = await graphs.ListAsync(status, cancellationToken) });
+});
+
+app.MapPost("/api/v1/graphs", async Task<IResult> (
+    HttpContext context,
+    InvestigationGraphCreateRequest request,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        return Results.Ok(await graphs.CreateAsync(request, "review-token-operator", cancellationToken));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["graph"] = new[] { ex.Message } });
+    }
+});
+
+app.MapGet("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var detail = await graphs.GetDetailAsync(graphId, cancellationToken);
+    return detail is null ? Results.NotFound() : Results.Ok(detail);
+});
+
+app.MapPut("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphUpdateRequest request,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var updated = await graphs.UpdateAsync(graphId, request, "review-token-operator", cancellationToken);
+        return updated is null ? Results.Conflict(new { error = "version_conflict_or_archived" }) : Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["graph"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPost("/api/v1/graphs/{graphId:guid}/archive", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var archived = await graphs.ArchiveAsync(graphId, "review-token-operator", cancellationToken);
+    return archived is null ? Results.NotFound() : Results.Ok(archived);
+});
+
+app.MapPost("/api/v1/graphs/{graphId:guid}/nodes", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphNodeRequest request,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        return Results.Ok(await graphs.AddNodeAsync(graphId, request, "review-token-operator", cancellationToken));
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["node"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPost("/api/v1/graphs/{graphId:guid}/edges", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphEdgeRequest request,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        return Results.Ok(await graphs.AddEdgeAsync(graphId, request, "review-token-operator", cancellationToken));
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["edge"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPost("/api/v1/graphs/{graphId:guid}/proposals", async Task<IResult> (
+    Guid graphId,
+    HttpContext context,
+    InvestigationGraphProposalRequest request,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        return Results.Ok(await graphs.CreateSocAgentProposalAsync(graphId, request.Instruction, "review-token-operator", cancellationToken));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["proposal"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPost("/api/v1/graphs/{graphId:guid}/proposals/{proposalId:guid}/apply", async Task<IResult> (
+    Guid graphId,
+    Guid proposalId,
+    HttpContext context,
+    InvestigationGraphRepository graphs,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var proposal = await graphs.ApplyProposalAsync(graphId, proposalId, "review-token-operator", cancellationToken);
+    return proposal is null ? Results.NotFound() : Results.Ok(proposal);
 });
 
 app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (

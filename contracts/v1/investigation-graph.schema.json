@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/investigation-graph.schema.json",
+  "title": "Challenger SIEM investigation graph v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "graph": { "$ref": "#/$defs/graph" },
+    "nodes": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/node" } },
+    "edges": { "type": "array", "maxItems": 400, "items": { "$ref": "#/$defs/edge" } }
+  },
+  "required": ["graph", "nodes", "edges"],
+  "$defs": {
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "graph_id": { "type": "string", "format": "uuid" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "description": { "type": ["string", "null"], "maxLength": 4000 },
+        "status": { "enum": ["active", "archived"] },
+        "owner": { "type": ["string", "null"], "maxLength": 120 },
+        "tags": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 40 } },
+        "version": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["graph_id", "title", "status", "tags", "version"]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "node_id": { "type": "string", "format": "uuid" },
+        "node_type": { "type": "string", "maxLength": 64 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reference_kind": { "type": ["string", "null"], "maxLength": 64 },
+        "reference_id": { "type": ["string", "null"], "maxLength": 200 },
+        "link_url": { "type": ["string", "null"], "maxLength": 500 },
+        "notes": { "type": ["string", "null"], "maxLength": 4000 },
+        "status": { "enum": ["active", "archived"] }
+      },
+      "required": ["node_id", "node_type", "label", "status"]
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "edge_id": { "type": "string", "format": "uuid" },
+        "source_node_id": { "type": "string", "format": "uuid" },
+        "target_node_id": { "type": "string", "format": "uuid" },
+        "edge_type": { "type": "string", "maxLength": 64 },
+        "label": { "type": ["string", "null"], "maxLength": 200 },
+        "notes": { "type": ["string", "null"], "maxLength": 4000 },
+        "status": { "enum": ["active", "archived"] }
+      },
+      "required": ["edge_id", "source_node_id", "target_node_id", "edge_type", "status"]
+    }
+  }
+}

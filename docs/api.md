@@ -188,6 +188,25 @@ Authorization: Bearer <review-token>
 
 Returns bounded asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, and role detection.
 
+## Investigation graphs
+
+```http
+GET /api/v1/graphs?status=active
+POST /api/v1/graphs
+GET /api/v1/graphs/<graph-id>
+PUT /api/v1/graphs/<graph-id>
+POST /api/v1/graphs/<graph-id>/archive
+POST /api/v1/graphs/<graph-id>/nodes
+POST /api/v1/graphs/<graph-id>/edges
+POST /api/v1/graphs/<graph-id>/proposals
+POST /api/v1/graphs/<graph-id>/proposals/<proposal-id>/apply
+Authorization: Bearer <review-token>
+```
+
+Graph records contain bounded metadata (`title`, `description`, `owner`, `tags`, `version`), typed nodes, typed edges, and proposal artifacts. Node types include `agent`, `host`, `user`, `process`, `ip`, `domain`, `file`, `registry_key`, `service`, `event`, `alert`, `detection_rule`, `source_health`, `note`, and `custom`. Edge types include `observed_on`, `generated`, `parent_of`, `communicated_with`, `authenticated_as`, `touched_file`, `modified_registry`, `evidence_for`, `related_to`, and `annotates`.
+
+Updates use `expected_version` for optimistic concurrency. `soc-agent` proposals are pending until an operator explicitly applies them; proposal application is audited and remains under the review-token/session model.
+
 ## soc-agent
 
 Provider status:

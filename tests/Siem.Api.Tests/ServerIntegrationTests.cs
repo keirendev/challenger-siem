@@ -107,6 +107,79 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task InvestigationGraphApisPersistNodesEdgesProposalsAndEnforceReviewToken()
+    {
+        var connectionString = database.RequireConnectionString();
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        using (var unauth = await client.GetAsync("/api/v1/graphs"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+        }
+
+        var graph = await PostJsonWithReviewTokenAsync<InvestigationGraphSummary>(client, "/api/v1/graphs", new InvestigationGraphCreateRequest
+        {
+            Title = "Synthetic investigation graph",
+            Description = "Synthetic graph for API tests",
+            Tags = new[] { "synthetic", "graph-test" }
+        });
+        Assert.NotEqual(Guid.Empty, graph.GraphId);
+        Assert.Equal(1, graph.Version);
+
+        var agentNode = await PostJsonWithReviewTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
+        {
+            NodeType = "agent",
+            Label = "synthetic-agent-node",
+            ReferenceKind = "agent",
+            ReferenceId = "graph-agent-001",
+            LinkUrl = "/agents?agent_id=graph-agent-001",
+            Notes = "Synthetic node only."
+        });
+        var noteNode = await PostJsonWithReviewTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
+        {
+            NodeType = "note",
+            Label = "analyst note",
+            Notes = "Synthetic relationship note."
+        });
+
+        var edge = await PostJsonWithReviewTokenAsync<InvestigationGraphEdge>(client, $"/api/v1/graphs/{graph.GraphId}/edges", new InvestigationGraphEdgeRequest
+        {
+            SourceNodeId = agentNode.NodeId,
+            TargetNodeId = noteNode.NodeId,
+            EdgeType = "annotates",
+            Label = "documents"
+        });
+        Assert.Equal("annotates", edge.EdgeType);
+
+        var proposal = await PostJsonWithReviewTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals", new InvestigationGraphProposalRequest
+        {
+            Instruction = "Propose a synthetic note node."
+        });
+        Assert.Equal("pending", proposal.Status);
+        Assert.Single(proposal.ProposedNodes);
+
+        var applied = await PostJsonWithReviewTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals/{proposal.ProposalId}/apply", new { });
+        Assert.Equal("applied", applied.Status);
+
+        var detail = await GetJsonWithReviewTokenAsync<InvestigationGraphDetail>(client, $"/api/v1/graphs/{graph.GraphId}");
+        Assert.Equal(graph.GraphId, detail.Graph.GraphId);
+        Assert.True(detail.Nodes.Count >= 3);
+        Assert.Contains(detail.Edges, item => item.EdgeId == edge.EdgeId);
+        Assert.Contains(detail.Proposals, item => item.ProposalId == proposal.ProposalId && item.Status == "applied");
+
+        var updated = await PutJsonWithReviewTokenAsync<InvestigationGraphSummary>(client, $"/api/v1/graphs/{graph.GraphId}", new InvestigationGraphUpdateRequest
+        {
+            Title = "Synthetic investigation graph updated",
+            Description = "Updated synthetic graph",
+            Tags = new[] { "updated" },
+            ExpectedVersion = detail.Graph.Version
+        });
+        Assert.Equal("Synthetic investigation graph updated", updated.Title);
+        Assert.True(updated.Version > detail.Graph.Version);
+    }
+
+    [PostgresFact]
     public async Task SocAgentChatEndpointsPersistSessionAndKeepOneShotAskCompatible()
     {
         var connectionString = database.RequireConnectionString();
@@ -282,6 +355,19 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     private static async Task<T> PostJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body, options: JsonOptions.Default)
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        using var response = await client.SendAsync(request, CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
+        return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task<T> PutJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, path)
         {
             Content = JsonContent.Create(body, options: JsonOptions.Default)
         };

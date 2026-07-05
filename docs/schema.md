@@ -72,6 +72,10 @@ Store bounded chat workspace session metadata and message history, including rol
 
 Stores detection alert review skeleton data and links alerts to event evidence.
 
+### `investigation_graphs`, `investigation_graph_nodes`, `investigation_graph_edges`, `investigation_graph_proposals`, and `investigation_graph_audit`
+
+Store bounded operator-managed investigation graphs, typed nodes/edges, proposal-first `soc-agent` graph changes, and audit records. Nodes link to existing SIEM pages through reference fields and URLs instead of copying raw telemetry. Proposals remain pending until explicitly applied by an operator.
+
 ### `ingestion_errors`
 
 Stores reviewable ingest validation failures after an agent has authenticated successfully. Rows include agent ID, batch ID, event ID when it can be safely identified, an error code/message, and bounded JSON context. The context intentionally omits authorization headers, bearer tokens, rendered event messages, and full raw event payloads.
@@ -104,6 +108,11 @@ limit 25;
 - `soc_agent_turns(created_at desc)` and `soc_agent_turns(context_agent_id)`
 - `soc_agent_sessions(updated_at desc)` and `soc_agent_sessions(context_agent_id)`
 - `soc_agent_messages(session_id, created_at asc, id asc)`
+- `investigation_graphs(status, updated_at desc)` and GIN `investigation_graphs(tags)`
+- `investigation_graph_nodes(graph_id, status)` and `investigation_graph_nodes(reference_kind, reference_id)`
+- `investigation_graph_edges(graph_id, status)`
+- `investigation_graph_proposals(graph_id, status, created_at desc)`
+- `investigation_graph_audit(graph_id, created_at desc)`
 - `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
 
 ## Applying and validating the schema
