@@ -47,10 +47,11 @@ dotnet test Challenger.Siem.sln
 Start the API and web console:
 
 ```bash
-ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile
+./scripts/platform.sh start
+./scripts/platform.sh status
 ```
 
-Then browse to `http://127.0.0.1:5081/login` and sign in with `Auth__ReviewToken`. The web console uses an HTTP-only same-origin session cookie after login; the review token is not stored in browser local storage.
+The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with `Auth__ReviewToken`. The web console uses an HTTP-only same-origin session cookie after login; the review token is not stored in browser local storage.
 
 ## Validate with synthetic data
 
