@@ -86,6 +86,9 @@ public sealed class SocAgentModel(
             "expired" => "warning",
             "refresh_failed" => "warning",
             "unsupported_delegated_auth" => "warning",
+            "unsupported_subscription_oauth" => "warning",
+            "scope_missing" => "warning",
+            "plan_limited" => "warning",
             "budget_limited" => "warning",
             "rate_limited" => "warning",
             _ => "danger"

@@ -225,7 +225,7 @@ GET /api/v1/soc-agent/status
 Authorization: Bearer <review-token>
 ```
 
-Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `connected`, `budget_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. Delegated auth-file responses may include safe `credential_source`, `expires_at`, and `refresh_status` metadata. Responses never include provider secrets, raw auth-file contents, account identifiers, or full auth-file paths.
+Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. Subscription OAuth and delegated auth-file responses may include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`. Responses never include provider secrets, raw auth-file contents, account identifiers, or full auth-file paths.
 
 Backwards-compatible one-shot ask:
 
@@ -256,7 +256,7 @@ Content-Type: application/json
 }
 ```
 
-Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `OpenAI` is explicitly configured with server-side API-key or delegated auth-file credentials and external calls enabled, the server sends only bounded/redacted tool context to the official Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the official Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
 ## Alerts and detections
 

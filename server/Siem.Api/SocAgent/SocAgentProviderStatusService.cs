@@ -12,9 +12,7 @@ public sealed class SocAgentProviderStatusService(
         var current = options.Value;
         var provider = NormalizeProvider(current.Provider);
         var authMode = NormalizeAuthMode(current.AuthMode, provider);
-        var displayName = string.IsNullOrWhiteSpace(current.ProviderDisplayName)
-            ? provider
-            : current.ProviderDisplayName.Trim();
+        var displayName = DisplayNameFor(current, provider, authMode);
 
         if (!current.Enabled)
         {
@@ -36,14 +34,15 @@ public sealed class SocAgentProviderStatusService(
             return Create(
                 status: "local",
                 provider: "Local",
-                displayName: string.IsNullOrWhiteSpace(current.ProviderDisplayName) ? "Local soc-agent" : displayName,
+                displayName: displayName,
                 model: current.Model,
                 authMode: "local",
                 message: "Using the local deterministic soc-agent provider. Prompts and tool summaries stay inside the SIEM server.",
                 requiresConnection: false,
                 connectUrl: null,
                 connectLabel: null,
-                dataMayLeaveLocalSiem: false);
+                dataMayLeaveLocalSiem: false,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         if (!IsSupportedExternalProvider(provider))
@@ -58,7 +57,8 @@ public sealed class SocAgentProviderStatusService(
                 requiresConnection: true,
                 connectUrl: "/soc-agent",
                 connectLabel: "Review provider configuration",
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         if (!current.ExternalCallsEnabled)
@@ -69,11 +69,19 @@ public sealed class SocAgentProviderStatusService(
                 displayName,
                 model: current.Model,
                 authMode,
-                message: "An external ChatGPT/OpenAI provider is selected, but external model calls are disabled. Configure an official server-side provider mode before data leaves the local SIEM.",
+                message: "An external ChatGPT/OpenAI provider is selected, but external model calls are disabled. Configure ChatGPT subscription OAuth or another official server-side provider mode before data leaves the local SIEM.",
                 requiresConnection: true,
-                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
-                connectLabel: "Open official provider setup",
-                dataMayLeaveLocalSiem: true);
+                connectUrl: SafeSetupUrl(current, authMode),
+                connectLabel: IsSubscriptionOAuth(authMode) ? "Review ChatGPT subscription OAuth setup" : "Open official provider setup",
+                dataMayLeaveLocalSiem: true,
+                providerPath: IsSubscriptionOAuth(authMode) ? "chatgpt_subscription_oauth" : null,
+                authFileMode: IsSubscriptionOAuth(authMode) ? "subscription_oauth" : null,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
+        }
+
+        if (IsSubscriptionOAuth(authMode))
+        {
+            return CreateSubscriptionOAuthStatus(current, provider, displayName);
         }
 
         if (string.Equals(authMode, "delegated_file", StringComparison.OrdinalIgnoreCase))
@@ -93,9 +101,10 @@ public sealed class SocAgentProviderStatusService(
                     authMode,
                     message: "Delegated ChatGPT/OpenAI authentication is selected, but no official authorization URL is configured. Ask an admin to configure a supported OAuth/OIDC/PKCE flow; do not paste ChatGPT passwords into the SIEM.",
                     requiresConnection: true,
-                    connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                    connectUrl: SafeSetupUrl(current, authMode),
                     connectLabel: "View official provider setup",
-                    dataMayLeaveLocalSiem: true);
+                    dataMayLeaveLocalSiem: true,
+                    setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
             }
 
             var authorizationUrl = SafeAuthorizationUrl(current.AuthorizationUrl);
@@ -109,9 +118,10 @@ public sealed class SocAgentProviderStatusService(
                     authMode,
                     message: "Delegated provider authentication is configured with a URL that is not on the official provider allowlist. No external calls will be attempted.",
                     requiresConnection: true,
-                    connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                    connectUrl: SafeSetupUrl(current, authMode),
                     connectLabel: "View official provider setup",
-                    dataMayLeaveLocalSiem: true);
+                    dataMayLeaveLocalSiem: true,
+                    setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
             }
 
             return Create(
@@ -124,7 +134,8 @@ public sealed class SocAgentProviderStatusService(
                 requiresConnection: true,
                 connectUrl: authorizationUrl,
                 connectLabel: "Connect with official provider login",
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         if (!HasServerSideApiKey(current))
@@ -137,9 +148,10 @@ public sealed class SocAgentProviderStatusService(
                 authMode: "api_key",
                 message: "Server-side OpenAI API credentials are not configured. Operators cannot enter provider passwords or tokens in the SIEM page; an admin must configure official provider credentials outside source control.",
                 requiresConnection: true,
-                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                connectUrl: SafeSetupUrl(current, "api_key"),
                 connectLabel: "Open official provider setup",
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         if (!UsesOfficialOpenAiEndpoint(current))
@@ -152,9 +164,10 @@ public sealed class SocAgentProviderStatusService(
                 authMode: "api_key",
                 message: "OpenAI provider mode must use the official https://api.openai.com/v1/chat/completions endpoint. No external calls will be attempted with the configured endpoint.",
                 requiresConnection: true,
-                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                connectUrl: SafeSetupUrl(current, "api_key"),
                 connectLabel: "View official provider setup",
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         if (current.DailyBudgetUsd.HasValue && current.DailyBudgetUsd.Value <= 0m)
@@ -169,7 +182,8 @@ public sealed class SocAgentProviderStatusService(
                 requiresConnection: false,
                 connectUrl: null,
                 connectLabel: null,
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         return Create(
@@ -182,7 +196,75 @@ public sealed class SocAgentProviderStatusService(
             requiresConnection: false,
             connectUrl: null,
             connectLabel: null,
-            dataMayLeaveLocalSiem: true);
+            dataMayLeaveLocalSiem: true,
+            setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
+    }
+
+    private SocAgentProviderStatusResponse CreateSubscriptionOAuthStatus(SocAgentOptions current, string provider, string displayName)
+    {
+        if (!UsesOfficialOpenAiEndpoint(current))
+        {
+            return Create(
+                status: "provider_error",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "subscription_oauth",
+                message: "ChatGPT subscription OAuth mode must use the official https://api.openai.com/v1/chat/completions model endpoint when model invocation is permitted. No external calls will be attempted with the configured endpoint.",
+                requiresConnection: true,
+                connectUrl: SafeSetupUrl(current, "subscription_oauth"),
+                connectLabel: "View ChatGPT subscription OAuth setup",
+                dataMayLeaveLocalSiem: true,
+                providerPath: "chatgpt_subscription_oauth",
+                authFileMode: "subscription_oauth",
+                setupPriority: "primary");
+        }
+
+        var fileStatus = SocAgentSubscriptionOAuthCredentialLoader.Load(current, configuration, includeSecret: false);
+        if (string.Equals(fileStatus.Status, "connected", StringComparison.OrdinalIgnoreCase)
+            && current.DailyBudgetUsd.HasValue
+            && current.DailyBudgetUsd.Value <= 0m)
+        {
+            return Create(
+                status: "budget_limited",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "subscription_oauth",
+                message: "ChatGPT subscription OAuth credentials are configured, but the configured daily budget is exhausted or set to zero. External calls will not be attempted until the budget setting is raised.",
+                requiresConnection: false,
+                connectUrl: null,
+                connectLabel: null,
+                dataMayLeaveLocalSiem: true,
+                credentialSource: fileStatus.CredentialSource,
+                expiresAt: fileStatus.ExpiresAt,
+                refreshStatus: fileStatus.RefreshStatus,
+                providerPath: fileStatus.ProviderPath,
+                authFileMode: fileStatus.AuthFileMode,
+                setupPriority: fileStatus.SetupPriority,
+                scopeStatus: fileStatus.ScopeStatus,
+                entitlementStatus: fileStatus.EntitlementStatus);
+        }
+
+        return Create(
+            status: fileStatus.Status,
+            provider,
+            displayName,
+            model: current.Model,
+            authMode: "subscription_oauth",
+            message: fileStatus.OperatorMessage,
+            requiresConnection: fileStatus.RequiresConnection,
+            connectUrl: fileStatus.RequiresConnection ? SafeSetupUrl(current, "subscription_oauth") : null,
+            connectLabel: fileStatus.ConnectLabel,
+            dataMayLeaveLocalSiem: true,
+            credentialSource: fileStatus.CredentialSource,
+            expiresAt: fileStatus.ExpiresAt,
+            refreshStatus: fileStatus.RefreshStatus,
+            providerPath: fileStatus.ProviderPath,
+            authFileMode: fileStatus.AuthFileMode,
+            setupPriority: fileStatus.SetupPriority,
+            scopeStatus: fileStatus.ScopeStatus,
+            entitlementStatus: fileStatus.EntitlementStatus);
     }
 
     private SocAgentProviderStatusResponse CreateDelegatedFileStatus(SocAgentOptions current, string provider, string displayName)
@@ -197,9 +279,10 @@ public sealed class SocAgentProviderStatusService(
                 authMode: "delegated_file",
                 message: "Delegated auth-file mode must use the official https://api.openai.com/v1/chat/completions endpoint. No external calls will be attempted with the configured endpoint.",
                 requiresConnection: true,
-                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                connectUrl: SafeSetupUrl(current, "delegated_file"),
                 connectLabel: "View official provider setup",
-                dataMayLeaveLocalSiem: true);
+                dataMayLeaveLocalSiem: true,
+                setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
         }
 
         var fileStatus = SocAgentDelegatedAuthFileLoader.Load(current, configuration, includeSecret: false);
@@ -220,7 +303,10 @@ public sealed class SocAgentProviderStatusService(
                 dataMayLeaveLocalSiem: true,
                 credentialSource: fileStatus.CredentialSource,
                 expiresAt: fileStatus.ExpiresAt,
-                refreshStatus: fileStatus.RefreshStatus);
+                refreshStatus: fileStatus.RefreshStatus,
+                providerPath: "delegated_file",
+                authFileMode: "delegated_file",
+                setupPriority: "advanced");
         }
 
         return Create(
@@ -231,12 +317,15 @@ public sealed class SocAgentProviderStatusService(
             authMode: "delegated_file",
             message: fileStatus.OperatorMessage,
             requiresConnection: fileStatus.RequiresConnection,
-            connectUrl: fileStatus.RequiresConnection ? SafeSetupUrl(current.ProviderSetupUrl) : null,
+            connectUrl: fileStatus.RequiresConnection ? SafeSetupUrl(current, "delegated_file") : null,
             connectLabel: fileStatus.ConnectLabel,
             dataMayLeaveLocalSiem: true,
             credentialSource: fileStatus.CredentialSource,
             expiresAt: fileStatus.ExpiresAt,
-            refreshStatus: fileStatus.RefreshStatus);
+            refreshStatus: fileStatus.RefreshStatus,
+            providerPath: "delegated_file",
+            authFileMode: "delegated_file",
+            setupPriority: "advanced");
     }
 
     private bool HasServerSideApiKey(SocAgentOptions current)
@@ -260,7 +349,12 @@ public sealed class SocAgentProviderStatusService(
         bool dataMayLeaveLocalSiem,
         string? credentialSource = null,
         DateTimeOffset? expiresAt = null,
-        string? refreshStatus = null)
+        string? refreshStatus = null,
+        string? providerPath = null,
+        string? authFileMode = null,
+        string? setupPriority = null,
+        string? scopeStatus = null,
+        string? entitlementStatus = null)
     {
         return new SocAgentProviderStatusResponse
         {
@@ -277,6 +371,11 @@ public sealed class SocAgentProviderStatusService(
             CredentialSource = credentialSource,
             ExpiresAt = expiresAt,
             RefreshStatus = refreshStatus,
+            ProviderPath = providerPath,
+            AuthFileMode = authFileMode,
+            SetupPriority = setupPriority,
+            ScopeStatus = scopeStatus,
+            EntitlementStatus = entitlementStatus,
             CheckedAt = DateTimeOffset.UtcNow
         };
     }
@@ -290,7 +389,7 @@ public sealed class SocAgentProviderStatusService(
 
         return provider.Trim() switch
         {
-            var value when value.Equals("chatgpt", StringComparison.OrdinalIgnoreCase) => "OpenAI",
+            var value when value.Equals("chatgpt", StringComparison.OrdinalIgnoreCase) => "ChatGPT",
             var value when value.Equals("openai", StringComparison.OrdinalIgnoreCase) => "OpenAI",
             var value when value.Equals("local", StringComparison.OrdinalIgnoreCase) => "Local",
             var value => value
@@ -309,27 +408,66 @@ public sealed class SocAgentProviderStatusService(
             return "api_key";
         }
 
-        return authMode.Trim().ToLowerInvariant() switch
+        return authMode.Trim().ToLowerInvariant().Replace('-', '_') switch
         {
             "oauth" => "delegated",
             "oidc" => "delegated",
             "pkce" => "delegated",
             "delegated" => "delegated",
-            "delegated-file" => "delegated_file",
             "delegated_file" => "delegated_file",
             "delegatedfile" => "delegated_file",
-            "auth-file" => "delegated_file",
             "auth_file" => "delegated_file",
-            "api-key" => "api_key",
-            "apikey" => "api_key",
+            "subscriptionoauth" => "subscription_oauth",
+            "subscription_oauth" => "subscription_oauth",
+            "chatgpt_subscription_oauth" => "subscription_oauth",
+            "chatgptoauth" => "subscription_oauth",
+            "chatgpt_oauth" => "subscription_oauth",
             "api_key" => "api_key",
+            "apikey" => "api_key",
             var value => value
         };
     }
 
     private static bool IsSupportedExternalProvider(string provider)
     {
-        return provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase);
+        return provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSubscriptionOAuth(string authMode)
+    {
+        return string.Equals(authMode, "subscription_oauth", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DisplayNameFor(SocAgentOptions options, string provider, string authMode)
+    {
+        var configured = options.ProviderDisplayName?.Trim();
+        if (!string.IsNullOrWhiteSpace(configured)
+            && (!string.Equals(configured, "Local soc-agent", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase)))
+        {
+            return configured;
+        }
+
+        if (string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Local soc-agent";
+        }
+
+        return IsSubscriptionOAuth(authMode)
+            ? "ChatGPT subscription OAuth"
+            : "OpenAI ChatGPT";
+    }
+
+    private static string NormalizePreferredExternalAuthMode(string? preferred)
+    {
+        return NormalizeAuthMode(string.IsNullOrWhiteSpace(preferred) ? "SubscriptionOAuth" : preferred, "OpenAI") switch
+        {
+            "subscription_oauth" => "primary:subscription_oauth",
+            "api_key" => "primary:api_key",
+            "delegated_file" => "primary:delegated_file",
+            var value => $"primary:{value}"
+        };
     }
 
     private static bool UsesOfficialOpenAiEndpoint(SocAgentOptions options)
@@ -347,9 +485,14 @@ public sealed class SocAgentProviderStatusService(
             && string.Equals(path, "chat/completions", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string SafeSetupUrl(string? url)
+    private static string SafeSetupUrl(SocAgentOptions options, string authMode)
     {
-        return SafeOfficialProviderUrl(url, setupUrl: true) ?? "https://platform.openai.com/api-keys";
+        if (IsSubscriptionOAuth(authMode))
+        {
+            return SafeOfficialProviderUrl(options.SubscriptionProviderSetupUrl, setupUrl: true) ?? "https://help.openai.com/";
+        }
+
+        return SafeOfficialProviderUrl(options.ProviderSetupUrl, setupUrl: true) ?? "https://platform.openai.com/api-keys";
     }
 
     private static string? SafeAuthorizationUrl(string? url)

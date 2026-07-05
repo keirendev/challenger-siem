@@ -100,6 +100,21 @@ public sealed record SocAgentProviderStatusResponse
     [JsonPropertyName("refresh_status")]
     public string? RefreshStatus { get; init; }
 
+    [JsonPropertyName("provider_path")]
+    public string? ProviderPath { get; init; }
+
+    [JsonPropertyName("auth_file_mode")]
+    public string? AuthFileMode { get; init; }
+
+    [JsonPropertyName("setup_priority")]
+    public string? SetupPriority { get; init; }
+
+    [JsonPropertyName("scope_status")]
+    public string? ScopeStatus { get; init; }
+
+    [JsonPropertyName("entitlement_status")]
+    public string? EntitlementStatus { get; init; }
+
     [JsonPropertyName("checked_at")]
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
 }

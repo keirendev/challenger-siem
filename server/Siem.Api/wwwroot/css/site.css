@@ -577,6 +577,20 @@ pre,
     margin: 0;
 }
 
+.provider-setup {
+    margin-top: var(--space-4);
+}
+
+.setup-grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.setup-grid h3 {
+    margin-top: 0;
+}
+
 .chat-layout {
     align-items: start;
     display: grid;

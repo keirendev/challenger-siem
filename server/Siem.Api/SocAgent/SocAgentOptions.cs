@@ -13,10 +13,16 @@ public sealed class SocAgentOptions
     public string LocalFallbackModel { get; set; } = "soc-agent-local-v1";
     public bool FallbackToLocalWhenUnavailable { get; set; } = true;
     public bool ExternalCallsEnabled { get; set; }
+    public string PreferredExternalAuthMode { get; set; } = "SubscriptionOAuth";
     public string? ProviderSetupUrl { get; set; } = "https://platform.openai.com/api-keys";
+    public string? SubscriptionProviderSetupUrl { get; set; } = "https://help.openai.com/";
     public string? AuthorizationUrl { get; set; }
     public string? AuthFilePath { get; set; }
     public string AuthFileProviderKey { get; set; } = "openai";
+    public string? SubscriptionAuthFilePath { get; set; }
+    public string SubscriptionAuthFileProviderKey { get; set; } = "chatgpt";
+    public string SubscriptionRequiredScopes { get; set; } = "model.request";
+    public string? SubscriptionTokenEndpoint { get; set; } = "https://auth.openai.com/oauth/token";
     public int AuthFileExpirySkewSeconds { get; set; } = 300;
     public string? OpenAiApiKey { get; set; }
     public string OpenAiBaseUrl { get; set; } = "https://api.openai.com/v1";
