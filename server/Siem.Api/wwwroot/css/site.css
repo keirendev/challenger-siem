@@ -698,6 +698,7 @@ pre,
 .thread-header,
 .activity-panel-header,
 .composer-context-row,
+.context-indicator,
 .composer-actions,
 .tool-card-header,
 .run-state {
@@ -709,6 +710,19 @@ pre,
 .soc-agent-title-actions,
 .run-state {
     justify-content: flex-end;
+}
+
+.context-indicator {
+    flex-wrap: wrap;
+}
+
+.context-clear-link {
+    min-height: 2rem;
+    padding: 0.32rem 0.65rem;
+}
+
+#soc-agent-scroll-bottom[hidden] {
+    display: none;
 }
 
 .live-alert[hidden],
@@ -910,7 +924,7 @@ pre,
 }
 
 .activity-collapsed {
-    grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(3.25rem, 4rem);
+    grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(8.5rem, 10rem);
 }
 
 .activity-collapsed .soc-agent-activity > :not(.activity-panel-header) {
@@ -918,7 +932,27 @@ pre,
 }
 
 .activity-collapsed .soc-agent-activity {
+    align-items: stretch;
+    overflow: visible;
+}
+
+.activity-collapsed .activity-panel-header {
+    justify-content: center;
+}
+
+.activity-collapsed .activity-panel-header > div {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
     overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+.activity-collapsed #soc-agent-toggle-activity {
+    width: 100%;
 }
 
 .danger-text {

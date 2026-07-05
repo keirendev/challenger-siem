@@ -3,6 +3,7 @@
 @{
     ViewData["Title"] = "soc-agent";
     var composerContextAgentId = Model.ContextAgentId ?? Model.CurrentSession?.ContextAgentId;
+    var hasAgentContext = !string.IsNullOrWhiteSpace(composerContextAgentId);
     var currentSessionId = Model.CurrentSession?.SessionId.ToString() ?? string.Empty;
 }
 
@@ -146,39 +147,40 @@
 
         <form method="post" asp-page-handler="Send" class="card chat-composer live-composer" id="soc-agent-composer" aria-label="Send a soc-agent message">
             <input type="hidden" asp-for="SessionId" id="soc-agent-session-id-input" />
+            <input type="hidden" id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" />
             <div class="composer-context-row">
-                <span class="pill" id="soc-agent-context-chip">@(string.IsNullOrWhiteSpace(composerContextAgentId) ? "Global SIEM context" : $"Agent context: {composerContextAgentId}")</span>
+                <div class="context-indicator">
+                    <span class="pill" id="soc-agent-context-chip">@(hasAgentContext ? $"Agent context: {composerContextAgentId}" : "Global SIEM context")</span>
+                    @if (hasAgentContext)
+                    {
+                        <a class="button secondary context-clear-link" asp-page="/SocAgent">Clear context</a>
+                    }
+                </div>
                 <span class="muted" id="soc-agent-char-count">0 / 4000</span>
             </div>
             <div class="form-row">
                 <label for="Message">Message</label>
-                <textarea id="Message" asp-for="Message" rows="3" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, detections, or an agent investigation. Enter sends; Shift+Enter adds a newline." required></textarea>
+                <textarea id="Message" asp-for="Message" rows="3" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, detections, or an agent investigation. Enter/Ctrl+Enter/Cmd+Enter sends; Shift+Enter adds a newline." required></textarea>
             </div>
-            <div class="composer-grid">
-                <div class="form-row">
-                    <label for="ComposerContextAgentId">Optional agent ID context</label>
-                    <input id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" autocomplete="off" />
-                </div>
-                <div class="composer-actions">
-                    <button type="submit" id="soc-agent-send-button">Send</button>
-                    <button type="button" class="button danger" id="soc-agent-cancel-button" disabled>Cancel</button>
-                    @if (Model.HasCurrentSession)
-                    {
-                        <a class="button secondary" asp-page="/SocAgent">New chat</a>
-                    }
-                </div>
+            <div class="composer-actions">
+                <button type="submit" id="soc-agent-send-button">Send</button>
+                <button type="button" class="button danger" id="soc-agent-cancel-button" disabled>Cancel</button>
+                @if (Model.HasCurrentSession)
+                {
+                    <a class="button secondary" asp-page="/SocAgent">New chat</a>
+                }
             </div>
             <p class="muted">soc-agent can summarize and cite SIEM data, but it cannot mutate detections, configuration, agents, stored data, or repository files.</p>
         </form>
     </section>
 
-    <aside class="soc-agent-activity card" aria-labelledby="activity-title">
+    <aside class="soc-agent-activity card" id="soc-agent-activity-panel" aria-labelledby="activity-title">
         <div class="activity-panel-header">
             <div>
                 <p class="page-kicker">Activity</p>
                 <h2 id="activity-title">Run and provider</h2>
             </div>
-            <button type="button" class="button secondary" id="soc-agent-toggle-activity" aria-expanded="true">Collapse</button>
+            <button type="button" class="button secondary" id="soc-agent-toggle-activity" aria-expanded="true" aria-controls="soc-agent-activity-panel">Collapse</button>
         </div>
 
         <section class="compact-provider" aria-labelledby="provider-status-title">
@@ -310,6 +312,7 @@
     let reconnectTimer = null;
     let lastSequence = 0;
     let running = false;
+    let autoFollow = true;
     let pendingAssistant = null;
     let pendingAssistantContent = '';
 
@@ -357,13 +360,34 @@
     }
 
     function isNearBottom() {
-        return threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight < 180;
+        return threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight <= 96;
+    }
+
+    function updateScrollControl() {
+        const atBottom = isNearBottom();
+        const showControl = !autoFollow || !atBottom;
+        scrollButton.hidden = !showControl;
+        scrollButton.disabled = !showControl;
+        scrollButton.setAttribute('aria-disabled', String(!showControl));
+    }
+
+    function setAutoFollow(shouldFollow) {
+        autoFollow = shouldFollow;
+        updateScrollControl();
     }
 
     function scrollToLatest(force = false) {
-        if (force || isNearBottom()) {
+        if (force) {
+            autoFollow = true;
+            threadScroll.scrollTop = threadScroll.scrollHeight;
+            updateScrollControl();
+            return;
+        }
+
+        if (autoFollow) {
             threadScroll.scrollTop = threadScroll.scrollHeight;
         }
+        updateScrollControl();
     }
 
     function createElement(tag, className, text) {
@@ -394,7 +418,6 @@
         const existing = document.getElementById(`message-${message.message_id}`);
         if (existing) return existing;
 
-        const shouldScroll = isNearBottom();
         emptyState.hidden = true;
 
         let item;
@@ -428,7 +451,7 @@
             messageList.appendChild(item);
         }
 
-        if (shouldScroll) scrollToLatest(true);
+        scrollToLatest();
         return item;
     }
 
@@ -707,11 +730,16 @@
     textarea.addEventListener('input', updateCharacterCount);
     contextInput.addEventListener('input', updateContextChip);
     textarea.addEventListener('keydown', event => {
-        if (event.key === 'Enter' && !event.shiftKey) {
+        const explicitSendShortcut = event.ctrlKey || event.metaKey;
+        const plainEnterSend = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+        if (event.key === 'Enter' && !event.shiftKey && (plainEnterSend || explicitSendShortcut)) {
             event.preventDefault();
-            form.requestSubmit();
+            if (!running && !sendButton.disabled) {
+                form.requestSubmit();
+            }
         }
     });
+    threadScroll.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });
     scrollButton.addEventListener('click', () => scrollToLatest(true));
     document.querySelectorAll('[data-prompt]').forEach(button => {
         button.addEventListener('click', () => {

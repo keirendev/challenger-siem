@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Refined the `/soc-agent` chat workspace with hidden manual agent context, a non-editable context chip, reliable activity-panel collapse/expand controls, user-controlled auto-follow scrolling, and Ctrl/Cmd+Enter send support.
 - Added a live `soc-agent` workspace with same-origin event-stream run transport, no-reload chat sends, tool/progress events, cancellation, reconnect recovery, compact provider/activity panels, and docs/tests for the additive browser workflow.
 - Added ChatGPT Codex Responses support for `soc-agent` Pi `openai-codex` auth-file mode so ChatGPT subscription credentials from `~/.pi/agent/auth.json` can call plan-allowed models such as `gpt-5.5` without requiring OpenAI API `model.request` scope.
 - Added Pi agent auth-file reuse for `soc-agent` ChatGPT subscription OAuth mode so a successful Pi `/login` can supply the server-side `~/.pi/agent/auth.json` `openai-codex` credential without creating a separate auth file.

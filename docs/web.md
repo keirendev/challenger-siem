@@ -43,7 +43,7 @@ Initial performance/accessibility budgets for local validation:
 - `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
 - `/alerts` and `/alerts/detail?alert_id=<uuid>` - paged alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
 - `/graphs` and `/graphs/detail?graph_id=<uuid>` - paged operator-managed investigation graphs with bounded metadata, typed nodes/edges, source links, archive lifecycle, and approval-gated `soc-agent` proposals.
-- `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering live chat workspace with a session rail, focused no-reload thread/composer, collapsible activity/provider panel, live server-side tool progress for agents, source health, events, alerts, detection rules, inventory, cancellation, reconnect recovery, and citations back to review pages.
+- `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering live chat workspace with a session rail, focused no-reload thread/composer, non-editable agent context chip, Ctrl/Cmd+Enter send support, user-controlled auto-follow scrolling, collapsible activity/provider panel, live server-side tool progress for agents, source health, events, alerts, detection rules, inventory, cancellation, reconnect recovery, and citations back to review pages.
 - `/audit-policy` - audit-policy drift snapshot review skeleton.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.
 

@@ -34,7 +34,7 @@ The `/soc-agent` page shows:
 - ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup clearly marked as advanced alternatives;
 - a prominent official connect/setup action when external ChatGPT/OpenAI auth is required but unavailable;
 - bounded chat history and a message thread with operator and `soc-agent` bubbles;
-- no-reload message sending with Enter-to-send, Shift+Enter-newline, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, a non-editable agent-context chip, user-controlled auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
 - live tool activity cards with running/ok states, bounded row counts/summaries, and final citation links back to SIEM review pages;
 - loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.
