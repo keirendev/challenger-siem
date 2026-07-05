@@ -206,6 +206,36 @@ create table if not exists soc_agent_turns (
 create index if not exists idx_soc_agent_turns_created on soc_agent_turns(created_at desc);
 create index if not exists idx_soc_agent_turns_context_agent on soc_agent_turns(context_agent_id);
 
+create table if not exists soc_agent_sessions (
+    session_id uuid primary key,
+    title text not null,
+    provider text not null,
+    model text not null,
+    status text not null default 'open',
+    context_agent_id text null,
+    context_event_id uuid null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint ck_soc_agent_sessions_status check (status in ('open', 'error', 'closed'))
+);
+create index if not exists idx_soc_agent_sessions_updated on soc_agent_sessions(updated_at desc);
+create index if not exists idx_soc_agent_sessions_context_agent on soc_agent_sessions(context_agent_id);
+
+create table if not exists soc_agent_messages (
+    id bigserial primary key,
+    session_id uuid not null references soc_agent_sessions(session_id) on delete cascade,
+    role text not null,
+    content text not null,
+    provider text null,
+    model text null,
+    tool_runs jsonb not null default '[]'::jsonb,
+    citations jsonb not null default '[]'::jsonb,
+    error_code text null,
+    created_at timestamptz not null default now(),
+    constraint ck_soc_agent_messages_role check (role in ('operator', 'soc_agent', 'system'))
+);
+create index if not exists idx_soc_agent_messages_session on soc_agent_messages(session_id, created_at asc, id asc);
+
 create table if not exists ingestion_errors (
     id bigserial primary key,
     agent_id text null,

@@ -110,6 +110,28 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
         var auditPolicy = await GetHtmlAsync(client, "/audit-policy");
         Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
+
+        var socAgent = await GetHtmlAsync(client, $"/soc-agent?agent_id={Uri.EscapeDataString(agentId)}");
+        Assert.Contains("soc-agent chat", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Provider status", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Chat history", socAgent, StringComparison.Ordinal);
+        var socAgentToken = ExtractAntiforgeryToken(socAgent);
+        using (var chatResponse = await client.PostAsync("/soc-agent?handler=Send", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = socAgentToken,
+            ["Message"] = $"Summarize synthetic marker {agentId}",
+            ["ComposerContextAgentId"] = agentId
+        })))
+        {
+            Assert.Equal(HttpStatusCode.Redirect, chatResponse.StatusCode);
+            var chatLocation = chatResponse.Headers.Location?.OriginalString ?? throw new InvalidOperationException("soc-agent chat did not redirect to the session.");
+            var chatThread = await GetHtmlAsync(client, chatLocation);
+            Assert.Contains("Operator", chatThread, StringComparison.Ordinal);
+            Assert.Contains("soc-agent", chatThread, StringComparison.Ordinal);
+            Assert.Contains("Tool activity", chatThread, StringComparison.Ordinal);
+            Assert.Contains("Citations", chatThread, StringComparison.Ordinal);
+            Assert.Contains(agentId, chatThread, StringComparison.Ordinal);
+        }
     }
 
     [PostgresFact]

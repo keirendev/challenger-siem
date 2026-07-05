@@ -24,7 +24,7 @@ Issued by the server during registration.
 
 Protects the initial search/review API and web review console.
 
-- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/inventory`, `/api/v1/alerts`, `/api/v1/detections/rules`, and `POST /api/v1/soc-agent/ask`.
+- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/inventory`, `/api/v1/alerts`, `/api/v1/detections/rules`, `POST /api/v1/soc-agent/ask`, and the additive `/api/v1/soc-agent/status` / session chat endpoints.
 - Browser operators submit the token to `/login` for the web console.
 - Server compares it to `Auth:ReviewToken` from configuration.
 - A successful web login issues an HTTP-only same-origin cookie; the review token is not stored in browser local storage.
@@ -39,6 +39,12 @@ The API fails startup with non-secret key names if any of these settings are mis
 - `Auth:ReviewToken`
 
 Do not put real values in committed `appsettings.json`; use environment variables, secret stores, or ignored `.local/dev.env` files.
+
+## External `soc-agent` provider auth
+
+The `soc-agent` chat UI never asks operators to enter ChatGPT/OpenAI passwords, browser cookies, or unofficial session tokens. External provider credentials must be configured server-side through environment variables or a secret store. If an official delegated OAuth/OIDC/PKCE flow is configured in the future, the UI may link only to that official authorization URL with server-side state/CSRF handling.
+
+When external provider auth is required but unavailable, `/soc-agent` shows a connect/setup action that directs operators to official provider setup guidance and falls back to the configured local provider only when explicitly enabled by `SocAgent:FallbackToLocalWhenUnavailable`.
 
 ## Transport security
 

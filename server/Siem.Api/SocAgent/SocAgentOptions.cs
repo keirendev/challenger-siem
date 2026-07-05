@@ -6,9 +6,25 @@ public sealed class SocAgentOptions
 
     public bool Enabled { get; set; } = true;
     public string Provider { get; set; } = "Local";
+    public string ProviderDisplayName { get; set; } = "Local soc-agent";
+    public string AuthMode { get; set; } = "Local";
     public string Model { get; set; } = "soc-agent-local-v1";
+    public string LocalFallbackProvider { get; set; } = "LocalFallback";
+    public string LocalFallbackModel { get; set; } = "soc-agent-local-v1";
+    public bool FallbackToLocalWhenUnavailable { get; set; } = true;
+    public bool ExternalCallsEnabled { get; set; }
+    public string? ProviderSetupUrl { get; set; } = "https://platform.openai.com/api-keys";
+    public string? AuthorizationUrl { get; set; }
+    public string? OpenAiApiKey { get; set; }
+    public int RequestTimeoutSeconds { get; set; } = 30;
+    public int MaxRetries { get; set; } = 1;
+    public int MaxToolCalls { get; set; } = 8;
+    public int MaxPromptCharacters { get; set; } = 4000;
+    public int MaxResultCharacters { get; set; } = 20000;
+    public int MaxChatMessages { get; set; } = 50;
     public int MaxEvents { get; set; } = 5;
     public int MaxAgents { get; set; } = 10;
     public int MaxAlerts { get; set; } = 10;
     public bool RequireApprovalForMutations { get; set; } = true;
+    public decimal? DailyBudgetUsd { get; set; }
 }

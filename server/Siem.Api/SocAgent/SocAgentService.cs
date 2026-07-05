@@ -13,19 +13,163 @@ public sealed class SocAgentService(
     AlertRepository alerts,
     AssetInventoryRepository inventory,
     SocAgentRepository audit,
+    SocAgentProviderStatusService providerStatus,
     IOptions<SocAgentOptions> options)
 {
     private readonly SocAgentOptions options = options.Value;
 
+    public SocAgentProviderStatusResponse GetProviderStatus() => providerStatus.GetStatus();
+
+    public Task<IReadOnlyList<SocAgentSessionSummary>> GetRecentSessionsAsync(CancellationToken cancellationToken)
+    {
+        return audit.GetRecentSessionsAsync(Math.Clamp(options.MaxChatMessages, 1, 50), cancellationToken);
+    }
+
+    public async Task<SocAgentSessionSummary> CreateSessionAsync(
+        SocAgentSessionCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        var status = GetProviderStatus();
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? "New investigation"
+            : request.Title.Trim();
+        return await audit.CreateSessionAsync(
+            title,
+            EffectiveProvider(status),
+            EffectiveModel(status),
+            request.ContextAgentId,
+            request.ContextEventId,
+            cancellationToken);
+    }
+
+    public async Task<SocAgentSessionDetailResponse?> GetSessionDetailAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var session = await audit.GetSessionAsync(sessionId, cancellationToken);
+        if (session is null)
+        {
+            return null;
+        }
+
+        var messages = await audit.GetMessagesAsync(sessionId, Math.Clamp(options.MaxChatMessages, 1, 200), cancellationToken);
+        return new SocAgentSessionDetailResponse
+        {
+            Session = session,
+            Messages = messages,
+            ProviderStatus = GetProviderStatus()
+        };
+    }
+
+    public async Task<SocAgentChatResponse> SendChatMessageAsync(
+        Guid? sessionId,
+        SocAgentChatRequest request,
+        CancellationToken cancellationToken)
+    {
+        var message = request.Message.Trim();
+        var maxPromptCharacters = Math.Clamp(options.MaxPromptCharacters, 1, 20_000);
+        if (string.IsNullOrWhiteSpace(message) || message.Length > maxPromptCharacters)
+        {
+            throw new ArgumentException($"Message is required and must be {maxPromptCharacters} characters or less.", nameof(request));
+        }
+
+        var status = GetProviderStatus();
+        var session = sessionId.HasValue
+            ? await audit.GetSessionAsync(sessionId.Value, cancellationToken)
+            : null;
+        if (sessionId.HasValue && session is null)
+        {
+            throw new KeyNotFoundException("soc-agent chat session was not found.");
+        }
+
+        session ??= await audit.CreateSessionAsync(
+            MakeTitle(message),
+            EffectiveProvider(status),
+            EffectiveModel(status),
+            request.ContextAgentId,
+            request.ContextEventId,
+            cancellationToken);
+
+        var effectiveContextAgentId = string.IsNullOrWhiteSpace(request.ContextAgentId)
+            ? session.ContextAgentId
+            : request.ContextAgentId.Trim();
+        var effectiveContextEventId = request.ContextEventId ?? session.ContextEventId;
+
+        var userMessage = await audit.AddMessageAsync(
+            session.SessionId,
+            "operator",
+            message,
+            provider: null,
+            model: null,
+            toolRuns: Array.Empty<SocAgentToolRunSummary>(),
+            citations: Array.Empty<SocAgentCitation>(),
+            errorCode: null,
+            cancellationToken);
+
+        SocAgentAskResponse response;
+        string? errorCode = null;
+        try
+        {
+            response = await AskAsync(new SocAgentAskRequest
+            {
+                Question = message,
+                ContextAgentId = effectiveContextAgentId,
+                ContextEventId = effectiveContextEventId
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            errorCode = ex.GetType().Name;
+            response = new SocAgentAskResponse
+            {
+                Provider = EffectiveProvider(status),
+                Model = EffectiveModel(status),
+                Answer = "soc-agent could not complete the request. Confirm the database schema is applied and try again.",
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        var assistantMessage = await audit.AddMessageAsync(
+            session.SessionId,
+            "soc_agent",
+            response.Answer,
+            response.Provider,
+            response.Model,
+            response.ToolRuns,
+            response.Citations,
+            errorCode,
+            cancellationToken);
+
+        var updatedSession = await audit.GetSessionAsync(session.SessionId, cancellationToken) ?? session;
+        return new SocAgentChatResponse
+        {
+            Session = updatedSession,
+            UserMessage = userMessage,
+            AssistantMessage = assistantMessage,
+            ProviderStatus = status
+        };
+    }
+
     public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, CancellationToken cancellationToken)
     {
+        var status = GetProviderStatus();
         if (!options.Enabled)
         {
             return new SocAgentAskResponse
             {
-                Provider = options.Provider,
-                Model = options.Model,
-                Answer = "soc-agent is disabled by configuration. Set SocAgent:Enabled=true to enable the local SIEM tool harness."
+                Provider = status.Provider,
+                Model = status.Model,
+                Answer = status.Message,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        if (status.RequiresConnection && !options.FallbackToLocalWhenUnavailable)
+        {
+            return new SocAgentAskResponse
+            {
+                Provider = status.Provider,
+                Model = status.Model,
+                Answer = $"Provider connection required: {status.Message}",
+                CreatedAt = DateTimeOffset.UtcNow
             };
         }
 
@@ -33,6 +177,7 @@ public sealed class SocAgentService(
         var citations = new List<SocAgentCitation>();
         var toolRuns = new List<SocAgentToolRunSummary>();
         var answer = new StringBuilder();
+        var usingLocalFallback = status.RequiresConnection && options.FallbackToLocalWhenUnavailable;
 
         var agents = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, request.ContextAgentId, null, "active"),
@@ -94,9 +239,16 @@ public sealed class SocAgentService(
 
         answer.AppendLine("soc-agent local SIEM assessment");
         answer.AppendLine();
+        if (usingLocalFallback)
+        {
+            answer.AppendLine($"Provider connection status: {status.Message}");
+            answer.AppendLine("Using local fallback only; no prompt or telemetry was sent to an external provider.");
+            answer.AppendLine();
+        }
+
         answer.AppendLine($"Question: {question}");
         answer.AppendLine();
-        answer.AppendLine($"Observed {selectedAgents.Length} agent(s), {sourceHealthResponse.Sources.Count} source-health row(s), {recentEvents.Count} recent event(s), {selectedAlerts.Length} alert(s), {detectionRules.Count} detection rule(s), and {inventoryRows.Count} inventory snapshot(s) in scope.");
+        answer.AppendLine($"Observed {selectedAgents.Length} active agent(s), {sourceHealthResponse.Sources.Count} source-health row(s), {recentEvents.Count} recent event(s), {selectedAlerts.Length} alert(s), {detectionRules.Count} detection rule(s), and {inventoryRows.Count} inventory snapshot(s) in scope.");
 
         var unhealthySummaries = sourceHealthResponse.Summaries
             .Where(summary => !string.Equals(summary.OverallStatus, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase))
@@ -137,9 +289,9 @@ public sealed class SocAgentService(
 
         var response = new SocAgentAskResponse
         {
-            Provider = options.Provider,
-            Model = options.Model,
-            Answer = answer.ToString().Trim(),
+            Provider = EffectiveProvider(status),
+            Model = EffectiveModel(status),
+            Answer = Truncate(answer.ToString().Trim(), Math.Clamp(options.MaxResultCharacters, 1000, 100_000)),
             ToolRuns = toolRuns,
             Citations = citations,
             CreatedAt = DateTimeOffset.UtcNow
@@ -148,9 +300,36 @@ public sealed class SocAgentService(
         return response;
     }
 
+    private string EffectiveProvider(SocAgentProviderStatusResponse status)
+    {
+        return status.RequiresConnection && options.FallbackToLocalWhenUnavailable
+            ? options.LocalFallbackProvider
+            : status.Provider;
+    }
+
+    private string EffectiveModel(SocAgentProviderStatusResponse status)
+    {
+        return status.RequiresConnection && options.FallbackToLocalWhenUnavailable
+            ? options.LocalFallbackModel
+            : status.Model;
+    }
+
+    private static string MakeTitle(string message)
+    {
+        var singleLine = message.ReplaceLineEndings(" ").Trim();
+        if (singleLine.Length == 0)
+        {
+            return "New investigation";
+        }
+
+        return singleLine.Length <= 80 ? singleLine : singleLine[..80] + "…";
+    }
+
     private static string Preview(string value)
     {
         var singleLine = value.ReplaceLineEndings(" ").Trim();
         return singleLine.Length <= 160 ? singleLine : singleLine[..160] + "…";
     }
+
+    private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 }

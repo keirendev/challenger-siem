@@ -62,7 +62,11 @@ Stores detection rule metadata, source prerequisites, normalized field prerequis
 
 ### `soc_agent_turns`
 
-Stores bounded local `soc-agent` question/answer metadata, provider/model, tool-run summaries, citations, and optional context identifiers. It must not store provider secrets or unbounded raw telemetry.
+Stores bounded backwards-compatible one-shot `soc-agent` question/answer metadata, provider/model, tool-run summaries, citations, and optional context identifiers. It must not store provider secrets or unbounded raw telemetry.
+
+### `soc_agent_sessions` and `soc_agent_messages`
+
+Store bounded chat workspace session metadata and message history, including role, redacted/bounded content, provider/model labels, tool-run summaries, citations, optional context identifiers, and timestamps. These tables must not store provider credentials, browser cookies, unofficial provider tokens, raw provider payloads, or unbounded endpoint telemetry.
 
 ### `alerts` and `alert_evidence`
 
@@ -98,6 +102,8 @@ limit 25;
 - `alerts(status)`, `alerts(agent_id)`, and `alerts(created_at desc)`
 - `alert_evidence(alert_id)`
 - `soc_agent_turns(created_at desc)` and `soc_agent_turns(context_agent_id)`
+- `soc_agent_sessions(updated_at desc)` and `soc_agent_sessions(context_agent_id)`
+- `soc_agent_messages(session_id, created_at asc, id asc)`
 - `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
 
 ## Applying and validating the schema

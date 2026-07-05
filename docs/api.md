@@ -190,6 +190,17 @@ Returns bounded asset inventory snapshots such as audit policy, security-control
 
 ## soc-agent
 
+Provider status:
+
+```http
+GET /api/v1/soc-agent/status
+Authorization: Bearer <review-token>
+```
+
+Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `connected`, or `provider_error`, plus a safe official setup/connect URL when applicable. Responses never include provider secrets.
+
+Backwards-compatible one-shot ask:
+
 ```http
 POST /api/v1/soc-agent/ask
 Authorization: Bearer <review-token>
@@ -201,7 +212,23 @@ Content-Type: application/json
 }
 ```
 
-Returns a bounded local `soc-agent` answer with tool-run summaries and citations back to SIEM review pages. The MVP provider is `Local`; it does not send data to an external model provider and does not perform mutating actions.
+Chat sessions:
+
+```http
+GET /api/v1/soc-agent/sessions
+POST /api/v1/soc-agent/sessions
+GET /api/v1/soc-agent/sessions/<session-id>
+POST /api/v1/soc-agent/sessions/<session-id>/messages
+Authorization: Bearer <review-token>
+Content-Type: application/json
+
+{
+  "message": "Summarize current coverage and alerts",
+  "context_agent_id": "win11-test-001"
+}
+```
+
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
 ## Alerts and detections
 
