@@ -172,16 +172,48 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.DoesNotContain(recentAgentId, disabledInventory, StringComparison.Ordinal);
 
         var antiForgeryToken = ExtractAntiforgeryToken(defaultInventory);
+        string validationRedirect;
+        using (var validationResponse = await client.PostAsync("/agents?handler=CleanupStale", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = antiForgeryToken,
+            ["agent_id"] = prefix,
+            ["health"] = "stale",
+            ["status"] = "active",
+            ["page"] = "2"
+        })))
+        {
+            validationRedirect = AssertAgentInventoryRedirect(validationResponse, prefix, "stale", "active", "2");
+        }
+
+        var validationInventory = await GetHtmlAsync(client, validationRedirect);
+        Assert.Contains("Confirm the non-destructive stale-agent cleanup before retiring agents.", validationInventory, StringComparison.Ordinal);
+        Assert.Contains("Agent results", validationInventory, StringComparison.Ordinal);
+        Assert.Contains("Page 2", validationInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("Developer Exception Page", validationInventory, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("InvalidOperationException", validationInventory, StringComparison.OrdinalIgnoreCase);
+
+        antiForgeryToken = ExtractAntiforgeryToken(validationInventory);
+        string cleanupRedirect;
         using (var cleanupResponse = await client.PostAsync("/agents?handler=CleanupStale", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = antiForgeryToken,
             ["ConfirmCleanup"] = "true",
             ["agent_id"] = prefix,
-            ["status"] = "active"
+            ["health"] = "stale",
+            ["status"] = "active",
+            ["page"] = "2"
         })))
         {
-            Assert.Equal(HttpStatusCode.Redirect, cleanupResponse.StatusCode);
+            cleanupRedirect = AssertAgentInventoryRedirect(cleanupResponse, prefix, "stale", "active", "2");
         }
+
+        var cleanupInventory = await GetHtmlAsync(client, cleanupRedirect);
+        Assert.Contains("Retired ", cleanupInventory, StringComparison.Ordinal);
+        Assert.Contains("stale active agent(s)", cleanupInventory, StringComparison.Ordinal);
+        Assert.Contains("Agent results", cleanupInventory, StringComparison.Ordinal);
+        Assert.Contains("Page 2", cleanupInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("Developer Exception Page", cleanupInventory, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("InvalidOperationException", cleanupInventory, StringComparison.OrdinalIgnoreCase);
 
         var activeAfterCleanup = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}&status=active");
         Assert.Contains(recentAgentId, activeAfterCleanup, StringComparison.Ordinal);
@@ -255,6 +287,23 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         command.Parameters.AddWithValue("stale_agent_id", staleAgentId);
         command.Parameters.AddWithValue("disabled_agent_id", disabledAgentId);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static string AssertAgentInventoryRedirect(
+        HttpResponseMessage response,
+        string expectedAgentId,
+        string expectedHealth,
+        string expectedStatus,
+        string expectedPage)
+    {
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location?.OriginalString ?? throw new InvalidOperationException("Cleanup did not return a redirect location.");
+        Assert.Contains("/agents", location, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"agent_id={Uri.EscapeDataString(expectedAgentId)}", location, StringComparison.Ordinal);
+        Assert.Contains($"health={Uri.EscapeDataString(expectedHealth)}", location, StringComparison.Ordinal);
+        Assert.Contains($"status={Uri.EscapeDataString(expectedStatus)}", location, StringComparison.Ordinal);
+        Assert.Contains($"page={Uri.EscapeDataString(expectedPage)}", location, StringComparison.Ordinal);
+        return location;
     }
 
     private static async Task LoginAsync(HttpClient client)
