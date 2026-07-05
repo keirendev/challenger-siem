@@ -13,15 +13,24 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         var connectionString = database.RequireConnectionString();
         var targetAgentId = $"cleanup-script-{Guid.NewGuid():N}";
         var keepAgentId = $"keep-script-{Guid.NewGuid():N}";
+        var contextlessPrefix = $"Synthetic cleanup contextless {Guid.NewGuid():N}";
         await using var dataSource = NpgsqlDataSource.Create(connectionString);
-        await SeedAgentGraphAsync(dataSource, targetAgentId, "CLEANUP-SCRIPT-TARGET");
-        await SeedAgentGraphAsync(dataSource, keepAgentId, "CLEANUP-SCRIPT-KEEP");
+        var target = await SeedAgentGraphAsync(dataSource, targetAgentId, "CLEANUP-SCRIPT-TARGET");
+        var keep = await SeedAgentGraphAsync(dataSource, keepAgentId, "CLEANUP-SCRIPT-KEEP");
+        var contextlessTargetSession = await SeedContextlessSocAgentSessionAsync(dataSource, contextlessPrefix + " target");
+        var contextlessKeepSession = await SeedContextlessSocAgentSessionAsync(dataSource, "Synthetic cleanup keep contextless");
 
         var dryRun = await RunCleanupAsync(connectionString, "--no-defaults", "--agent-id", targetAgentId);
         Assert.Contains("mode=dry-run", dryRun, StringComparison.Ordinal);
         Assert.Contains("target_agents=1", dryRun, StringComparison.Ordinal);
-        Assert.Equal(1, await CountAsync(dataSource, "agents", targetAgentId));
-        Assert.Equal(1, await CountAsync(dataSource, "events", targetAgentId));
+        Assert.Contains("soc_agent_messages=1", dryRun, StringComparison.Ordinal);
+        Assert.Contains("investigation_graphs=1", dryRun, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic message", dryRun, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CLEANUP-SCRIPT-TARGET", dryRun, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", targetAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "events", "agent_id", targetAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "soc_agent_messages", "session_id", target.SessionId.ToString()));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "investigation_graphs", "graph_id", target.GraphId.ToString()));
 
         var execute = await RunCleanupAsync(
             connectionString,
@@ -33,18 +42,44 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
             "DELETE-SYNTHETIC-DATA");
         Assert.Contains("mode=execute", execute, StringComparison.Ordinal);
         Assert.Contains("target_agents=1", execute, StringComparison.Ordinal);
+        Assert.Contains("target_soc_agent_sessions=1", execute, StringComparison.Ordinal);
+        Assert.Contains("target_investigation_graphs=1", execute, StringComparison.Ordinal);
 
-        Assert.Equal(0, await CountAsync(dataSource, "agents", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "events", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "agent_heartbeats", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "source_health", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "asset_inventory_snapshots", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "coverage_exceptions", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "ingestion_errors", targetAgentId));
-        Assert.Equal(0, await CountAsync(dataSource, "soc_agent_turns", targetAgentId, "context_agent_id"));
-        Assert.Equal(0, await CountAsync(dataSource, "soc_agent_sessions", targetAgentId, "context_agent_id"));
-        Assert.Equal(1, await CountAsync(dataSource, "agents", keepAgentId));
-        Assert.Equal(1, await CountAsync(dataSource, "events", keepAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "agents", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "events", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "agent_heartbeats", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "source_health", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "asset_inventory_snapshots", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "coverage_exceptions", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "ingestion_errors", "agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "soc_agent_turns", "context_agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "soc_agent_sessions", "context_agent_id", targetAgentId));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "soc_agent_messages", "session_id", target.SessionId.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graphs", "graph_id", target.GraphId.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_nodes", "graph_id", target.GraphId.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_edges", "graph_id", target.GraphId.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_proposals", "graph_id", target.GraphId.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_audit", "graph_id", target.GraphId.ToString()));
+
+        Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", keepAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "events", "agent_id", keepAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "soc_agent_messages", "session_id", keep.SessionId.ToString()));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "investigation_graphs", "graph_id", keep.GraphId.ToString()));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "soc_agent_sessions", "session_id", contextlessTargetSession.ToString()));
+
+        var contextlessExecute = await RunCleanupAsync(
+            connectionString,
+            "--no-defaults",
+            "--soc-agent-title-prefix",
+            contextlessPrefix,
+            "--execute",
+            "--confirm",
+            "DELETE-SYNTHETIC-DATA");
+        Assert.Contains("selectors_soc_agent_title_prefix=1", contextlessExecute, StringComparison.Ordinal);
+        Assert.Contains("target_soc_agent_sessions=1", contextlessExecute, StringComparison.Ordinal);
+        Assert.Equal(0, await CountByTextAsync(dataSource, "soc_agent_sessions", "session_id", contextlessTargetSession.ToString()));
+        Assert.Equal(0, await CountByTextAsync(dataSource, "soc_agent_messages", "session_id", contextlessTargetSession.ToString()));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "soc_agent_sessions", "session_id", contextlessKeepSession.ToString()));
 
         var secondRun = await RunCleanupAsync(
             connectionString,
@@ -55,14 +90,19 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
             "--confirm",
             "DELETE-SYNTHETIC-DATA");
         Assert.Contains("target_agents=0", secondRun, StringComparison.Ordinal);
-        Assert.Equal(1, await CountAsync(dataSource, "agents", keepAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", keepAgentId));
     }
 
-    private static async Task SeedAgentGraphAsync(NpgsqlDataSource dataSource, string agentId, string hostname)
+    private static async Task<SeededCleanupData> SeedAgentGraphAsync(NpgsqlDataSource dataSource, string agentId, string hostname)
     {
         var eventId = Guid.NewGuid();
         var alertId = Guid.NewGuid();
         var sessionId = Guid.NewGuid();
+        var graphId = Guid.NewGuid();
+        var agentNodeId = Guid.NewGuid();
+        var eventNodeId = Guid.NewGuid();
+        var edgeId = Guid.NewGuid();
+        var proposalId = Guid.NewGuid();
         await using var command = dataSource.CreateCommand("""
             insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, status, api_token_hash)
             values (@agent_id, @hostname, null, 'Synthetic OS', '0.8.0-test', 'active', 'synthetic-token-hash')
@@ -104,6 +144,27 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
 
             insert into soc_agent_messages (session_id, role, content, provider, model, tool_runs, citations)
             values (@session_id, 'soc_agent', 'synthetic message', 'Local', 'soc-agent-local-v1', '[]'::jsonb, '[]'::jsonb);
+
+            insert into investigation_graphs (graph_id, title, description, owner, tags)
+            values (@graph_id, 'Synthetic cleanup graph', 'synthetic graph summary', 'synthetic-operator', array['synthetic', 'cleanup'])
+            on conflict (graph_id) do nothing;
+
+            insert into investigation_graph_nodes (node_id, graph_id, node_type, label, reference_kind, reference_id, link_url, notes)
+            values
+                (@agent_node_id, @graph_id, 'agent', 'Synthetic cleanup agent', 'agent', @agent_id, '/agents/detail?agent_id=' || @agent_id, 'synthetic agent node'),
+                (@event_node_id, @graph_id, 'event', 'Synthetic cleanup event', 'event', @event_id::text, '/events/detail?agent_id=' || @agent_id || '&event_id=' || @event_id::text, 'synthetic event node')
+            on conflict (node_id) do nothing;
+
+            insert into investigation_graph_edges (edge_id, graph_id, source_node_id, target_node_id, edge_type, label, notes)
+            values (@edge_id, @graph_id, @agent_node_id, @event_node_id, 'generated', 'generated event', 'synthetic edge')
+            on conflict (edge_id) do nothing;
+
+            insert into investigation_graph_proposals (proposal_id, graph_id, instruction, rationale, proposed_nodes, proposed_edges, created_by)
+            values (@proposal_id, @graph_id, 'synthetic proposal', 'synthetic rationale', '[]'::jsonb, '[]'::jsonb, 'synthetic-operator')
+            on conflict (proposal_id) do nothing;
+
+            insert into investigation_graph_audit (graph_id, action, actor, summary)
+            values (@graph_id, 'create', 'synthetic-operator', 'synthetic audit');
             """);
         command.Parameters.AddWithValue("agent_id", agentId);
         command.Parameters.AddWithValue("hostname", hostname);
@@ -112,13 +173,35 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         command.Parameters.AddWithValue("alert_id", alertId);
         command.Parameters.AddWithValue("batch_id", Guid.NewGuid());
         command.Parameters.AddWithValue("session_id", sessionId);
+        command.Parameters.AddWithValue("graph_id", graphId);
+        command.Parameters.AddWithValue("agent_node_id", agentNodeId);
+        command.Parameters.AddWithValue("event_node_id", eventNodeId);
+        command.Parameters.AddWithValue("edge_id", edgeId);
+        command.Parameters.AddWithValue("proposal_id", proposalId);
         await command.ExecuteNonQueryAsync(CancellationToken.None);
+        return new SeededCleanupData(sessionId, graphId);
     }
 
-    private static async Task<int> CountAsync(NpgsqlDataSource dataSource, string tableName, string agentId, string columnName = "agent_id")
+    private static async Task<Guid> SeedContextlessSocAgentSessionAsync(NpgsqlDataSource dataSource, string title)
     {
-        await using var command = dataSource.CreateCommand($"select count(*) from {tableName} where {columnName} = @agent_id;");
-        command.Parameters.AddWithValue("agent_id", agentId);
+        var sessionId = Guid.NewGuid();
+        await using var command = dataSource.CreateCommand("""
+            insert into soc_agent_sessions (session_id, title, provider, model, status, context_agent_id)
+            values (@session_id, @title, 'Local', 'soc-agent-local-v1', 'open', null);
+
+            insert into soc_agent_messages (session_id, role, content, provider, model, tool_runs, citations)
+            values (@session_id, 'operator', 'synthetic contextless message', 'Local', 'soc-agent-local-v1', '[]'::jsonb, '[]'::jsonb);
+            """);
+        command.Parameters.AddWithValue("session_id", sessionId);
+        command.Parameters.AddWithValue("title", title);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+        return sessionId;
+    }
+
+    private static async Task<int> CountByTextAsync(NpgsqlDataSource dataSource, string tableName, string columnName, string value)
+    {
+        await using var command = dataSource.CreateCommand($"select count(*) from {tableName} where {columnName}::text = @value;");
+        command.Parameters.AddWithValue("value", value);
         return Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
     }
 
@@ -161,4 +244,6 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
 
         throw new FileNotFoundException($"Could not locate repository file: {relativePath}");
     }
+
+    private sealed record SeededCleanupData(Guid SessionId, Guid GraphId);
 }

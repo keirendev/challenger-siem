@@ -25,6 +25,8 @@ AGENTS_HTML=".local/web-smoke-agents.html"
 EVENTS_HTML=".local/web-smoke-events.html"
 DETAIL_HTML=".local/web-smoke-detail.html"
 SOC_AGENT_HTML=".local/web-smoke-soc-agent.html"
+SOC_AGENT_CHAT_HTML=".local/web-smoke-soc-agent-chat.html"
+SOC_AGENT_CHAT_HEADERS=".local/web-smoke-soc-agent-chat.headers"
 GRAPHS_HTML=".local/web-smoke-graphs.html"
 REGISTER_REQUEST=".local/web-smoke-register-request.json"
 REGISTER_RESPONSE=".local/web-smoke-register-response.json"
@@ -33,7 +35,7 @@ INGEST_RESPONSE=".local/web-smoke-ingest-response.json"
 QUERY_RESPONSE=".local/web-smoke-query-response.json"
 
 mkdir -p .local
-rm -f "$COOKIE_JAR" "$LOGIN_HTML" "$DASHBOARD_HTML" "$AGENTS_HTML" "$EVENTS_HTML" "$DETAIL_HTML" "$SOC_AGENT_HTML" "$GRAPHS_HTML" \
+rm -f "$COOKIE_JAR" "$LOGIN_HTML" "$DASHBOARD_HTML" "$AGENTS_HTML" "$EVENTS_HTML" "$DETAIL_HTML" "$SOC_AGENT_HTML" "$SOC_AGENT_CHAT_HTML" "$SOC_AGENT_CHAT_HEADERS" "$GRAPHS_HTML" \
   "$REGISTER_REQUEST" "$REGISTER_RESPONSE" "$INGEST_REQUEST" "$INGEST_RESPONSE" "$QUERY_RESPONSE" "$LOG_FILE"
 
 API_PID=""
@@ -143,6 +145,34 @@ PY
 )"
 curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL$DETAIL_URL" > "$DETAIL_HTML"
 curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL/soc-agent?agent_id=$AGENT_ID" > "$SOC_AGENT_HTML"
+SOC_AGENT_CSRF_TOKEN="$(python - <<'PY'
+import html, re
+text = open('.local/web-smoke-soc-agent.html', encoding='utf-8').read()
+match = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', text)
+if not match:
+    raise SystemExit('soc-agent page did not contain an antiforgery token')
+print(html.unescape(match.group(1)))
+PY
+)"
+curl --silent --fail -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  -D "$SOC_AGENT_CHAT_HEADERS" \
+  -o /dev/null \
+  -X POST "$BASE_URL/soc-agent?handler=Send" \
+  --data-urlencode "__RequestVerificationToken=$SOC_AGENT_CSRF_TOKEN" \
+  --data-urlencode "Message=Synthetic web smoke soc-agent marker $AGENT_ID" \
+  --data-urlencode "ComposerContextAgentId=$AGENT_ID"
+SOC_AGENT_CHAT_LOCATION="$(python - <<'PY'
+from pathlib import Path
+headers = Path('.local/web-smoke-soc-agent-chat.headers').read_text(encoding='utf-8', errors='ignore').splitlines()
+for line in headers:
+    if line.lower().startswith('location:'):
+        print(line.split(':', 1)[1].strip())
+        break
+else:
+    raise SystemExit('soc-agent chat post did not redirect')
+PY
+)"
+curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL$SOC_AGENT_CHAT_LOCATION" > "$SOC_AGENT_CHAT_HTML"
 curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL/graphs" > "$GRAPHS_HTML"
 
 python - <<PY
@@ -153,6 +183,7 @@ checks = {
     'events': Path('$EVENTS_HTML').read_text(encoding='utf-8'),
     'detail': Path('$DETAIL_HTML').read_text(encoding='utf-8'),
     'soc-agent': Path('$SOC_AGENT_HTML').read_text(encoding='utf-8'),
+    'soc-agent-chat': Path('$SOC_AGENT_CHAT_HTML').read_text(encoding='utf-8'),
 }
 missing = [name for name, body in checks.items() if agent_id not in body]
 if missing:
@@ -163,6 +194,9 @@ if 'Dashboard' not in dashboard or 'active agents' not in dashboard:
 soc_agent = Path('$SOC_AGENT_HTML').read_text(encoding='utf-8')
 if 'soc-agent chat' not in soc_agent or 'Provider status' not in soc_agent:
     raise SystemExit('web smoke failed; soc-agent chat did not render expected status')
+soc_agent_chat = Path('$SOC_AGENT_CHAT_HTML').read_text(encoding='utf-8')
+if 'Tool activity' not in soc_agent_chat or 'Synthetic web smoke soc-agent marker' not in soc_agent_chat:
+    raise SystemExit('web smoke failed; soc-agent chat did not persist the synthetic conversation')
 graphs = Path('$GRAPHS_HTML').read_text(encoding='utf-8')
 if 'Investigation graphs' not in graphs or 'Create graph' not in graphs:
     raise SystemExit('web smoke failed; investigation graphs page did not render')

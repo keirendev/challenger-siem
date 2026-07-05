@@ -96,7 +96,7 @@ Automated smoke path without Docker:
 ./scripts/smoke-test-web.sh
 ```
 
-The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` status HTML. For web-app issue validation, supplement this smoke script with Playwright browser E2E covering the relevant pages. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
+The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, creates a synthetic `soc-agent` chat tied to that agent, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` HTML. For web-app issue validation, supplement this smoke script with Playwright browser E2E covering the relevant pages. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent and its linked `soc-agent` chat history after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
 
 Manual path:
 

@@ -75,7 +75,21 @@ For a one-off manual run, prefer exact IDs:
 ./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id web-smoke-12345 --execute --confirm DELETE-SYNTHETIC-DATA
 ```
 
-The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Cleanup output remains under `.local/`.
+Cleanup is scoped through allowlisted selectors and includes dependent rows for targeted agents: events, heartbeats, source health, inventory snapshots, coverage exceptions, ingestion errors, alerts/evidence, agent-linked investigation graphs/proposals/audit, `soc_agent_turns`, and `soc_agent_sessions`/`soc_agent_messages`. For older synthetic `soc-agent` chats without an agent context, use explicit session IDs or a narrow synthetic title prefix:
+
+```bash
+./scripts/cleanup-synthetic-data.sh --no-defaults --soc-agent-session-id <synthetic-session-uuid>
+./scripts/cleanup-synthetic-data.sh --no-defaults --soc-agent-title-prefix 'Synthetic web smoke '
+```
+
+Synthetic investigation graphs can also be selected explicitly when they are not linked to a target agent:
+
+```bash
+./scripts/cleanup-synthetic-data.sh --no-defaults --graph-id <synthetic-graph-uuid>
+./scripts/cleanup-synthetic-data.sh --no-defaults --graph-title-prefix 'Synthetic cleanup '
+```
+
+The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Web smoke creates a synthetic `soc-agent` chat tied to its per-run agent ID, so opt-in cleanup removes that chat history too. Cleanup output remains aggregate-only under `.local/`.
 
 ## 5. Use investigation graphs and soc-agent chat safely
 
