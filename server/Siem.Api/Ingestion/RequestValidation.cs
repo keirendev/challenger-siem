@@ -16,6 +16,17 @@ public static class RequestValidation
         "audit_failure"
     };
 
+    private static readonly HashSet<string> AllowedSourceStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        SourceHealthStatuses.Healthy,
+        SourceHealthStatuses.Missing,
+        SourceHealthStatuses.Disabled,
+        SourceHealthStatuses.Stale,
+        SourceHealthStatuses.Error,
+        SourceHealthStatuses.NotApplicable,
+        SourceHealthStatuses.Excepted
+    };
+
     public static Dictionary<string, string[]> ValidateRegistration(AgentRegistrationRequest request)
     {
         var errors = NewErrorBag();
@@ -47,6 +58,31 @@ public static class RequestValidation
         if (request.MemoryMb < 0)
         {
             Add(errors, nameof(request.MemoryMb), "Memory MB must be greater than or equal to zero.");
+        }
+
+        if (request.QueueMetrics is not null)
+        {
+            if (request.QueueMetrics.QueueDepth < 0)
+            {
+                Add(errors, "queue_metrics.queue_depth", "Queue depth must be greater than or equal to zero.");
+            }
+
+            if (request.QueueMetrics.PoisonDepth < 0)
+            {
+                Add(errors, "queue_metrics.poison_depth", "Poison depth must be greater than or equal to zero.");
+            }
+        }
+
+        for (var index = 0; index < request.SourceHealth.Count; index++)
+        {
+            var source = request.SourceHealth[index];
+            RequireLength(errors, $"source_health[{index}].source_id", source.SourceId, 1, 128);
+            RequireLength(errors, $"source_health[{index}].display_name", source.DisplayName, 1, 255);
+            RequireLength(errors, $"source_health[{index}].channel", source.Channel, 1, 255);
+            if (!AllowedSourceStatuses.Contains(source.Status))
+            {
+                Add(errors, $"source_health[{index}].status", "Source status is not supported.");
+            }
         }
 
         return ToValidationProblem(errors);

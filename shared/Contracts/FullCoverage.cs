@@ -1,0 +1,527 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Challenger.Siem.Contracts.V1;
+
+/// <summary>
+/// Windows host coverage levels used by the full-coverage model.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum WindowsCoverageLevel
+{
+    L0,
+    L1,
+    L2,
+    L3,
+    L4
+}
+
+/// <summary>
+/// Source-health status values. These string values are used in API contracts and persisted rows.
+/// </summary>
+public static class SourceHealthStatuses
+{
+    public const string Healthy = "healthy";
+    public const string Missing = "missing";
+    public const string Disabled = "disabled";
+    public const string Stale = "stale";
+    public const string Error = "error";
+    public const string NotApplicable = "not_applicable";
+    public const string Excepted = "excepted";
+}
+
+public static class AlertStatuses
+{
+    public const string New = "new";
+    public const string Triaged = "triaged";
+    public const string Closed = "closed";
+    public const string Suppressed = "suppressed";
+}
+
+public static class DetectionSeverities
+{
+    public const string Informational = "informational";
+    public const string Low = "low";
+    public const string Medium = "medium";
+    public const string High = "high";
+    public const string Critical = "critical";
+}
+
+public sealed record SourceManifestEntry
+{
+    [JsonPropertyName("source_id")]
+    public string SourceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("coverage_level")]
+    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+
+    [JsonPropertyName("required")]
+    public bool Required { get; init; }
+
+    [JsonPropertyName("enabled_by_default")]
+    public bool EnabledByDefault { get; init; } = true;
+
+    [JsonPropertyName("source_pack")]
+    public string SourcePack { get; init; } = "windows-l2";
+
+    [JsonPropertyName("parser_id")]
+    public string ParserId { get; init; } = string.Empty;
+}
+
+public sealed record SourceHealthReport
+{
+    [JsonPropertyName("source_id")]
+    public string SourceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = string.Empty;
+
+    [JsonPropertyName("coverage_level")]
+    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = SourceHealthStatuses.Healthy;
+
+    [JsonPropertyName("required")]
+    public bool Required { get; init; }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+
+    [JsonPropertyName("last_event_time")]
+    public DateTimeOffset? LastEventTime { get; init; }
+
+    [JsonPropertyName("last_record_id")]
+    public long? LastRecordId { get; init; }
+
+    [JsonPropertyName("oldest_record_id")]
+    public long? OldestRecordId { get; init; }
+
+    [JsonPropertyName("newest_record_id")]
+    public long? NewestRecordId { get; init; }
+
+    [JsonPropertyName("log_size_bytes")]
+    public long? LogSizeBytes { get; init; }
+
+    [JsonPropertyName("retention_days")]
+    public int? RetentionDays { get; init; }
+
+    [JsonPropertyName("lag_seconds")]
+    public long? LagSeconds { get; init; }
+
+    [JsonPropertyName("error_code")]
+    public string? ErrorCode { get; init; }
+
+    [JsonPropertyName("error_message")]
+    public string? ErrorMessage { get; init; }
+
+    [JsonPropertyName("gap_detected")]
+    public bool GapDetected { get; init; }
+
+    [JsonPropertyName("cleared_detected")]
+    public bool ClearedDetected { get; init; }
+
+    [JsonPropertyName("bookmark_gap_detected")]
+    public bool BookmarkGapDetected { get; init; }
+
+    [JsonPropertyName("config_hash")]
+    public string? ConfigHash { get; init; }
+
+    [JsonPropertyName("source_version")]
+    public string? SourceVersion { get; init; }
+
+    [JsonPropertyName("details")]
+    public IReadOnlyDictionary<string, string> Details { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed record QueueSloMetrics
+{
+    [JsonPropertyName("queue_depth")]
+    public int QueueDepth { get; init; }
+
+    [JsonPropertyName("poison_depth")]
+    public int PoisonDepth { get; init; }
+
+    [JsonPropertyName("oldest_queued_age_seconds")]
+    public long? OldestQueuedAgeSeconds { get; init; }
+
+    [JsonPropertyName("last_successful_send_time")]
+    public DateTimeOffset? LastSuccessfulSendTime { get; init; }
+
+    [JsonPropertyName("max_size_mb")]
+    public int MaxSizeMb { get; init; }
+
+    [JsonPropertyName("warning_size_percent")]
+    public int WarningSizePercent { get; init; }
+}
+
+public sealed record CoverageSummary
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("hostname")]
+    public string Hostname { get; init; } = string.Empty;
+
+    [JsonPropertyName("target_level")]
+    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+
+    [JsonPropertyName("current_level")]
+    public WindowsCoverageLevel CurrentLevel { get; init; } = WindowsCoverageLevel.L0;
+
+    [JsonPropertyName("overall_status")]
+    public string OverallStatus { get; init; } = SourceHealthStatuses.Missing;
+
+    [JsonPropertyName("missing_mandatory_sources")]
+    public int MissingMandatorySources { get; init; }
+
+    [JsonPropertyName("stale_sources")]
+    public int StaleSources { get; init; }
+
+    [JsonPropertyName("error_sources")]
+    public int ErrorSources { get; init; }
+
+    [JsonPropertyName("queue_depth")]
+    public int QueueDepth { get; init; }
+
+    [JsonPropertyName("last_heartbeat_time")]
+    public DateTimeOffset? LastHeartbeatTime { get; init; }
+}
+
+public sealed record SourceHealthResponse
+{
+    [JsonPropertyName("summaries")]
+    public IReadOnlyList<CoverageSummary> Summaries { get; init; } = Array.Empty<CoverageSummary>();
+
+    [JsonPropertyName("sources")]
+    public IReadOnlyList<SourceHealthReport> Sources { get; init; } = Array.Empty<SourceHealthReport>();
+}
+
+public sealed record CoverageExceptionRecord
+{
+    [JsonPropertyName("agent_id")]
+    public string? AgentId { get; init; }
+
+    [JsonPropertyName("hostname")]
+    public string? Hostname { get; init; }
+
+    [JsonPropertyName("source_id")]
+    public string SourceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+
+    [JsonPropertyName("approved_by")]
+    public string ApprovedBy { get; init; } = string.Empty;
+
+    [JsonPropertyName("expires_at")]
+    public DateTimeOffset? ExpiresAt { get; init; }
+}
+
+public sealed record NormalizedEventFields
+{
+    [JsonPropertyName("category")]
+    public string? Category { get; init; }
+
+    [JsonPropertyName("action")]
+    public string? Action { get; init; }
+
+    [JsonPropertyName("outcome")]
+    public string? Outcome { get; init; }
+
+    [JsonPropertyName("user_name")]
+    public string? UserName { get; init; }
+
+    [JsonPropertyName("user_sid")]
+    public string? UserSid { get; init; }
+
+    [JsonPropertyName("target_user_name")]
+    public string? TargetUserName { get; init; }
+
+    [JsonPropertyName("logon_type")]
+    public string? LogonType { get; init; }
+
+    [JsonPropertyName("process_id")]
+    public string? ProcessId { get; init; }
+
+    [JsonPropertyName("parent_process_id")]
+    public string? ParentProcessId { get; init; }
+
+    [JsonPropertyName("process_image")]
+    public string? ProcessImage { get; init; }
+
+    [JsonPropertyName("parent_process_image")]
+    public string? ParentProcessImage { get; init; }
+
+    [JsonPropertyName("process_command_line")]
+    public string? ProcessCommandLine { get; init; }
+
+    [JsonPropertyName("source_ip")]
+    public string? SourceIp { get; init; }
+
+    [JsonPropertyName("source_port")]
+    public string? SourcePort { get; init; }
+
+    [JsonPropertyName("destination_ip")]
+    public string? DestinationIp { get; init; }
+
+    [JsonPropertyName("destination_port")]
+    public string? DestinationPort { get; init; }
+
+    [JsonPropertyName("protocol")]
+    public string? Protocol { get; init; }
+
+    [JsonPropertyName("service_name")]
+    public string? ServiceName { get; init; }
+
+    [JsonPropertyName("driver_name")]
+    public string? DriverName { get; init; }
+
+    [JsonPropertyName("object_name")]
+    public string? ObjectName { get; init; }
+
+    [JsonPropertyName("registry_key")]
+    public string? RegistryKey { get; init; }
+
+    [JsonPropertyName("file_path")]
+    public string? FilePath { get; init; }
+
+    [JsonPropertyName("hash")]
+    public string? Hash { get; init; }
+
+    [JsonPropertyName("rule_name")]
+    public string? RuleName { get; init; }
+
+    [JsonPropertyName("threat_name")]
+    public string? ThreatName { get; init; }
+
+    [JsonPropertyName("task_name")]
+    public string? TaskName { get; init; }
+
+    [JsonPropertyName("package_name")]
+    public string? PackageName { get; init; }
+
+    [JsonPropertyName("entities")]
+    public IReadOnlyList<EventEntity> Entities { get; init; } = Array.Empty<EventEntity>();
+
+    [JsonPropertyName("labels")]
+    public IReadOnlyDictionary<string, string> Labels { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed record EventEntity
+{
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = string.Empty;
+
+    [JsonPropertyName("value")]
+    public string Value { get; init; } = string.Empty;
+
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = string.Empty;
+}
+
+public sealed record AssetInventorySnapshot
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("hostname")]
+    public string Hostname { get; init; } = string.Empty;
+
+    [JsonPropertyName("snapshot_type")]
+    public string SnapshotType { get; init; } = string.Empty;
+
+    [JsonPropertyName("collected_at")]
+    public DateTimeOffset CollectedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("items")]
+    public IReadOnlyList<InventoryItem> Items { get; init; } = Array.Empty<InventoryItem>();
+
+    [JsonPropertyName("summary")]
+    public IReadOnlyDictionary<string, string> Summary { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed record InventoryItem
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [JsonPropertyName("identity")]
+    public string? Identity { get; init; }
+
+    [JsonPropertyName("metadata")]
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed record DetectionRuleMetadata
+{
+    [JsonPropertyName("rule_id")]
+    public string RuleId { get; init; } = string.Empty;
+
+    [JsonPropertyName("version")]
+    public int Version { get; init; } = 1;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = string.Empty;
+
+    [JsonPropertyName("severity")]
+    public string Severity { get; init; } = DetectionSeverities.Medium;
+
+    [JsonPropertyName("confidence")]
+    public string Confidence { get; init; } = "medium";
+
+    [JsonPropertyName("category")]
+    public string Category { get; init; } = string.Empty;
+
+    [JsonPropertyName("required_sources")]
+    public IReadOnlyList<string> RequiredSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("required_fields")]
+    public IReadOnlyList<string> RequiredFields { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("mitre_attack")]
+    public IReadOnlyList<string> MitreAttack { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+}
+
+public sealed record AlertRecord
+{
+    [JsonPropertyName("alert_id")]
+    public Guid AlertId { get; init; }
+
+    [JsonPropertyName("rule_id")]
+    public string RuleId { get; init; } = string.Empty;
+
+    [JsonPropertyName("rule_version")]
+    public int RuleVersion { get; init; } = 1;
+
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("severity")]
+    public string Severity { get; init; } = DetectionSeverities.Medium;
+
+    [JsonPropertyName("confidence")]
+    public string Confidence { get; init; } = "medium";
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = AlertStatuses.New;
+
+    [JsonPropertyName("agent_id")]
+    public string? AgentId { get; init; }
+
+    [JsonPropertyName("hostname")]
+    public string? Hostname { get; init; }
+
+    [JsonPropertyName("created_at")]
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; init; } = string.Empty;
+
+    [JsonPropertyName("affected_entities")]
+    public IReadOnlyList<EventEntity> AffectedEntities { get; init; } = Array.Empty<EventEntity>();
+
+    [JsonPropertyName("evidence")]
+    public IReadOnlyList<AlertEvidenceRecord> Evidence { get; init; } = Array.Empty<AlertEvidenceRecord>();
+}
+
+public sealed record AlertEvidenceRecord
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("event_id")]
+    public Guid EventId { get; init; }
+
+    [JsonPropertyName("event_time")]
+    public DateTimeOffset? EventTime { get; init; }
+
+    [JsonPropertyName("channel")]
+    public string? Channel { get; init; }
+
+    [JsonPropertyName("windows_event_id")]
+    public int? WindowsEventId { get; init; }
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; init; } = string.Empty;
+}
+
+public sealed record RoleSourcePackDesign
+{
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = string.Empty;
+
+    [JsonPropertyName("sources")]
+    public IReadOnlyList<string> Sources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("parsers")]
+    public IReadOnlyList<string> Parsers { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("detections")]
+    public IReadOnlyList<string> Detections { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("validation")]
+    public IReadOnlyList<string> Validation { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("privacy_notes")]
+    public string PrivacyNotes { get; init; } = string.Empty;
+}
+
+public sealed record RedactionPolicy
+{
+    [JsonPropertyName("raw_json_allowed")]
+    public bool RawJsonAllowed { get; init; }
+
+    [JsonPropertyName("redacted_fields")]
+    public IReadOnlyList<string> RedactedFields { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("max_command_line_length")]
+    public int MaxCommandLineLength { get; init; } = 2048;
+
+    [JsonPropertyName("max_script_block_length")]
+    public int MaxScriptBlockLength { get; init; } = 4096;
+}
+
+public sealed record TamperCheckSummary
+{
+    [JsonPropertyName("binary_hash")]
+    public string? BinaryHash { get; init; }
+
+    [JsonPropertyName("config_hash")]
+    public string? ConfigHash { get; init; }
+
+    [JsonPropertyName("signature_status")]
+    public string? SignatureStatus { get; init; }
+
+    [JsonPropertyName("acl_status")]
+    public string? AclStatus { get; init; }
+}
+
+public static class JsonElementExtensions
+{
+    public static JsonElement ToJsonElement<T>(this T value)
+    {
+        return JsonSerializer.SerializeToElement(value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+}

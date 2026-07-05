@@ -1,0 +1,74 @@
+@page "/alerts/detail"
+@model Challenger.Siem.Api.Pages.Alerts.DetailModel
+@{
+    ViewData["Title"] = "Alert detail";
+}
+
+<div class="page-header">
+    <div><h1>Alert detail</h1><p class="muted">Detection metadata, affected entities, and linked evidence.</p></div>
+    <a class="button secondary" asp-page="/Alerts/Index">Back to alerts</a>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+else if (Model.Alert is not null)
+{
+    <section class="card">
+        <h2>@Model.Alert.Title</h2>
+        <dl class="detail-grid">
+            <dt>Rule</dt><dd>@Model.Alert.RuleId v@Model.Alert.RuleVersion</dd>
+            <dt>Severity</dt><dd>@Model.Alert.Severity</dd>
+            <dt>Confidence</dt><dd>@Model.Alert.Confidence</dd>
+            <dt>Status</dt><dd>@Model.Alert.Status</dd>
+            <dt>Host</dt><dd>@(Model.Alert.Hostname ?? Model.Alert.AgentId ?? "—")</dd>
+            <dt>Created</dt><dd>@Model.Alert.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</dd>
+        </dl>
+        <p>@Model.Alert.Summary</p>
+    </section>
+
+    <section class="card">
+        <h2>Affected entities</h2>
+        @if (Model.Alert.AffectedEntities.Count == 0)
+        {
+            <p class="muted">No affected entities are linked.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var entity in Model.Alert.AffectedEntities)
+                {
+                    <li><strong>@entity.Type</strong> @entity.Value <span class="muted">@entity.Role</span></li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section class="table-card">
+        <h2>Evidence</h2>
+        @if (Model.Alert.Evidence.Count == 0)
+        {
+            <div class="empty">No evidence rows are linked.</div>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Event time</th><th>Agent</th><th>Channel</th><th>Event ID</th><th>Summary</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var evidence in Model.Alert.Evidence)
+                    {
+                        <tr>
+                            <td>@(evidence.EventTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</td>
+                            <td>@evidence.AgentId</td>
+                            <td>@(evidence.Channel ?? "—")</td>
+                            <td>@(evidence.WindowsEventId?.ToString() ?? "—")</td>
+                            <td>@evidence.Summary</td>
+                            <td><a asp-page="/Events/Detail" asp-route-agent_id="@evidence.AgentId" asp-route-event_id="@evidence.EventId">Open event</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}

@@ -16,9 +16,12 @@ The submitted token is compared server-side, is not logged, and is not stored in
 
 - `/login` - operator review-token login.
 - `/` - dashboard with API/operator health metrics, agent counts, recent ingestion volume, latest ingest time, stale agents, and agents reporting non-zero queue depth.
-- `/agents` - agent inventory with hostname, agent ID, OS, agent version, first/last seen, latest queue depth, and stale/recent state. Supports hostname, agent ID, and health filters.
-- `/events` - event search form matching the MVP review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, and bounded limit.
-- `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message and formatted raw JSON.
+- `/agents` - agent inventory with hostname, agent ID, OS, agent version, coverage level/status, source issue counts, first/last seen, latest queue depth, and stale/recent state. Supports hostname, agent ID, and health filters.
+- `/agents/detail?agent_id=<agent>` - host coverage/source-health detail with required source status, record ranges, log-size metrics, and gap/clear indicators.
+- `/events` - event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, and bounded limit.
+- `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
+- `/alerts` and `/alerts/detail?alert_id=<uuid>` - alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
+- `/audit-policy` - audit-policy drift snapshot review skeleton.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.
 
 ## Review settings
@@ -45,7 +48,7 @@ Automated smoke path without Docker:
 ./scripts/smoke-test-web.sh
 ```
 
-The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, and event detail HTML. Temporary HTML/cookies/responses stay under ignored `.local/`.
+The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, and verifies dashboard, agent inventory, event search, and event detail HTML. For web-app issue validation, supplement this smoke script with Playwright browser E2E covering the relevant pages. Temporary HTML/cookies/responses stay under ignored `.local/`.
 
 Manual path:
 

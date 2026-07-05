@@ -54,6 +54,8 @@
                     <th>Hostname</th>
                     <th>OS version</th>
                     <th>Agent version</th>
+                    <th>Coverage</th>
+                    <th>Source issues</th>
                     <th>First seen</th>
                     <th>Last seen</th>
                     <th>Latest queue depth</th>
@@ -68,6 +70,8 @@
                         <td>@agent.Hostname</td>
                         <td>@agent.OsVersion</td>
                         <td>@agent.AgentVersion</td>
+                        <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId">@agent.CurrentCoverageLevel</a> <span class="badge @(agent.CoverageStatus == "healthy" ? "ok" : agent.CoverageStatus == "missing" ? "warning" : "danger")">@agent.CoverageStatus</span></td>
+                        <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.ErrorSources error</td>
                         <td>@agent.FirstSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         <td>
                             @agent.LastSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")

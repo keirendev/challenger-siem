@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Config;
+using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Transport;
 using Microsoft.Extensions.Options;
 
@@ -11,6 +12,7 @@ public sealed class AgentEnrollmentService(
     IOptions<AgentOptions> options,
     AgentConfigFile configFile,
     SiemIngestClient client,
+    ISecretProtector secretProtector,
     ILogger<AgentEnrollmentService> logger)
 {
     private readonly AgentOptions options = options.Value;
@@ -19,6 +21,12 @@ public sealed class AgentEnrollmentService(
     {
         if (!string.IsNullOrWhiteSpace(options.ApiToken))
         {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.ProtectedApiToken))
+        {
+            options.ApiToken = secretProtector.Unprotect(options.ProtectedApiToken);
             return;
         }
 
@@ -78,7 +86,8 @@ public sealed class AgentEnrollmentService(
 
         target["AgentId"] = options.AgentId;
         target["ServerBaseUrl"] = options.ServerBaseUrl?.ToString();
-        target["ApiToken"] = options.ApiToken;
+        target["ApiToken"] = string.Empty;
+        target["ProtectedApiToken"] = secretProtector.Protect(options.ApiToken);
 
         if (target["Enrollment"] is JsonObject enrollment)
         {

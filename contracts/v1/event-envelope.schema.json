@@ -19,61 +19,69 @@
     "raw"
   ],
   "properties": {
-    "event_id": {
-      "type": "string",
-      "format": "uuid"
-    },
-    "agent_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
-    },
-    "hostname": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 255
-    },
-    "source": {
-      "type": "string",
-      "const": "windows_event_log"
-    },
-    "channel": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 255
-    },
-    "provider": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 255
-    },
-    "windows_event_id": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 65535
-    },
-    "record_id": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "event_time": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "ingest_time": {
-      "type": ["string", "null"],
-      "format": "date-time"
-    },
+    "event_id": { "type": "string", "format": "uuid" },
+    "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "source": { "type": "string", "const": "windows_event_log" },
+    "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "provider": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "windows_event_id": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "record_id": { "type": "integer", "minimum": 0 },
+    "event_time": { "type": "string", "format": "date-time" },
+    "ingest_time": { "type": ["string", "null"], "format": "date-time" },
     "severity": {
       "type": "string",
       "enum": ["verbose", "information", "warning", "error", "critical", "audit_success", "audit_failure"]
     },
-    "message": {
-      "type": "string",
-      "maxLength": 20000
+    "message": { "type": "string", "maxLength": 20000 },
+    "normalized": { "$ref": "#/$defs/normalized_event_fields" },
+    "raw": { "type": "object" }
+  },
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "type": "string", "maxLength": 64 },
+        "value": { "type": "string", "maxLength": 2048 },
+        "role": { "type": "string", "maxLength": 128 }
+      }
     },
-    "raw": {
-      "type": "object"
+    "normalized_event_fields": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "category": { "type": ["string", "null"], "maxLength": 128 },
+        "action": { "type": ["string", "null"], "maxLength": 128 },
+        "outcome": { "type": ["string", "null"], "maxLength": 128 },
+        "user_name": { "type": ["string", "null"], "maxLength": 512 },
+        "user_sid": { "type": ["string", "null"], "maxLength": 512 },
+        "target_user_name": { "type": ["string", "null"], "maxLength": 512 },
+        "logon_type": { "type": ["string", "null"], "maxLength": 64 },
+        "process_id": { "type": ["string", "null"], "maxLength": 64 },
+        "parent_process_id": { "type": ["string", "null"], "maxLength": 64 },
+        "process_image": { "type": ["string", "null"], "maxLength": 2048 },
+        "parent_process_image": { "type": ["string", "null"], "maxLength": 2048 },
+        "process_command_line": { "type": ["string", "null"], "maxLength": 4096 },
+        "source_ip": { "type": ["string", "null"], "maxLength": 128 },
+        "source_port": { "type": ["string", "null"], "maxLength": 64 },
+        "destination_ip": { "type": ["string", "null"], "maxLength": 128 },
+        "destination_port": { "type": ["string", "null"], "maxLength": 64 },
+        "protocol": { "type": ["string", "null"], "maxLength": 64 },
+        "service_name": { "type": ["string", "null"], "maxLength": 512 },
+        "driver_name": { "type": ["string", "null"], "maxLength": 512 },
+        "object_name": { "type": ["string", "null"], "maxLength": 2048 },
+        "registry_key": { "type": ["string", "null"], "maxLength": 2048 },
+        "file_path": { "type": ["string", "null"], "maxLength": 2048 },
+        "hash": { "type": ["string", "null"], "maxLength": 512 },
+        "rule_name": { "type": ["string", "null"], "maxLength": 512 },
+        "threat_name": { "type": ["string", "null"], "maxLength": 512 },
+        "task_name": { "type": ["string", "null"], "maxLength": 512 },
+        "package_name": { "type": ["string", "null"], "maxLength": 512 },
+        "entities": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/entity" } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
     }
   }
 }

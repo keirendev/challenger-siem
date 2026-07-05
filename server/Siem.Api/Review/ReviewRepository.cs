@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Challenger.Siem.Contracts.V1;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Review;
@@ -103,7 +104,21 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 lh.heartbeat_time as latest_heartbeat_time,
                 lh.queue_depth as latest_queue_depth,
                 lh.last_event_time,
-                (a.last_seen < @stale_cutoff) as is_stale
+                (a.last_seen < @stale_cutoff) as is_stale,
+                coalesce(sh.missing_mandatory_sources, 0) as missing_mandatory_sources,
+                coalesce(sh.stale_sources, 0) as stale_sources,
+                coalesce(sh.error_sources, 0) as error_sources,
+                case
+                    when coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.healthy_sources, 0) >= 12 then 'L2'
+                    when coalesce(sh.healthy_sources, 0) >= 1 then 'L1'
+                    else 'L0'
+                end as current_coverage_level,
+                case
+                    when coalesce(sh.missing_mandatory_sources, 0) > 0 or coalesce(sh.error_sources, 0) > 0 then 'error'
+                    when coalesce(sh.stale_sources, 0) > 0 then 'stale'
+                    when coalesce(sh.healthy_sources, 0) = 0 then 'missing'
+                    else 'healthy'
+                end as coverage_status
             from agents a
             left join lateral (
                 select heartbeat_time, queue_depth, last_event_time
@@ -112,6 +127,15 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 order by heartbeat_time desc
                 limit 1
             ) lh on true
+            left join lateral (
+                select
+                    count(*) filter (where required_source and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
+                    count(*) filter (where status = 'stale')::int as stale_sources,
+                    count(*) filter (where status = 'error')::int as error_sources,
+                    count(*) filter (where status = 'healthy')::int as healthy_sources
+                from source_health
+                where agent_id = a.agent_id
+            ) sh on true
             """);
 
         if (where.Count > 0)
@@ -139,7 +163,12 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 ReadNullableDateTimeOffset(reader, "latest_heartbeat_time"),
                 ReadNullableInt32(reader, "latest_queue_depth"),
                 ReadNullableDateTimeOffset(reader, "last_event_time"),
-                reader.GetBoolean(reader.GetOrdinal("is_stale"))));
+                reader.GetBoolean(reader.GetOrdinal("is_stale")),
+                Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_coverage_level"))),
+                reader.GetString(reader.GetOrdinal("coverage_status")),
+                reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
+                reader.GetInt32(reader.GetOrdinal("stale_sources")),
+                reader.GetInt32(reader.GetOrdinal("error_sources"))));
         }
 
         return results;

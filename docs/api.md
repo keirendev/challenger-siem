@@ -63,6 +63,14 @@ Request:
       "ingest_time": null,
       "severity": "information",
       "message": "An account failed to log on.",
+      "normalized": {
+        "category": "authentication",
+        "action": "logon",
+        "outcome": "failure",
+        "target_user_name": "synthetic-user",
+        "source_ip": "192.0.2.10",
+        "entities": []
+      },
       "raw": {
         "event_data": {}
       }
@@ -108,9 +116,32 @@ Request:
   "last_event_time": "2026-07-04T12:00:00Z",
   "queue_depth": 42,
   "cpu_percent": 1.5,
-  "memory_mb": 90
+  "memory_mb": 90,
+  "config_hash": "sha256-redacted-config-hash",
+  "queue_metrics": {
+    "queue_depth": 42,
+    "poison_depth": 0,
+    "oldest_queued_age_seconds": 120,
+    "last_successful_send_time": "2026-07-04T12:00:00Z",
+    "max_size_mb": 512,
+    "warning_size_percent": 80
+  },
+  "source_health": [
+    {
+      "source_id": "system",
+      "display_name": "Windows System",
+      "channel": "System",
+      "coverage_level": "L1",
+      "status": "healthy",
+      "required": true,
+      "enabled": true,
+      "newest_record_id": 123456
+    }
+  ]
 }
 ```
+
+Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`.
 
 ## Search events
 
@@ -128,4 +159,42 @@ Supported filters:
 - `from`
 - `to`
 - `keyword`
+- `category`
+- `action`
+- `user_name`
+- `process_image`
+- `source_ip`
+- `destination_ip`
+- `service_name`
+- `file_path`
+- `registry_key`
 - `limit` (maximum 500)
+
+## Source health
+
+```http
+GET /api/v1/source-health?agent_id=win11-test-001
+Authorization: Bearer <review-token>
+```
+
+Returns coverage summaries and per-source health rows populated from agent heartbeat data.
+
+## Inventory
+
+```http
+GET /api/v1/inventory?agent_id=win11-test-001&snapshot_type=audit_policy
+Authorization: Bearer <review-token>
+```
+
+Returns bounded asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, and role detection.
+
+## Alerts and detections
+
+```http
+GET /api/v1/alerts
+GET /api/v1/alerts/<alert-id>
+GET /api/v1/detections/rules
+Authorization: Bearer <review-token>
+```
+
+The initial alert/detection APIs expose the storage and review skeleton plus built-in detection metadata. Mutating alert triage and rule activation remain future approved workflows.

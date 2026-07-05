@@ -67,12 +67,21 @@ Required for agent MVP:
 - `System`
 - `Application`
 
-Planned optional channels:
+Default optional L2/L3 source manifest channels:
 
 - `Windows PowerShell`
 - `Microsoft-Windows-PowerShell/Operational`
-- `Microsoft-Windows-Sysmon/Operational`
 - `Microsoft-Windows-Windows Defender/Operational`
+- `Microsoft-Windows-TaskScheduler/Operational`
+- `Microsoft-Windows-WMI-Activity/Operational`
+- `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational`
+- `Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational`
+- `Microsoft-Windows-WinRM/Operational`
+- `Microsoft-Windows-Windows Firewall With Advanced Security/Firewall`
+- `Microsoft-Windows-GroupPolicy/Operational`
+- `Microsoft-Windows-CodeIntegrity/Operational`
+- `Microsoft-Windows-AppLocker/EXE and DLL`
+- `Microsoft-Windows-Sysmon/Operational`
 
 ## Reliability decisions
 

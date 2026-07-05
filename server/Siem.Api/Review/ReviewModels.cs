@@ -1,3 +1,5 @@
+using Challenger.Siem.Contracts.V1;
+
 namespace Challenger.Siem.Api.Review;
 
 public sealed record DashboardSummary(
@@ -28,7 +30,12 @@ public sealed record AgentInventoryItem(
     DateTimeOffset? LatestHeartbeatTime,
     int? LatestQueueDepth,
     DateTimeOffset? LastEventTime,
-    bool IsStale);
+    bool IsStale,
+    WindowsCoverageLevel CurrentCoverageLevel,
+    string CoverageStatus,
+    int MissingMandatorySources,
+    int StaleSources,
+    int ErrorSources);
 
 public sealed record DatabaseStatus(bool IsConnected, string Message)
 {

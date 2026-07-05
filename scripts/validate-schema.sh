@@ -46,7 +46,7 @@ psql_args_from_connection_string() {
 
 CHECK_SQL="$(cat <<'SQL'
 with required_tables(name) as (
-    values ('agents'), ('events'), ('agent_heartbeats'), ('ingestion_errors')
+    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('ingestion_errors')
 ), missing_tables as (
     select 'missing table ' || name as problem
     from required_tables
@@ -60,8 +60,21 @@ with required_tables(name) as (
         ('idx_events_channel'),
         ('idx_events_provider'),
         ('idx_events_raw_json'),
+        ('idx_events_event_category'),
+        ('idx_events_event_action'),
+        ('idx_events_user_name'),
+        ('idx_events_process_image'),
+        ('idx_events_destination_ip'),
         ('idx_agent_heartbeats_agent_id'),
         ('idx_agent_heartbeats_time'),
+        ('idx_source_health_status'),
+        ('idx_source_health_agent'),
+        ('idx_asset_inventory_agent_type'),
+        ('idx_detection_rules_category'),
+        ('idx_alerts_status'),
+        ('idx_alerts_agent'),
+        ('idx_alerts_created'),
+        ('idx_alert_evidence_alert'),
         ('idx_ingestion_errors_agent_id'),
         ('idx_ingestion_errors_time')
 ), missing_indexes as (

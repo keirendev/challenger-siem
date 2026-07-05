@@ -80,6 +80,8 @@ The current MVP baseline can:
 - authenticate the agent using a per-agent token
 - store events in PostgreSQL with JSONB raw payloads
 - return stored events from `GET /api/v1/events`
+- report source health and coverage posture from agent heartbeats
+- expose starter alert, detection-rule, asset-inventory, and source-health review APIs
 - host a review-token-protected web console from the API process
 
 Open the API base URL in a browser and log in with `Auth__ReviewToken` to use the web console.
@@ -99,6 +101,12 @@ See:
 - `docs/web.md`
 - `docs/runbooks.md`
 - `docs/tls.md`
+- `docs/security-hardening-roadmap.md`
+- `docs/windows-host-full-coverage-spec.md`
+- `docs/windows-host-full-coverage-github-issues.md`
+- `docs/windows-l2-validation-runbook.md`
+- `docs/sysmon-l3-validation-runbook.md`
+- `docs/windows-role-packs.md`
 - `docs/release-readiness.md`
 - `server/Siem.Api/Database/001_initial.sql`
 - `examples/agent-registration.json`

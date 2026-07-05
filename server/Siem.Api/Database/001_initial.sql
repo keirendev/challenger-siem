@@ -43,6 +43,24 @@ create index if not exists idx_events_channel on events(channel);
 create index if not exists idx_events_provider on events(provider);
 create index if not exists idx_events_raw_json on events using gin(raw_json);
 
+alter table events add column if not exists event_category text null;
+alter table events add column if not exists event_action text null;
+alter table events add column if not exists normalized_json jsonb null;
+alter table events add column if not exists user_name text null;
+alter table events add column if not exists target_user_name text null;
+alter table events add column if not exists process_image text null;
+alter table events add column if not exists process_command_line text null;
+alter table events add column if not exists source_ip text null;
+alter table events add column if not exists destination_ip text null;
+alter table events add column if not exists service_name text null;
+alter table events add column if not exists file_path text null;
+alter table events add column if not exists registry_key text null;
+create index if not exists idx_events_event_category on events(event_category);
+create index if not exists idx_events_event_action on events(event_action);
+create index if not exists idx_events_user_name on events(user_name);
+create index if not exists idx_events_process_image on events(process_image);
+create index if not exists idx_events_destination_ip on events(destination_ip);
+
 create table if not exists agent_heartbeats (
     id bigserial primary key,
     agent_id text not null references agents(agent_id),
@@ -61,6 +79,117 @@ create table if not exists agent_heartbeats (
 
 create index if not exists idx_agent_heartbeats_agent_id on agent_heartbeats(agent_id);
 create index if not exists idx_agent_heartbeats_time on agent_heartbeats(heartbeat_time desc);
+
+alter table agent_heartbeats add column if not exists config_hash text null;
+alter table agent_heartbeats add column if not exists queue_metrics jsonb null;
+alter table agent_heartbeats add column if not exists source_manifest jsonb null;
+alter table agent_heartbeats add column if not exists source_health_summary jsonb null;
+alter table agent_heartbeats add column if not exists tamper_checks jsonb null;
+
+create table if not exists source_health (
+    agent_id text not null references agents(agent_id),
+    source_id text not null,
+    display_name text not null,
+    channel text not null,
+    coverage_level text not null,
+    status text not null,
+    required_source boolean not null default false,
+    enabled boolean not null default true,
+    last_event_time timestamptz null,
+    last_record_id bigint null,
+    oldest_record_id bigint null,
+    newest_record_id bigint null,
+    log_size_bytes bigint null,
+    retention_days integer null,
+    lag_seconds bigint null,
+    error_code text null,
+    error_message text null,
+    gap_detected boolean not null default false,
+    cleared_detected boolean not null default false,
+    bookmark_gap_detected boolean not null default false,
+    config_hash text null,
+    source_version text null,
+    details jsonb not null default '{}'::jsonb,
+    updated_at timestamptz not null default now(),
+    primary key (agent_id, source_id),
+    constraint ck_source_health_status check (status in ('healthy', 'missing', 'disabled', 'stale', 'error', 'not_applicable', 'excepted')),
+    constraint ck_source_health_level check (coverage_level in ('L0', 'L1', 'L2', 'L3', 'L4'))
+);
+create index if not exists idx_source_health_status on source_health(status);
+create index if not exists idx_source_health_agent on source_health(agent_id);
+
+create table if not exists coverage_exceptions (
+    id bigserial primary key,
+    agent_id text null references agents(agent_id),
+    hostname text null,
+    source_id text not null,
+    reason text not null,
+    approved_by text not null,
+    expires_at timestamptz null,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_coverage_exceptions_source on coverage_exceptions(source_id);
+
+create table if not exists asset_inventory_snapshots (
+    id bigserial primary key,
+    agent_id text not null references agents(agent_id),
+    hostname text not null,
+    snapshot_type text not null,
+    collected_at timestamptz not null,
+    items jsonb not null,
+    summary jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_asset_inventory_agent_type on asset_inventory_snapshots(agent_id, snapshot_type, collected_at desc);
+
+create table if not exists detection_rules (
+    rule_id text not null,
+    version integer not null,
+    name text not null,
+    description text not null,
+    severity text not null,
+    confidence text not null,
+    category text not null,
+    required_sources text[] not null default '{}',
+    required_fields text[] not null default '{}',
+    mitre_attack text[] not null default '{}',
+    enabled boolean not null default true,
+    created_at timestamptz not null default now(),
+    primary key (rule_id, version)
+);
+create index if not exists idx_detection_rules_category on detection_rules(category);
+
+create table if not exists alerts (
+    alert_id uuid primary key,
+    rule_id text not null,
+    rule_version integer not null,
+    title text not null,
+    severity text not null,
+    confidence text not null,
+    status text not null default 'new',
+    agent_id text null references agents(agent_id),
+    hostname text null,
+    created_at timestamptz not null default now(),
+    summary text not null,
+    affected_entities jsonb not null default '[]'::jsonb,
+    constraint ck_alert_status check (status in ('new', 'triaged', 'closed', 'suppressed'))
+);
+create index if not exists idx_alerts_status on alerts(status);
+create index if not exists idx_alerts_agent on alerts(agent_id);
+create index if not exists idx_alerts_created on alerts(created_at desc);
+
+create table if not exists alert_evidence (
+    id bigserial primary key,
+    alert_id uuid not null references alerts(alert_id) on delete cascade,
+    agent_id text not null,
+    event_id uuid not null,
+    event_time timestamptz null,
+    channel text null,
+    windows_event_id integer null,
+    summary text not null,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_alert_evidence_alert on alert_evidence(alert_id);
 
 create table if not exists ingestion_errors (
     id bigserial primary key,

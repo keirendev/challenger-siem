@@ -7,14 +7,15 @@ Project: `agent/WindowsAgent`
 - Runs as a .NET 8 Worker Service and can be hosted as a Windows Service.
 - Reads configured Windows Event Log channels using the Windows Event Log API.
 - Starts at the end of each channel by default when no state exists, preventing a first-run flood of historical events.
-- Normalizes records into the v1 `EventEnvelope` contract.
+- Normalizes records into the v1 `EventEnvelope` contract with source-specific category/action/entity metadata for Security, System, Application, PowerShell, Defender, Task Scheduler, WMI, RDP, WinRM, Firewall, Group Policy, Code Integrity, AppLocker/WDAC, and Sysmon source groups.
 - Uses deterministic event IDs based on agent/channel/record/provider/event ID for server-side deduplication.
 - Persists channel position state to JSON.
 - Persists unsent events to a local SQLite queue before forwarding.
 - Supports first-run enrollment with `POST /api/v1/agents/register` and persists the returned per-agent token.
 - Sends batches to `POST /api/v1/ingest/events`.
 - Deletes queued events only after server acknowledgement, using event-id acknowledgement arrays when present.
-- Sends heartbeat data to `POST /api/v1/agents/heartbeat`.
+- Sends heartbeat data to `POST /api/v1/agents/heartbeat`, including configuration hash, queue SLO metrics, source manifest, source-health probes, and tamper-check summary fields.
+- Supports DPAPI-protected persisted API tokens for first-run enrollment on Windows.
 - Retries with bounded exponential backoff when collection or forwarding fails.
 - Quarantines repeatedly failing queued events in a local `poison_events` table so later events can continue draining.
 
@@ -105,7 +106,7 @@ Required fields:
 
 - `AgentId`
 - `ServerBaseUrl`
-- `ApiToken` **or** `Enrollment.EnrollmentToken`
+- `ApiToken`, `ProtectedApiToken`, **or** `Enrollment.EnrollmentToken`
 - at least one channel in `Channels`
 
 For the current lab server binding, set:
@@ -116,7 +117,7 @@ For the current lab server binding, set:
 
 A ready-to-edit example is available at `examples/windows-agentsettings-192.168.122.1-4444.json`.
 
-Do not log or commit `ApiToken` or `Enrollment.EnrollmentToken`.
+Do not log or commit `ApiToken`, `ProtectedApiToken`, or `Enrollment.EnrollmentToken`.
 
 ### First-run enrollment
 
@@ -130,7 +131,7 @@ To enroll from the endpoint, leave `ApiToken` blank and set:
 }
 ```
 
-On successful registration the agent stores the returned per-agent token in the configured `agentsettings.json`, clears the enrollment token in that file, and continues with normal ingest/heartbeat authentication. Existing configs that already contain `ApiToken` continue to work and skip enrollment.
+On successful registration the agent stores the returned per-agent token as DPAPI-protected `ProtectedApiToken` in the configured `agentsettings.json`, clears the enrollment token in that file, and continues with normal ingest/heartbeat authentication. Existing lab configs that already contain `ApiToken` continue to work and skip enrollment.
 
 ## State and queue files
 
@@ -150,6 +151,6 @@ These files should be protected to Administrators and SYSTEM when installed. Use
 ## Windows validation notes
 
 - Required channels are `Security`, `System`, and `Application`. Security access depends on the service account; LocalSystem is expected to work in the MVP lab.
-- Optional channels are skipped cleanly and logged once when absent.
+- Optional L2/L3 channels are represented in the source manifest and report `missing`/`error` source-health status when unavailable or unreadable.
 - Default `StartAtEndWhenNoState: true` prevents a first-run flood. For bounded lab collection tests, set it to `false` only in ignored temporary configs.
 - The safety runbook avoids reboots, firewall/authentication changes, event-log clearing, and deleting operator data. If a service uninstall must be demonstrated, use a disposable lab and explicit operator approval; the default uninstall script preserves data unless `-RemoveData` is supplied.

@@ -9,7 +9,7 @@ Used only for initial agent registration.
 - Client sends it in `X-Enrollment-Token` to `POST /api/v1/agents/register`.
 - Server compares it to `Auth:EnrollmentToken` from configuration.
 - It must be long, random, and managed outside source control.
-- The Windows agent can use it for first-run enrollment and then clears the enrollment token from the persisted settings file after storing the returned per-agent token.
+- The Windows agent can use it for first-run enrollment and then clears the enrollment token from the persisted settings file after storing the returned per-agent token as `ProtectedApiToken` with Windows DPAPI machine protection.
 
 ### Per-agent API token
 
@@ -17,13 +17,14 @@ Issued by the server during registration.
 
 - Client uses it as `Authorization: Bearer <token>` for ingest and heartbeat endpoints.
 - Server stores only a SHA-256 hash of the token.
+- Windows agents should prefer DPAPI-protected local `ProtectedApiToken` persistence after enrollment; plaintext `ApiToken` remains supported for ignored local lab settings.
 - Re-registering an existing `agent_id` rotates the stored token and invalidates the previous token.
 
 ### Review token
 
 Protects the initial search/review API and web review console.
 
-- API clients use `Authorization: Bearer <review-token>` for `GET /api/v1/events`.
+- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/inventory`, `/api/v1/alerts`, and `/api/v1/detections/rules`.
 - Browser operators submit the token to `/login` for the web console.
 - Server compares it to `Auth:ReviewToken` from configuration.
 - A successful web login issues an HTTP-only same-origin cookie; the review token is not stored in browser local storage.

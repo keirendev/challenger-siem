@@ -34,7 +34,21 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             Os = "Windows Test",
             LastEventTime = DateTimeOffset.UtcNow,
             QueueDepth = 3,
-            MemoryMb = 64
+            MemoryMb = 64,
+            SourceHealth = new[]
+            {
+                new SourceHealthReport
+                {
+                    SourceId = "system",
+                    DisplayName = "Windows System",
+                    Channel = "System",
+                    CoverageLevel = WindowsCoverageLevel.L1,
+                    Status = SourceHealthStatuses.Healthy,
+                    Required = true,
+                    Enabled = true,
+                    NewestRecordId = 6005
+                }
+            }
         }, agentToken);
 
         await PostWithBearerAsync(client, "/api/v1/ingest/events", new IngestBatchRequest
@@ -57,6 +71,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                     EventTime = DateTimeOffset.UtcNow,
                     Severity = "information",
                     Message = $"Web console smoke marker {agentId}",
+                    Normalized = new NormalizedEventFields { Category = "system", Action = "observed" },
                     Raw = JsonSerializer.SerializeToElement(new { web_marker = agentId })
                 }
             }
@@ -72,8 +87,13 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(agentId, agents, StringComparison.Ordinal);
         Assert.Contains(hostname, agents, StringComparison.Ordinal);
         Assert.Contains("3", agents, StringComparison.Ordinal);
+        Assert.Contains("L1", agents, StringComparison.Ordinal);
 
-        var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&limit=10");
+        var coverage = await GetHtmlAsync(client, $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}");
+        Assert.Contains("Host coverage", coverage, StringComparison.Ordinal);
+        Assert.Contains("Windows System", coverage, StringComparison.Ordinal);
+
+        var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&category=system&limit=10");
         Assert.Contains(agentId, events, StringComparison.Ordinal);
         Assert.Contains("WebSmokeProvider", events, StringComparison.Ordinal);
 
@@ -81,6 +101,14 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(eventId.ToString(), detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Raw JSON", detail, StringComparison.Ordinal);
         Assert.Contains(agentId, detail, StringComparison.Ordinal);
+        Assert.Contains("Entities", detail, StringComparison.Ordinal);
+
+        var alerts = await GetHtmlAsync(client, "/alerts");
+        Assert.Contains("Alerts", alerts, StringComparison.Ordinal);
+        Assert.Contains("No alerts match", alerts, StringComparison.Ordinal);
+
+        var auditPolicy = await GetHtmlAsync(client, "/audit-policy");
+        Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
     }
 
     private static WebApplicationFactory<Program> CreateFactory(string connectionString)

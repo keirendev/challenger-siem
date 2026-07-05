@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Eventing.Reader;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Config;
+using Challenger.Siem.WindowsAgent.Normalization;
 using Challenger.Siem.WindowsAgent.Serialization;
 using Challenger.Siem.WindowsAgent.Util;
 using Microsoft.Extensions.Options;
@@ -38,6 +39,71 @@ public sealed class WindowsEventCollector(
         {
             logger.LogWarning(ex, "Could not read latest record ID for Windows Event Log channel {Channel}.", channel);
             return Task.FromResult<long?>(null);
+        }
+    }
+
+    public Task<SourceHealthReport> ProbeChannelAsync(SourceManifestEntry source, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var latest = GetLatestRecordIdAsync(source.Channel, cancellationToken).GetAwaiter().GetResult();
+            long? oldest = null;
+            try
+            {
+                using var forwardReader = new EventLogReader(new EventLogQuery(source.Channel, PathType.LogName, "*")
+                {
+                    ReverseDirection = false
+                });
+                using var first = forwardReader.ReadEvent();
+                oldest = first?.RecordId;
+            }
+            catch (EventLogException)
+            {
+                // The latest probe already captures the source health status; oldest is best effort.
+            }
+
+            long? logSizeBytes = null;
+            try
+            {
+                using var config = new EventLogConfiguration(source.Channel);
+                logSizeBytes = config.MaximumSizeInBytes;
+            }
+            catch (EventLogException)
+            {
+                // Best effort only; not all channels expose a size through the API for every caller.
+            }
+
+            var status = latest.HasValue ? SourceHealthStatuses.Healthy : SourceHealthStatuses.Missing;
+            return Task.FromResult(new SourceHealthReport
+            {
+                SourceId = source.SourceId,
+                DisplayName = source.DisplayName,
+                Channel = source.Channel,
+                CoverageLevel = source.CoverageLevel,
+                Required = source.Required,
+                Enabled = true,
+                Status = status,
+                LastRecordId = latest,
+                OldestRecordId = oldest,
+                NewestRecordId = latest,
+                LogSizeBytes = logSizeBytes,
+                Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["parser_id"] = source.ParserId,
+                    ["source_pack"] = source.SourcePack
+                }
+            });
+        }
+        catch (EventLogNotFoundException)
+        {
+            LogChannelNotPresentOnce(source.Channel);
+            return Task.FromResult(SourceProbeError(source, SourceHealthStatuses.Missing, "event_log_not_found", "Channel is not present on this host."));
+        }
+        catch (EventLogException ex)
+        {
+            logger.LogWarning(ex, "Could not probe Windows Event Log channel {Channel}.", source.Channel);
+            return Task.FromResult(SourceProbeError(source, SourceHealthStatuses.Error, ex.GetType().Name, ex.Message));
         }
     }
 
@@ -144,7 +210,29 @@ public sealed class WindowsEventCollector(
             IngestTime = null,
             Severity = WindowsEventSeverityMapper.Map(record.Level, keywords),
             Message = message,
+            Normalized = WindowsEventNormalizer.Normalize(channel, provider, windowsEventId, message),
             Raw = raw
+        };
+    }
+
+    private static SourceHealthReport SourceProbeError(SourceManifestEntry source, string status, string errorCode, string errorMessage)
+    {
+        return new SourceHealthReport
+        {
+            SourceId = source.SourceId,
+            DisplayName = source.DisplayName,
+            Channel = source.Channel,
+            CoverageLevel = source.CoverageLevel,
+            Required = source.Required,
+            Enabled = true,
+            Status = status,
+            ErrorCode = errorCode,
+            ErrorMessage = errorMessage.Length <= 500 ? errorMessage : errorMessage[..500],
+            Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["parser_id"] = source.ParserId,
+                ["source_pack"] = source.SourcePack
+            }
         };
     }
 

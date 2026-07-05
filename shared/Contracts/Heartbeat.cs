@@ -27,4 +27,19 @@ public sealed record HeartbeatRequest
 
     [JsonPropertyName("memory_mb")]
     public int? MemoryMb { get; init; }
+
+    [JsonPropertyName("config_hash")]
+    public string? ConfigHash { get; init; }
+
+    [JsonPropertyName("queue_metrics")]
+    public QueueSloMetrics? QueueMetrics { get; init; }
+
+    [JsonPropertyName("source_manifest")]
+    public IReadOnlyList<SourceManifestEntry> SourceManifest { get; init; } = Array.Empty<SourceManifestEntry>();
+
+    [JsonPropertyName("source_health")]
+    public IReadOnlyList<SourceHealthReport> SourceHealth { get; init; } = Array.Empty<SourceHealthReport>();
+
+    [JsonPropertyName("tamper_checks")]
+    public TamperCheckSummary? TamperChecks { get; init; }
 }

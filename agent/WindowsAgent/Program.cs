@@ -1,6 +1,7 @@
 using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Queue;
+using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Services;
 using Challenger.Siem.WindowsAgent.State;
 using Challenger.Siem.WindowsAgent.Transport;
@@ -37,8 +38,8 @@ builder.Services
     .Validate(options => !string.IsNullOrWhiteSpace(options.AgentId), "Agent:AgentId is required.")
     .Validate(options => options.ServerBaseUrl is not null, "Agent:ServerBaseUrl is required.")
     .Validate(
-        options => !string.IsNullOrWhiteSpace(options.ApiToken) || !string.IsNullOrWhiteSpace(options.Enrollment.EnrollmentToken),
-        "Agent:ApiToken or Agent:Enrollment:EnrollmentToken is required.")
+        options => !string.IsNullOrWhiteSpace(options.ApiToken) || !string.IsNullOrWhiteSpace(options.ProtectedApiToken) || !string.IsNullOrWhiteSpace(options.Enrollment.EnrollmentToken),
+        "Agent:ApiToken, Agent:ProtectedApiToken, or Agent:Enrollment:EnrollmentToken is required.")
     .Validate(options => options.Channels.Count > 0, "At least one required channel is required.")
     .Validate(options => options.Batching.MaxEvents is > 0 and <= 500, "Batching:MaxEvents must be between 1 and 500.")
     .Validate(options => options.PollIntervalSeconds > 0, "PollIntervalSeconds must be greater than zero.")
@@ -49,6 +50,7 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton(new AgentConfigFile(configPath));
+builder.Services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
 builder.Services.AddSingleton<IWindowsEventCollector, WindowsEventCollector>();
 builder.Services.AddSingleton<IChannelStateStore, JsonChannelStateStore>();
 builder.Services.AddSingleton<IEventQueue, SqliteEventQueue>();

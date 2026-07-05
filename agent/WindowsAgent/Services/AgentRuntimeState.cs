@@ -4,6 +4,7 @@ public sealed class AgentRuntimeState
 {
     private readonly object gate = new();
     private DateTimeOffset? lastEventTime;
+    private DateTimeOffset? lastSuccessfulSendTime;
 
     public DateTimeOffset? LastEventTime
     {
@@ -16,6 +17,17 @@ public sealed class AgentRuntimeState
         }
     }
 
+    public DateTimeOffset? LastSuccessfulSendTime
+    {
+        get
+        {
+            lock (gate)
+            {
+                return lastSuccessfulSendTime;
+            }
+        }
+    }
+
     public void ObserveEventTime(DateTimeOffset eventTime)
     {
         lock (gate)
@@ -24,6 +36,14 @@ public sealed class AgentRuntimeState
             {
                 lastEventTime = eventTime;
             }
+        }
+    }
+
+    public void ObserveSuccessfulSend()
+    {
+        lock (gate)
+        {
+            lastSuccessfulSendTime = DateTimeOffset.UtcNow;
         }
     }
 }

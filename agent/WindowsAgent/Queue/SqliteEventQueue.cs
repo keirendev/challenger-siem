@@ -244,6 +244,44 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
         }
     }
 
+    public async Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            await InitializeUnsafeAsync(cancellationToken);
+            await using var connection = OpenConnection();
+            var queueDepth = await CountRowsAsync(connection, "queued_events", cancellationToken);
+            var poisonDepth = await CountRowsAsync(connection, "poison_events", cancellationToken);
+            DateTimeOffset? oldestQueuedAt = null;
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "select min(enqueued_at) from queued_events;";
+                var result = await command.ExecuteScalarAsync(cancellationToken);
+                if (result is string value)
+                {
+                    oldestQueuedAt = ParseTimestamp(value);
+                }
+            }
+
+            return new QueueSloMetrics
+            {
+                QueueDepth = queueDepth,
+                PoisonDepth = poisonDepth,
+                OldestQueuedAgeSeconds = oldestQueuedAt.HasValue
+                    ? Math.Max(0, (long)Math.Floor((DateTimeOffset.UtcNow - oldestQueuedAt.Value).TotalSeconds))
+                    : null,
+                LastSuccessfulSendTime = lastSuccessfulSendTime,
+                MaxSizeMb = options.Queue.MaxSizeMb,
+                WarningSizePercent = options.Queue.WarningSizePercent
+            };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public static TimeSpan BackoffDelayForAttempts(int sendAttempts, int maxBackoffSeconds)
     {
         if (sendAttempts <= 0)
@@ -307,6 +345,14 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
         await EnsureColumnAsync(connection, "queued_events", "send_attempts", "integer not null default 0", cancellationToken);
         await EnsureColumnAsync(connection, "queued_events", "last_attempt_at", "text null", cancellationToken);
         initialized = true;
+    }
+
+    private static async Task<int> CountRowsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"select count(*) from {tableName};";
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, CultureInfo.InvariantCulture);
     }
 
     private SqliteConnection OpenConnection()

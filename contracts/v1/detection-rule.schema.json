@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/detection-rule.schema.json",
+  "title": "Challenger SIEM Detection Rule Metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rule_id", "version", "name", "description", "severity", "confidence", "category", "required_sources", "required_fields", "enabled"],
+  "properties": {
+    "rule_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "version": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "description": { "type": "string", "maxLength": 2000 },
+    "severity": { "type": "string", "enum": ["informational", "low", "medium", "high", "critical"] },
+    "confidence": { "type": "string" },
+    "category": { "type": "string" },
+    "required_sources": { "type": "array", "items": { "type": "string" } },
+    "required_fields": { "type": "array", "items": { "type": "string" } },
+    "mitre_attack": { "type": "array", "items": { "type": "string" } },
+    "enabled": { "type": "boolean" }
+  }
+}

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
+using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V1;
@@ -37,6 +38,10 @@ builder.Services.AddScoped<AgentRepository>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
+builder.Services.AddScoped<SourceHealthRepository>();
+builder.Services.AddScoped<AssetInventoryRepository>();
+builder.Services.AddScoped<AlertRepository>();
+builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<ReviewRepository>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
@@ -195,6 +200,87 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     var query = EventSearchQuery.FromQuery(context.Request.Query);
     var results = await events.SearchEventsAsync(query, cancellationToken);
     return Results.Ok(new EventSearchResponse { Events = results });
+});
+
+app.MapGet("/api/v1/source-health", async Task<IResult> (
+    HttpContext context,
+    SourceHealthRepository sourceHealth,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var agentId = context.Request.Query["agent_id"].FirstOrDefault();
+    return Results.Ok(await sourceHealth.SearchAsync(agentId, cancellationToken));
+});
+
+app.MapGet("/api/v1/inventory", async Task<IResult> (
+    HttpContext context,
+    AssetInventoryRepository inventory,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var agentId = context.Request.Query["agent_id"].FirstOrDefault();
+    var snapshotType = context.Request.Query["snapshot_type"].FirstOrDefault();
+    return Results.Ok(new { snapshots = await inventory.SearchAsync(agentId, snapshotType, cancellationToken) });
+});
+
+app.MapGet("/api/v1/alerts", async Task<IResult> (
+    HttpContext context,
+    AlertRepository alerts,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var status = context.Request.Query["status"].FirstOrDefault();
+    return Results.Ok(new { alerts = await alerts.SearchAlertsAsync(status, cancellationToken) });
+});
+
+app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
+    Guid alertId,
+    HttpContext context,
+    AlertRepository alerts,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var alert = await alerts.GetAlertAsync(alertId, cancellationToken);
+    return alert is null ? Results.NotFound() : Results.Ok(alert);
+});
+
+app.MapGet("/api/v1/detections/rules", async Task<IResult> (
+    HttpContext context,
+    AlertRepository alerts,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new { rules = await alerts.GetRulesAsync(cancellationToken) });
 });
 
 app.MapRazorPages();

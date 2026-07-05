@@ -46,6 +46,9 @@ public sealed record EventEnvelope
     [JsonPropertyName("message")]
     public string Message { get; init; } = string.Empty;
 
+    [JsonPropertyName("normalized")]
+    public NormalizedEventFields? Normalized { get; init; }
+
     [JsonPropertyName("raw")]
     public JsonElement Raw { get; init; }
 }

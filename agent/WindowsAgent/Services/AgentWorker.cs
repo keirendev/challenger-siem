@@ -2,7 +2,9 @@ using System.Reflection;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
+using Challenger.Siem.WindowsAgent.Coverage;
 using Challenger.Siem.WindowsAgent.Queue;
+using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.State;
 using Challenger.Siem.WindowsAgent.Transport;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ public sealed class AgentWorker(
     SiemIngestClient client,
     AgentRuntimeState runtimeState,
     AgentEnrollmentService enrollmentService,
+    AgentConfigFile configFile,
     ILogger<AgentWorker> logger) : BackgroundService
 {
     private readonly AgentOptions options = options.Value;
@@ -137,6 +140,11 @@ public sealed class AgentWorker(
             }
 
             var deleted = await DeleteAcknowledgedEventsAsync(batch, acknowledgement, cancellationToken);
+            if (deleted > 0)
+            {
+                runtimeState.ObserveSuccessfulSend();
+            }
+
             sentOrDeduplicated += deleted;
 
             var rejected = await QuarantineRejectedEventsAsync(batch, acknowledgement, cancellationToken);
@@ -249,7 +257,18 @@ public sealed class AgentWorker(
                 LastEventTime = runtimeState.LastEventTime,
                 QueueDepth = await queue.CountAsync(cancellationToken),
                 CpuPercent = null,
-                MemoryMb = Convert.ToInt32(GC.GetTotalMemory(forceFullCollection: false) / 1024L / 1024L)
+                MemoryMb = Convert.ToInt32(GC.GetTotalMemory(forceFullCollection: false) / 1024L / 1024L),
+                ConfigHash = AgentConfigurationHasher.ComputeHash(configFile),
+                QueueMetrics = await queue.GetMetricsAsync(runtimeState.LastSuccessfulSendTime, cancellationToken),
+                SourceManifest = WindowsSourceManifest.Build(options.Channels, options.OptionalChannels),
+                SourceHealth = await ProbeSourceHealthAsync(cancellationToken),
+                TamperChecks = new TamperCheckSummary
+                {
+                    BinaryHash = AgentConfigurationHasher.ComputeFileHash(Environment.ProcessPath ?? string.Empty),
+                    ConfigHash = AgentConfigurationHasher.ComputeHash(configFile),
+                    AclStatus = "not_evaluated",
+                    SignatureStatus = "not_evaluated"
+                }
             };
 
             await client.SendHeartbeatAsync(heartbeat, cancellationToken);
@@ -258,6 +277,33 @@ public sealed class AgentWorker(
         {
             logger.LogWarning(ex, "Heartbeat failed.");
         }
+    }
+
+    private async Task<IReadOnlyList<SourceHealthReport>> ProbeSourceHealthAsync(CancellationToken cancellationToken)
+    {
+        var manifest = WindowsSourceManifest.Build(options.Channels, options.OptionalChannels);
+        var results = new List<SourceHealthReport>(manifest.Count);
+        foreach (var source in manifest)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var report = await collector.ProbeChannelAsync(source, cancellationToken);
+            var lastRecordId = await stateStore.GetLastRecordIdAsync(source.Channel, cancellationToken);
+            if (lastRecordId.HasValue)
+            {
+                var clearedDetected = report.NewestRecordId.HasValue && report.NewestRecordId.Value < lastRecordId.Value;
+                var bookmarkGapDetected = report.OldestRecordId.HasValue && report.OldestRecordId.Value > lastRecordId.Value + 1;
+                report = report with
+                {
+                    ClearedDetected = clearedDetected,
+                    BookmarkGapDetected = bookmarkGapDetected,
+                    GapDetected = clearedDetected || bookmarkGapDetected
+                };
+            }
+
+            results.Add(report);
+        }
+
+        return results;
     }
 
     private static TimeSpan BackoffDelay(int consecutiveFailures)
