@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Xunit;
@@ -237,6 +240,60 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(detail.Messages, message => message.Role == "soc_agent");
     }
 
+    [PostgresFact]
+    public async Task SocAgentChatUsesConfiguredExternalProviderWhenConnected()
+    {
+        var connectionString = database.RequireConnectionString();
+        var fakeProvider = new FakeSocAgentModelProvider("Fake official provider answer with citations preserved.");
+        using var factory = CreateFactory(
+            connectionString,
+            new Dictionary<string, string?>
+            {
+                ["SocAgent:Provider"] = "OpenAI",
+                ["SocAgent:ProviderDisplayName"] = "OpenAI ChatGPT",
+                ["SocAgent:AuthMode"] = "ApiKey",
+                ["SocAgent:Model"] = "gpt-test",
+                ["SocAgent:ExternalCallsEnabled"] = "true",
+                ["SocAgent:OpenAiApiKey"] = "fake-openai-api-key-for-tests"
+            },
+            services =>
+            {
+                services.RemoveAll<ISocAgentModelProvider>();
+                services.AddSingleton<ISocAgentModelProvider>(fakeProvider);
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+        Assert.Equal("connected", status.Status);
+        Assert.False(status.RequiresConnection);
+        Assert.True(status.DataMayLeaveLocalSiem);
+
+        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        {
+            Title = "Synthetic external provider chat"
+        });
+        Assert.Equal("OpenAI", session.Provider);
+        Assert.Equal("gpt-test", session.Model);
+
+        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        {
+            Message = "Summarize current posture with the official provider. api_key=should-not-leave"
+        });
+
+        Assert.Equal("OpenAI", chat.AssistantMessage.Provider);
+        Assert.Equal("gpt-test", chat.AssistantMessage.Model);
+        Assert.Contains("Fake official provider answer", chat.AssistantMessage.Content, StringComparison.Ordinal);
+        Assert.Contains(chat.AssistantMessage.ToolRuns, tool => tool.ToolName == "external_model_provider");
+        Assert.NotEmpty(chat.AssistantMessage.Citations);
+        var providerRequest = fakeProvider.LastRequest ?? throw new InvalidOperationException("Fake provider was not called.");
+        Assert.Contains("Local SIEM tool assessment", providerRequest.Prompt, StringComparison.Ordinal);
+        Assert.Contains("api_key=<redacted>", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fake-openai-api-key", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
+
+        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.Provider == "OpenAI");
+    }
+
     [Fact]
     public async Task SocAgentStatusReportsOfficialSetupWhenExternalProviderIsNotConfigured()
     {
@@ -293,7 +350,8 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 
     private static WebApplicationFactory<Program> CreateFactory(
         string connectionString,
-        IReadOnlyDictionary<string, string?>? overrides = null)
+        IReadOnlyDictionary<string, string?>? overrides = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -317,6 +375,11 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 
                 configuration.AddInMemoryCollection(values);
             });
+
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
         });
     }
 
@@ -499,6 +562,17 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             errorCommand.Parameters.AddWithValue("batch_id", invalidBatchId);
             var errorCount = Convert.ToInt32(await errorCommand.ExecuteScalarAsync(CancellationToken.None));
             Assert.Equal(1, errorCount);
+        }
+    }
+
+    private sealed class FakeSocAgentModelProvider(string answer) : ISocAgentModelProvider
+    {
+        public SocAgentModelProviderRequest? LastRequest { get; private set; }
+
+        public Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, answer));
         }
     }
 

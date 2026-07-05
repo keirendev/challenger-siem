@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added an optional official OpenAI Chat Completions-backed `soc-agent` provider path with server-side credential handling, safe status/error mapping, bounded redacted prompts, local fallback, and web/API documentation.
 - Fixed stale-agent cleanup redirects in the web console so success and validation paths return safely to agent inventory with filters preserved.
 - Expanded guarded synthetic-data cleanup to cover agent-linked `soc-agent` turns, sessions/messages, investigation graphs/proposals/audit, explicit synthetic chat/graph selectors, and web-smoke `soc-agent` chat cleanup.
 - Revamped the web review console with a cohesive dark operator shell, active navigation, accessible focus/skip-link behavior, responsive cards/tables, visible filter/result state, bounded pagination for list workflows, and updated web validation/docs.

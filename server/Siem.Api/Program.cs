@@ -9,6 +9,7 @@ using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -45,6 +46,11 @@ builder.Services.AddScoped<AssetInventoryRepository>();
 builder.Services.AddScoped<AlertRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
 builder.Services.AddScoped<SocAgentProviderStatusService>();
+builder.Services.AddHttpClient<ISocAgentModelProvider, OpenAiSocAgentModelProvider>((serviceProvider, client) =>
+{
+    var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
+});
 builder.Services.AddScoped<SocAgentService>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();

@@ -42,6 +42,83 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
+    public void OpenAiProviderWithServerSideCredentialsReportsConnectedWithoutSecretMaterial()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            ProviderDisplayName = "OpenAI ChatGPT",
+            AuthMode = "ApiKey",
+            Model = "gpt-test",
+            ExternalCallsEnabled = true,
+            OpenAiApiKey = "fake-openai-api-key-for-tests"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("connected", status.Status);
+        Assert.Equal("OpenAI", status.Provider);
+        Assert.False(status.RequiresConnection);
+        Assert.True(status.DataMayLeaveLocalSiem);
+        Assert.DoesNotContain("fake-openai-api-key", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void OpenAiProviderRejectsNonOfficialApiEndpoint()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "ApiKey",
+            ExternalCallsEnabled = true,
+            OpenAiApiKey = "fake-openai-api-key-for-tests",
+            OpenAiBaseUrl = "https://example.invalid/v1"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("provider_error", status.Status);
+        Assert.True(status.RequiresConnection);
+        Assert.Contains("official", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void OpenAiProviderWithZeroBudgetReportsBudgetLimited()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "ApiKey",
+            ExternalCallsEnabled = true,
+            OpenAiApiKey = "fake-openai-api-key-for-tests",
+            DailyBudgetUsd = 0m
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("budget_limited", status.Status);
+        Assert.False(status.RequiresConnection);
+        Assert.Contains("budget", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UnsafeProviderSetupUrlFallsBackToOfficialSetupUrl()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "ApiKey",
+            ExternalCallsEnabled = false,
+            ProviderSetupUrl = "https://example.invalid/collect-token"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("provider_not_configured", status.Status);
+        Assert.Equal("https://platform.openai.com/api-keys", status.ConnectUrl);
+    }
+
+    [Fact]
     public void DelegatedProviderWithoutAuthorizationUrlFailsClosedWithAdminInstructions()
     {
         var service = CreateService(new SocAgentOptions
@@ -57,6 +134,25 @@ public sealed class SocAgentProviderStatusTests
         Assert.True(status.RequiresConnection);
         Assert.Contains("official", status.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("do not paste ChatGPT passwords", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DelegatedProviderRejectsAuthorizationUrlOutsideOfficialAllowlist()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "Delegated",
+            ExternalCallsEnabled = true,
+            AuthorizationUrl = "https://example.invalid/oauth/authorize"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("provider_error", status.Status);
+        Assert.True(status.RequiresConnection);
+        Assert.Contains("allowlist", status.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("https://platform.openai.com/api-keys", status.ConnectUrl);
     }
 
     private static SocAgentProviderStatusService CreateService(SocAgentOptions options)

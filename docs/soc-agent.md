@@ -2,7 +2,7 @@
 
 `soc-agent` is the SIEM-aware SOC analyst and detection-engineering chat workspace in Challenger SIEM.
 
-The current implementation is a safe local provider/tool harness with a persistent web chat UI. It runs server-side SIEM tools, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. It does **not** automate ChatGPT web login, call unofficial provider endpoints, require external model credentials, activate detections, change configuration, delete data, or edit source code.
+The current implementation is a safe local provider/tool harness with a persistent web chat UI and an optional official OpenAI Chat Completions-backed provider path. It runs server-side SIEM tools, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side OpenAI API-compatible credentials configured outside source control. It does **not** automate ChatGPT web login, call unofficial provider endpoints, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
 
 The original planning record is archived at `docs/archive/soc-agent-planning-record-implemented.md`.
 
@@ -32,7 +32,7 @@ The `/soc-agent` page shows:
 - inline tool activity, row counts, summaries, and citation links back to SIEM review pages;
 - a mutation-safety reminder.
 
-When an external provider is selected but no official server-side auth/setup is configured, the UI fails closed for external calls and uses the configured local fallback only when `SocAgent:FallbackToLocalWhenUnavailable=true`. The page never asks for ChatGPT passwords, browser cookies, or unofficial session tokens.
+When an external provider is selected but no official server-side auth/setup is configured, budget is exhausted, or the provider returns a safe mapped error, the UI fails closed for external calls and uses the configured local fallback only when `SocAgent:FallbackToLocalWhenUnavailable=true`. The page never asks for ChatGPT passwords, browser cookies, API keys, or unofficial session tokens.
 
 ## Provider model and configuration
 
@@ -49,6 +49,9 @@ Default configuration keeps all prompts and tool summaries local:
     "FallbackToLocalWhenUnavailable": true,
     "ExternalCallsEnabled": false,
     "ProviderSetupUrl": "https://platform.openai.com/api-keys",
+    "OpenAiBaseUrl": "https://api.openai.com/v1",
+    "OpenAiChatCompletionsPath": "chat/completions",
+    "MaxProviderOutputTokens": 1200,
     "RequestTimeoutSeconds": 30,
     "MaxRetries": 1,
     "MaxToolCalls": 8,
@@ -63,9 +66,15 @@ Default configuration keeps all prompts and tool summaries local:
 }
 ```
 
-For future official OpenAI/ChatGPT use, configure provider credentials only server-side through ignored environment variables or a secret store. Do not put provider credentials in `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output.
+For official OpenAI/ChatGPT-compatible use, configure provider credentials only server-side through ignored environment variables or a secret store, for example `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Do not put provider credentials in `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output. The built-in provider client is intentionally pinned to the official `https://api.openai.com/v1/chat/completions` endpoint; tests use injected fake providers rather than real credentials.
 
-Supported status values are `local`, `disabled`, `provider_not_configured`, `auth_required`, `connected`, and `provider_error`.
+Supported status values are `local`, `disabled`, `provider_not_configured`, `auth_required`, `connected`, `budget_limited`, `rate_limited`, `auth_failed`, and `provider_error`.
+
+### Official provider-backed execution
+
+When `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and a server-side API key is configured, `soc-agent` keeps all SIEM data access on the server and sends only a bounded/redacted prompt to the official OpenAI Chat Completions endpoint. The prompt is assembled from the deterministic local tool assessment, tool-run summaries, and citation URLs; raw event JSON, provider credentials, bearer tokens, and unbounded endpoint telemetry are not sent. Provider errors are mapped to operator-safe codes (`auth_failed`, `budget_limited`, `rate_limited`, or `provider_error`) without rendering raw provider responses.
+
+Delegated OAuth/OIDC/PKCE remains setup-only until an official flow is configured. Connect/setup URLs are allowlisted to official OpenAI/ChatGPT hosts, and unsupported or non-allowlisted URLs are treated as `provider_error`.
 
 ## Current local tools
 
@@ -121,7 +130,7 @@ Future mutating workflows must remain proposal-first and require explicit author
 
 ## Future enhancements
 
-- External official model-provider client and streaming support.
+- Streaming support for external provider responses.
 - Timeline/entity pivot tools.
 - Detection draft, backtest, and saved proposal artifacts.
 - Approval UX for any future mutating tools.

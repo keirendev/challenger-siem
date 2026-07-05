@@ -16,6 +16,9 @@ public sealed class SocAgentOptions
     public string? ProviderSetupUrl { get; set; } = "https://platform.openai.com/api-keys";
     public string? AuthorizationUrl { get; set; }
     public string? OpenAiApiKey { get; set; }
+    public string OpenAiBaseUrl { get; set; } = "https://api.openai.com/v1";
+    public string OpenAiChatCompletionsPath { get; set; } = "chat/completions";
+    public int MaxProviderOutputTokens { get; set; } = 1200;
     public int RequestTimeoutSeconds { get; set; } = 30;
     public int MaxRetries { get; set; } = 1;
     public int MaxToolCalls { get; set; } = 8;

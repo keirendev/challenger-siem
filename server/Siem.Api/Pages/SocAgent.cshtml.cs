@@ -83,6 +83,8 @@ public sealed class SocAgentModel(
             "disabled" => "warning",
             "provider_not_configured" => "warning",
             "auth_required" => "warning",
+            "budget_limited" => "warning",
+            "rate_limited" => "warning",
             _ => "danger"
         };
     }

@@ -15,6 +15,7 @@ public sealed class SocAgentService(
     InvestigationGraphRepository graphs,
     SocAgentRepository audit,
     SocAgentProviderStatusService providerStatus,
+    ISocAgentModelProvider modelProvider,
     IOptions<SocAgentOptions> options)
 {
     private readonly SocAgentOptions options = options.Value;
@@ -163,13 +164,13 @@ public sealed class SocAgentService(
             };
         }
 
-        if (status.RequiresConnection && !options.FallbackToLocalWhenUnavailable)
+        if (IsExternalProviderUnavailable(status) && !options.FallbackToLocalWhenUnavailable)
         {
             return new SocAgentAskResponse
             {
                 Provider = status.Provider,
                 Model = status.Model,
-                Answer = $"Provider connection required: {status.Message}",
+                Answer = $"Provider unavailable: {status.Message}",
                 CreatedAt = DateTimeOffset.UtcNow
             };
         }
@@ -178,7 +179,7 @@ public sealed class SocAgentService(
         var citations = new List<SocAgentCitation>();
         var toolRuns = new List<SocAgentToolRunSummary>();
         var answer = new StringBuilder();
-        var usingLocalFallback = status.RequiresConnection && options.FallbackToLocalWhenUnavailable;
+        var usingLocalFallback = IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable;
 
         var agents = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, request.ContextAgentId, null, "active"),
@@ -307,31 +308,163 @@ public sealed class SocAgentService(
         answer.AppendLine();
         answer.AppendLine("Recommended next steps: review cited coverage gaps, inspect linked events/alerts, validate missing mandatory sources on the endpoint, and keep mutating detection changes as proposals requiring explicit operator approval.");
 
-        var response = new SocAgentAskResponse
-        {
-            Provider = EffectiveProvider(status),
-            Model = EffectiveModel(status),
-            Answer = Truncate(answer.ToString().Trim(), Math.Clamp(options.MaxResultCharacters, 1000, 100_000)),
-            ToolRuns = toolRuns,
-            Citations = citations,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var maxResultCharacters = Math.Clamp(options.MaxResultCharacters, 1000, 100_000);
+        var localAnswer = SocAgentTextSafety.Truncate(answer.ToString().Trim(), maxResultCharacters);
+        var response = await CreateResponseAsync(
+            request,
+            status,
+            localAnswer,
+            toolRuns,
+            citations,
+            maxResultCharacters,
+            cancellationToken);
         await audit.SaveTurnAsync(request, response, cancellationToken);
         return response;
     }
 
+    private async Task<SocAgentAskResponse> CreateResponseAsync(
+        SocAgentAskRequest request,
+        SocAgentProviderStatusResponse status,
+        string localAnswer,
+        List<SocAgentToolRunSummary> toolRuns,
+        List<SocAgentCitation> citations,
+        int maxResultCharacters,
+        CancellationToken cancellationToken)
+    {
+        if (CanUseExternalProvider(status))
+        {
+            try
+            {
+                var prompt = BuildExternalPrompt(request.Question, localAnswer, toolRuns, citations);
+                var providerResult = await modelProvider.CompleteAsync(
+                    new SocAgentModelProviderRequest(status, prompt, maxResultCharacters),
+                    cancellationToken);
+                toolRuns.Add(new SocAgentToolRunSummary
+                {
+                    ToolName = "external_model_provider",
+                    RowCount = 0,
+                    Summary = "Submitted a bounded/redacted prompt to the configured official provider."
+                });
+                return new SocAgentAskResponse
+                {
+                    Provider = providerResult.Provider,
+                    Model = providerResult.Model,
+                    Answer = providerResult.Answer,
+                    ToolRuns = toolRuns,
+                    Citations = citations,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+            }
+            catch (SocAgentModelProviderException ex) when (options.FallbackToLocalWhenUnavailable)
+            {
+                toolRuns.Add(new SocAgentToolRunSummary
+                {
+                    ToolName = "external_model_provider",
+                    RowCount = 0,
+                    Summary = $"External provider failed with {ex.ErrorCode}; used local fallback without exposing provider secrets."
+                });
+                var fallbackAnswer = SocAgentTextSafety.Truncate(
+                    $"External provider unavailable ({ex.ErrorCode}): {ex.OperatorSafeMessage}\nUsing local fallback only; no provider secrets were exposed to the browser.\n\n{localAnswer}",
+                    maxResultCharacters);
+                return new SocAgentAskResponse
+                {
+                    Provider = options.LocalFallbackProvider,
+                    Model = options.LocalFallbackModel,
+                    Answer = fallbackAnswer,
+                    ToolRuns = toolRuns,
+                    Citations = citations,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+            }
+            catch (SocAgentModelProviderException ex)
+            {
+                toolRuns.Add(new SocAgentToolRunSummary
+                {
+                    ToolName = "external_model_provider",
+                    RowCount = 0,
+                    Summary = $"External provider failed with {ex.ErrorCode}; local fallback is disabled."
+                });
+                return new SocAgentAskResponse
+                {
+                    Provider = status.Provider,
+                    Model = status.Model,
+                    Answer = $"External provider unavailable ({ex.ErrorCode}): {ex.OperatorSafeMessage}",
+                    ToolRuns = toolRuns,
+                    Citations = citations,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+            }
+        }
+
+        return new SocAgentAskResponse
+        {
+            Provider = EffectiveProvider(status),
+            Model = EffectiveModel(status),
+            Answer = localAnswer,
+            ToolRuns = toolRuns,
+            Citations = citations,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private string BuildExternalPrompt(
+        string question,
+        string localAnswer,
+        IReadOnlyList<SocAgentToolRunSummary> toolRuns,
+        IReadOnlyList<SocAgentCitation> citations)
+    {
+        var prompt = new StringBuilder();
+        prompt.AppendLine("Challenger SIEM soc-agent external-provider request.");
+        prompt.AppendLine("Use the bounded/redacted local SIEM context below. Do not request credentials, do not assume uncited data, and do not propose mutations except as operator-approved proposals.");
+        prompt.AppendLine();
+        prompt.AppendLine("Operator question (redacted):");
+        prompt.AppendLine(SocAgentTextSafety.RedactSecrets(question));
+        prompt.AppendLine();
+        prompt.AppendLine("Local SIEM tool assessment (bounded/redacted):");
+        prompt.AppendLine(SocAgentTextSafety.RedactSecrets(localAnswer));
+        prompt.AppendLine();
+        prompt.AppendLine("Tool summaries:");
+        foreach (var tool in toolRuns.Take(Math.Clamp(options.MaxToolCalls, 1, 20)))
+        {
+            prompt.AppendLine($"- {tool.ToolName}: rows={tool.RowCount}; {SocAgentTextSafety.RedactSecrets(tool.Summary)}");
+        }
+
+        prompt.AppendLine();
+        prompt.AppendLine("Citations to preserve in the answer:");
+        foreach (var citation in citations.Take(20))
+        {
+            prompt.AppendLine($"- {citation.Label} ({citation.Kind}): {citation.Url}");
+        }
+
+        return SocAgentTextSafety.Truncate(
+            SocAgentTextSafety.RedactSecrets(prompt.ToString()),
+            Math.Clamp(options.MaxPromptCharacters, 1000, 20_000));
+    }
+
     private string EffectiveProvider(SocAgentProviderStatusResponse status)
     {
-        return status.RequiresConnection && options.FallbackToLocalWhenUnavailable
+        return IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable
             ? options.LocalFallbackProvider
             : status.Provider;
     }
 
     private string EffectiveModel(SocAgentProviderStatusResponse status)
     {
-        return status.RequiresConnection && options.FallbackToLocalWhenUnavailable
+        return IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable
             ? options.LocalFallbackModel
             : status.Model;
+    }
+
+    private static bool CanUseExternalProvider(SocAgentProviderStatusResponse status)
+    {
+        return string.Equals(status.Status, "connected", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(status.Provider, "Local", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsExternalProviderUnavailable(SocAgentProviderStatusResponse status)
+    {
+        return !string.Equals(status.Provider, "Local", StringComparison.OrdinalIgnoreCase)
+            && !CanUseExternalProvider(status);
     }
 
     private static string MakeTitle(string message)
@@ -347,9 +480,7 @@ public sealed class SocAgentService(
 
     private static string Preview(string value)
     {
-        var singleLine = value.ReplaceLineEndings(" ").Trim();
+        var singleLine = SocAgentTextSafety.RedactSecrets(value).ReplaceLineEndings(" ").Trim();
         return singleLine.Length <= 160 ? singleLine : singleLine[..160] + "…";
     }
-
-    private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 }
