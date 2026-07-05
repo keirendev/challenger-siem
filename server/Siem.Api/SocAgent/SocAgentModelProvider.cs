@@ -55,7 +55,7 @@ public sealed class OpenAiSocAgentModelProvider(
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
             using var httpRequest = CreateRequest(endpoint, apiKey, request);
-            using var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await SendAsync(httpRequest, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
                 var answer = await ReadAnswerAsync(response, request.MaxResultCharacters, cancellationToken);
@@ -77,6 +77,28 @@ public sealed class OpenAiSocAgentModelProvider(
         }
 
         throw new SocAgentModelProviderException("provider_error", "The external provider request did not complete.");
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new SocAgentModelProviderException(
+                "provider_error",
+                "The external provider request timed out. Try again later or use local fallback.",
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new SocAgentModelProviderException(
+                "provider_error",
+                "The external provider could not be reached. No provider secrets were exposed to the browser.",
+                ex);
+        }
     }
 
     private HttpRequestMessage CreateRequest(Uri endpoint, string apiKey, SocAgentModelProviderRequest request)
@@ -143,7 +165,7 @@ public sealed class OpenAiSocAgentModelProvider(
     private async Task<string> ReadAnswerAsync(HttpResponseMessage response, int maxResultCharacters, CancellationToken cancellationToken)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        using var document = await ParseProviderResponseAsync(stream, cancellationToken);
         var root = document.RootElement;
         if (!root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
         {
@@ -167,12 +189,38 @@ public sealed class OpenAiSocAgentModelProvider(
         return SocAgentTextSafety.Truncate(answer, maxResultCharacters);
     }
 
+    private static async Task<JsonDocument> ParseProviderResponseAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            throw new SocAgentModelProviderException(
+                "provider_error",
+                "The external provider response could not be parsed safely.",
+                ex);
+        }
+    }
+
     private string? GetApiKey()
     {
-        return options.OpenAiApiKey
-            ?? configuration["SocAgent:OpenAiApiKey"]
-            ?? configuration["OpenAI:ApiKey"]
-            ?? configuration["OPENAI_API_KEY"];
+        foreach (var candidate in new[]
+        {
+            options.OpenAiApiKey,
+            configuration["SocAgent:OpenAiApiKey"],
+            configuration["OpenAI:ApiKey"],
+            configuration["OPENAI_API_KEY"]
+        })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate.Trim();
+            }
+        }
+
+        return null;
     }
 
     private static void AddOptionalHeader(HttpRequestMessage request, string name, string? value)
