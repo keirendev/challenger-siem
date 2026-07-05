@@ -40,25 +40,34 @@ public sealed class OpenAiSocAgentModelProvider(
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SocAgentOptions options = options.Value;
 
+    private sealed record ProviderCredential(string AccessToken, string? AccountId);
+
     public async Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
     {
-        var bearerCredential = await GetBearerCredentialAsync(cancellationToken);
-        if (string.IsNullOrWhiteSpace(bearerCredential))
+        var credential = await GetBearerCredentialAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(credential?.AccessToken))
         {
             throw new SocAgentModelProviderException(
                 "provider_not_configured",
                 "Server-side OpenAI API credentials are not configured.");
         }
 
-        var endpoint = CreateChatCompletionsEndpoint();
+        var useChatGptCodexResponses = UsesChatGptCodexResponses(request.Status);
+        var endpoint = useChatGptCodexResponses
+            ? CreateChatGptCodexResponsesEndpoint()
+            : CreateChatCompletionsEndpoint();
         var maxRetries = Math.Clamp(options.MaxRetries, 0, 3);
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            using var httpRequest = CreateRequest(endpoint, bearerCredential, request);
+            using var httpRequest = useChatGptCodexResponses
+                ? CreateChatGptCodexRequest(endpoint, credential, request)
+                : CreateRequest(endpoint, credential.AccessToken, request);
             using var response = await SendAsync(httpRequest, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
-                var answer = await ReadAnswerAsync(response, request.MaxResultCharacters, cancellationToken);
+                var answer = useChatGptCodexResponses
+                    ? await ReadChatGptCodexAnswerAsync(response, request.MaxResultCharacters, cancellationToken)
+                    : await ReadAnswerAsync(response, request.MaxResultCharacters, cancellationToken);
                 return new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, answer);
             }
 
@@ -133,6 +142,46 @@ public sealed class OpenAiSocAgentModelProvider(
         return httpRequest;
     }
 
+    private HttpRequestMessage CreateChatGptCodexRequest(Uri endpoint, ProviderCredential credential, SocAgentModelProviderRequest request)
+    {
+        var payload = new
+        {
+            model = request.Status.Model,
+            instructions = "You are Challenger SIEM soc-agent. Use only the supplied bounded SIEM context, preserve citations, do not request credentials, and never perform mutations.",
+            input = new[]
+            {
+                new
+                {
+                    type = "message",
+                    role = "user",
+                    content = new[]
+                    {
+                        new
+                        {
+                            type = "input_text",
+                            text = request.Prompt
+                        }
+                    }
+                }
+            },
+            stream = true,
+            store = false,
+            tools = Array.Empty<object>()
+        };
+
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json")
+        };
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
+        httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        httpRequest.Headers.TryAddWithoutValidation("chatgpt-account-id", credential.AccountId ?? string.Empty);
+        httpRequest.Headers.TryAddWithoutValidation("OpenAI-Beta", "responses=experimental");
+        httpRequest.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
+        httpRequest.Headers.TryAddWithoutValidation("session_id", Guid.NewGuid().ToString("D"));
+        return httpRequest;
+    }
+
     private Uri CreateChatCompletionsEndpoint()
     {
         var baseUrl = string.IsNullOrWhiteSpace(options.OpenAiBaseUrl)
@@ -162,6 +211,24 @@ public sealed class OpenAiSocAgentModelProvider(
         return new Uri(normalizedBase, path);
     }
 
+    private Uri CreateChatGptCodexResponsesEndpoint()
+    {
+        var configured = string.IsNullOrWhiteSpace(options.ChatGptCodexResponsesUrl)
+            ? "https://chatgpt.com/backend-api/codex/responses"
+            : options.ChatGptCodexResponsesUrl.Trim();
+        if (!Uri.TryCreate(configured, UriKind.Absolute, out var uri)
+            || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.AbsolutePath.TrimEnd('/'), "/backend-api/codex/responses", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new SocAgentModelProviderException(
+                "provider_error",
+                "The ChatGPT Codex Responses URL must use the configured https://chatgpt.com/backend-api/codex/responses endpoint.");
+        }
+
+        return uri;
+    }
+
     private async Task<string> ReadAnswerAsync(HttpResponseMessage response, int maxResultCharacters, CancellationToken cancellationToken)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -189,6 +256,68 @@ public sealed class OpenAiSocAgentModelProvider(
         return SocAgentTextSafety.Truncate(answer, maxResultCharacters);
     }
 
+    private static async Task<string> ReadChatGptCodexAnswerAsync(HttpResponseMessage response, int maxResultCharacters, CancellationToken cancellationToken)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
+        var answer = new StringBuilder();
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var data = line[5..].Trim();
+            if (data.Length == 0 || string.Equals(data, "[DONE]", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            using var document = ParseProviderEvent(data);
+            var root = document.RootElement;
+            var eventType = root.TryGetProperty("type", out var typeProperty) && typeProperty.ValueKind == JsonValueKind.String
+                ? typeProperty.GetString()
+                : null;
+            if (string.Equals(eventType, "response.output_text.delta", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("delta", out var delta)
+                && delta.ValueKind == JsonValueKind.String)
+            {
+                answer.Append(delta.GetString());
+            }
+            else if (string.Equals(eventType, "response.failed", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SocAgentModelProviderException(
+                    "provider_error",
+                    "The ChatGPT Codex Responses backend returned an error. Use local fallback or reconnect the server-side credential.");
+            }
+        }
+
+        var sanitized = SocAgentTextSafety.RedactSecrets(answer.ToString()).Trim();
+        if (sanitized.Length == 0)
+        {
+            throw new SocAgentModelProviderException("provider_error", "The ChatGPT Codex Responses backend response was empty.");
+        }
+
+        return SocAgentTextSafety.Truncate(sanitized, maxResultCharacters);
+    }
+
+    private static JsonDocument ParseProviderEvent(string data)
+    {
+        try
+        {
+            return JsonDocument.Parse(data);
+        }
+        catch (JsonException ex)
+        {
+            throw new SocAgentModelProviderException(
+                "provider_error",
+                "The external provider stream could not be parsed safely.",
+                ex);
+        }
+    }
+
     private static async Task<JsonDocument> ParseProviderResponseAsync(Stream stream, CancellationToken cancellationToken)
     {
         try
@@ -204,7 +333,7 @@ public sealed class OpenAiSocAgentModelProvider(
         }
     }
 
-    private async Task<string?> GetBearerCredentialAsync(CancellationToken cancellationToken)
+    private async Task<ProviderCredential?> GetBearerCredentialAsync(CancellationToken cancellationToken)
     {
         if (UsesSubscriptionOAuth(options.AuthMode))
         {
@@ -216,7 +345,7 @@ public sealed class OpenAiSocAgentModelProvider(
 
             if (fileStatus.CanUseCredential)
             {
-                return fileStatus.AccessToken;
+                return new ProviderCredential(fileStatus.AccessToken!, fileStatus.AccountId);
             }
 
             throw new SocAgentModelProviderException(fileStatus.Status, fileStatus.OperatorMessage);
@@ -227,7 +356,7 @@ public sealed class OpenAiSocAgentModelProvider(
             var fileStatus = SocAgentDelegatedAuthFileLoader.Load(options, configuration, includeSecret: true);
             if (fileStatus.CanUseCredential)
             {
-                return fileStatus.AccessToken;
+                return new ProviderCredential(fileStatus.AccessToken!, null);
             }
 
             throw new SocAgentModelProviderException(fileStatus.Status, fileStatus.OperatorMessage);
@@ -243,7 +372,7 @@ public sealed class OpenAiSocAgentModelProvider(
         {
             if (!string.IsNullOrWhiteSpace(candidate))
             {
-                return candidate.Trim();
+                return new ProviderCredential(candidate.Trim(), null);
             }
         }
 
@@ -268,6 +397,13 @@ public sealed class OpenAiSocAgentModelProvider(
             || authMode?.Trim().Equals("delegatedfile", StringComparison.OrdinalIgnoreCase) == true
             || authMode?.Trim().Equals("auth_file", StringComparison.OrdinalIgnoreCase) == true
             || authMode?.Trim().Equals("auth-file", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool UsesChatGptCodexResponses(SocAgentProviderStatusResponse status)
+    {
+        return string.Equals(status.AuthMode, "pi_auth_json", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status.AuthFileMode, "pi_auth_json", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status.ProviderPath, "pi_auth_json_openai_codex", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AddOptionalHeader(HttpRequestMessage request, string name, string? value)

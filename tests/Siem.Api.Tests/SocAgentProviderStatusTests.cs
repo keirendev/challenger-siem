@@ -256,6 +256,59 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
+    public void SubscriptionOAuthPiAuthUsesCodexEndpointValidationInsteadOfOpenAiChatCompletions()
+    {
+        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
+            "synthetic-pi-access-token",
+            "synthetic-pi-refresh-token",
+            DateTimeOffset.UtcNow.AddHours(2)));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            Model = "gpt-5.5",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            SubscriptionAuthFileProviderKey = "openai-codex",
+            OpenAiBaseUrl = "https://example.invalid/v1"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("connected", status.Status);
+        Assert.Equal("gpt-5.5", status.Model);
+        Assert.Equal("pi_auth_json", status.AuthMode);
+        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
+        Assert.Contains("ChatGPT Codex Responses", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthPiAuthRejectsUnsafeCodexEndpoint()
+    {
+        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
+            "synthetic-pi-access-token",
+            "synthetic-pi-refresh-token",
+            DateTimeOffset.UtcNow.AddHours(2)));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            SubscriptionAuthFileProviderKey = "openai-codex",
+            ChatGptCodexResponsesUrl = "https://example.invalid/backend-api/codex/responses"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("provider_error", status.Status);
+        Assert.Equal("pi_auth_json", status.AuthMode);
+        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
+        Assert.True(status.RequiresConnection);
+        Assert.Contains("chatgpt.com/backend-api/codex/responses", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SubscriptionOAuthMissingModelScopeFailsClosed()
     {
         using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(

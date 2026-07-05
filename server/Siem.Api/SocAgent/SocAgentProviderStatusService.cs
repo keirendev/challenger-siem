@@ -202,7 +202,28 @@ public sealed class SocAgentProviderStatusService(
 
     private SocAgentProviderStatusResponse CreateSubscriptionOAuthStatus(SocAgentOptions current, string provider, string displayName)
     {
-        if (!UsesOfficialOpenAiEndpoint(current))
+        var fileStatus = SocAgentSubscriptionOAuthCredentialLoader.Load(current, configuration, includeSecret: false);
+        if (string.Equals(fileStatus.AuthFileMode, "pi_auth_json", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!UsesChatGptCodexResponsesEndpoint(current))
+            {
+                return Create(
+                    status: "provider_error",
+                    provider,
+                    displayName,
+                    model: current.Model,
+                    authMode: "pi_auth_json",
+                    message: "Pi auth.json ChatGPT subscription mode must use the configured https://chatgpt.com/backend-api/codex/responses endpoint for Codex Responses calls. No external calls will be attempted with the configured endpoint.",
+                    requiresConnection: true,
+                    connectUrl: SafeSetupUrl(current, "subscription_oauth"),
+                    connectLabel: "View ChatGPT subscription OAuth setup",
+                    dataMayLeaveLocalSiem: true,
+                    providerPath: fileStatus.ProviderPath,
+                    authFileMode: fileStatus.AuthFileMode,
+                    setupPriority: fileStatus.SetupPriority);
+            }
+        }
+        else if (!UsesOfficialOpenAiEndpoint(current))
         {
             return Create(
                 status: "provider_error",
@@ -219,8 +240,6 @@ public sealed class SocAgentProviderStatusService(
                 authFileMode: "subscription_oauth",
                 setupPriority: "primary");
         }
-
-        var fileStatus = SocAgentSubscriptionOAuthCredentialLoader.Load(current, configuration, includeSecret: false);
         if (string.Equals(fileStatus.Status, "connected", StringComparison.OrdinalIgnoreCase)
             && current.DailyBudgetUsd.HasValue
             && current.DailyBudgetUsd.Value <= 0m)
@@ -483,6 +502,17 @@ public sealed class SocAgentProviderStatusService(
             && string.Equals(uri.Host, "api.openai.com", StringComparison.OrdinalIgnoreCase)
             && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/v1", StringComparison.OrdinalIgnoreCase)
             && string.Equals(path, "chat/completions", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool UsesChatGptCodexResponsesEndpoint(SocAgentOptions options)
+    {
+        var configured = string.IsNullOrWhiteSpace(options.ChatGptCodexResponsesUrl)
+            ? "https://chatgpt.com/backend-api/codex/responses"
+            : options.ChatGptCodexResponsesUrl.Trim();
+        return Uri.TryCreate(configured, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(uri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/backend-api/codex/responses", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SubscriptionConnectOrSetupUrl(SocAgentOptions options)

@@ -39,6 +39,7 @@ public sealed class SocAgentOptions
     public string? OpenAiApiKey { get; set; }
     public string OpenAiBaseUrl { get; set; } = "https://api.openai.com/v1";
     public string OpenAiChatCompletionsPath { get; set; } = "chat/completions";
+    public string ChatGptCodexResponsesUrl { get; set; } = "https://chatgpt.com/backend-api/codex/responses";
     public int MaxProviderOutputTokens { get; set; } = 1200;
     public int RequestTimeoutSeconds { get; set; } = 30;
     public int MaxRetries { get; set; } = 1;

@@ -85,11 +85,10 @@ public sealed class SocAgentModelProviderTests
         using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("""
-            {
-              "choices": [
-                { "message": { "content": "Pi auth provider answer" } }
-              ]
-            }
+            data: {"type":"response.output_text.delta","delta":"Pi auth provider answer with Bearer abc123"}
+            data: {"type":"response.completed"}
+            data: [DONE]
+
             """)
         }));
         var provider = CreateProvider(httpClient, new SocAgentOptions
@@ -103,15 +102,25 @@ public sealed class SocAgentModelProviderTests
         });
 
         var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
-            new SocAgentProviderStatusResponse { Status = "connected", Provider = "ChatGPT", Model = "gpt-test", AuthMode = "pi_auth_json" },
+            new SocAgentProviderStatusResponse
+            {
+                Status = "connected",
+                Provider = "ChatGPT",
+                Model = "gpt-test",
+                AuthMode = "pi_auth_json",
+                AuthFileMode = "pi_auth_json",
+                ProviderPath = "pi_auth_json_openai_codex"
+            },
             "bounded prompt",
             2000), CancellationToken.None);
 
-        Assert.Equal("Pi auth provider answer", result.Answer);
+        Assert.Equal("Pi auth provider answer with Bearer <redacted>", result.Answer);
         Assert.Single(SequencedHandler.Calls);
-        Assert.Equal(new Uri("https://api.openai.com/v1/chat/completions"), SequencedHandler.Calls[0].Uri);
+        Assert.Equal(new Uri("https://chatgpt.com/backend-api/codex/responses"), SequencedHandler.Calls[0].Uri);
         Assert.Equal("Bearer", SequencedHandler.Calls[0].AuthorizationScheme);
         Assert.Equal("synthetic-pi-provider-token", SequencedHandler.Calls[0].AuthorizationParameter);
+        Assert.Contains("\"model\":\"gpt-test\"", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"stream\":true", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
         Assert.DoesNotContain("synthetic-pi-provider-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
         Assert.DoesNotContain("synthetic-pi-refresh-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
     }
