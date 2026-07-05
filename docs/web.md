@@ -14,16 +14,35 @@ export Auth__ReviewToken='<long-random-review-token>'
 
 The submitted token is compared server-side, is not logged, and is not stored in browser local storage. A successful login creates an HTTP-only same-origin cookie for the operator session. Logout clears that cookie.
 
+## Visual system and operator workflow
+
+The console uses a local, no-CDN dark SIEM shell with:
+
+- sticky authenticated navigation with active-page state;
+- a skip link, semantic landmarks, visible focus states, and keyboard-friendly controls;
+- reusable cards, metric tiles, status badges, filter panels, empty states, notices, destructive-action guardrails, and responsive table wrappers;
+- visible filter/result summaries so operators can tell what is active before pivoting;
+- bounded list pages for agents, events, alerts, and investigation graphs with previous/next navigation.
+
+Initial performance/accessibility budgets for local validation:
+
+| Area | Budget |
+| --- | --- |
+| Static CSS | Keep `site.css` lightweight and local; no external fonts, CDNs, analytics, or browser telemetry. |
+| Main list pages | Render at most one bounded page of table rows by default: agents 50, events configured `limit` up to 500, alerts 50, graphs 25. |
+| Browser E2E | Exercise login, nav, list/detail pages, logout, unauthenticated redirect, responsive widths, focus behavior, and basic landmark/label checks against the real app. |
+| Sensitive fields | Raw JSON and event text stay authenticated and must not be copied into docs, logs, screenshots, public fixtures, or GitHub comments. |
+
 ## Pages
 
 - `/login` - operator review-token login.
 - `/` - dashboard with API/operator health metrics, active/recent/stale agent counts, retired agent count, historical registration count, recent ingestion volume, latest ingest time, and active agents reporting non-zero queue depth.
-- `/agents` - agent inventory with hostname, agent ID, OS, agent version, coverage level/status, source issue counts, first/last seen, latest queue depth, registration status, and stale/recent state. Supports hostname, agent ID, registration status, and health filters. Defaults to active registrations.
+- `/agents` - paged agent inventory with hostname, agent ID, OS, agent version, coverage level/status, source issue counts, first/last seen, latest queue depth, registration status, and stale/recent state. Supports hostname, agent ID, registration status, and health filters. Defaults to active registrations.
 - `/agents/detail?agent_id=<agent>` - host coverage/source-health detail with required source status, record ranges, log-size metrics, and gap/clear indicators.
-- `/events` - event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, and bounded limit.
+- `/events` - paged event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, active filter pills, and bounded limit.
 - `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
-- `/alerts` and `/alerts/detail?alert_id=<uuid>` - alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
-- `/graphs` and `/graphs/detail?graph_id=<uuid>` - operator-managed investigation graphs with bounded metadata, typed nodes/edges, source links, archive lifecycle, and approval-gated `soc-agent` proposals.
+- `/alerts` and `/alerts/detail?alert_id=<uuid>` - paged alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
+- `/graphs` and `/graphs/detail?graph_id=<uuid>` - paged operator-managed investigation graphs with bounded metadata, typed nodes/edges, source links, archive lifecycle, and approval-gated `soc-agent` proposals.
 - `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering chat workspace with provider status/connect UX, bounded session history, server-side tools for agents, source health, events, alerts, detection rules, and inventory, plus citations back to review pages.
 - `/audit-policy` - audit-policy drift snapshot review skeleton.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.

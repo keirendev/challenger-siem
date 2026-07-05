@@ -11,6 +11,7 @@ public sealed class IndexModel(
     ILogger<IndexModel> logger) : PageModel
 {
     private const int CleanupSampleLimit = 10;
+    public const int PageSize = 50;
 
     [BindProperty(SupportsGet = true, Name = "hostname")]
     public string? Hostname { get; set; }
@@ -24,6 +25,9 @@ public sealed class IndexModel(
     [BindProperty(SupportsGet = true, Name = "status")]
     public string? Status { get; set; } = "active";
 
+    [BindProperty(SupportsGet = true, Name = "page")]
+    public int PageNumber { get; set; } = 1;
+
     [BindProperty]
     public bool ConfirmCleanup { get; set; }
 
@@ -35,6 +39,14 @@ public sealed class IndexModel(
 
     public IReadOnlyList<AgentInventoryItem> Agents { get; private set; } = Array.Empty<AgentInventoryItem>();
 
+    public bool HasPreviousPage => PageNumber > 1;
+
+    public bool HasNextPage { get; private set; }
+
+    public int FirstResultNumber => Agents.Count == 0 ? 0 : ((PageNumber - 1) * PageSize) + 1;
+
+    public int LastResultNumber => ((PageNumber - 1) * PageSize) + Agents.Count;
+
     public StaleAgentCleanupPreview CleanupPreview { get; private set; } = StaleAgentCleanupPreview.Empty;
 
     public string? ErrorMessage { get; private set; }
@@ -44,16 +56,18 @@ public sealed class IndexModel(
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         Status = NormalizeStatus(Status);
+        PageNumber = Math.Max(1, PageNumber);
         await LoadPageDataAsync(cancellationToken);
     }
 
     public async Task<IActionResult> OnPostCleanupStaleAsync(CancellationToken cancellationToken)
     {
         Status = NormalizeStatus(Status);
+        PageNumber = Math.Max(1, PageNumber);
         if (!ConfirmCleanup)
         {
             CleanupErrorMessage = "Confirm the non-destructive stale-agent cleanup before retiring agents.";
-            return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status });
+            return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status, page = PageNumber });
         }
 
         try
@@ -73,7 +87,7 @@ public sealed class IndexModel(
             CleanupErrorMessage = "Stale-agent cleanup could not be completed.";
         }
 
-        return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status });
+        return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status, page = PageNumber });
     }
 
     private async Task LoadPageDataAsync(CancellationToken cancellationToken)
@@ -85,10 +99,14 @@ public sealed class IndexModel(
                 options.StaleAgentAfter,
                 CleanupSampleLimit,
                 cancellationToken);
-            Agents = await reviewRepository.SearchAgentsAsync(
+            var loadedAgents = await reviewRepository.SearchAgentsAsync(
                 new AgentInventoryQuery(Hostname, AgentId, Health, Status),
                 options.StaleAgentAfter,
-                cancellationToken);
+                cancellationToken,
+                PageSize + 1,
+                (PageNumber - 1) * PageSize);
+            HasNextPage = loadedAgents.Count > PageSize;
+            Agents = loadedAgents.Take(PageSize).ToArray();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

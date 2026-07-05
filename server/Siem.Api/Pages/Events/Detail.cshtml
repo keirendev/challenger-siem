@@ -6,8 +6,9 @@
 
 <div class="page-header">
     <div>
+        <p class="page-kicker">Event drill-down</p>
         <h1>Event detail</h1>
-        <p class="muted">Normalized fields and original raw event payload.</p>
+        <p class="muted">Normalized fields, entities, message text, and the original raw event payload for an authenticated operator.</p>
     </div>
     <a class="button secondary" asp-page="/Events/Index">Back to search</a>
 </div>
@@ -63,8 +64,11 @@ else if (Model.Envelope is not null)
 
     <section class="card">
         <div class="page-header">
-            <h2>Raw JSON</h2>
-            <button type="button" class="secondary" onclick="navigator.clipboard?.writeText(document.getElementById('raw-json').value)">Copy</button>
+            <div>
+                <h2>Raw JSON</h2>
+                <p class="muted">Rendered only on the authenticated detail page; do not copy into public issues, docs, or logs.</p>
+            </div>
+            <button type="button" class="secondary" onclick="navigator.clipboard?.writeText(document.getElementById('raw-json').value)">Copy raw JSON</button>
         </div>
         <textarea id="raw-json" class="raw-json" readonly>@Model.RawJson</textarea>
     </section>

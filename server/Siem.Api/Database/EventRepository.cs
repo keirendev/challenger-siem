@@ -130,10 +130,11 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return new StoreEventsResult(accepted, duplicates, acceptedEventIds, duplicateEventIds);
     }
 
-    public async Task<IReadOnlyList<EventEnvelope>> SearchEventsAsync(EventSearchQuery query, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<EventEnvelope>> SearchEventsAsync(EventSearchQuery query, CancellationToken cancellationToken, int offset = 0)
     {
         var where = new List<string>();
         var limit = Math.Clamp(query.Limit, 1, 500);
+        var clampedOffset = Math.Max(0, offset);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -191,6 +192,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         AddTextFilter(where, command, "registry_key", "registry_key", query.RegistryKey, exact: false);
 
         command.Parameters.AddWithValue("limit", limit);
+        command.Parameters.AddWithValue("offset", clampedOffset);
 
         var sql = new StringBuilder("""
             select
@@ -217,7 +219,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             sql.Append(string.Join(" and ", where));
         }
 
-        sql.Append(" order by event_time desc, id desc limit @limit;");
+        sql.Append(" order by event_time desc, id desc limit @limit offset @offset;");
         command.CommandText = sql.ToString();
 
         var results = new List<EventEnvelope>();

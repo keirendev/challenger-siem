@@ -5,7 +5,7 @@
 }
 
 <div class="page-header">
-    <div><h1>Alert detail</h1><p class="muted">Detection metadata, affected entities, and linked evidence.</p></div>
+    <div><p class="page-kicker">Detection drill-down</p><h1>Alert detail</h1><p class="muted">Detection metadata, affected entities, and linked evidence.</p></div>
     <a class="button secondary" asp-page="/Alerts/Index">Back to alerts</a>
 </div>
 
@@ -46,13 +46,14 @@ else if (Model.Alert is not null)
     </section>
 
     <section class="table-card">
-        <h2>Evidence</h2>
+        <div class="table-title"><h2>Evidence</h2></div>
         @if (Model.Alert.Evidence.Count == 0)
         {
             <div class="empty">No evidence rows are linked.</div>
         }
         else
         {
+            <div class="table-scroll">
             <table>
                 <thead><tr><th>Event time</th><th>Agent</th><th>Channel</th><th>Event ID</th><th>Summary</th><th></th></tr></thead>
                 <tbody>
@@ -69,6 +70,7 @@ else if (Model.Alert is not null)
                     }
                 </tbody>
             </table>
+            </div>
         }
     </section>
 }

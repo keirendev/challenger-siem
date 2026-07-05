@@ -17,13 +17,17 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
         "observed_on", "generated", "parent_of", "communicated_with", "authenticated_as", "touched_file", "modified_registry", "evidence_for", "related_to", "annotates"
     };
 
-    public async Task<IReadOnlyList<InvestigationGraphSummary>> ListAsync(string? status, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<InvestigationGraphSummary>> ListAsync(string? status, CancellationToken cancellationToken, int limit = 100, int offset = 0)
     {
+        var clampedLimit = Math.Clamp(limit, 1, 100);
+        var clampedOffset = Math.Max(0, offset);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         var normalizedStatus = NormalizeStatusFilter(status);
-        command.CommandText = GraphSelectSql + (normalizedStatus == "all" ? "" : " where g.status = @status") + " order by g.updated_at desc limit 100;";
+        command.CommandText = GraphSelectSql + (normalizedStatus == "all" ? "" : " where g.status = @status") + " order by g.updated_at desc limit @limit offset @offset;";
         if (normalizedStatus != "all") command.Parameters.AddWithValue("status", normalizedStatus);
+        command.Parameters.AddWithValue("limit", clampedLimit);
+        command.Parameters.AddWithValue("offset", clampedOffset);
         var results = new List<InvestigationGraphSummary>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(ReadSummary(reader));

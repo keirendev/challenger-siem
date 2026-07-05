@@ -6,10 +6,14 @@
 
 <div class="page-header">
     <div>
+        <p class="page-kicker">Operations overview</p>
         <h1>Dashboard</h1>
-        <p class="muted">Current ingestion and endpoint health summary.</p>
+        <p class="muted">Current ingestion, endpoint health, queue pressure, and review-console status.</p>
     </div>
-    <a class="button secondary" asp-page="/Events/Index">Review events</a>
+    <div class="actions">
+        <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale">Review stale agents</a>
+        <a class="button" asp-page="/Events/Index">Review events</a>
+    </div>
 </div>
 
 @if (Model.ErrorMessage is not null)

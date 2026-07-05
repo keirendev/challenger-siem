@@ -1,3 +1,8 @@
+@{
+    var currentPage = (ViewContext.RouteData.Values["page"] as string) ?? string.Empty;
+    bool IsActive(string page) => string.Equals(currentPage, page, StringComparison.OrdinalIgnoreCase)
+        || currentPage.StartsWith(page + "/", StringComparison.OrdinalIgnoreCase);
+}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,26 +12,27 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="topbar">
         <a class="brand" asp-page="/Index">Challenger SIEM</a>
         @if (User.Identity?.IsAuthenticated == true)
         {
             <nav class="nav" aria-label="Primary">
-                <a asp-page="/Index">Dashboard</a>
-                <a asp-page="/Agents/Index">Agents</a>
-                <a asp-page="/Events/Index">Events</a>
-                <a asp-page="/Alerts/Index">Alerts</a>
-                <a asp-page="/Graphs/Index">Graphs</a>
-                <a asp-page="/SocAgent">soc-agent</a>
-                <a asp-page="/AuditPolicy">Audit policy</a>
-                <a asp-page="/About">About</a>
+                <a class="@(IsActive("/Index") ? "active" : null)" aria-current="@(IsActive("/Index") ? "page" : null)" asp-page="/Index">Dashboard</a>
+                <a class="@(IsActive("/Agents") ? "active" : null)" aria-current="@(IsActive("/Agents") ? "page" : null)" asp-page="/Agents/Index">Agents</a>
+                <a class="@(IsActive("/Events") ? "active" : null)" aria-current="@(IsActive("/Events") ? "page" : null)" asp-page="/Events/Index">Events</a>
+                <a class="@(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index">Alerts</a>
+                <a class="@(IsActive("/Graphs") ? "active" : null)" aria-current="@(IsActive("/Graphs") ? "page" : null)" asp-page="/Graphs/Index">Graphs</a>
+                <a class="@(IsActive("/SocAgent") ? "active" : null)" aria-current="@(IsActive("/SocAgent") ? "page" : null)" asp-page="/SocAgent">soc-agent</a>
+                <a class="@(IsActive("/AuditPolicy") ? "active" : null)" aria-current="@(IsActive("/AuditPolicy") ? "page" : null)" asp-page="/AuditPolicy">Audit policy</a>
+                <a class="@(IsActive("/About") ? "active" : null)" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About">About</a>
             </nav>
             <form class="logout" method="post" asp-page="/Logout">
                 <button type="submit">Logout</button>
             </form>
         }
     </header>
-    <main class="container">
+    <main id="main-content" class="container" tabindex="-1">
         @RenderBody()
     </main>
 </body>

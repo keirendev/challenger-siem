@@ -6,6 +6,7 @@
 
 <div class="page-header">
     <div>
+        <p class="page-kicker">Investigation workspace</p>
         <h1>Investigation graphs</h1>
         <p class="muted">Create and reuse bounded operator-managed relationship graphs for investigations.</p>
     </div>
@@ -15,7 +16,12 @@
 @if (Model.Message is not null) { <div class="notice" role="status">@Model.Message</div> }
 
 <section class="card">
-    <h2>Create graph</h2>
+    <div class="page-header">
+        <div>
+            <p class="page-kicker">New graph</p>
+            <h2>Create graph</h2>
+        </div>
+    </div>
     <form method="post" asp-page-handler="Create" class="filters">
         <div class="form-row"><label for="Title">Title</label><input id="Title" asp-for="Title" maxlength="160" required /></div>
         <div class="form-row"><label for="Description">Description</label><input id="Description" asp-for="Description" maxlength="4000" /></div>
@@ -24,7 +30,7 @@
     </form>
 </section>
 
-<form method="get" class="card filters">
+<form method="get" class="card filters filter-panel" aria-label="Graph filters">
     <div class="form-row">
         <label for="status">Status</label>
         <select id="status" asp-for="Status">
@@ -33,23 +39,31 @@
             <option value="all">All</option>
         </select>
     </div>
-    <div class="actions"><button type="submit">Filter</button><a class="button secondary" asp-page="/Graphs/Index">Clear</a></div>
+    <div class="actions"><button type="submit">Filter graphs</button><a class="button secondary" asp-page="/Graphs/Index">Clear</a></div>
 </form>
 
-<section class="table-card">
+<section class="table-card" aria-labelledby="graphs-results-title">
+<div class="table-title">
+    <div>
+        <h2 id="graphs-results-title">Graph results</h2>
+        <p class="muted">Showing @Model.FirstResultNumber-@Model.LastResultNumber from a bounded @Challenger.Siem.Api.Pages.Graphs.IndexModel.PageSize-row page.</p>
+    </div>
+    <span class="pill">status: @(string.IsNullOrWhiteSpace(Model.Status) ? "active" : Model.Status)</span>
+</div>
 @if (Model.Graphs.Count == 0)
 {
     <div class="empty">No investigation graphs match the current filters.</div>
 }
 else
 {
+    <div class="table-scroll">
     <table>
         <thead><tr><th>Title</th><th>Status</th><th>Nodes</th><th>Edges</th><th>Tags</th><th>Updated</th><th></th></tr></thead>
         <tbody>
         @foreach (var graph in Model.Graphs)
         {
             <tr>
-                <td>@graph.Title<div class="muted">@graph.Description</div></td>
+                <td class="compact-cell"><strong>@graph.Title</strong><div class="muted">@graph.Description</div></td>
                 <td><span class="badge @(graph.Status == "active" ? "ok" : "warning")">@graph.Status</span></td>
                 <td>@graph.NodeCount</td>
                 <td>@graph.EdgeCount</td>
@@ -60,5 +74,13 @@ else
         }
         </tbody>
     </table>
+    </div>
 }
+<nav class="pagination" aria-label="Graph result pages">
+    <span class="muted">Page @Model.PageNumber · recently updated first</span>
+    <div class="actions">
+        <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Graphs/Index" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
+        <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Graphs/Index" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber + 1)">Next</a>
+    </div>
+</nav>
 </section>
