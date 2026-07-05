@@ -1,4 +1,6 @@
+using System.Globalization;
 using Challenger.Siem.Api.Review;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
@@ -56,18 +58,18 @@ public sealed class IndexModel(
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         Status = NormalizeStatus(Status);
-        PageNumber = Math.Max(1, PageNumber);
+        NormalizePageNumber();
         await LoadPageDataAsync(cancellationToken);
     }
 
     public async Task<IActionResult> OnPostCleanupStaleAsync(CancellationToken cancellationToken)
     {
         Status = NormalizeStatus(Status);
-        PageNumber = Math.Max(1, PageNumber);
+        NormalizePageNumber();
         if (!ConfirmCleanup)
         {
             CleanupErrorMessage = "Confirm the non-destructive stale-agent cleanup before retiring agents.";
-            return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status, page = PageNumber });
+            return LocalRedirect(AgentInventoryRedirectUrl());
         }
 
         try
@@ -87,7 +89,65 @@ public sealed class IndexModel(
             CleanupErrorMessage = "Stale-agent cleanup could not be completed.";
         }
 
-        return RedirectToPage(new { hostname = Hostname, agent_id = AgentId, health = Health, status = Status, page = PageNumber });
+        return LocalRedirect(AgentInventoryRedirectUrl());
+    }
+
+    private string AgentInventoryRedirectUrl()
+    {
+        var query = new List<KeyValuePair<string, string?>>
+        {
+            new("status", Status),
+            new("page", PageNumber.ToString(CultureInfo.InvariantCulture))
+        };
+
+        AddOptionalQueryValue(query, "hostname", Hostname);
+        AddOptionalQueryValue(query, "agent_id", AgentId);
+        AddOptionalQueryValue(query, "health", Health);
+
+        return "/agents" + QueryString.Create(query).ToUriComponent();
+    }
+
+    private void NormalizePageNumber()
+    {
+        if (TryReadPageNumber(out var requestedPage))
+        {
+            PageNumber = requestedPage;
+        }
+
+        PageNumber = Math.Max(1, PageNumber);
+    }
+
+    private bool TryReadPageNumber(out int pageNumber)
+    {
+        if (Request.HasFormContentType
+            && Request.Form.TryGetValue("page", out var formValues)
+            && TryParsePageNumber(formValues[0], out pageNumber))
+        {
+            return true;
+        }
+
+        if (Request.Query.TryGetValue("page", out var queryValues)
+            && TryParsePageNumber(queryValues[0], out pageNumber))
+        {
+            return true;
+        }
+
+        pageNumber = 1;
+        return false;
+    }
+
+    private static bool TryParsePageNumber(string? value, out int pageNumber)
+    {
+        return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out pageNumber)
+            && pageNumber > 0;
+    }
+
+    private static void AddOptionalQueryValue(List<KeyValuePair<string, string?>> query, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            query.Add(new KeyValuePair<string, string?>(name, value));
+        }
     }
 
     private async Task LoadPageDataAsync(CancellationToken cancellationToken)

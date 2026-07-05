@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Fixed stale-agent cleanup redirects in the web console so success and validation paths return safely to agent inventory with filters preserved.
 - Expanded guarded synthetic-data cleanup to cover agent-linked `soc-agent` turns, sessions/messages, investigation graphs/proposals/audit, explicit synthetic chat/graph selectors, and web-smoke `soc-agent` chat cleanup.
 - Revamped the web review console with a cohesive dark operator shell, active navigation, accessible focus/skip-link behavior, responsive cards/tables, visible filter/result state, bounded pagination for list workflows, and updated web validation/docs.
 - Refreshed the public documentation into a wiki-style docs set with a concise README, operator/contributor/troubleshooting guides, sanitized web-console screenshots, and a documentation-maintenance checklist.
