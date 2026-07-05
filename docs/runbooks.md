@@ -103,7 +103,7 @@ The smoke scripts also support opt-in cleanup after a successful run with `SIEM_
 1. Start the API and sign in to the review console.
 2. Open `/soc-agent` and confirm the provider status banner.
 3. For the default `Local` provider, ask a bounded investigation question and follow citations back to review pages.
-4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. If setup is missing, budget is exhausted, or the provider returns an error, use only the official setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, or unofficial tokens into Challenger SIEM.
+4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side API-key or delegated auth-file credentials were configured outside source control before sending sensitive prompts. Delegated auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If setup is missing, expired, unsupported, budget is exhausted, or the provider returns an error, use only the official setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or unofficial tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
 ## 7. Retire stale lab agents safely

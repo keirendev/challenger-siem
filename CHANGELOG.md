@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added opt-in delegated auth-file support for `soc-agent` OpenAI provider mode with safe local/secret path validation, official API audience checks, token-expiry status metadata, provider credential selection, redacted web/API status, docs, and synthetic test coverage.
 - Added an optional official OpenAI Chat Completions-backed `soc-agent` provider path with server-side credential handling, safe status/error mapping, bounded redacted prompts, local fallback, and web/API documentation.
 - Fixed stale-agent cleanup redirects in the web console so success and validation paths return safely to agent inventory with filters preserved.
 - Expanded guarded synthetic-data cleanup to cover agent-linked `soc-agent` turns, sessions/messages, investigation graphs/proposals/audit, explicit synthetic chat/graph selectors, and web-smoke `soc-agent` chat cleanup.

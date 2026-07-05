@@ -76,6 +76,11 @@ public sealed class SocAgentProviderStatusService(
                 dataMayLeaveLocalSiem: true);
         }
 
+        if (string.Equals(authMode, "delegated_file", StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateDelegatedFileStatus(current, provider, displayName);
+        }
+
         if (string.Equals(authMode, "delegated", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(current.AuthorizationUrl))
@@ -180,6 +185,60 @@ public sealed class SocAgentProviderStatusService(
             dataMayLeaveLocalSiem: true);
     }
 
+    private SocAgentProviderStatusResponse CreateDelegatedFileStatus(SocAgentOptions current, string provider, string displayName)
+    {
+        if (!UsesOfficialOpenAiEndpoint(current))
+        {
+            return Create(
+                status: "provider_error",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "delegated_file",
+                message: "Delegated auth-file mode must use the official https://api.openai.com/v1/chat/completions endpoint. No external calls will be attempted with the configured endpoint.",
+                requiresConnection: true,
+                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                connectLabel: "View official provider setup",
+                dataMayLeaveLocalSiem: true);
+        }
+
+        var fileStatus = SocAgentDelegatedAuthFileLoader.Load(current, configuration, includeSecret: false);
+        if (string.Equals(fileStatus.Status, "connected", StringComparison.OrdinalIgnoreCase)
+            && current.DailyBudgetUsd.HasValue
+            && current.DailyBudgetUsd.Value <= 0m)
+        {
+            return Create(
+                status: "budget_limited",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "delegated_file",
+                message: "Server-side delegated auth-file credentials are configured, but the configured daily budget is exhausted or set to zero. External calls will not be attempted until the budget setting is raised.",
+                requiresConnection: false,
+                connectUrl: null,
+                connectLabel: null,
+                dataMayLeaveLocalSiem: true,
+                credentialSource: fileStatus.CredentialSource,
+                expiresAt: fileStatus.ExpiresAt,
+                refreshStatus: fileStatus.RefreshStatus);
+        }
+
+        return Create(
+            status: fileStatus.Status,
+            provider,
+            displayName,
+            model: current.Model,
+            authMode: "delegated_file",
+            message: fileStatus.OperatorMessage,
+            requiresConnection: fileStatus.RequiresConnection,
+            connectUrl: fileStatus.RequiresConnection ? SafeSetupUrl(current.ProviderSetupUrl) : null,
+            connectLabel: fileStatus.ConnectLabel,
+            dataMayLeaveLocalSiem: true,
+            credentialSource: fileStatus.CredentialSource,
+            expiresAt: fileStatus.ExpiresAt,
+            refreshStatus: fileStatus.RefreshStatus);
+    }
+
     private bool HasServerSideApiKey(SocAgentOptions current)
     {
         return !string.IsNullOrWhiteSpace(current.OpenAiApiKey)
@@ -198,7 +257,10 @@ public sealed class SocAgentProviderStatusService(
         bool requiresConnection,
         string? connectUrl,
         string? connectLabel,
-        bool dataMayLeaveLocalSiem)
+        bool dataMayLeaveLocalSiem,
+        string? credentialSource = null,
+        DateTimeOffset? expiresAt = null,
+        string? refreshStatus = null)
     {
         return new SocAgentProviderStatusResponse
         {
@@ -212,6 +274,9 @@ public sealed class SocAgentProviderStatusService(
             ConnectUrl = connectUrl,
             ConnectLabel = connectLabel,
             DataMayLeaveLocalSiem = dataMayLeaveLocalSiem,
+            CredentialSource = credentialSource,
+            ExpiresAt = expiresAt,
+            RefreshStatus = refreshStatus,
             CheckedAt = DateTimeOffset.UtcNow
         };
     }
@@ -250,6 +315,11 @@ public sealed class SocAgentProviderStatusService(
             "oidc" => "delegated",
             "pkce" => "delegated",
             "delegated" => "delegated",
+            "delegated-file" => "delegated_file",
+            "delegated_file" => "delegated_file",
+            "delegatedfile" => "delegated_file",
+            "auth-file" => "delegated_file",
+            "auth_file" => "delegated_file",
             "api-key" => "api_key",
             "apikey" => "api_key",
             "api_key" => "api_key",
