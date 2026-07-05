@@ -571,6 +571,29 @@ app.MapGet("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
     return detail is null ? Results.NotFound() : Results.Ok(detail);
 });
 
+app.MapDelete("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
+    Guid sessionId,
+    HttpContext context,
+    SocAgentService socAgent,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await socAgent.DeleteSessionAsync(sessionId, cancellationToken);
+    return result.Status switch
+    {
+        "deleted" => Results.Ok(result),
+        "not_found" => Results.NotFound(result),
+        "run_active" => Results.Conflict(result),
+        _ => Results.Problem("soc-agent chat session deletion could not be completed.")
+    };
+});
+
 app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<IResult> (
     Guid sessionId,
     HttpContext context,

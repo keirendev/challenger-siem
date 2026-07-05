@@ -2,6 +2,7 @@
 @model Challenger.Siem.Api.Pages.SocAgentModel
 @{
     ViewData["Title"] = "soc-agent";
+    ViewData["MainClass"] = "container soc-agent-container";
     var composerContextAgentId = Model.ContextAgentId ?? Model.CurrentSession?.ContextAgentId;
     var hasAgentContext = !string.IsNullOrWhiteSpace(composerContextAgentId);
     var currentSessionId = Model.CurrentSession?.SessionId.ToString() ?? string.Empty;
@@ -14,7 +15,7 @@
         <p class="muted">No-reload SIEM investigation chat with live tool progress, bounded citations, cancellation, and proposal-only safety boundaries.</p>
     </div>
     <div class="soc-agent-title-actions">
-        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-pill">@Model.ProviderStatus.Status</span>
+        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-pill" aria-label="Provider status: @Model.ProviderStatus.Status" title="@Model.ProviderStatus.DisplayName">@Model.ProviderStatus.Status</span>
         <a class="button secondary" asp-page="/SocAgent">New chat</a>
     </div>
 </div>
@@ -29,6 +30,34 @@
 }
 
 <div id="soc-agent-live-alert" class="notice live-alert" role="status" aria-live="polite" hidden></div>
+
+<div id="soc-agent-provider-inline-notice" class="notice provider-inline-notice" role="status" aria-live="polite" @(Model.ShouldShowProviderInlineNotice ? null : "hidden")>
+    <div class="provider-inline-summary">
+        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-inline-status">@Model.ProviderStatus.Status</span>
+        <strong id="soc-agent-provider-inline-name">@Model.ProviderStatus.DisplayName</strong>
+        <span id="soc-agent-provider-inline-message">@Model.ProviderStatus.Message</span>
+    </div>
+    @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
+    {
+        <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
+    }
+    @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
+    {
+        <div class="provider-inline-actions">
+            @if (Model.CanStartSubscriptionOAuthConnect)
+            {
+                <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
+                    <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
+                </form>
+            }
+            else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
+            {
+                <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
+            }
+            <span class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</span>
+        </div>
+    }
+</div>
 
 <div class="soc-agent-workspace" data-soc-agent-workspace data-session-id="@currentSessionId" data-context-agent-id="@composerContextAgentId" data-live-start-url="/soc-agent/live/runs" data-max-message-length="4000">
     <aside class="soc-agent-rail card" aria-labelledby="sessions-title">
@@ -48,11 +77,25 @@
             <ul class="session-list" id="soc-agent-session-list">
                 @foreach (var session in Model.Sessions)
                 {
-                    <li>
+                    <li class="session-item">
                         <a class="session-link @(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId" data-session-id="@session.SessionId">
                             <span>@session.Title</span>
                             <span class="muted">@session.MessageCount messages · @session.Status · @session.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
                         </a>
+                        <details class="session-delete">
+                            <summary>Delete chat</summary>
+                            <form method="post" asp-page-handler="DeleteSession" class="session-delete-form">
+                                <input type="hidden" name="DeleteSessionId" value="@session.SessionId" />
+                                <input type="hidden" name="SessionId" value="@Model.CurrentSession?.SessionId" />
+                                <input type="hidden" name="ContextAgentId" value="@Model.ContextAgentId" />
+                                <p class="muted">Deletes this chat session and its persisted messages only. One-shot soc-agent audit turns are retained.</p>
+                                <label class="confirm-inline">
+                                    <input type="checkbox" name="ConfirmDelete" value="true" />
+                                    Confirm deletion of “@session.Title” (@session.MessageCount messages)
+                                </label>
+                                <button type="submit" class="danger">Delete chat</button>
+                            </form>
+                        </details>
                     </li>
                 }
             </ul>
@@ -142,6 +185,7 @@
                         </li>
                     }
                 </ol>
+                <div id="soc-agent-thread-end" class="thread-end-sentinel" aria-hidden="true"></div>
             </div>
         </div>
 
@@ -178,94 +222,13 @@
         <div class="activity-panel-header">
             <div>
                 <p class="page-kicker">Activity</p>
-                <h2 id="activity-title">Run and provider</h2>
+                <h2 id="activity-title">Live tool activity</h2>
             </div>
             <button type="button" class="button secondary" id="soc-agent-toggle-activity" aria-expanded="true" aria-controls="soc-agent-activity-panel">Collapse</button>
         </div>
 
-        <section class="compact-provider" aria-labelledby="provider-status-title">
-            <h3 id="provider-status-title">Provider status</h3>
-            <p>
-                <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-status">@Model.ProviderStatus.Status</span>
-                <strong id="soc-agent-provider-name">@Model.ProviderStatus.DisplayName</strong>
-            </p>
-            <p class="muted" id="soc-agent-provider-detail">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</p>
-            <p id="soc-agent-provider-message">@Model.ProviderStatus.Message</p>
-
-            @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
-            {
-                <details class="provider-details">
-                    <summary>Credential/setup details</summary>
-                    <dl class="provider-metadata">
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath))
-                        {
-                            <dt>Provider path</dt>
-                            <dd>@Model.ProviderStatus.ProviderPath</dd>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.AuthFileMode))
-                        {
-                            <dt>Auth-file mode</dt>
-                            <dd>@Model.ProviderStatus.AuthFileMode</dd>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
-                        {
-                            <dt>Credential source</dt>
-                            <dd>@Model.ProviderStatus.CredentialSource</dd>
-                        }
-                        @if (Model.ProviderStatus.ExpiresAt is not null)
-                        {
-                            <dt>Access token expires</dt>
-                            <dd>@Model.ProviderStatus.ExpiresAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</dd>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
-                        {
-                            <dt>Refresh</dt>
-                            <dd>@Model.ProviderStatus.RefreshStatus</dd>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus))
-                        {
-                            <dt>Scope</dt>
-                            <dd>@Model.ProviderStatus.ScopeStatus</dd>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
-                        {
-                            <dt>Entitlement</dt>
-                            <dd>@Model.ProviderStatus.EntitlementStatus</dd>
-                        }
-                    </dl>
-                </details>
-            }
-
-            @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
-            {
-                <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
-            }
-            @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
-            {
-                <div class="provider-action">
-                    @if (Model.CanStartSubscriptionOAuthConnect)
-                    {
-                        <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
-                            <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
-                        </form>
-                    }
-                    else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
-                    {
-                        <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
-                    }
-                    <p class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</p>
-                </div>
-            }
-        </section>
-
-        <details class="provider-setup-inline">
-            <summary>External provider setup</summary>
-            <p><strong>Primary:</strong> ChatGPT subscription OAuth through server-side Pi <code>openai-codex</code> auth or a dedicated ignored credential file.</p>
-            <p><strong>Advanced:</strong> server-side OpenAI API key or delegated API bearer file. Browser clients never receive provider tokens.</p>
-        </details>
-
         <section class="activity-feed" aria-labelledby="activity-feed-title">
-            <h3 id="activity-feed-title">Live tool activity</h3>
+            <h3 id="activity-feed-title">Tool feed</h3>
             <div id="soc-agent-activity-list" class="activity-list" aria-live="polite">
                 <p class="muted" id="soc-agent-activity-empty">No active run. Tool cards appear here while soc-agent works.</p>
             </div>
@@ -287,6 +250,8 @@
     const sendButton = document.getElementById('soc-agent-send-button');
     const cancelButton = document.getElementById('soc-agent-cancel-button');
     const messageList = document.getElementById('soc-agent-message-list');
+    const threadScroll = document.getElementById('soc-agent-thread-scroll');
+    const threadEnd = document.getElementById('soc-agent-thread-end');
     const emptyState = document.getElementById('soc-agent-empty');
     const scrollButton = document.getElementById('soc-agent-scroll-bottom');
     const runState = document.getElementById('soc-agent-run-state');
@@ -297,14 +262,13 @@
     const charCount = document.getElementById('soc-agent-char-count');
     const contextChip = document.getElementById('soc-agent-context-chip');
     const sessionMeta = document.getElementById('soc-agent-session-meta');
-    const providerStatus = document.getElementById('soc-agent-provider-status');
+    const providerInlineNotice = document.getElementById('soc-agent-provider-inline-notice');
+    const providerStatus = document.getElementById('soc-agent-provider-inline-status');
     const providerPill = document.getElementById('soc-agent-provider-pill');
-    const providerName = document.getElementById('soc-agent-provider-name');
-    const providerDetail = document.getElementById('soc-agent-provider-detail');
-    const providerMessage = document.getElementById('soc-agent-provider-message');
+    const providerName = document.getElementById('soc-agent-provider-inline-name');
+    const providerMessage = document.getElementById('soc-agent-provider-inline-message');
     const toggleActivity = document.getElementById('soc-agent-toggle-activity');
     const workspace = document.querySelector('.soc-agent-workspace');
-    const documentElement = document.documentElement;
     const maxLength = Number(root.dataset.maxMessageLength || '4000');
     let currentSessionId = root.dataset.sessionId || '';
     let currentRunId = null;
@@ -312,7 +276,7 @@
     let reconnectTimer = null;
     let lastSequence = 0;
     let running = false;
-    let autoFollow = true;
+    let autoFollow = false;
     let pendingAssistant = null;
     let pendingAssistantContent = '';
 
@@ -359,21 +323,36 @@
         contextChip.textContent = value ? `Agent context: ${value}` : 'Global SIEM context';
     }
 
-    function documentScrollHeight() {
-        return Math.max(documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    function hasThreadContent() {
+        return Boolean(messageList && messageList.children.length > 0);
     }
 
-    function pageScrollOffset() {
-        return window.scrollY || documentElement.scrollTop || 0;
+    function latestThreadTarget() {
+        return threadEnd || messageList?.lastElementChild || messageList || threadScroll;
     }
 
-    function isNearBottom() {
-        return documentScrollHeight() - pageScrollOffset() - window.innerHeight <= 128;
+    function latestViewportBottom() {
+        const composerTop = form.getBoundingClientRect().top;
+        if (composerTop > 0 && composerTop < window.innerHeight) {
+            return Math.max(0, composerTop - 16);
+        }
+
+        return window.innerHeight - 16;
+    }
+
+    function isLatestVisible() {
+        const target = latestThreadTarget();
+        if (!target || !hasThreadContent()) {
+            return true;
+        }
+
+        const rect = target.getBoundingClientRect();
+        return rect.top >= -64 && rect.top <= latestViewportBottom() + 128;
     }
 
     function updateScrollControl() {
-        const atBottom = isNearBottom();
-        const showControl = !autoFollow || !atBottom;
+        const nearLatest = isLatestVisible();
+        const showControl = hasThreadContent() && (!autoFollow || !nearLatest);
         scrollButton.hidden = !showControl;
         scrollButton.disabled = !showControl;
         scrollButton.setAttribute('aria-disabled', String(!showControl));
@@ -389,8 +368,9 @@
             autoFollow = true;
         }
 
-        if (force || autoFollow) {
-            window.scrollTo({ top: documentScrollHeight(), behavior: force ? 'smooth' : 'auto' });
+        const target = latestThreadTarget();
+        if ((force || autoFollow) && target) {
+            target.scrollIntoView({ block: 'end', inline: 'nearest', behavior: force ? 'smooth' : 'auto' });
             window.requestAnimationFrame(updateScrollControl);
             return;
         }
@@ -560,11 +540,18 @@
 
     function updateProvider(status) {
         if (!status) return;
-        providerStatus.textContent = status.status || 'unknown';
-        providerPill.textContent = status.status || 'unknown';
-        providerName.textContent = status.display_name || status.provider || 'Provider';
-        providerDetail.textContent = `${status.provider || 'Provider'} / ${status.model || 'model'} / ${status.auth_mode || 'auth'}`;
-        providerMessage.textContent = status.message || '';
+        const statusText = status.status || 'unknown';
+        if (providerStatus) providerStatus.textContent = statusText;
+        if (providerPill) {
+            providerPill.textContent = statusText;
+            providerPill.setAttribute('aria-label', `Provider status: ${statusText}`);
+            providerPill.setAttribute('title', status.display_name || status.provider || 'Provider');
+        }
+        if (providerName) providerName.textContent = status.display_name || status.provider || 'Provider';
+        if (providerMessage) providerMessage.textContent = status.message || '';
+        if (providerInlineNotice) {
+            providerInlineNotice.hidden = !(status.requires_connection || status.data_may_leave_local_siem);
+        }
     }
 
     function applyLiveEvent(rawEvent) {
@@ -693,6 +680,7 @@
                 url.searchParams.delete('agent_id');
                 window.history.replaceState({}, '', url);
             }
+            setAutoFollow(true);
             appendMessage(result.user_message);
             textarea.value = '';
             updateCharacterCount();
@@ -725,7 +713,9 @@
             if (!response.ok) return;
             const active = await response.json();
             if (active.has_active_run && active.run_id) {
+                setAutoFollow(true);
                 setRunning(true, active.status === 'cancel_requested' ? 'Cancelling' : 'Running');
+                scrollToLatest();
                 openEventStream(active.run_id, 0);
             }
         } catch (_) {
@@ -747,8 +737,14 @@
             }
         }
     });
-    window.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });
-    window.addEventListener('resize', updateScrollControl, { passive: true });
+    window.addEventListener('scroll', () => setAutoFollow(isLatestVisible()), { passive: true });
+    window.addEventListener('resize', () => {
+        if (autoFollow) {
+            scrollToLatest();
+        } else {
+            updateScrollControl();
+        }
+    }, { passive: true });
     scrollButton.addEventListener('click', () => scrollToLatest(true));
     document.querySelectorAll('[data-prompt]').forEach(button => {
         button.addEventListener('click', () => {
@@ -765,7 +761,8 @@
 
     updateCharacterCount();
     updateContextChip();
-    scrollToLatest(true);
+    setAutoFollow(isLatestVisible());
+    window.requestAnimationFrame(updateScrollControl);
     resumeActiveRun();
 })();
 </script>

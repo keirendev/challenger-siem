@@ -22,6 +22,7 @@ Review-token APIs:
 - `GET /api/v1/soc-agent/sessions` - recent bounded chat sessions.
 - `POST /api/v1/soc-agent/sessions` - create a chat session.
 - `GET /api/v1/soc-agent/sessions/{session_id}` - session detail and bounded messages.
+- `DELETE /api/v1/soc-agent/sessions/{session_id}` - authenticated chat-history management that deletes one session and cascades its messages, while blocking active live runs.
 - `POST /api/v1/soc-agent/sessions/{session_id}/messages` - append an operator message and receive a `soc-agent` response.
 - `POST /api/v1/soc-agent/ask` - backwards-compatible one-shot local tool-backed answer.
 
@@ -29,12 +30,11 @@ Review-token APIs:
 
 The `/soc-agent` page shows:
 
-- a single-page operator workspace where the browser is the primary vertical scroll surface, with a left recent-session rail, center thread, sticky page-level composer, and collapsible right activity/provider panel;
-- compact provider/model/auth status and whether data may leave the local SIEM, with detailed setup moved into the right panel without independent panel scrollbars;
-- ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup clearly marked as advanced alternatives;
-- a prominent official connect/setup action when external ChatGPT/OpenAI auth is required but unavailable;
-- bounded chat history and a message thread with operator and `soc-agent` bubbles;
-- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, a non-editable agent-context chip, document-level user-controlled auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- a widened single-page operator workspace where the browser is the primary vertical scroll surface, with a left recent-session rail, wider center thread, sticky page-level composer, and a right rail focused on live tool activity;
+- compact provider/model/auth status in the title pill, plus a small inline notice/connect action only when external-provider setup, auth, or data-sharing state needs operator attention;
+- ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup documented as advanced alternatives instead of occupying persistent right-rail space;
+- bounded chat history, confirmation-gated per-session deletion controls in the Recent chats rail, and a message thread with operator and `soc-agent` bubbles;
+- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, a non-editable agent-context chip, thread-end-sentinel auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
 - live tool activity cards with running/ok states, bounded row counts/summaries, and final citation links back to SIEM review pages;
 - loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.
@@ -234,7 +234,7 @@ Responses include tool-run summaries and citations back to review pages such as 
 - optional context agent/event identifiers;
 - timestamps and session status.
 
-These tables are not intended to duplicate full raw endpoint telemetry or store provider credentials/provider payloads.
+These tables are not intended to duplicate full raw endpoint telemetry or store provider credentials/provider payloads. Explicit operator deletion of a chat session removes the `soc_agent_sessions` row and associated `soc_agent_messages` rows through `on delete cascade`; independent one-shot `soc_agent_turns` audit rows are retained unless a separate synthetic-data cleanup/runbook action targets them.
 
 ## Safety and provider-auth guardrails
 
@@ -249,7 +249,7 @@ Provider credentials must never be committed, rendered into browser local storag
 
 ## Mutation policy
 
-The current `soc-agent` implementation is read-only. It does not activate detections, change configuration, delete data, reconfigure agents, or modify repository files.
+The current `soc-agent` tool implementation is read-only. It does not activate detections, change configuration, delete endpoint/SIEM telemetry, reconfigure agents, modify repository files, or initiate chat-history deletion. Chat-session deletion is an explicit authenticated operator UI/API action outside the model/tool loop and is blocked while that session has an active live run.
 
 Investigation graph assistance follows this policy today: `soc-agent` may read graph summaries and create a bounded pending proposal on a graph page, but nodes/edges are not changed until an operator checks the approval control and applies the proposal.
 

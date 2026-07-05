@@ -16,6 +16,7 @@ public sealed class SocAgentService(
     SocAgentRepository audit,
     SocAgentProviderStatusService providerStatus,
     ISocAgentModelProvider modelProvider,
+    SocAgentLiveRunRegistry liveRuns,
     IOptions<SocAgentOptions> options)
 {
     private readonly SocAgentOptions options = options.Value;
@@ -58,6 +59,31 @@ public sealed class SocAgentService(
             Session = session,
             Messages = messages,
             ProviderStatus = GetProviderStatus()
+        };
+    }
+
+    public async Task<SocAgentSessionDeleteResponse> DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        if (liveRuns.TryGetActiveRunForSession(sessionId, out _))
+        {
+            return new SocAgentSessionDeleteResponse
+            {
+                SessionId = sessionId,
+                Deleted = false,
+                Status = "run_active",
+                Message = "Cancel or finish the active soc-agent run before deleting this chat."
+            };
+        }
+
+        var deleted = await audit.DeleteSessionAsync(sessionId, cancellationToken);
+        return new SocAgentSessionDeleteResponse
+        {
+            SessionId = sessionId,
+            Deleted = deleted,
+            Status = deleted ? "deleted" : "not_found",
+            Message = deleted
+                ? "Deleted the soc-agent chat session and its persisted messages. One-shot soc-agent audit turns are retained."
+                : "The selected soc-agent chat session was not found."
         };
     }
 

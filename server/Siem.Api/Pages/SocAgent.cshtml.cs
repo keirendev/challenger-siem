@@ -28,8 +28,17 @@ public sealed class SocAgentModel(
     [BindProperty]
     public string? ComposerContextAgentId { get; set; }
 
+    [BindProperty]
+    public Guid? DeleteSessionId { get; set; }
+
+    [BindProperty]
+    public bool ConfirmDelete { get; set; }
+
     [TempData]
     public string? ErrorMessage { get; set; }
+
+    [TempData]
+    public string? NoticeMessage { get; set; }
 
     public SocAgentProviderStatusResponse ProviderStatus { get; private set; } = new();
 
@@ -39,11 +48,14 @@ public sealed class SocAgentModel(
 
     public IReadOnlyList<SocAgentChatMessageDto> Messages { get; private set; } = Array.Empty<SocAgentChatMessageDto>();
 
-    public string? NoticeMessage { get; private set; }
-
     public bool HasCurrentSession => CurrentSession is not null;
 
     public bool CanStartSubscriptionOAuthConnect => subscriptionOAuthConnect.CanStartInteractiveConnect();
+
+    public bool ShouldShowProviderInlineNotice =>
+        ProviderStatus.RequiresConnection
+        || ProviderStatus.DataMayLeaveLocalSiem
+        || CanStartSubscriptionOAuthConnect;
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
@@ -99,6 +111,48 @@ public sealed class SocAgentModel(
         return RedirectToPage(new { session_id = SessionId, agent_id = contextAgentId });
     }
 
+    public async Task<IActionResult> OnPostDeleteSessionAsync(CancellationToken cancellationToken)
+    {
+        var deletedSessionId = DeleteSessionId;
+        if (!deletedSessionId.HasValue)
+        {
+            ErrorMessage = "Choose a soc-agent chat session to delete.";
+            return RedirectAfterDeleteAttempt(null, deleted: false);
+        }
+
+        if (!ConfirmDelete)
+        {
+            ErrorMessage = "Confirm chat deletion before removing a soc-agent session.";
+            return RedirectAfterDeleteAttempt(deletedSessionId.Value, deleted: false);
+        }
+
+        var deleted = false;
+        try
+        {
+            var result = await socAgent.DeleteSessionAsync(deletedSessionId.Value, cancellationToken);
+            deleted = result.Deleted;
+            if (result.Deleted)
+            {
+                NoticeMessage = "Deleted soc-agent chat session and associated messages. One-shot audit turns are retained.";
+            }
+            else if (string.Equals(result.Status, "run_active", StringComparison.OrdinalIgnoreCase))
+            {
+                ErrorMessage = result.Message;
+            }
+            else
+            {
+                ErrorMessage = "The selected soc-agent chat session was not found.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "soc-agent chat session could not be deleted.");
+            ErrorMessage = "soc-agent could not delete the selected chat session. Confirm the database schema is applied and try again.";
+        }
+
+        return RedirectAfterDeleteAttempt(deletedSessionId.Value, deleted);
+    }
+
     public string StatusBadgeClass()
     {
         return ProviderStatus.Status switch
@@ -125,6 +179,17 @@ public sealed class SocAgentModel(
         return string.Equals(message.Role, "operator", StringComparison.OrdinalIgnoreCase)
             ? "Operator"
             : "soc-agent";
+    }
+
+    private IActionResult RedirectAfterDeleteAttempt(Guid? deletedSessionId, bool deleted)
+    {
+        var keepSession = SessionId.HasValue
+            && (!deleted || !deletedSessionId.HasValue || SessionId.Value != deletedSessionId.Value);
+        return RedirectToPage(new
+        {
+            session_id = keepSession ? SessionId : null,
+            agent_id = string.IsNullOrWhiteSpace(ContextAgentId) ? null : ContextAgentId.Trim()
+        });
     }
 
     private async Task LoadPageAsync(CancellationToken cancellationToken)

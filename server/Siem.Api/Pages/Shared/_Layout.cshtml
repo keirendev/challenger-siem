@@ -1,5 +1,6 @@
 @{
     var currentPage = (ViewContext.RouteData.Values["page"] as string) ?? string.Empty;
+    var mainClass = ViewData["MainClass"] as string ?? "container";
     bool IsActive(string page) => string.Equals(currentPage, page, StringComparison.OrdinalIgnoreCase)
         || currentPage.StartsWith(page + "/", StringComparison.OrdinalIgnoreCase);
 }
@@ -32,7 +33,7 @@
             </form>
         }
     </header>
-    <main id="main-content" class="container" tabindex="-1">
+    <main id="main-content" class="@mainClass" tabindex="-1">
         @RenderBody()
     </main>
 </body>

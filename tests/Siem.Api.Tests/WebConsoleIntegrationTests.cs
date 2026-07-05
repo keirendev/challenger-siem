@@ -122,6 +122,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("soc-agent workspace", socAgent, StringComparison.Ordinal);
         Assert.Contains("Provider status", socAgent, StringComparison.Ordinal);
         Assert.Contains("Recent chats", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Live tool activity", socAgent, StringComparison.Ordinal);
         Assert.Contains("Send a soc-agent message", socAgent, StringComparison.Ordinal);
         var socAgentToken = ExtractAntiforgeryToken(socAgent);
         using (var chatResponse = await client.PostAsync("/soc-agent?handler=Send", new FormUrlEncodedContent(new Dictionary<string, string>
@@ -138,7 +139,25 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             Assert.Contains("soc-agent", chatThread, StringComparison.Ordinal);
             Assert.Contains("Tool activity", chatThread, StringComparison.Ordinal);
             Assert.Contains("Citations", chatThread, StringComparison.Ordinal);
+            Assert.Contains("Delete chat", chatThread, StringComparison.Ordinal);
+            Assert.Contains("Confirm deletion", chatThread, StringComparison.Ordinal);
             Assert.Contains(agentId, chatThread, StringComparison.Ordinal);
+
+            var sessionId = ExtractSessionId(chatLocation);
+            var deleteToken = ExtractAntiforgeryToken(chatThread);
+            using var deleteResponse = await client.PostAsync($"/soc-agent?handler=DeleteSession&session_id={sessionId}", new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["__RequestVerificationToken"] = deleteToken,
+                ["DeleteSessionId"] = sessionId.ToString(),
+                ["SessionId"] = sessionId.ToString(),
+                ["ContextAgentId"] = agentId,
+                ["ConfirmDelete"] = "true"
+            }));
+            Assert.Equal(HttpStatusCode.Redirect, deleteResponse.StatusCode);
+            var deleteLocation = deleteResponse.Headers.Location?.OriginalString ?? throw new InvalidOperationException("soc-agent delete did not redirect.");
+            var afterDelete = await GetHtmlAsync(client, deleteLocation);
+            Assert.Contains("Deleted soc-agent chat session", afterDelete, StringComparison.Ordinal);
+            Assert.DoesNotContain(sessionId.ToString(), afterDelete, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -235,7 +254,12 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                 {
                     ["ConnectionStrings:SiemDatabase"] = connectionString,
                     ["Auth:EnrollmentToken"] = EnrollmentToken,
-                    ["Auth:ReviewToken"] = ReviewToken
+                    ["Auth:ReviewToken"] = ReviewToken,
+                    ["SocAgent:Provider"] = "Local",
+                    ["SocAgent:ProviderDisplayName"] = "Local soc-agent",
+                    ["SocAgent:AuthMode"] = "Local",
+                    ["SocAgent:Model"] = "soc-agent-local-v1",
+                    ["SocAgent:ExternalCallsEnabled"] = "false"
                 });
             });
         });
@@ -324,6 +348,13 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         using var response = await client.GetAsync(path);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
+    }
+
+    private static Guid ExtractSessionId(string location)
+    {
+        var match = Regex.Match(location, "[?&]session_id=(?<session_id>[0-9a-fA-F-]{36})", RegexOptions.CultureInvariant);
+        Assert.True(match.Success, "soc-agent redirect should include a session_id query value.");
+        return Guid.Parse(match.Groups["session_id"].Value);
     }
 
     private static string ExtractAntiforgeryToken(string html)

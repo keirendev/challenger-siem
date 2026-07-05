@@ -143,6 +143,15 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         return messages;
     }
 
+    public async Task<bool> DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "delete from soc_agent_sessions where session_id = @session_id;";
+        command.Parameters.AddWithValue("session_id", sessionId);
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
     public async Task<SocAgentChatMessageDto> AddMessageAsync(
         Guid sessionId,
         string role,

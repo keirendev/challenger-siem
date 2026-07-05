@@ -24,7 +24,7 @@ Issued by the server during registration.
 
 Protects the initial search/review API and web review console.
 
-- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/inventory`, `/api/v1/alerts`, `/api/v1/detections/rules`, `POST /api/v1/soc-agent/ask`, and the additive `/api/v1/soc-agent/status` / session chat endpoints.
+- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/inventory`, `/api/v1/alerts`, `/api/v1/detections/rules`, `POST /api/v1/soc-agent/ask`, and the additive `/api/v1/soc-agent/status` / session chat endpoints, including `DELETE /api/v1/soc-agent/sessions/{session_id}`.
 - Browser operators submit the token to `/login` for the web console.
 - Server compares it to `Auth:ReviewToken` from configuration.
 - A successful web login issues an HTTP-only same-origin cookie; the review token is not stored in browser local storage.
