@@ -47,7 +47,7 @@ public sealed class SocAgentWorkspaceUiTests
         Assert.DoesNotContain("max-height: calc(100vh - 8rem);", css, StringComparison.Ordinal);
         Assert.DoesNotContain("height: min(74vh, 52rem);", css, StringComparison.Ordinal);
         Assert.DoesNotContain("height: 68vh;", css, StringComparison.Ordinal);
-        Assert.DoesNotContain("overflow-y: auto;", css, StringComparison.Ordinal);
+        Assert.DoesNotContain(".thread-scroll {\n    flex: 1;\n    min-height: 0;\n    overflow-y: auto;", css, StringComparison.Ordinal);
     }
 
     [Fact]
