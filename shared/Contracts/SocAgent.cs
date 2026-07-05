@@ -235,3 +235,69 @@ public sealed record SocAgentChatResponse
     [JsonPropertyName("provider_status")]
     public SocAgentProviderStatusResponse ProviderStatus { get; init; } = new();
 }
+
+public sealed record SocAgentLiveRunStartRequest
+{
+    [JsonPropertyName("session_id")]
+    public Guid? SessionId { get; init; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = string.Empty;
+
+    [JsonPropertyName("context_agent_id")]
+    public string? ContextAgentId { get; init; }
+
+    [JsonPropertyName("context_event_id")]
+    public Guid? ContextEventId { get; init; }
+}
+
+public sealed record SocAgentLiveRunStartResponse
+{
+    [JsonPropertyName("run_id")]
+    public Guid RunId { get; init; }
+
+    [JsonPropertyName("session")]
+    public SocAgentSessionSummary Session { get; init; } = new();
+
+    [JsonPropertyName("user_message")]
+    public SocAgentChatMessageDto UserMessage { get; init; } = new();
+
+    [JsonPropertyName("provider_status")]
+    public SocAgentProviderStatusResponse ProviderStatus { get; init; } = new();
+
+    [JsonPropertyName("next_sequence")]
+    public long NextSequence { get; init; }
+}
+
+public sealed record SocAgentLiveRunCancelResponse
+{
+    [JsonPropertyName("run_id")]
+    public Guid RunId { get; init; }
+
+    [JsonPropertyName("session_id")]
+    public Guid SessionId { get; init; }
+
+    [JsonPropertyName("cancelled")]
+    public bool Cancelled { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+}
+
+public sealed record SocAgentLiveActiveRunResponse
+{
+    [JsonPropertyName("has_active_run")]
+    public bool HasActiveRun { get; init; }
+
+    [JsonPropertyName("run_id")]
+    public Guid? RunId { get; init; }
+
+    [JsonPropertyName("session_id")]
+    public Guid? SessionId { get; init; }
+
+    [JsonPropertyName("last_sequence")]
+    public long LastSequence { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "idle";
+}

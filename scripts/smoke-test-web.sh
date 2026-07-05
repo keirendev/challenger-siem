@@ -192,8 +192,8 @@ dashboard = Path('$DASHBOARD_HTML').read_text(encoding='utf-8')
 if 'Dashboard' not in dashboard or 'active agents' not in dashboard:
     raise SystemExit('web smoke failed; dashboard did not render expected metrics')
 soc_agent = Path('$SOC_AGENT_HTML').read_text(encoding='utf-8')
-if 'soc-agent chat' not in soc_agent or 'Provider status' not in soc_agent:
-    raise SystemExit('web smoke failed; soc-agent chat did not render expected status')
+if 'soc-agent workspace' not in soc_agent or 'Provider status' not in soc_agent:
+    raise SystemExit('web smoke failed; soc-agent workspace did not render expected status')
 soc_agent_chat = Path('$SOC_AGENT_CHAT_HTML').read_text(encoding='utf-8')
 if 'Tool activity' not in soc_agent_chat or 'Synthetic web smoke soc-agent marker' not in soc_agent_chat:
     raise SystemExit('web smoke failed; soc-agent chat did not persist the synthetic conversation')

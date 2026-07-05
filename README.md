@@ -8,7 +8,7 @@ Challenger SIEM is a custom, no-Docker SIEM prototype focused first on Windows e
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
 - Authenticated `/api/v1` review APIs for events, agents/source health, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`.
-- Review-token-protected web console for dashboard review, agent inventory, host coverage/source health, event search/detail, alert skeletons, investigation graphs, `soc-agent`, audit-policy snapshots, and system/about status.
+- Review-token-protected web console for dashboard review, agent inventory, host coverage/source health, event search/detail, alert skeletons, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
 - Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
 
 ## Architecture

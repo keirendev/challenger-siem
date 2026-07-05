@@ -66,6 +66,15 @@ public sealed class SocAgentService(
         SocAgentChatRequest request,
         CancellationToken cancellationToken)
     {
+        var turn = await StartChatTurnAsync(sessionId, request, cancellationToken);
+        return await CompleteChatTurnAsync(turn, progress: null, cancellationToken);
+    }
+
+    public async Task<SocAgentChatTurn> StartChatTurnAsync(
+        Guid? sessionId,
+        SocAgentChatRequest request,
+        CancellationToken cancellationToken)
+    {
         var message = request.Message.Trim();
         var maxPromptCharacters = Math.Clamp(options.MaxPromptCharacters, 1, 20_000);
         if (string.IsNullOrWhiteSpace(message) || message.Length > maxPromptCharacters)
@@ -106,31 +115,54 @@ public sealed class SocAgentService(
             errorCode: null,
             cancellationToken);
 
-        SocAgentAskResponse response;
-        string? errorCode = null;
-        try
-        {
-            response = await AskAsync(new SocAgentAskRequest
+        return new SocAgentChatTurn(
+            session,
+            userMessage,
+            new SocAgentAskRequest
             {
                 Question = message,
                 ContextAgentId = effectiveContextAgentId,
                 ContextEventId = effectiveContextEventId
-            }, cancellationToken);
+            },
+            status);
+    }
+
+    public async Task<SocAgentChatResponse> CompleteChatTurnAsync(
+        SocAgentChatTurn turn,
+        ISocAgentProgressSink? progress,
+        CancellationToken cancellationToken)
+    {
+        SocAgentAskResponse response;
+        string? errorCode = null;
+        try
+        {
+            response = await AskAsync(turn.AskRequest, progress, cancellationToken);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            errorCode = "cancelled";
+            response = new SocAgentAskResponse
+            {
+                Provider = EffectiveProvider(turn.ProviderStatus),
+                Model = EffectiveModel(turn.ProviderStatus),
+                Answer = "soc-agent turn was cancelled by the operator before completion. No additional SIEM mutations were performed.",
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+        catch (Exception ex)
         {
             errorCode = ex.GetType().Name;
             response = new SocAgentAskResponse
             {
-                Provider = EffectiveProvider(status),
-                Model = EffectiveModel(status),
+                Provider = EffectiveProvider(turn.ProviderStatus),
+                Model = EffectiveModel(turn.ProviderStatus),
                 Answer = "soc-agent could not complete the request. Confirm the database schema is applied and try again.",
                 CreatedAt = DateTimeOffset.UtcNow
             };
         }
 
         var assistantMessage = await audit.AddMessageAsync(
-            session.SessionId,
+            turn.Session.SessionId,
             "soc_agent",
             response.Answer,
             response.Provider,
@@ -138,21 +170,30 @@ public sealed class SocAgentService(
             response.ToolRuns,
             response.Citations,
             errorCode,
-            cancellationToken);
+            CancellationToken.None);
 
-        var updatedSession = await audit.GetSessionAsync(session.SessionId, cancellationToken) ?? session;
+        var updatedSession = await audit.GetSessionAsync(turn.Session.SessionId, CancellationToken.None) ?? turn.Session;
         return new SocAgentChatResponse
         {
             Session = updatedSession,
-            UserMessage = userMessage,
+            UserMessage = turn.UserMessage,
             AssistantMessage = assistantMessage,
-            ProviderStatus = status
+            ProviderStatus = turn.ProviderStatus
         };
     }
 
-    public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, CancellationToken cancellationToken)
+    public Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, CancellationToken cancellationToken)
+    {
+        return AskAsync(request, progress: null, cancellationToken);
+    }
+
+    public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, ISocAgentProgressSink? progress, CancellationToken cancellationToken)
     {
         var status = GetProviderStatus();
+        if (progress is not null)
+        {
+            await progress.ProviderStatusAsync(status, cancellationToken);
+        }
         if (!options.Enabled)
         {
             return new SocAgentAskResponse
@@ -181,19 +222,47 @@ public sealed class SocAgentService(
         var answer = new StringBuilder();
         var usingLocalFallback = IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable;
 
+        async ValueTask StartToolAsync(string toolName, string summary)
+        {
+            if (progress is not null)
+            {
+                await progress.ToolStartedAsync(toolName, summary, cancellationToken);
+            }
+        }
+
+        async ValueTask AddToolAsync(SocAgentToolRunSummary toolRun)
+        {
+            toolRuns.Add(toolRun);
+            if (progress is not null)
+            {
+                await progress.ToolFinishedAsync(toolRun, cancellationToken);
+            }
+        }
+
+        async ValueTask AddCitationAsync(SocAgentCitation citation)
+        {
+            citations.Add(citation);
+            if (progress is not null)
+            {
+                await progress.CitationAddedAsync(citation, cancellationToken);
+            }
+        }
+
+        await StartToolAsync("agent_inventory_search", "Loading recent agent inventory and coverage summary rows.");
         var agents = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, request.ContextAgentId, null, "active"),
             TimeSpan.FromMinutes(15),
             cancellationToken);
         var selectedAgents = agents.Take(Math.Clamp(options.MaxAgents, 1, 50)).ToArray();
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "agent_inventory_search", RowCount = selectedAgents.Length, Summary = "Loaded recent agent inventory and coverage summary rows." });
-        citations.Add(new SocAgentCitation { Kind = "agent_search", Label = "Agent inventory", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/agents" : $"/agents?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "agent_inventory_search", RowCount = selectedAgents.Length, Summary = "Loaded recent agent inventory and coverage summary rows." });
+        await AddCitationAsync(new SocAgentCitation { Kind = "agent_search", Label = "Agent inventory", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/agents" : $"/agents?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
 
+        await StartToolAsync("coverage_summary", "Loading source-health rows and coverage summaries.");
         var sourceHealthResponse = await sourceHealth.SearchAsync(request.ContextAgentId, cancellationToken);
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "coverage_summary", RowCount = sourceHealthResponse.Sources.Count, Summary = "Loaded source-health rows and coverage summaries." });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "coverage_summary", RowCount = sourceHealthResponse.Sources.Count, Summary = "Loaded source-health rows and coverage summaries." });
         if (!string.IsNullOrWhiteSpace(request.ContextAgentId))
         {
-            citations.Add(new SocAgentCitation { Kind = "source_health", Label = "Host coverage", Url = $"/agents/detail?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
+            await AddCitationAsync(new SocAgentCitation { Kind = "source_health", Label = "Host coverage", Url = $"/agents/detail?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
         }
 
         var eventQuery = new EventSearchQuery(
@@ -214,12 +283,13 @@ public sealed class SocAgentService(
             FilePath: null,
             RegistryKey: null,
             Limit: Math.Clamp(options.MaxEvents, 1, 50));
+        await StartToolAsync("event_search", "Loading recent normalized events for the current scope.");
         var recentEvents = await events.SearchEventsAsync(eventQuery, cancellationToken);
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "event_search", RowCount = recentEvents.Count, Summary = "Loaded recent normalized events for the current scope." });
-        citations.Add(new SocAgentCitation { Kind = "event_search", Label = "Recent events", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/events" : $"/events?agent_id={Uri.EscapeDataString(request.ContextAgentId)}&limit=25" });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "event_search", RowCount = recentEvents.Count, Summary = "Loaded recent normalized events for the current scope." });
+        await AddCitationAsync(new SocAgentCitation { Kind = "event_search", Label = "Recent events", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/events" : $"/events?agent_id={Uri.EscapeDataString(request.ContextAgentId)}&limit=25" });
         foreach (var evt in recentEvents.Take(3))
         {
-            citations.Add(new SocAgentCitation
+            await AddCitationAsync(new SocAgentCitation
             {
                 Kind = "event_detail",
                 Label = $"Event {evt.WindowsEventId} on {evt.Hostname}",
@@ -227,25 +297,29 @@ public sealed class SocAgentService(
             });
         }
 
+        await StartToolAsync("alert_review", "Loading current alert review rows.");
         var alertRows = await alerts.SearchAlertsAsync(null, cancellationToken);
         var selectedAlerts = alertRows.Take(Math.Clamp(options.MaxAlerts, 1, 50)).ToArray();
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "alert_review", RowCount = selectedAlerts.Length, Summary = "Loaded current alert review rows." });
-        citations.Add(new SocAgentCitation { Kind = "alerts", Label = "Alerts", Url = "/alerts" });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "alert_review", RowCount = selectedAlerts.Length, Summary = "Loaded current alert review rows." });
+        await AddCitationAsync(new SocAgentCitation { Kind = "alerts", Label = "Alerts", Url = "/alerts" });
 
+        await StartToolAsync("detection_rule_metadata", "Loading detection rule metadata and prerequisites.");
         var detectionRules = await alerts.GetRulesAsync(cancellationToken);
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "detection_rule_metadata", RowCount = detectionRules.Count, Summary = "Loaded detection rule metadata and prerequisites." });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "detection_rule_metadata", RowCount = detectionRules.Count, Summary = "Loaded detection rule metadata and prerequisites." });
 
+        await StartToolAsync("inventory_summary", "Loading bounded inventory snapshot summaries.");
         var inventoryRows = await inventory.SearchAsync(request.ContextAgentId, null, cancellationToken);
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "inventory_summary", RowCount = inventoryRows.Count, Summary = "Loaded bounded inventory snapshot summaries." });
-        citations.Add(new SocAgentCitation { Kind = "audit_policy", Label = "Audit policy drift", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/audit-policy" : $"/audit-policy?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "inventory_summary", RowCount = inventoryRows.Count, Summary = "Loaded bounded inventory snapshot summaries." });
+        await AddCitationAsync(new SocAgentCitation { Kind = "audit_policy", Label = "Audit policy drift", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/audit-policy" : $"/audit-policy?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
 
+        await StartToolAsync("graph_search", "Loading active investigation graph summaries for operator-managed context.");
         var graphRows = await graphs.ListAsync("active", cancellationToken);
         var selectedGraphs = graphRows.Take(5).ToArray();
-        toolRuns.Add(new SocAgentToolRunSummary { ToolName = "graph_search", RowCount = selectedGraphs.Length, Summary = "Loaded active investigation graph summaries for operator-managed context." });
-        citations.Add(new SocAgentCitation { Kind = "graph_search", Label = "Investigation graphs", Url = "/graphs" });
+        await AddToolAsync(new SocAgentToolRunSummary { ToolName = "graph_search", RowCount = selectedGraphs.Length, Summary = "Loaded active investigation graph summaries for operator-managed context." });
+        await AddCitationAsync(new SocAgentCitation { Kind = "graph_search", Label = "Investigation graphs", Url = "/graphs" });
         foreach (var graph in selectedGraphs.Take(3))
         {
-            citations.Add(new SocAgentCitation { Kind = "graph_detail", Label = graph.Title, Url = $"/graphs/detail?graph_id={graph.GraphId}" });
+            await AddCitationAsync(new SocAgentCitation { Kind = "graph_detail", Label = graph.Title, Url = $"/graphs/detail?graph_id={graph.GraphId}" });
         }
 
         answer.AppendLine("soc-agent local SIEM assessment");
@@ -317,6 +391,7 @@ public sealed class SocAgentService(
             toolRuns,
             citations,
             maxResultCharacters,
+            progress,
             cancellationToken);
         await audit.SaveTurnAsync(request, response, cancellationToken);
         return response;
@@ -329,22 +404,34 @@ public sealed class SocAgentService(
         List<SocAgentToolRunSummary> toolRuns,
         List<SocAgentCitation> citations,
         int maxResultCharacters,
+        ISocAgentProgressSink? progress,
         CancellationToken cancellationToken)
     {
         if (CanUseExternalProvider(status))
         {
             try
             {
+                if (progress is not null)
+                {
+                    await progress.ToolStartedAsync("external_model_provider", "Submitting a bounded/redacted prompt to the configured official provider.", cancellationToken);
+                }
+
                 var prompt = BuildExternalPrompt(request.Question, localAnswer, toolRuns, citations);
                 var providerResult = await modelProvider.CompleteAsync(
                     new SocAgentModelProviderRequest(status, prompt, maxResultCharacters),
                     cancellationToken);
-                toolRuns.Add(new SocAgentToolRunSummary
+                var providerToolRun = new SocAgentToolRunSummary
                 {
                     ToolName = "external_model_provider",
                     RowCount = 0,
                     Summary = "Submitted a bounded/redacted prompt to the configured official provider."
-                });
+                };
+                toolRuns.Add(providerToolRun);
+                if (progress is not null)
+                {
+                    await progress.ToolFinishedAsync(providerToolRun, cancellationToken);
+                }
+
                 return new SocAgentAskResponse
                 {
                     Provider = providerResult.Provider,
@@ -357,12 +444,18 @@ public sealed class SocAgentService(
             }
             catch (SocAgentModelProviderException ex) when (options.FallbackToLocalWhenUnavailable)
             {
-                toolRuns.Add(new SocAgentToolRunSummary
+                var providerToolRun = new SocAgentToolRunSummary
                 {
                     ToolName = "external_model_provider",
                     RowCount = 0,
                     Summary = $"External provider failed with {ex.ErrorCode}; used local fallback without exposing provider secrets."
-                });
+                };
+                toolRuns.Add(providerToolRun);
+                if (progress is not null)
+                {
+                    await progress.ToolFinishedAsync(providerToolRun, cancellationToken);
+                }
+
                 var fallbackAnswer = SocAgentTextSafety.Truncate(
                     $"External provider unavailable ({ex.ErrorCode}): {ex.OperatorSafeMessage}\nUsing local fallback only; no provider secrets were exposed to the browser.\n\n{localAnswer}",
                     maxResultCharacters);
@@ -378,12 +471,18 @@ public sealed class SocAgentService(
             }
             catch (SocAgentModelProviderException ex)
             {
-                toolRuns.Add(new SocAgentToolRunSummary
+                var providerToolRun = new SocAgentToolRunSummary
                 {
                     ToolName = "external_model_provider",
                     RowCount = 0,
                     Summary = $"External provider failed with {ex.ErrorCode}; local fallback is disabled."
-                });
+                };
+                toolRuns.Add(providerToolRun);
+                if (progress is not null)
+                {
+                    await progress.ToolFinishedAsync(providerToolRun, cancellationToken);
+                }
+
                 return new SocAgentAskResponse
                 {
                     Provider = status.Provider,

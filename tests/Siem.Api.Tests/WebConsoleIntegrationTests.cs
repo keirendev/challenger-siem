@@ -119,9 +119,9 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
 
         var socAgent = await GetHtmlAsync(client, $"/soc-agent?agent_id={Uri.EscapeDataString(agentId)}");
-        Assert.Contains("soc-agent chat", socAgent, StringComparison.Ordinal);
+        Assert.Contains("soc-agent workspace", socAgent, StringComparison.Ordinal);
         Assert.Contains("Provider status", socAgent, StringComparison.Ordinal);
-        Assert.Contains("Chat history", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Recent chats", socAgent, StringComparison.Ordinal);
         Assert.Contains("Send a soc-agent message", socAgent, StringComparison.Ordinal);
         var socAgentToken = ExtractAntiforgeryToken(socAgent);
         using (var chatResponse = await client.PostAsync("/soc-agent?handler=Send", new FormUrlEncodedContent(new Dictionary<string, string>

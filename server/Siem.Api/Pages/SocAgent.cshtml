@@ -3,15 +3,19 @@
 @{
     ViewData["Title"] = "soc-agent";
     var composerContextAgentId = Model.ContextAgentId ?? Model.CurrentSession?.ContextAgentId;
+    var currentSessionId = Model.CurrentSession?.SessionId.ToString() ?? string.Empty;
 }
 
-<div class="page-header">
+<div class="page-header soc-agent-titlebar">
     <div>
-        <p class="page-kicker">Analyst assistant</p>
-        <h1>soc-agent chat</h1>
-        <p class="muted">Conversational SIEM investigation with bounded server-side tools, citations, and proposal-only safety boundaries.</p>
+        <p class="page-kicker">Live analyst workspace</p>
+        <h1>soc-agent workspace</h1>
+        <p class="muted">No-reload SIEM investigation chat with live tool progress, bounded citations, cancellation, and proposal-only safety boundaries.</p>
     </div>
-    <a class="button secondary" asp-page="/SocAgent">New chat</a>
+    <div class="soc-agent-title-actions">
+        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-pill">@Model.ProviderStatus.Status</span>
+        <a class="button secondary" asp-page="/SocAgent">New chat</a>
+    </div>
 </div>
 
 @if (Model.ErrorMessage is not null)
@@ -23,111 +27,30 @@
     <div class="notice" role="status">@Model.NoticeMessage</div>
 }
 
-<section class="card provider-status" aria-labelledby="provider-status-title">
-    <div>
-        <h2 id="provider-status-title">Provider status</h2>
-        <p>
-            <span class="badge @Model.StatusBadgeClass()">@Model.ProviderStatus.Status</span>
-            <strong>@Model.ProviderStatus.DisplayName</strong>
-            <span class="muted">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</span>
-        </p>
-        <p>@Model.ProviderStatus.Message</p>
-        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
-        {
-            <dl class="provider-metadata">
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath))
-                {
-                    <dt>Provider path</dt>
-                    <dd>@Model.ProviderStatus.ProviderPath</dd>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.AuthFileMode))
-                {
-                    <dt>Auth-file mode</dt>
-                    <dd>@Model.ProviderStatus.AuthFileMode</dd>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
-                {
-                    <dt>Credential source</dt>
-                    <dd>@Model.ProviderStatus.CredentialSource</dd>
-                }
-                @if (Model.ProviderStatus.ExpiresAt is not null)
-                {
-                    <dt>Access token expires</dt>
-                    <dd>@Model.ProviderStatus.ExpiresAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</dd>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
-                {
-                    <dt>Refresh</dt>
-                    <dd>@Model.ProviderStatus.RefreshStatus</dd>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus))
-                {
-                    <dt>Scope</dt>
-                    <dd>@Model.ProviderStatus.ScopeStatus</dd>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
-                {
-                    <dt>Entitlement</dt>
-                    <dd>@Model.ProviderStatus.EntitlementStatus</dd>
-                }
-            </dl>
-        }
-        @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
-        {
-            <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
-        }
-    </div>
-    @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
-    {
-        <div class="provider-action">
-            @if (Model.CanStartSubscriptionOAuthConnect)
-            {
-                <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
-                    <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
-                </form>
-            }
-            else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
-            {
-                <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
-            }
-            <p class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</p>
-        </div>
-    }
-</section>
+<div id="soc-agent-live-alert" class="notice live-alert" role="status" aria-live="polite" hidden></div>
 
-<section class="card provider-setup" aria-labelledby="provider-setup-title">
-    <h2 id="provider-setup-title">External provider setup</h2>
-    <div class="setup-grid">
-        <div>
-            <p class="page-kicker">Primary external path</p>
-            <h3>ChatGPT subscription OAuth</h3>
-            <p>Configure <code>SocAgent:AuthMode=SubscriptionOAuth</code> with Pi's server-side <code>~/.pi/agent/auth.json</code> <code>openai-codex</code> entry after Pi <code>/login</code>, or with a dedicated ignored <code>auth.json</code>-style credential file. When interactive connect is enabled with official OAuth client settings, operators can start the authorization-code/PKCE flow from this page. Challenger SIEM validates official issuer/audience/scope metadata, refresh state, and entitlement hints before any bounded prompt can leave the local SIEM.</p>
+<div class="soc-agent-workspace" data-soc-agent-workspace data-session-id="@currentSessionId" data-context-agent-id="@composerContextAgentId" data-live-start-url="/soc-agent/live/runs" data-max-message-length="4000">
+    <aside class="soc-agent-rail card" aria-labelledby="sessions-title">
+        <div class="rail-header">
+            <div>
+                <p class="page-kicker">History</p>
+                <h2 id="sessions-title">Recent chats</h2>
+            </div>
+            <a class="button secondary" asp-page="/SocAgent">New</a>
         </div>
-        <div>
-            <p class="page-kicker">Advanced alternatives</p>
-            <h3>API key or delegated API bearer</h3>
-            <p>Server-side OpenAI API-key and delegated API-bearer modes remain available for administrators who manage those credentials through ignored environment variables, ignored auth files, or secret stores.</p>
-        </div>
-    </div>
-    <p class="muted">Provider credentials, account identifiers, raw auth files, cookies, and full private paths are never rendered in the browser.</p>
-</section>
-
-<div class="chat-layout">
-    <aside class="card chat-sessions" aria-labelledby="sessions-title">
-        <h2 id="sessions-title">Chat history</h2>
         @if (Model.Sessions.Count == 0)
         {
-            <p class="muted">No saved chats yet.</p>
+            <p class="muted">No saved chats yet. Send a message to create a persisted session.</p>
         }
         else
         {
-            <ul>
+            <ul class="session-list" id="soc-agent-session-list">
                 @foreach (var session in Model.Sessions)
                 {
                     <li>
-                        <a class="@(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId">
+                        <a class="session-link @(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId" data-session-id="@session.SessionId">
                             <span>@session.Title</span>
-                            <span class="muted">@session.MessageCount messages · @session.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                            <span class="muted">@session.MessageCount messages · @session.Status · @session.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
                         </a>
                     </li>
                 }
@@ -135,35 +58,43 @@
         }
     </aside>
 
-    <section class="chat-main" aria-labelledby="thread-title">
-        <div class="card chat-thread">
-            <div class="page-header">
+    <section class="soc-agent-chat" aria-labelledby="thread-title">
+        <div class="card chat-thread live-thread">
+            <div class="thread-header">
                 <div>
+                    <p class="page-kicker">Conversation</p>
                     <h2 id="thread-title">@(Model.CurrentSession?.Title ?? "New investigation")</h2>
                     @if (Model.CurrentSession is not null)
                     {
-                        <p class="muted">Session @Model.CurrentSession.SessionId · @Model.CurrentSession.MessageCount messages</p>
+                        <p class="muted" id="soc-agent-session-meta">Session @Model.CurrentSession.SessionId · @Model.CurrentSession.MessageCount messages</p>
                     }
                     else
                     {
-                        <p class="muted">Ask a question to start a persisted investigation thread.</p>
+                        <p class="muted" id="soc-agent-session-meta">Ask a question to start a persisted investigation thread.</p>
                     }
+                </div>
+                <div class="run-state" aria-live="polite">
+                    <span class="badge" id="soc-agent-run-state">Idle</span>
+                    <button type="button" class="button secondary" id="soc-agent-scroll-bottom">Scroll to latest</button>
                 </div>
             </div>
 
-            @if (Model.Messages.Count == 0)
-            {
-                <div class="empty chat-empty">
+            <div class="connection-banner" id="soc-agent-connection-banner" role="status" aria-live="polite" hidden></div>
+
+            <div class="thread-scroll" id="soc-agent-thread-scroll">
+                <div class="empty chat-empty" id="soc-agent-empty" @(Model.Messages.Count == 0 ? null : "hidden")>
                     <h3>Start a SOC investigation</h3>
-                    <p>Try: “Summarize active coverage gaps and recent alerts” or open an agent context from inventory.</p>
+                    <p>Try “Summarize active coverage gaps and recent alerts”, or open this page with an agent context from inventory.</p>
+                    <div class="suggested-prompts" aria-label="Suggested prompts">
+                        <button type="button" class="button secondary" data-prompt="Summarize active coverage gaps and recent alerts.">Coverage and alerts</button>
+                        <button type="button" class="button secondary" data-prompt="What should I investigate first for this host context?">Host triage</button>
+                    </div>
                 </div>
-            }
-            else
-            {
-                <ol class="message-list" aria-label="soc-agent message thread">
+
+                <ol class="message-list live-message-list" id="soc-agent-message-list" aria-label="soc-agent message thread" aria-live="polite">
                     @foreach (var message in Model.Messages)
                     {
-                        <li class="message-bubble @(message.Role == "operator" ? "operator" : "assistant")" id="message-@message.MessageId">
+                        <li class="message-bubble @(message.Role == "operator" ? "operator" : "assistant")" id="message-@message.MessageId" data-message-id="@message.MessageId" data-role="@message.Role">
                             <div class="message-meta">
                                 <strong>@Model.RoleLabel(message)</strong>
                                 <span>@message.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
@@ -180,18 +111,19 @@
 
                             @if (message.ToolRuns.Count > 0)
                             {
-                                <details class="tool-details" open>
-                                    <summary>Tool activity (@message.ToolRuns.Count)</summary>
-                                    <table>
-                                        <thead><tr><th>Tool</th><th>Rows</th><th>Summary</th></tr></thead>
-                                        <tbody>
-                                            @foreach (var tool in message.ToolRuns)
-                                            {
-                                                <tr><td>@tool.ToolName</td><td>@tool.RowCount</td><td>@tool.Summary</td></tr>
-                                            }
-                                        </tbody>
-                                    </table>
-                                </details>
+                                <div class="tool-card-grid" aria-label="Tool activity for this message">
+                                    @foreach (var tool in message.ToolRuns)
+                                    {
+                                        <article class="tool-card complete">
+                                            <div class="tool-card-header">
+                                                <strong>@tool.ToolName</strong>
+                                                <span class="badge ok">ok</span>
+                                            </div>
+                                            <p>@tool.Summary</p>
+                                            <p class="muted">Rows: @tool.RowCount</p>
+                                        </article>
+                                    }
+                                </div>
                             }
 
                             @if (message.Citations.Count > 0)
@@ -209,27 +141,594 @@
                         </li>
                     }
                 </ol>
-            }
+            </div>
         </div>
 
-        <form method="post" asp-page-handler="Send" class="card chat-composer" aria-label="Send a soc-agent message">
-            <input type="hidden" asp-for="SessionId" />
+        <form method="post" asp-page-handler="Send" class="card chat-composer live-composer" id="soc-agent-composer" aria-label="Send a soc-agent message">
+            <input type="hidden" asp-for="SessionId" id="soc-agent-session-id-input" />
+            <div class="composer-context-row">
+                <span class="pill" id="soc-agent-context-chip">@(string.IsNullOrWhiteSpace(composerContextAgentId) ? "Global SIEM context" : $"Agent context: {composerContextAgentId}")</span>
+                <span class="muted" id="soc-agent-char-count">0 / 4000</span>
+            </div>
             <div class="form-row">
                 <label for="Message">Message</label>
-                <textarea id="Message" asp-for="Message" rows="4" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, or a host investigation." required></textarea>
+                <textarea id="Message" asp-for="Message" rows="3" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, detections, or an agent investigation. Enter sends; Shift+Enter adds a newline." required></textarea>
             </div>
-            <div class="form-row">
-                <label for="ComposerContextAgentId">Optional agent ID context</label>
-                <input id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" />
-            </div>
-            <div class="actions">
-                <button type="submit">Send message</button>
-                @if (Model.HasCurrentSession)
-                {
-                    <a class="button secondary" asp-page="/SocAgent">Start new chat</a>
-                }
+            <div class="composer-grid">
+                <div class="form-row">
+                    <label for="ComposerContextAgentId">Optional agent ID context</label>
+                    <input id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" autocomplete="off" />
+                </div>
+                <div class="composer-actions">
+                    <button type="submit" id="soc-agent-send-button">Send</button>
+                    <button type="button" class="button danger" id="soc-agent-cancel-button" disabled>Cancel</button>
+                    @if (Model.HasCurrentSession)
+                    {
+                        <a class="button secondary" asp-page="/SocAgent">New chat</a>
+                    }
+                </div>
             </div>
             <p class="muted">soc-agent can summarize and cite SIEM data, but it cannot mutate detections, configuration, agents, stored data, or repository files.</p>
         </form>
     </section>
+
+    <aside class="soc-agent-activity card" aria-labelledby="activity-title">
+        <div class="activity-panel-header">
+            <div>
+                <p class="page-kicker">Activity</p>
+                <h2 id="activity-title">Run and provider</h2>
+            </div>
+            <button type="button" class="button secondary" id="soc-agent-toggle-activity" aria-expanded="true">Collapse</button>
+        </div>
+
+        <section class="compact-provider" aria-labelledby="provider-status-title">
+            <h3 id="provider-status-title">Provider status</h3>
+            <p>
+                <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-status">@Model.ProviderStatus.Status</span>
+                <strong id="soc-agent-provider-name">@Model.ProviderStatus.DisplayName</strong>
+            </p>
+            <p class="muted" id="soc-agent-provider-detail">@Model.ProviderStatus.Provider / @Model.ProviderStatus.Model / @Model.ProviderStatus.AuthMode</p>
+            <p id="soc-agent-provider-message">@Model.ProviderStatus.Message</p>
+
+            @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource) || Model.ProviderStatus.ExpiresAt is not null || !string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus) || !string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
+            {
+                <details class="provider-details">
+                    <summary>Credential/setup details</summary>
+                    <dl class="provider-metadata">
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ProviderPath))
+                        {
+                            <dt>Provider path</dt>
+                            <dd>@Model.ProviderStatus.ProviderPath</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.AuthFileMode))
+                        {
+                            <dt>Auth-file mode</dt>
+                            <dd>@Model.ProviderStatus.AuthFileMode</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
+                        {
+                            <dt>Credential source</dt>
+                            <dd>@Model.ProviderStatus.CredentialSource</dd>
+                        }
+                        @if (Model.ProviderStatus.ExpiresAt is not null)
+                        {
+                            <dt>Access token expires</dt>
+                            <dd>@Model.ProviderStatus.ExpiresAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
+                        {
+                            <dt>Refresh</dt>
+                            <dd>@Model.ProviderStatus.RefreshStatus</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus))
+                        {
+                            <dt>Scope</dt>
+                            <dd>@Model.ProviderStatus.ScopeStatus</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
+                        {
+                            <dt>Entitlement</dt>
+                            <dd>@Model.ProviderStatus.EntitlementStatus</dd>
+                        }
+                    </dl>
+                </details>
+            }
+
+            @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
+            {
+                <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
+            }
+            @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
+            {
+                <div class="provider-action">
+                    @if (Model.CanStartSubscriptionOAuthConnect)
+                    {
+                        <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
+                            <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
+                        </form>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
+                    {
+                        <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
+                    }
+                    <p class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</p>
+                </div>
+            }
+        </section>
+
+        <details class="provider-setup-inline">
+            <summary>External provider setup</summary>
+            <p><strong>Primary:</strong> ChatGPT subscription OAuth through server-side Pi <code>openai-codex</code> auth or a dedicated ignored credential file.</p>
+            <p><strong>Advanced:</strong> server-side OpenAI API key or delegated API bearer file. Browser clients never receive provider tokens.</p>
+        </details>
+
+        <section class="activity-feed" aria-labelledby="activity-feed-title">
+            <h3 id="activity-feed-title">Live tool activity</h3>
+            <div id="soc-agent-activity-list" class="activity-list" aria-live="polite">
+                <p class="muted" id="soc-agent-activity-empty">No active run. Tool cards appear here while soc-agent works.</p>
+            </div>
+        </section>
+    </aside>
 </div>
+
+<script>
+(() => {
+    const root = document.querySelector('[data-soc-agent-workspace]');
+    if (!root || !window.fetch) {
+        return;
+    }
+
+    const form = document.getElementById('soc-agent-composer');
+    const textarea = document.getElementById('Message');
+    const contextInput = document.getElementById('ComposerContextAgentId');
+    const hiddenSessionInput = document.getElementById('soc-agent-session-id-input');
+    const sendButton = document.getElementById('soc-agent-send-button');
+    const cancelButton = document.getElementById('soc-agent-cancel-button');
+    const messageList = document.getElementById('soc-agent-message-list');
+    const emptyState = document.getElementById('soc-agent-empty');
+    const threadScroll = document.getElementById('soc-agent-thread-scroll');
+    const scrollButton = document.getElementById('soc-agent-scroll-bottom');
+    const runState = document.getElementById('soc-agent-run-state');
+    const alertBox = document.getElementById('soc-agent-live-alert');
+    const banner = document.getElementById('soc-agent-connection-banner');
+    const activityList = document.getElementById('soc-agent-activity-list');
+    const activityEmpty = document.getElementById('soc-agent-activity-empty');
+    const charCount = document.getElementById('soc-agent-char-count');
+    const contextChip = document.getElementById('soc-agent-context-chip');
+    const sessionMeta = document.getElementById('soc-agent-session-meta');
+    const providerStatus = document.getElementById('soc-agent-provider-status');
+    const providerPill = document.getElementById('soc-agent-provider-pill');
+    const providerName = document.getElementById('soc-agent-provider-name');
+    const providerDetail = document.getElementById('soc-agent-provider-detail');
+    const providerMessage = document.getElementById('soc-agent-provider-message');
+    const toggleActivity = document.getElementById('soc-agent-toggle-activity');
+    const workspace = document.querySelector('.soc-agent-workspace');
+    const maxLength = Number(root.dataset.maxMessageLength || '4000');
+    let currentSessionId = root.dataset.sessionId || '';
+    let currentRunId = null;
+    let eventSource = null;
+    let reconnectTimer = null;
+    let lastSequence = 0;
+    let running = false;
+    let pendingAssistant = null;
+    let pendingAssistantContent = '';
+
+    function showAlert(message, kind = 'notice') {
+        if (!alertBox) return;
+        alertBox.textContent = message;
+        alertBox.hidden = false;
+        alertBox.className = kind === 'error' ? 'alert live-alert' : 'notice live-alert';
+    }
+
+    function hideAlert() {
+        if (alertBox) {
+            alertBox.hidden = true;
+            alertBox.textContent = '';
+        }
+    }
+
+    function setBanner(message, isError = false) {
+        if (!banner) return;
+        banner.hidden = !message;
+        banner.textContent = message || '';
+        banner.classList.toggle('error', Boolean(isError));
+    }
+
+    function setRunning(isRunning, label) {
+        running = isRunning;
+        runState.textContent = label || (isRunning ? 'Running' : 'Idle');
+        runState.classList.toggle('warning', isRunning);
+        sendButton.disabled = isRunning;
+        cancelButton.disabled = !isRunning || !currentRunId;
+        textarea.setAttribute('aria-busy', isRunning ? 'true' : 'false');
+    }
+
+    function updateCharacterCount() {
+        const length = textarea.value.length;
+        charCount.textContent = `${length} / ${maxLength}`;
+        charCount.classList.toggle('danger-text', length > maxLength * 0.95);
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+    }
+
+    function updateContextChip() {
+        const value = (contextInput.value || '').trim();
+        contextChip.textContent = value ? `Agent context: ${value}` : 'Global SIEM context';
+    }
+
+    function isNearBottom() {
+        return threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight < 180;
+    }
+
+    function scrollToLatest(force = false) {
+        if (force || isNearBottom()) {
+            threadScroll.scrollTop = threadScroll.scrollHeight;
+        }
+    }
+
+    function createElement(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined && text !== null) element.textContent = text;
+        return element;
+    }
+
+    function roleLabel(role) {
+        return role === 'operator' ? 'Operator' : 'soc-agent';
+    }
+
+    function safeUrl(url) {
+        try {
+            const parsed = new URL(url || '', window.location.origin);
+            if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/')) {
+                return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+            }
+        } catch (_) {
+            // Fall through to inert link.
+        }
+        return '#';
+    }
+
+    function appendMessage(message) {
+        if (!message || !message.message_id) return;
+        const existing = document.getElementById(`message-${message.message_id}`);
+        if (existing) return existing;
+
+        const shouldScroll = isNearBottom();
+        emptyState.hidden = true;
+
+        let item;
+        if (pendingAssistant && message.role !== 'operator') {
+            item = pendingAssistant;
+            item.id = `message-${message.message_id}`;
+            item.dataset.messageId = message.message_id;
+            item.querySelector('.message-box').textContent = message.content || pendingAssistantContent;
+            pendingAssistant = null;
+            pendingAssistantContent = '';
+            const meta = item.querySelector('.message-meta');
+            meta.textContent = '';
+            hydrateMessageMeta(meta, message);
+            const existingTools = item.querySelector('.tool-card-grid');
+            if (existingTools) existingTools.remove();
+            const existingCitations = item.querySelector('.citations');
+            if (existingCitations) existingCitations.remove();
+            hydrateToolCards(item, message.tool_runs || []);
+            hydrateCitations(item, message.citations || []);
+        } else {
+            item = createElement('li', `message-bubble ${message.role === 'operator' ? 'operator' : 'assistant'}`);
+            item.id = `message-${message.message_id}`;
+            item.dataset.messageId = message.message_id;
+            item.dataset.role = message.role;
+            const meta = createElement('div', 'message-meta');
+            hydrateMessageMeta(meta, message);
+            item.appendChild(meta);
+            item.appendChild(createElement('pre', 'message-box', message.content || ''));
+            hydrateToolCards(item, message.tool_runs || []);
+            hydrateCitations(item, message.citations || []);
+            messageList.appendChild(item);
+        }
+
+        if (shouldScroll) scrollToLatest(true);
+        return item;
+    }
+
+    function hydrateMessageMeta(meta, message) {
+        meta.appendChild(createElement('strong', '', roleLabel(message.role)));
+        meta.appendChild(createElement('span', '', new Date(message.created_at || Date.now()).toLocaleString()));
+        if (message.provider) {
+            meta.appendChild(createElement('span', 'badge', `${message.provider} / ${message.model || ''}`));
+        }
+        if (message.error_code) {
+            meta.appendChild(createElement('span', 'badge danger', message.error_code));
+        }
+    }
+
+    function hydrateToolCards(container, tools) {
+        if (!tools.length) return;
+        const grid = createElement('div', 'tool-card-grid');
+        grid.setAttribute('aria-label', 'Tool activity for this message');
+        for (const tool of tools) {
+            const card = createElement('article', 'tool-card complete');
+            const header = createElement('div', 'tool-card-header');
+            header.appendChild(createElement('strong', '', tool.tool_name || 'tool'));
+            header.appendChild(createElement('span', 'badge ok', 'ok'));
+            card.appendChild(header);
+            card.appendChild(createElement('p', '', tool.summary || 'Completed.'));
+            card.appendChild(createElement('p', 'muted', `Rows: ${tool.row_count ?? 0}`));
+            grid.appendChild(card);
+        }
+        container.appendChild(grid);
+    }
+
+    function hydrateCitations(container, citations) {
+        if (!citations.length) return;
+        const wrapper = createElement('div', 'citations');
+        wrapper.appendChild(createElement('h3', '', 'Citations'));
+        const list = createElement('ul');
+        for (const citation of citations) {
+            const item = createElement('li');
+            const link = createElement('a', '', citation.label || 'Citation');
+            link.href = safeUrl(citation.url);
+            item.appendChild(link);
+            item.appendChild(document.createTextNode(' '));
+            item.appendChild(createElement('span', 'muted', citation.kind || 'reference'));
+            list.appendChild(item);
+        }
+        wrapper.appendChild(list);
+        container.appendChild(wrapper);
+    }
+
+    function ensurePendingAssistant() {
+        if (pendingAssistant) return pendingAssistant;
+        emptyState.hidden = true;
+        pendingAssistant = createElement('li', 'message-bubble assistant pending', '');
+        pendingAssistant.id = `message-pending-${currentRunId || 'run'}`;
+        const meta = createElement('div', 'message-meta');
+        meta.appendChild(createElement('strong', '', 'soc-agent'));
+        meta.appendChild(createElement('span', 'badge warning', 'streaming'));
+        pendingAssistant.appendChild(meta);
+        pendingAssistant.appendChild(createElement('pre', 'message-box', ''));
+        messageList.appendChild(pendingAssistant);
+        return pendingAssistant;
+    }
+
+    function appendContentDelta(delta) {
+        const item = ensurePendingAssistant();
+        pendingAssistantContent += delta || '';
+        item.querySelector('.message-box').textContent = pendingAssistantContent;
+        scrollToLatest();
+    }
+
+    function upsertActivity(type, data, sequence) {
+        if (!activityList) return;
+        activityEmpty.hidden = true;
+        const toolName = data.tool_name || data.tool_run?.tool_name || 'soc-agent';
+        let card = activityList.querySelector(`[data-tool-name="${CSS.escape(toolName)}"].running`);
+        if (!card) {
+            card = createElement('article', 'activity-card running');
+            card.dataset.toolName = toolName;
+            const header = createElement('div', 'tool-card-header');
+            header.appendChild(createElement('strong', '', toolName));
+            header.appendChild(createElement('span', 'badge warning', 'running'));
+            card.appendChild(header);
+            card.appendChild(createElement('p', '', data.summary || 'Running.'));
+            card.appendChild(createElement('p', 'muted', `seq ${sequence}`));
+            activityList.prepend(card);
+        }
+
+        if (type === 'tool_finished') {
+            card.classList.remove('running');
+            card.classList.add('complete');
+            const badge = card.querySelector('.badge');
+            badge.className = 'badge ok';
+            badge.textContent = 'ok';
+            card.querySelector('p').textContent = data.summary || 'Completed.';
+            card.querySelector('.muted').textContent = `Rows: ${data.row_count ?? 0} · seq ${sequence}`;
+        }
+    }
+
+    function updateProvider(status) {
+        if (!status) return;
+        providerStatus.textContent = status.status || 'unknown';
+        providerPill.textContent = status.status || 'unknown';
+        providerName.textContent = status.display_name || status.provider || 'Provider';
+        providerDetail.textContent = `${status.provider || 'Provider'} / ${status.model || 'model'} / ${status.auth_mode || 'auth'}`;
+        providerMessage.textContent = status.message || '';
+    }
+
+    function applyLiveEvent(rawEvent) {
+        const payload = JSON.parse(rawEvent.data);
+        const type = payload.type || rawEvent.type;
+        lastSequence = Math.max(lastSequence, Number(payload.sequence || 0));
+        const data = payload.data || {};
+
+        switch (type) {
+            case 'resume_snapshot':
+                setBanner(data.status === 'running' || data.status === 'cancel_requested' ? 'Reconnected to an active soc-agent run.' : 'Connected to soc-agent live events.');
+                break;
+            case 'session_created':
+                if (data.session?.session_id) {
+                    currentSessionId = data.session.session_id;
+                    root.dataset.sessionId = currentSessionId;
+                    hiddenSessionInput.value = currentSessionId;
+                    sessionMeta.textContent = `Session ${currentSessionId} · live run active`;
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('session_id', currentSessionId);
+                    window.history.replaceState({}, '', url);
+                }
+                break;
+            case 'message_created':
+                appendMessage(data.message);
+                break;
+            case 'run_started':
+                setRunning(true, 'Running');
+                showAlert(data.message || 'soc-agent run started.');
+                break;
+            case 'provider_status':
+                updateProvider(data.provider_status);
+                break;
+            case 'tool_started':
+            case 'tool_finished':
+                upsertActivity(type, data, payload.sequence);
+                break;
+            case 'citation_added':
+                // Final persisted assistant messages render citations; live citation events keep the stream resumable.
+                break;
+            case 'content_delta':
+                appendContentDelta(data.delta || '');
+                break;
+            case 'run_cancel_requested':
+                setRunning(true, 'Cancelling');
+                showAlert(data.message || 'Cancellation requested.');
+                break;
+            case 'run_error':
+                showAlert(data.message || 'soc-agent run reported an error.', 'error');
+                setBanner(data.message || 'soc-agent run reported an error.', true);
+                break;
+            case 'run_complete':
+                setRunning(false, data.status === 'cancelled' ? 'Cancelled' : (data.status === 'error' ? 'Error' : 'Complete'));
+                currentRunId = null;
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                if (reconnectTimer) {
+                    window.clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                setBanner('soc-agent run complete.');
+                if (data.status === 'complete') hideAlert();
+                break;
+        }
+    }
+
+    function openEventStream(runId, after = 0) {
+        if (eventSource) eventSource.close();
+        currentRunId = runId;
+        const url = `/soc-agent/live/runs/${encodeURIComponent(runId)}/events?after=${encodeURIComponent(after)}`;
+        eventSource = new EventSource(url, { withCredentials: true });
+        setBanner('Connecting to soc-agent live stream…');
+        const eventTypes = ['resume_snapshot', 'session_created', 'message_created', 'run_started', 'provider_status', 'tool_started', 'tool_finished', 'citation_added', 'content_delta', 'run_cancel_requested', 'run_error', 'run_complete'];
+        for (const type of eventTypes) {
+            eventSource.addEventListener(type, applyLiveEvent);
+        }
+        eventSource.onopen = () => setBanner('Live stream connected.');
+        eventSource.onerror = () => {
+            if (running && currentRunId) {
+                setBanner('Live stream reconnecting…', false);
+                eventSource.close();
+                if (reconnectTimer) window.clearTimeout(reconnectTimer);
+                reconnectTimer = window.setTimeout(() => openEventStream(currentRunId, lastSequence), 1000);
+            }
+        };
+    }
+
+    async function startRun(event) {
+        event.preventDefault();
+        hideAlert();
+        const message = textarea.value.trim();
+        if (!message || message.length > maxLength || running) {
+            showAlert(`Enter a message up to ${maxLength} characters.`, 'error');
+            return;
+        }
+
+        setRunning(true, 'Starting');
+        setBanner('Starting soc-agent run…');
+        try {
+            const response = await fetch(root.dataset.liveStartUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: currentSessionId || null,
+                    message,
+                    context_agent_id: (contextInput.value || '').trim() || null
+                })
+            });
+
+            if (!response.ok) {
+                const problem = await response.text();
+                throw new Error(problem || `soc-agent live start failed with ${response.status}`);
+            }
+
+            const result = await response.json();
+            currentSessionId = result.session?.session_id || currentSessionId;
+            hiddenSessionInput.value = currentSessionId;
+            root.dataset.sessionId = currentSessionId;
+            if (currentSessionId) {
+                sessionMeta.textContent = `Session ${currentSessionId} · live run active`;
+                const url = new URL(window.location.href);
+                url.searchParams.set('session_id', currentSessionId);
+                url.searchParams.delete('agent_id');
+                window.history.replaceState({}, '', url);
+            }
+            appendMessage(result.user_message);
+            textarea.value = '';
+            updateCharacterCount();
+            openEventStream(result.run_id, result.next_sequence || 0);
+        } catch (error) {
+            setRunning(false, 'Idle');
+            showAlert('soc-agent live run could not start. Use the form fallback or confirm your operator session is still signed in.', 'error');
+            setBanner(error.message, true);
+        }
+    }
+
+    async function cancelRun() {
+        if (!currentRunId) return;
+        cancelButton.disabled = true;
+        setRunning(true, 'Cancelling');
+        try {
+            await fetch(`/soc-agent/live/runs/${encodeURIComponent(currentRunId)}/cancel`, {
+                method: 'POST',
+                credentials: 'same-origin'
+            });
+        } catch (_) {
+            showAlert('Cancellation could not be sent; reconnecting may recover the run state.', 'error');
+        }
+    }
+
+    async function resumeActiveRun() {
+        if (!currentSessionId) return;
+        try {
+            const response = await fetch(`/soc-agent/live/sessions/${encodeURIComponent(currentSessionId)}/active`, { credentials: 'same-origin' });
+            if (!response.ok) return;
+            const active = await response.json();
+            if (active.has_active_run && active.run_id) {
+                setRunning(true, active.status === 'cancel_requested' ? 'Cancelling' : 'Running');
+                openEventStream(active.run_id, 0);
+            }
+        } catch (_) {
+            setBanner('Could not check for an active soc-agent run.', true);
+        }
+    }
+
+    form.addEventListener('submit', startRun);
+    cancelButton.addEventListener('click', cancelRun);
+    textarea.addEventListener('input', updateCharacterCount);
+    contextInput.addEventListener('input', updateContextChip);
+    textarea.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            form.requestSubmit();
+        }
+    });
+    scrollButton.addEventListener('click', () => scrollToLatest(true));
+    document.querySelectorAll('[data-prompt]').forEach(button => {
+        button.addEventListener('click', () => {
+            textarea.value = button.dataset.prompt || '';
+            updateCharacterCount();
+            textarea.focus();
+        });
+    });
+    toggleActivity.addEventListener('click', () => {
+        const collapsed = workspace.classList.toggle('activity-collapsed');
+        toggleActivity.setAttribute('aria-expanded', String(!collapsed));
+        toggleActivity.textContent = collapsed ? 'Expand' : 'Collapse';
+    });
+
+    updateCharacterCount();
+    updateContextChip();
+    scrollToLatest(true);
+    resumeActiveRun();
+})();
+</script>

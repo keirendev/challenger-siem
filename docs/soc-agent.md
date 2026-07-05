@@ -2,7 +2,7 @@
 
 `soc-agent` is the SIEM-aware SOC analyst and detection-engineering chat workspace in Challenger SIEM.
 
-The current implementation is a safe local provider/tool harness with a persistent web chat UI and optional ChatGPT/OpenAI-backed provider paths. ChatGPT subscription OAuth is the primary external setup path: Pi `openai-codex` credentials can call the ChatGPT Codex Responses backend used for subscription/Codex model access, while dedicated server-side OAuth/API-key credentials can call the OpenAI API Chat Completions path when they grant the required API audience and model-invocation scope. Server-side API keys and generic delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side credentials configured outside source control. It does **not** automate ChatGPT web login, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
+The current implementation is a safe local provider/tool harness with a persistent live web chat UI and optional ChatGPT/OpenAI-backed provider paths. ChatGPT subscription OAuth is the primary external setup path: Pi `openai-codex` credentials can call the ChatGPT Codex Responses backend used for subscription/Codex model access, while dedicated server-side OAuth/API-key credentials can call the OpenAI API Chat Completions path when they grant the required API audience and model-invocation scope. Server-side API keys and generic delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, streams live run/tool/progress events to the authenticated browser workspace, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side credentials configured outside source control. It does **not** automate ChatGPT web login, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
 
 The original planning record is archived at `docs/archive/soc-agent-planning-record-implemented.md`.
 
@@ -10,7 +10,11 @@ The original planning record is archived at `docs/archive/soc-agent-planning-rec
 
 Web:
 
-- `/soc-agent` - authenticated chat workspace behind the existing operator session cookie.
+- `/soc-agent` - authenticated live chat workspace behind the existing operator session cookie.
+- `POST /soc-agent/live/runs` - same-origin browser endpoint that starts a live run after persisting the operator message.
+- `GET /soc-agent/live/runs/{run_id}/events?after=<sequence>` - authenticated `text/event-stream` transport for resume snapshots, run state, tool progress, citations, content deltas, errors, and completion.
+- `POST /soc-agent/live/runs/{run_id}/cancel` - cancels an active server-side turn and records a bounded cancelled assistant message when interrupted.
+- `GET /soc-agent/live/sessions/{session_id}/active` - lets the page recover an active run after refresh without duplicating messages.
 
 Review-token APIs:
 
@@ -25,12 +29,14 @@ Review-token APIs:
 
 The `/soc-agent` page shows:
 
-- provider/model/auth status and whether data may leave the local SIEM;
+- a full-height operator workspace with a left recent-session rail, focused center thread, sticky bottom composer, and collapsible right activity/provider panel;
+- compact provider/model/auth status and whether data may leave the local SIEM, with detailed setup moved into the right panel;
 - ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup clearly marked as advanced alternatives;
 - a prominent official connect/setup action when external ChatGPT/OpenAI auth is required but unavailable;
 - bounded chat history and a message thread with operator and `soc-agent` bubbles;
-- a composer with optional agent context;
-- inline tool activity, row counts, summaries, and citation links back to SIEM review pages;
+- no-reload message sending with Enter-to-send, Shift+Enter-newline, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- live tool activity cards with running/ok states, bounded row counts/summaries, and final citation links back to SIEM review pages;
+- loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.
 
 When an external provider is selected but no supported server-side auth/setup is configured, budget is exhausted, or the provider returns a safe mapped error, the UI fails closed for external calls and uses the configured local fallback only when `SocAgent:FallbackToLocalWhenUnavailable=true`. The page never asks for ChatGPT passwords, browser cookies, API keys, or session tokens.
@@ -215,7 +221,7 @@ Delegated OAuth/OIDC/PKCE connect URLs remain setup-only unless a future officia
 - `inventory_summary` - bounded inventory/audit-policy snapshot summaries.
 - `graph_search` - active investigation graph summaries and citations for operator-managed context.
 
-Responses include tool-run summaries and citations back to review pages such as agent inventory, host coverage, event detail, alerts, and audit-policy drift.
+Responses include tool-run summaries and citations back to review pages such as agent inventory, host coverage, event detail, alerts, and audit-policy drift. During live runs the browser receives typed event-stream frames with monotonic sequence IDs: `resume_snapshot`, `session_created`, `message_created`, `run_started`, `provider_status`, `tool_started`, `tool_finished`, `citation_added`, `content_delta`, `run_cancel_requested`, `run_error`, and `run_complete`. Reconnects pass the last observed sequence so retained events are replayed without duplicating persisted messages.
 
 ## Audit and chat persistence
 
@@ -258,7 +264,7 @@ Future mutating workflows must remain proposal-first and require explicit author
 
 ## Future enhancements
 
-- Streaming support for external provider responses.
+- External-provider token-by-token streaming when provider SDK support and persistence semantics are ready.
 - Timeline/entity pivot tools.
 - Detection draft, backtest, and saved proposal artifacts.
 - Approval UX for any future mutating tools.

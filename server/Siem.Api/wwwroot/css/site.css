@@ -689,6 +689,243 @@ pre,
     position: sticky;
 }
 
+.soc-agent-titlebar {
+    align-items: center;
+}
+
+.soc-agent-title-actions,
+.rail-header,
+.thread-header,
+.activity-panel-header,
+.composer-context-row,
+.composer-actions,
+.tool-card-header,
+.run-state {
+    align-items: center;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.soc-agent-title-actions,
+.run-state {
+    justify-content: flex-end;
+}
+
+.live-alert[hidden],
+.connection-banner[hidden],
+.chat-empty[hidden] {
+    display: none;
+}
+
+.soc-agent-workspace {
+    align-items: stretch;
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(260px, 340px);
+    min-height: calc(100vh - 11rem);
+}
+
+.soc-agent-rail,
+.soc-agent-activity,
+.live-thread {
+    min-height: 0;
+}
+
+.soc-agent-rail,
+.soc-agent-activity {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    max-height: calc(100vh - 8rem);
+    overflow: auto;
+    position: sticky;
+    top: 5.25rem;
+}
+
+.rail-header,
+.activity-panel-header,
+.thread-header,
+.composer-context-row {
+    justify-content: space-between;
+}
+
+.session-list,
+.live-message-list,
+.activity-list,
+.suggested-prompts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.session-list {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.session-link {
+    display: grid;
+    gap: 0.22rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 0.72rem;
+    text-decoration: none;
+}
+
+.session-link:hover,
+.session-link.active-session {
+    border-color: rgb(118 165 255 / 0.34);
+    background: rgb(79 140 255 / 0.12);
+    color: #fff;
+}
+
+.soc-agent-chat {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.live-thread {
+    display: flex;
+    flex-direction: column;
+    height: min(74vh, 52rem);
+    padding: 0;
+    overflow: hidden;
+}
+
+.thread-header,
+.connection-banner {
+    border-bottom: 1px solid var(--line);
+    padding: var(--space-4) var(--space-5);
+}
+
+.connection-banner {
+    background: rgb(56 189 248 / 0.12);
+    color: #bae6fd;
+}
+
+.connection-banner.error {
+    background: rgb(127 29 29 / 0.34);
+    color: #fecdd3;
+}
+
+.thread-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-5);
+    scroll-behavior: smooth;
+}
+
+.live-message-list {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.message-bubble.pending {
+    border-style: dashed;
+}
+
+.message-bubble.pending .message-box::after {
+    content: "▌";
+    color: var(--brand-strong);
+}
+
+.suggested-prompts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
+    margin-top: var(--space-4);
+}
+
+.live-composer {
+    z-index: 2;
+}
+
+.composer-grid {
+    align-items: end;
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: minmax(180px, 1fr) auto;
+}
+
+.composer-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.compact-provider,
+.activity-feed,
+.provider-setup-inline {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgb(8 20 38 / 0.42);
+    padding: var(--space-4);
+}
+
+.compact-provider h3,
+.activity-feed h3 {
+    margin-top: 0;
+}
+
+.provider-details summary,
+.provider-setup-inline summary {
+    cursor: pointer;
+    font-weight: 850;
+}
+
+.activity-list,
+.tool-card-grid {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.tool-card-grid {
+    margin-top: var(--space-4);
+}
+
+.activity-card,
+.tool-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgb(8 20 38 / 0.72);
+    padding: var(--space-3);
+}
+
+.activity-card.running,
+.tool-card.running {
+    border-color: rgb(251 191 36 / 0.42);
+}
+
+.activity-card.complete,
+.tool-card.complete {
+    border-color: rgb(52 211 153 / 0.34);
+}
+
+.activity-card p,
+.tool-card p {
+    margin-bottom: 0;
+}
+
+.activity-collapsed {
+    grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(3.25rem, 4rem);
+}
+
+.activity-collapsed .soc-agent-activity > :not(.activity-panel-header) {
+    display: none;
+}
+
+.activity-collapsed .soc-agent-activity {
+    overflow: hidden;
+}
+
+.danger-text {
+    color: var(--danger);
+    font-weight: 850;
+}
+
 .graph-node-grid {
     display: grid;
     gap: var(--space-4);
@@ -729,7 +966,23 @@ pre,
     }
 
     .detail-grid,
-    .chat-layout {
+    .chat-layout,
+    .soc-agent-workspace,
+    .activity-collapsed {
+        grid-template-columns: 1fr;
+    }
+
+    .soc-agent-rail,
+    .soc-agent-activity {
+        max-height: none;
+        position: static;
+    }
+
+    .live-thread {
+        height: 68vh;
+    }
+
+    .composer-grid {
         grid-template-columns: 1fr;
     }
 

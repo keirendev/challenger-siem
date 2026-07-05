@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -241,6 +242,86 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task SocAgentLiveRunStreamsProgressAndPersistsConversation()
+    {
+        var connectionString = database.RequireConnectionString();
+        using var factory = CreateFactory(connectionString);
+        using var webClient = await CreateAuthenticatedWebClientAsync(factory);
+        using var reviewClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var start = await PostJsonAsync<SocAgentLiveRunStartResponse>(webClient, "/soc-agent/live/runs", new SocAgentLiveRunStartRequest
+        {
+            Message = "Summarize current SIEM posture from live mode."
+        });
+
+        Assert.NotEqual(Guid.Empty, start.RunId);
+        Assert.NotEqual(Guid.Empty, start.Session.SessionId);
+        Assert.Equal("operator", start.UserMessage.Role);
+
+        using var streamResponse = await webClient.GetAsync($"/soc-agent/live/runs/{start.RunId}/events?after=0");
+        streamResponse.EnsureSuccessStatusCode();
+        var stream = await streamResponse.Content.ReadAsStringAsync(CancellationToken.None);
+        var events = ParseServerSentEvents(stream);
+
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_started");
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "tool_started");
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "tool_finished");
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "content_delta");
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_complete");
+        Assert.True(events.Where(item => item.GetProperty("type").GetString() != "resume_snapshot").Select(item => item.GetProperty("sequence").GetInt64()).SequenceEqual(
+            events.Where(item => item.GetProperty("type").GetString() != "resume_snapshot").Select(item => item.GetProperty("sequence").GetInt64()).OrderBy(item => item)));
+
+        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
+        Assert.Equal(start.Session.SessionId, detail.Session.SessionId);
+        Assert.Single(detail.Messages, message => message.Role == "operator");
+        Assert.Single(detail.Messages, message => message.Role == "soc_agent");
+        Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.ToolRuns.Count > 0);
+    }
+
+    [PostgresFact]
+    public async Task SocAgentLiveRunCancelRecordsCancelledMessage()
+    {
+        var connectionString = database.RequireConnectionString();
+        var slowProvider = new SlowSocAgentModelProvider();
+        using var factory = CreateFactory(
+            connectionString,
+            new Dictionary<string, string?>
+            {
+                ["SocAgent:Provider"] = "OpenAI",
+                ["SocAgent:ProviderDisplayName"] = "OpenAI ChatGPT",
+                ["SocAgent:AuthMode"] = "ApiKey",
+                ["SocAgent:Model"] = "gpt-test",
+                ["SocAgent:ExternalCallsEnabled"] = "true",
+                ["SocAgent:OpenAiApiKey"] = "fake-openai-api-key-for-tests"
+            },
+            services =>
+            {
+                services.RemoveAll<ISocAgentModelProvider>();
+                services.AddSingleton<ISocAgentModelProvider>(slowProvider);
+            });
+        using var webClient = await CreateAuthenticatedWebClientAsync(factory);
+        using var reviewClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var start = await PostJsonAsync<SocAgentLiveRunStartResponse>(webClient, "/soc-agent/live/runs", new SocAgentLiveRunStartRequest
+        {
+            Message = "Start an external provider turn that will be cancelled."
+        });
+
+        var cancel = await PostJsonAsync<SocAgentLiveRunCancelResponse>(webClient, $"/soc-agent/live/runs/{start.RunId}/cancel", new { });
+        Assert.Equal(start.RunId, cancel.RunId);
+        Assert.True(cancel.Cancelled || cancel.Status is "cancel_requested" or "cancelled");
+
+        using var streamResponse = await webClient.GetAsync($"/soc-agent/live/runs/{start.RunId}/events?after=0");
+        streamResponse.EnsureSuccessStatusCode();
+        var events = ParseServerSentEvents(await streamResponse.Content.ReadAsStringAsync(CancellationToken.None));
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_cancel_requested");
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_complete" && item.GetProperty("data").GetProperty("status").GetString() == "cancelled");
+
+        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
+        Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.ErrorCode == "cancelled");
+    }
+
+    [PostgresFact]
     public async Task SocAgentChatUsesConfiguredExternalProviderWhenConnected()
     {
         var connectionString = database.RequireConnectionString();
@@ -383,6 +464,30 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         });
     }
 
+    private static async Task<HttpClient> CreateAuthenticatedWebClientAsync(WebApplicationFactory<Program> factory)
+    {
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = true
+        });
+        var loginHtml = await client.GetStringAsync("/login", CancellationToken.None);
+        var tokenMatch = Regex.Match(loginHtml, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"", RegexOptions.CultureInvariant);
+        if (!tokenMatch.Success)
+        {
+            throw new InvalidOperationException("login page did not include an antiforgery token.");
+        }
+
+        using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = WebUtility.HtmlDecode(tokenMatch.Groups[1].Value),
+            ["ReviewToken"] = ReviewToken,
+            ["ReturnUrl"] = "/"
+        }), CancellationToken.None);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        return client;
+    }
+
     private static async Task<string> RegisterAsync(HttpClient client, string agentId, string hostname, string agentVersion)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/register")
@@ -440,6 +545,14 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         };
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
         using var response = await client.SendAsync(request, CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
+        return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task<T> PostJsonAsync<T>(HttpClient client, string path, object body)
+    {
+        using var response = await client.PostAsJsonAsync(path, body, JsonOptions.Default, CancellationToken.None);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
@@ -565,6 +678,27 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         }
     }
 
+    private static IReadOnlyList<JsonElement> ParseServerSentEvents(string stream)
+    {
+        var events = new List<JsonElement>();
+        var blocks = stream.Replace("\r\n", "\n", StringComparison.Ordinal).Split("\n\n", StringSplitOptions.RemoveEmptyEntries);
+        foreach (var block in blocks)
+        {
+            var dataLines = block.Split('\n')
+                .Where(line => line.StartsWith("data: ", StringComparison.Ordinal))
+                .Select(line => line[6..]);
+            var data = string.Join("\n", dataLines).Trim();
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                continue;
+            }
+
+            events.Add(JsonDocument.Parse(data).RootElement.Clone());
+        }
+
+        return events;
+    }
+
     private sealed class FakeSocAgentModelProvider(string answer) : ISocAgentModelProvider
     {
         public SocAgentModelProviderRequest? LastRequest { get; private set; }
@@ -573,6 +707,15 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         {
             LastRequest = request;
             return Task.FromResult(new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, answer));
+        }
+    }
+
+    private sealed class SlowSocAgentModelProvider : ISocAgentModelProvider
+    {
+        public async Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+            return new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, "This synthetic response should be cancelled before completion.");
         }
     }
 

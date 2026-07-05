@@ -258,6 +258,17 @@ Content-Type: application/json
 
 Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
+Same-origin web live transport (outside `/api/v1`, authenticated by the existing operator session cookie rather than review tokens in URLs or browser storage):
+
+```http
+POST /soc-agent/live/runs
+GET /soc-agent/live/runs/<run-id>/events?after=<sequence>
+POST /soc-agent/live/runs/<run-id>/cancel
+GET /soc-agent/live/sessions/<session-id>/active
+```
+
+`POST /soc-agent/live/runs` persists the operator message, starts or continues a bounded chat session, and returns `run_id`, `session`, `user_message`, `provider_status`, and `next_sequence`. The event stream is `text/event-stream` with monotonic `sequence` IDs plus typed events including `resume_snapshot`, `session_created`, `message_created`, `run_started`, `provider_status`, `tool_started`, `tool_finished`, `citation_added`, `content_delta`, `run_cancel_requested`, `run_error`, and `run_complete`. Reconnecting with `after=<sequence>` replays only newer retained events; refreshing the page can also query the active-run endpoint for the selected session. Cancellation requests stop the active turn through server-side cancellation and persist a bounded assistant cancellation message when interrupted.
+
 ## Alerts and detections
 
 ```http

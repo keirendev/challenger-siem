@@ -67,7 +67,7 @@ The graph list and detail screenshots use a synthetic operator-managed graph wit
 
 ### soc-agent workspace
 
-The `soc-agent` screenshot shows local provider status and a synthetic agent context. Do not use real prompts or responses in public screenshots.
+The `soc-agent` screenshot should show the live workspace layout with local provider status, a synthetic agent context, and sanitized tool/activity panels. Do not use real prompts or responses in public screenshots.
 
 ![soc-agent workspace with local provider status](assets/web-console/soc-agent.png)
 
@@ -114,7 +114,7 @@ The gallery was validated with a headless browser against the real redesigned ap
 - `/events` filtered search and `/events/detail`.
 - `/alerts` alert skeleton.
 - `/graphs` and `/graphs/detail` with a synthetic graph.
-- `/soc-agent`, `/audit-policy`, and `/about`.
+- `/soc-agent` live workspace, `/audit-policy`, and `/about`.
 - Logout and unauthenticated redirect/denial behavior.
 - Responsive-width smoke coverage, visible focus behavior, active navigation state, and lightweight CSS/page budget checks.
 

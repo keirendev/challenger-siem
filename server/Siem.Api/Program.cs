@@ -59,6 +59,8 @@ builder.Services.AddHttpClient<SocAgentSubscriptionOAuthConnectService>((service
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
 });
 builder.Services.AddScoped<SocAgentService>();
+builder.Services.AddSingleton<SocAgentLiveRunRegistry>();
+builder.Services.AddScoped<SocAgentLiveRunCoordinator>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<InvestigationGraphRepository>();
@@ -601,6 +603,84 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
     }
 });
 
+app.MapPost("/soc-agent/live/runs", async Task<IResult> (
+    SocAgentLiveRunStartRequest request,
+    SocAgentLiveRunCoordinator liveRuns,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > 4000)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["message"] = new[] { "Message is required and must be 4000 characters or less." }
+        });
+    }
+
+    try
+    {
+        return Results.Ok(await liveRuns.StartRunAsync(request, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = "run_already_active", message = ex.Message });
+    }
+}).RequireAuthorization();
+
+app.MapGet("/soc-agent/live/sessions/{sessionId:guid}/active", (
+    Guid sessionId,
+    SocAgentLiveRunCoordinator liveRuns) => Results.Ok(liveRuns.GetActiveRun(sessionId)))
+    .RequireAuthorization();
+
+app.MapPost("/soc-agent/live/runs/{runId:guid}/cancel", (
+    Guid runId,
+    SocAgentLiveRunCoordinator liveRuns) =>
+{
+    var result = liveRuns.CancelRun(runId);
+    return result is null ? Results.NotFound() : Results.Ok(result);
+}).RequireAuthorization();
+
+app.MapGet("/soc-agent/live/runs/{runId:guid}/events", async Task<IResult> (
+    Guid runId,
+    HttpContext context,
+    SocAgentLiveRunRegistry liveRuns,
+    CancellationToken cancellationToken) =>
+{
+    if (!liveRuns.TryGetRun(runId, out var state))
+    {
+        return Results.NotFound();
+    }
+
+    var after = ParseLongOrDefault(context.Request.Query["after"].FirstOrDefault(), 0);
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Connection = "keep-alive";
+    context.Response.ContentType = "text/event-stream; charset=utf-8";
+
+    var snapshot = new SocAgentLiveEvent(
+        state.LastSequence,
+        "resume_snapshot",
+        state.RunId,
+        state.SessionId,
+        DateTimeOffset.UtcNow,
+        new Dictionary<string, object?>
+        {
+            ["status"] = state.Status,
+            ["last_sequence"] = state.LastSequence,
+            ["session_id"] = state.SessionId
+        });
+    await WriteSocAgentLiveEventAsync(context, snapshot, cancellationToken);
+
+    await foreach (var liveEvent in state.ReadEventsAsync(after, cancellationToken))
+    {
+        await WriteSocAgentLiveEventAsync(context, liveEvent, cancellationToken);
+    }
+
+    return Results.Empty;
+}).RequireAuthorization();
+
 app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionOAuthConnectService connect) =>
 {
     try
@@ -652,6 +732,29 @@ app.Run();
 static int ParseIntOrDefault(string? value, int fallback)
 {
     return int.TryParse(value, out var parsed) ? parsed : fallback;
+}
+
+static long ParseLongOrDefault(string? value, long fallback)
+{
+    return long.TryParse(value, out var parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+static async Task WriteSocAgentLiveEventAsync(HttpContext context, SocAgentLiveEvent liveEvent, CancellationToken cancellationToken)
+{
+    await context.Response.WriteAsync($"id: {liveEvent.Sequence}\n", cancellationToken);
+    await context.Response.WriteAsync($"event: {liveEvent.Type}\n", cancellationToken);
+    await context.Response.WriteAsync("data: ", cancellationToken);
+    await JsonSerializer.SerializeAsync(
+        context.Response.Body,
+        liveEvent,
+        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower
+        },
+        cancellationToken);
+    await context.Response.WriteAsync("\n\n", cancellationToken);
+    await context.Response.Body.FlushAsync(cancellationToken);
 }
 
 public partial class Program;
