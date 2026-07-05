@@ -7,6 +7,7 @@ namespace Challenger.Siem.Api.Pages;
 
 public sealed class SocAgentModel(
     SocAgentService socAgent,
+    SocAgentSubscriptionOAuthConnectService subscriptionOAuthConnect,
     ILogger<SocAgentModel> logger) : PageModel
 {
     [BindProperty(SupportsGet = true, Name = "session_id")]
@@ -14,6 +15,12 @@ public sealed class SocAgentModel(
 
     [BindProperty(SupportsGet = true, Name = "agent_id")]
     public string? ContextAgentId { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "oauth_status")]
+    public string? OAuthStatus { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "oauth_error")]
+    public string? OAuthError { get; set; }
 
     [BindProperty]
     public string Message { get; set; } = string.Empty;
@@ -32,11 +39,29 @@ public sealed class SocAgentModel(
 
     public IReadOnlyList<SocAgentChatMessageDto> Messages { get; private set; } = Array.Empty<SocAgentChatMessageDto>();
 
+    public string? NoticeMessage { get; private set; }
+
     public bool HasCurrentSession => CurrentSession is not null;
+
+    public bool CanStartSubscriptionOAuthConnect => subscriptionOAuthConnect.CanStartInteractiveConnect();
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         await LoadPageAsync(cancellationToken);
+    }
+
+    public IActionResult OnPostConnectSubscriptionOAuth()
+    {
+        try
+        {
+            var authorizationUri = subscriptionOAuthConnect.CreateAuthorizationUri(HttpContext, "/soc-agent");
+            return Redirect(authorizationUri.ToString());
+        }
+        catch (SocAgentSubscriptionOAuthConnectException ex)
+        {
+            ErrorMessage = ex.OperatorSafeMessage;
+            return RedirectToPage();
+        }
     }
 
     public async Task<IActionResult> OnPostSendAsync(CancellationToken cancellationToken)
@@ -104,6 +129,15 @@ public sealed class SocAgentModel(
 
     private async Task LoadPageAsync(CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(OAuthError))
+        {
+            ErrorMessage = OAuthError.Length <= 500 ? OAuthError : OAuthError[..500];
+        }
+        else if (!string.IsNullOrWhiteSpace(OAuthStatus))
+        {
+            NoticeMessage = OAuthStatus.Length <= 500 ? OAuthStatus : OAuthStatus[..500];
+        }
+
         ProviderStatus = socAgent.GetProviderStatus();
         Sessions = await socAgent.GetRecentSessionsAsync(cancellationToken);
         if (SessionId.HasValue)

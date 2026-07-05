@@ -83,8 +83,20 @@ Optional configuration values under `Review` tune dashboard and default search b
     "AuthFileProviderKey": "openai",
     "SubscriptionAuthFilePath": null,
     "SubscriptionAuthFileProviderKey": "chatgpt",
+    "SubscriptionUsePiAuthFile": true,
+    "SubscriptionPiAuthFilePath": "~/.pi/agent/auth.json",
+    "SubscriptionPiAuthFileProviderKey": "openai-codex",
     "SubscriptionRequiredScopes": "model.request",
     "SubscriptionTokenEndpoint": "https://auth.openai.com/oauth/token",
+    "SubscriptionConnectEnabled": false,
+    "SubscriptionAuthorizationUrl": "https://auth.openai.com/oauth/authorize",
+    "SubscriptionRedirectPath": "/soc-agent/oauth/callback",
+    "SubscriptionRedirectUri": null,
+    "SubscriptionClientId": null,
+    "SubscriptionClientSecret": null,
+    "SubscriptionOAuthAudience": "https://api.openai.com/v1",
+    "SubscriptionIssuer": "https://auth.openai.com/",
+    "SubscriptionStateLifetimeMinutes": 10,
     "AuthFileExpirySkewSeconds": 300,
     "OpenAiBaseUrl": "https://api.openai.com/v1",
     "OpenAiChatCompletionsPath": "chat/completions",
@@ -98,7 +110,7 @@ Optional configuration values under `Review` tune dashboard and default search b
 }
 ```
 
-`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default while presenting ChatGPT subscription OAuth as the primary external setup path and API-key/delegated bearer modes as advanced alternatives. When an external provider mode is explicitly enabled with server-side credentials, the status card states that bounded/redacted tool context may leave the local SIEM, shows only safe credential-source/expiry/refresh/scope/entitlement metadata, and never exposes provider secrets, account identifiers, raw auth files, or full auth-file paths to the browser.
+`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default while presenting ChatGPT subscription OAuth as the primary external setup path and API-key/delegated bearer modes as advanced alternatives. Subscription OAuth can reuse Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login`, or use a dedicated ignored/secret-managed credential file. When interactive subscription OAuth connect is enabled, the page shows a server-side connect/reconnect button that starts an official authorization-code/PKCE flow and stores tokens only in the configured ignored/secret-managed auth file. When an external provider mode is explicitly enabled with server-side credentials, the status card states that bounded/redacted tool context may leave the local SIEM, shows only safe credential-source/expiry/refresh/scope/entitlement metadata, and never exposes provider secrets, account identifiers, raw auth files, or full auth-file paths to the browser.
 
 ## Local smoke path
 

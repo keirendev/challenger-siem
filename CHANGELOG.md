@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added Pi agent auth-file reuse for `soc-agent` ChatGPT subscription OAuth mode so a successful Pi `/login` can supply the server-side `~/.pi/agent/auth.json` `openai-codex` credential without creating a separate auth file.
+- Added a server-mediated ChatGPT subscription OAuth connect flow for `soc-agent` so authenticated operators can start official authorization-code/PKCE setup from the web console while credentials stay server-side.
 - Added ChatGPT subscription OAuth as the primary external `soc-agent` provider setup path with safe auth-file parsing, official audience/scope/endpoint validation, near-expiry refresh, additive status metadata, web setup guidance, docs, and synthetic test coverage.
 - Added opt-in delegated auth-file support for `soc-agent` OpenAI provider mode with safe local/secret path validation, official API audience checks, token-expiry status metadata, provider credential selection, redacted web/API status, docs, and synthetic test coverage.
 - Added an optional official OpenAI Chat Completions-backed `soc-agent` provider path with server-side credential handling, safe status/error mapping, bounded redacted prompts, local fallback, and web/API documentation.

@@ -21,8 +21,20 @@ public sealed class SocAgentOptions
     public string AuthFileProviderKey { get; set; } = "openai";
     public string? SubscriptionAuthFilePath { get; set; }
     public string SubscriptionAuthFileProviderKey { get; set; } = "chatgpt";
+    public bool SubscriptionUsePiAuthFile { get; set; } = true;
+    public string SubscriptionPiAuthFilePath { get; set; } = "~/.pi/agent/auth.json";
+    public string SubscriptionPiAuthFileProviderKey { get; set; } = "openai-codex";
     public string SubscriptionRequiredScopes { get; set; } = "model.request";
     public string? SubscriptionTokenEndpoint { get; set; } = "https://auth.openai.com/oauth/token";
+    public bool SubscriptionConnectEnabled { get; set; }
+    public string? SubscriptionAuthorizationUrl { get; set; } = "https://auth.openai.com/oauth/authorize";
+    public string SubscriptionRedirectPath { get; set; } = "/soc-agent/oauth/callback";
+    public string? SubscriptionRedirectUri { get; set; }
+    public string? SubscriptionClientId { get; set; }
+    public string? SubscriptionClientSecret { get; set; }
+    public string SubscriptionOAuthAudience { get; set; } = "https://api.openai.com/v1";
+    public string SubscriptionIssuer { get; set; } = "https://auth.openai.com/";
+    public int SubscriptionStateLifetimeMinutes { get; set; } = 10;
     public int AuthFileExpirySkewSeconds { get; set; } = 300;
     public string? OpenAiApiKey { get; set; }
     public string OpenAiBaseUrl { get; set; } = "https://api.openai.com/v1";
