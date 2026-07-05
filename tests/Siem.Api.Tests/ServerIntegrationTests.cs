@@ -106,6 +106,23 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await AssertDatabaseStateAsync(dataSource, agentId, invalidBatchId);
     }
 
+    [Fact]
+    public async Task PlatformCapabilitiesEndpointRequiresReviewTokenAndReturnsSpecGapCatalog()
+    {
+        using var factory = CreateFactory("Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=test");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        using (var unauth = await client.GetAsync("/api/v1/platform/capabilities"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+        }
+
+        var response = await GetJsonWithReviewTokenAsync<PlatformCapabilitiesResponse>(client, "/api/v1/platform/capabilities");
+        Assert.Equal(19, response.Capabilities.Count);
+        Assert.Contains(response.Capabilities, item => item.CapabilityId == "SPEC-GAP-001");
+        Assert.Contains(response.Capabilities, item => item.CapabilityId == "SPEC-GAP-019");
+    }
+
     [PostgresFact]
     public async Task InvestigationGraphApisPersistNodesEdgesProposalsAndEnforceReviewToken()
     {
