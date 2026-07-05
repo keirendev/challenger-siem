@@ -17,16 +17,37 @@ public sealed class SocAgentWorkspaceUiTests
     }
 
     [Fact]
-    public void ScriptUsesExplicitAutoFollowStateAndSendShortcuts()
+    public void ScriptUsesDocumentAutoFollowStateAndSendShortcuts()
     {
         var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
 
         Assert.Contains("let autoFollow = true;", page, StringComparison.Ordinal);
+        Assert.Contains("function documentScrollHeight()", page, StringComparison.Ordinal);
+        Assert.Contains("return documentScrollHeight() - pageScrollOffset() - window.innerHeight <= 128;", page, StringComparison.Ordinal);
+        Assert.Contains("window.scrollTo({ top: documentScrollHeight(), behavior: force ? 'smooth' : 'auto' });", page, StringComparison.Ordinal);
         Assert.Contains("function setAutoFollow(shouldFollow)", page, StringComparison.Ordinal);
-        Assert.Contains("threadScroll.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });", page, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("threadScroll.addEventListener('scroll'", page, StringComparison.Ordinal);
         Assert.Contains("scrollButton.addEventListener('click', () => scrollToLatest(true));", page, StringComparison.Ordinal);
         Assert.Contains("const explicitSendShortcut = event.ctrlKey || event.metaKey;", page, StringComparison.Ordinal);
         Assert.Contains("if (!running && !sendButton.disabled)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkspaceCssUsesDocumentScrollInsteadOfNestedVerticalScrollbars()
+    {
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
+
+        Assert.Contains("id=\"soc-agent-thread-scroll\"", page, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-rail,\n.soc-agent-activity {\n    align-self: start;", css, StringComparison.Ordinal);
+        Assert.Contains(".live-thread {\n    display: grid;", css, StringComparison.Ordinal);
+        Assert.Contains(".thread-scroll {\n    overflow: visible;", css, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-workspace .message-box {\n    max-height: none;\n    overflow: visible;", css, StringComparison.Ordinal);
+        Assert.DoesNotContain("max-height: calc(100vh - 8rem);", css, StringComparison.Ordinal);
+        Assert.DoesNotContain("height: min(74vh, 52rem);", css, StringComparison.Ordinal);
+        Assert.DoesNotContain("height: 68vh;", css, StringComparison.Ordinal);
+        Assert.DoesNotContain(".thread-scroll {\n    flex: 1;\n    min-height: 0;\n    overflow-y: auto;", css, StringComparison.Ordinal);
     }
 
     [Fact]

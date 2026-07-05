@@ -29,12 +29,12 @@ Review-token APIs:
 
 The `/soc-agent` page shows:
 
-- a full-height operator workspace with a left recent-session rail, focused center thread, sticky bottom composer, and collapsible right activity/provider panel;
-- compact provider/model/auth status and whether data may leave the local SIEM, with detailed setup moved into the right panel;
+- a single-page operator workspace where the browser is the primary vertical scroll surface, with a left recent-session rail, center thread, sticky page-level composer, and collapsible right activity/provider panel;
+- compact provider/model/auth status and whether data may leave the local SIEM, with detailed setup moved into the right panel without independent panel scrollbars;
 - ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup clearly marked as advanced alternatives;
 - a prominent official connect/setup action when external ChatGPT/OpenAI auth is required but unavailable;
 - bounded chat history and a message thread with operator and `soc-agent` bubbles;
-- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, a non-editable agent-context chip, user-controlled auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, a non-editable agent-context chip, document-level user-controlled auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
 - live tool activity cards with running/ok states, bounded row counts/summaries, and final citation links back to SIEM review pages;
 - loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.

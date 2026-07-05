@@ -288,7 +288,6 @@
     const cancelButton = document.getElementById('soc-agent-cancel-button');
     const messageList = document.getElementById('soc-agent-message-list');
     const emptyState = document.getElementById('soc-agent-empty');
-    const threadScroll = document.getElementById('soc-agent-thread-scroll');
     const scrollButton = document.getElementById('soc-agent-scroll-bottom');
     const runState = document.getElementById('soc-agent-run-state');
     const alertBox = document.getElementById('soc-agent-live-alert');
@@ -305,6 +304,7 @@
     const providerMessage = document.getElementById('soc-agent-provider-message');
     const toggleActivity = document.getElementById('soc-agent-toggle-activity');
     const workspace = document.querySelector('.soc-agent-workspace');
+    const documentElement = document.documentElement;
     const maxLength = Number(root.dataset.maxMessageLength || '4000');
     let currentSessionId = root.dataset.sessionId || '';
     let currentRunId = null;
@@ -359,8 +359,16 @@
         contextChip.textContent = value ? `Agent context: ${value}` : 'Global SIEM context';
     }
 
+    function documentScrollHeight() {
+        return Math.max(documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    }
+
+    function pageScrollOffset() {
+        return window.scrollY || documentElement.scrollTop || 0;
+    }
+
     function isNearBottom() {
-        return threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight <= 96;
+        return documentScrollHeight() - pageScrollOffset() - window.innerHeight <= 128;
     }
 
     function updateScrollControl() {
@@ -379,14 +387,14 @@
     function scrollToLatest(force = false) {
         if (force) {
             autoFollow = true;
-            threadScroll.scrollTop = threadScroll.scrollHeight;
-            updateScrollControl();
+        }
+
+        if (force || autoFollow) {
+            window.scrollTo({ top: documentScrollHeight(), behavior: force ? 'smooth' : 'auto' });
+            window.requestAnimationFrame(updateScrollControl);
             return;
         }
 
-        if (autoFollow) {
-            threadScroll.scrollTop = threadScroll.scrollHeight;
-        }
         updateScrollControl();
     }
 
@@ -739,7 +747,8 @@
             }
         }
     });
-    threadScroll.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });
+    window.addEventListener('scroll', () => setAutoFollow(isNearBottom()), { passive: true });
+    window.addEventListener('resize', updateScrollControl, { passive: true });
     scrollButton.addEventListener('click', () => scrollToLatest(true));
     document.querySelectorAll('[data-prompt]').forEach(button => {
         button.addEventListener('click', () => {
