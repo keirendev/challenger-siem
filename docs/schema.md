@@ -28,7 +28,7 @@ Implemented in `server/Siem.Api/Database/001_initial.sql`.
 
 ### `agents`
 
-Stores registered endpoints and hashed per-agent API tokens.
+Stores registered endpoints, hashed per-agent API tokens, and lifecycle status. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry. Stale health is computed from `last_seen` rather than stored as a status.
 
 ### `events`
 

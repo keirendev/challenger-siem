@@ -167,6 +167,17 @@ button.secondary {
     color: var(--brand);
 }
 
+button.danger,
+.button.danger {
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
 .table-card {
     overflow-x: auto;
 }
@@ -219,13 +230,23 @@ tr:last-child td {
     color: var(--danger);
 }
 
-.alert {
-    border: 1px solid #fecdca;
+.alert,
+.notice {
     border-radius: 0.75rem;
-    background: #fffbfa;
-    color: var(--danger);
     padding: 0.85rem 1rem;
     margin-bottom: 1rem;
+}
+
+.alert {
+    border: 1px solid #fecdca;
+    background: #fffbfa;
+    color: var(--danger);
+}
+
+.notice {
+    border: 1px solid #abefc6;
+    background: #f6fef9;
+    color: var(--ok);
 }
 
 .empty {
@@ -270,6 +291,28 @@ pre,
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+.cleanup-panel {
+    margin-bottom: 1rem;
+}
+
+.cleanup-form {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.inline-check {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.5rem;
+    font-weight: 600;
+}
+
+.inline-check input {
+    margin-top: 0.25rem;
+    width: auto;
 }
 
 @media (max-width: 700px) {

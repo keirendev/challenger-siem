@@ -19,20 +19,28 @@
 
 <section class="metrics" aria-label="Dashboard metrics">
     <article class="card">
-        <span class="metric-value">@Model.Summary.TotalAgents</span>
-        <span class="metric-label">total agents</span>
+        <span class="metric-value">@Model.Summary.ActiveAgents</span>
+        <span class="metric-label">active agents</span>
     </article>
     <article class="card">
-        <span class="metric-value">@Model.Summary.RecentAgents</span>
-        <span class="metric-label">recent agents</span>
+        <span class="metric-value">@Model.Summary.RecentActiveAgents</span>
+        <span class="metric-label">recent active agents</span>
     </article>
     <article class="card">
-        <span class="metric-value">@Model.Summary.StaleAgents</span>
-        <span class="metric-label">stale agents</span>
+        <span class="metric-value">@Model.Summary.StaleActiveAgents</span>
+        <span class="metric-label">stale active agents</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.RetiredAgents</span>
+        <span class="metric-label">retired agents</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.HistoricalAgents</span>
+        <span class="metric-label">historical registrations</span>
     </article>
     <article class="card">
         <span class="metric-value">@Model.Summary.AgentsWithQueuedEvents</span>
-        <span class="metric-label">agents with queued events</span>
+        <span class="metric-label">active agents with queued events</span>
     </article>
     <article class="card">
         <span class="metric-value">@Model.Summary.RecentEventCount</span>
@@ -47,7 +55,8 @@
 <section class="card">
     <h2>Health interpretation</h2>
     <p>
-        Agents are marked stale when they have not been seen for @Model.StaleAgentMinutes minutes.
-        Non-zero queue depth is taken from the latest heartbeat observation.
+        Active agents are marked stale when they have not been seen for @Model.StaleAgentMinutes minutes.
+        Retired agents are disabled registrations hidden from default active views; their historical events and heartbeat data are preserved.
+        Non-zero queue depth is taken from the latest heartbeat observation for active agents.
     </p>
 </section>

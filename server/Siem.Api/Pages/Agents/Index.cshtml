@@ -2,18 +2,29 @@
 @model Agents.IndexModel
 @{
     ViewData["Title"] = "Agents";
+    var cleanupCandidateCount = Model.CleanupPreview.CandidateCount;
 }
 
 <div class="page-header">
     <div>
         <h1>Agent inventory</h1>
-        <p class="muted">Search endpoints and review latest heartbeat queue health.</p>
+        <p class="muted">Search active endpoints, include retired registrations when needed, and review latest heartbeat queue health.</p>
     </div>
 </div>
 
 @if (Model.ErrorMessage is not null)
 {
     <div class="alert" role="alert">@Model.ErrorMessage</div>
+}
+
+@if (Model.CleanupErrorMessage is not null)
+{
+    <div class="alert" role="alert">@Model.CleanupErrorMessage</div>
+}
+
+@if (Model.CleanupMessage is not null)
+{
+    <div class="notice" role="status">@Model.CleanupMessage</div>
 }
 
 <form method="get" class="card filters">
@@ -24,6 +35,14 @@
     <div class="form-row">
         <label for="agent_id">Agent ID</label>
         <input id="agent_id" name="agent_id" value="@Model.AgentId" />
+    </div>
+    <div class="form-row">
+        <label for="status">Registration status</label>
+        <select id="status" asp-for="Status">
+            <option value="active">Active (default)</option>
+            <option value="disabled">Retired / disabled</option>
+            <option value="all">All registrations</option>
+        </select>
     </div>
     <div class="form-row">
         <label for="health">Health</label>
@@ -39,6 +58,54 @@
         <a class="button secondary" asp-page="/Agents/Index">Clear</a>
     </div>
 </form>
+
+<section class="card cleanup-panel" aria-labelledby="cleanup-title">
+    <h2 id="cleanup-title">Stale-agent cleanup</h2>
+    <p>
+        Cleanup retires stale <strong>active</strong> registrations by setting their status to <code>disabled</code>.
+        It does not delete agent rows, events, heartbeats, source health, inventory snapshots, alerts, or evidence.
+        A re-enrolled endpoint can return to active status through the normal enrollment flow.
+    </p>
+    <dl class="detail-grid">
+        <dt>Stale cutoff</dt>
+        <dd>Last seen more than @Model.StaleAgentMinutes minutes ago</dd>
+        <dt>Eligible active agents</dt>
+        <dd>@cleanupCandidateCount</dd>
+        <dt>Sample candidates</dt>
+        <dd>
+            @if (Model.CleanupPreview.SampleAgentIds.Count == 0)
+            {
+                <span class="muted">None</span>
+            }
+            else
+            {
+                <span>@string.Join(", ", Model.CleanupPreview.SampleAgentIds)</span>
+            }
+        </dd>
+    </dl>
+    <form method="post" asp-page-handler="CleanupStale" class="cleanup-form">
+        <input type="hidden" name="hostname" value="@Model.Hostname" />
+        <input type="hidden" name="agent_id" value="@Model.AgentId" />
+        <input type="hidden" name="health" value="@Model.Health" />
+        <input type="hidden" name="status" value="@Model.Status" />
+        <label class="inline-check">
+            <input type="checkbox" asp-for="ConfirmCleanup" value="true" required />
+            I understand this only retires stale active registrations and preserves telemetry.
+        </label>
+        <div class="actions">
+            @if (cleanupCandidateCount == 0)
+            {
+                <button type="submit" class="danger" disabled>Retire stale active agents</button>
+            }
+            else
+            {
+                <button type="submit" class="danger">Retire stale active agents</button>
+            }
+            <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale" asp-route-status="active">Review stale active agents</a>
+            <a class="button secondary" asp-page="/Agents/Index" asp-route-status="disabled">Review retired agents</a>
+        </div>
+    </form>
+</section>
 
 <section class="table-card">
     @if (Model.Agents.Count == 0)
@@ -91,8 +158,16 @@
                             }
                         </td>
                         <td>
-                            <span class="badge @(agent.IsStale ? "danger" : "ok")">@(agent.IsStale ? "stale" : "recent")</span>
-                            <div class="muted">@agent.Status</div>
+                            @if (string.Equals(agent.Status, "disabled", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="badge danger">retired</span>
+                                <div class="muted">disabled</div>
+                            }
+                            else
+                            {
+                                <span class="badge @(agent.IsStale ? "danger" : "ok")">@(agent.IsStale ? "stale" : "recent")</span>
+                                <div class="muted">active</div>
+                            }
                         </td>
                     </tr>
                 }

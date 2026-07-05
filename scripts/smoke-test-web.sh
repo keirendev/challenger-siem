@@ -153,7 +153,7 @@ missing = [name for name, body in checks.items() if agent_id not in body]
 if missing:
     raise SystemExit(f'web smoke failed; marker missing from: {", ".join(missing)}')
 dashboard = Path('$DASHBOARD_HTML').read_text(encoding='utf-8')
-if 'Dashboard' not in dashboard or 'total agents' not in dashboard:
+if 'Dashboard' not in dashboard or 'active agents' not in dashboard:
     raise SystemExit('web smoke failed; dashboard did not render expected metrics')
 print('Web smoke test passed')
 print(f'agent_id={agent_id}')
