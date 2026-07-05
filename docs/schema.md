@@ -66,7 +66,7 @@ Stores bounded backwards-compatible one-shot `soc-agent` question/answer metadat
 
 ### `soc_agent_sessions` and `soc_agent_messages`
 
-Store bounded chat workspace session metadata and message history, including role, redacted/bounded content, provider/model labels, tool-run summaries, citations, optional context identifiers, and timestamps. These tables must not store provider credentials, browser cookies, unofficial provider tokens, raw provider payloads, or unbounded endpoint telemetry.
+Store bounded chat workspace session metadata and message history, including role, redacted/bounded content, provider/model labels, tool-run summaries, citations, optional context identifiers, and timestamps. `soc_agent_messages.session_id` uses `on delete cascade` so an explicit operator chat-session deletion removes associated messages consistently. Independent one-shot `soc_agent_turns` audit rows are retained by chat-session deletion. These tables must not store provider credentials, browser cookies, unofficial provider tokens, raw provider payloads, or unbounded endpoint telemetry.
 
 ### `alerts` and `alert_evidence`
 

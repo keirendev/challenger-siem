@@ -246,6 +246,7 @@ Chat sessions:
 GET /api/v1/soc-agent/sessions
 POST /api/v1/soc-agent/sessions
 GET /api/v1/soc-agent/sessions/<session-id>
+DELETE /api/v1/soc-agent/sessions/<session-id>
 POST /api/v1/soc-agent/sessions/<session-id>/messages
 Authorization: Bearer <review-token>
 Content-Type: application/json
@@ -256,7 +257,7 @@ Content-Type: application/json
 }
 ```
 
-Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. `DELETE /api/v1/soc-agent/sessions/<session-id>` is a backward-compatible management addition that removes the selected chat session and its `soc_agent_messages` rows through the database cascade, returns `404` when the session is already absent, and returns `409` with `status=run_active` while a live run is active for that session. Bounded one-shot `soc_agent_turns` audit rows are independent and retained. Delete responses are terse metadata only and do not echo message bodies. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
 Same-origin web live transport (outside `/api/v1`, authenticated by the existing operator session cookie rather than review tokens in URLs or browser storage):
 

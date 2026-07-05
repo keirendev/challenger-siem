@@ -242,6 +242,101 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task SocAgentSessionDeleteRequiresReviewTokenAndCascadesMessages()
+    {
+        var connectionString = database.RequireConnectionString();
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        using (var unauth = await client.DeleteAsync($"/api/v1/soc-agent/sessions/{Guid.NewGuid()}"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+        }
+
+        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        {
+            Title = "Synthetic session deletion"
+        });
+        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        {
+            Message = "Create synthetic messages for deletion."
+        });
+        Assert.Equal(session.SessionId, chat.Session.SessionId);
+
+        var deleted = await DeleteJsonWithReviewTokenAsync<SocAgentSessionDeleteResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        Assert.True(deleted.Deleted);
+        Assert.Equal("deleted", deleted.Status);
+        Assert.Equal(session.SessionId, deleted.SessionId);
+        Assert.DoesNotContain("Create synthetic messages", deleted.Message, StringComparison.OrdinalIgnoreCase);
+
+        using (var missingDetail = await SendGetWithReviewTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
+        {
+            Assert.Equal(HttpStatusCode.NotFound, missingDetail.StatusCode);
+        }
+
+        using (var secondDelete = await SendDeleteWithReviewTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
+        {
+            Assert.Equal(HttpStatusCode.NotFound, secondDelete.StatusCode);
+        }
+
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("""
+            select
+                (select count(*) from soc_agent_sessions where session_id = @session_id) as session_count,
+                (select count(*) from soc_agent_messages where session_id = @session_id) as message_count;
+            """);
+        command.Parameters.AddWithValue("session_id", session.SessionId);
+        await using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+        Assert.True(await reader.ReadAsync(CancellationToken.None));
+        Assert.Equal(0L, reader.GetInt64(0));
+        Assert.Equal(0L, reader.GetInt64(1));
+    }
+
+    [PostgresFact]
+    public async Task SocAgentSessionDeleteBlocksActiveRuns()
+    {
+        var connectionString = database.RequireConnectionString();
+        var slowProvider = new SlowSocAgentModelProvider();
+        using var factory = CreateFactory(
+            connectionString,
+            new Dictionary<string, string?>
+            {
+                ["SocAgent:Provider"] = "OpenAI",
+                ["SocAgent:ProviderDisplayName"] = "OpenAI ChatGPT",
+                ["SocAgent:AuthMode"] = "ApiKey",
+                ["SocAgent:Model"] = "gpt-test",
+                ["SocAgent:ExternalCallsEnabled"] = "true",
+                ["SocAgent:OpenAiApiKey"] = "fake-openai-api-key-for-tests"
+            },
+            services =>
+            {
+                services.RemoveAll<ISocAgentModelProvider>();
+                services.AddSingleton<ISocAgentModelProvider>(slowProvider);
+            });
+        using var webClient = await CreateAuthenticatedWebClientAsync(factory);
+        using var reviewClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var start = await PostJsonAsync<SocAgentLiveRunStartResponse>(webClient, "/soc-agent/live/runs", new SocAgentLiveRunStartRequest
+        {
+            Message = "Start a synthetic active run before deletion."
+        });
+
+        using (var blocked = await SendDeleteWithReviewTokenAsync(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}"))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            var body = await blocked.Content.ReadAsStringAsync(CancellationToken.None);
+            Assert.Contains("run_active", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Start a synthetic active run", body, StringComparison.OrdinalIgnoreCase);
+        }
+
+        await PostJsonAsync<SocAgentLiveRunCancelResponse>(webClient, $"/soc-agent/live/runs/{start.RunId}/cancel", new { });
+        using var streamResponse = await webClient.GetAsync($"/soc-agent/live/runs/{start.RunId}/events?after=0");
+        streamResponse.EnsureSuccessStatusCode();
+        var events = ParseServerSentEvents(await streamResponse.Content.ReadAsStringAsync(CancellationToken.None));
+        Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_complete");
+    }
+
+    [PostgresFact]
     public async Task SocAgentLiveRunStreamsProgressAndPersistsConversation()
     {
         var connectionString = database.RequireConnectionString();
@@ -443,7 +538,12 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                     ["ConnectionStrings:SiemDatabase"] = connectionString,
                     ["Auth:EnrollmentToken"] = EnrollmentToken,
                     ["Auth:ReviewToken"] = ReviewToken,
-                    ["Ingestion:MaxEventsPerBatch"] = "500"
+                    ["Ingestion:MaxEventsPerBatch"] = "500",
+                    ["SocAgent:Provider"] = "Local",
+                    ["SocAgent:ProviderDisplayName"] = "Local soc-agent",
+                    ["SocAgent:AuthMode"] = "Local",
+                    ["SocAgent:Model"] = "soc-agent-local-v1",
+                    ["SocAgent:ExternalCallsEnabled"] = "false"
                 };
 
                 if (overrides is not null)
@@ -537,6 +637,13 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
     }
 
+    private static async Task<HttpResponseMessage> SendGetWithReviewTokenAsync(HttpClient client, string path)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        return await client.SendAsync(request, CancellationToken.None);
+    }
+
     private static async Task<T> PostJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path)
@@ -556,6 +663,21 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task<T> DeleteJsonWithReviewTokenAsync<T>(HttpClient client, string path)
+    {
+        using var response = await SendDeleteWithReviewTokenAsync(client, path);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
+        return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
+    }
+
+    private static async Task<HttpResponseMessage> SendDeleteWithReviewTokenAsync(HttpClient client, string path)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Delete, path);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        return await client.SendAsync(request, CancellationToken.None);
     }
 
     private static async Task<T> PutJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)

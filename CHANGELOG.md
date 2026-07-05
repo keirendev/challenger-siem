@@ -4,6 +4,9 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added authenticated `soc-agent` chat-session deletion from the web workspace and v1 review API, with active-run conflict handling and message cascade semantics.
+- Expanded the `/soc-agent` workspace width, widened the conversation column, moved provider setup into compact status/notice surfaces, and kept the right rail focused on live tool activity.
+- Fixed `/soc-agent` auto-follow scrolling to target the active chat thread sentinel instead of jumping to the document bottom on initial page load.
 - Added a local platform lifecycle helper for starting, stopping, restarting, and checking the Challenger SIEM API/web console process without printing secrets.
 - Updated the `/soc-agent` chat workspace to use browser/page-level scrolling instead of nested scroll panels while preserving live send, activity, provider status, and scroll-to-latest behavior.
 - Refined the `/soc-agent` chat workspace with hidden manual agent context, a non-editable context chip, reliable activity-panel collapse/expand controls, user-controlled auto-follow scrolling, and Ctrl/Cmd+Enter send support.

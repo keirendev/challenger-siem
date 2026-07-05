@@ -209,6 +209,21 @@ public sealed record SocAgentSessionDetailResponse
     public SocAgentProviderStatusResponse ProviderStatus { get; init; } = new();
 }
 
+public sealed record SocAgentSessionDeleteResponse
+{
+    [JsonPropertyName("session_id")]
+    public Guid SessionId { get; init; }
+
+    [JsonPropertyName("deleted")]
+    public bool Deleted { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "deleted";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = string.Empty;
+}
+
 public sealed record SocAgentChatRequest
 {
     [JsonPropertyName("message")]

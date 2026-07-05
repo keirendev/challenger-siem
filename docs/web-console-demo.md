@@ -67,9 +67,9 @@ The graph list and detail screenshots use a synthetic operator-managed graph wit
 
 ### soc-agent workspace
 
-The `soc-agent` screenshot should show the live workspace layout with local provider status, a synthetic agent context, and sanitized tool/activity panels. Do not use real prompts or responses in public screenshots.
+The `soc-agent` screenshot should show the widened live workspace layout with the provider status pill, a synthetic agent context, Recent chats controls, and sanitized live tool activity. Do not use real prompts or responses in public screenshots.
 
-![soc-agent workspace with local provider status](assets/web-console/soc-agent.png)
+![soc-agent workspace with local provider status and live tool activity](assets/web-console/soc-agent.png)
 
 ### Audit policy
 
