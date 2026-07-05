@@ -103,11 +103,11 @@ See:
 - `docs/tls.md`
 - `docs/security-hardening-roadmap.md`
 - `docs/windows-host-full-coverage-spec.md`
-- `docs/windows-host-full-coverage-github-issues.md`
 - `docs/windows-l2-validation-runbook.md`
 - `docs/sysmon-l3-validation-runbook.md`
 - `docs/windows-role-packs.md`
 - `docs/release-readiness.md`
+- `docs/archive/README.md`
 - `server/Siem.Api/Database/001_initial.sql`
 - `examples/agent-registration.json`
 - `examples/fake-event-batch.json`

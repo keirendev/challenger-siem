@@ -1,64 +1,37 @@
-# Milestone tracker
+# Milestone status
 
-## Phase 1: Design
+The original MVP milestone checklist has been implemented and archived at `docs/archive/mvp-milestone-tracker-implemented.md`.
 
-- [x] Event schema: `contracts/v1/event-envelope.schema.json`, `shared/Contracts/EventEnvelope.cs`
-- [x] API contract: `docs/api.md`, `contracts/v1/*.schema.json`
-- [x] Database schema: `docs/schema.md`, `server/Siem.Api/Database/001_initial.sql`
-- [x] Agent config format: `docs/agent-config.md`
-- [x] Auth approach: `docs/auth.md`
-- [x] Open-source/custom dependency policy: `docs/dependencies.md`
+## Implemented baseline through 0.5.0
 
-## Phase 2: Server MVP
+- Windows endpoint agent with configurable Windows Event Log collection, deterministic event IDs, durable SQLite queueing, bounded retry/backoff, poison-event handling, channel state, first-run enrollment, DPAPI-protected persisted token support, source-health probing, queue SLO metrics, configuration/binary hash telemetry, and L2/L3 source manifests.
+- ASP.NET Core API with agent registration, heartbeat, event ingestion, deduplication, source-health persistence, inventory snapshots, alert/evidence storage, detection rule metadata, expanded event search, and `soc-agent` ask endpoint.
+- PostgreSQL schema for agents, events, heartbeats, ingestion errors, source health, coverage exceptions, asset inventory, detection rules, alerts/evidence, and `soc_agent_turns`.
+- Shared v1 contracts and JSON schemas for registration, heartbeat, event envelopes, ingest acknowledgement, source health, alerts, detection rules, and `soc-agent` requests/responses.
+- Server-hosted web console with operator login, dashboard, agent inventory, host coverage/source-health detail, event search/detail, alert list/detail, audit-policy drift, about page, and `soc-agent` workspace.
+- Windows host full-coverage foundation docs, validation runbooks, role-pack designs, security-hardening roadmap, web/API/schema/operator docs, and synthetic test coverage.
 
-- [x] ASP.NET Core API project scaffold: `server/Siem.Api`
-- [x] PostgreSQL integration using open-source Npgsql
-- [x] Agent registration endpoint
-- [x] Event ingestion endpoint
-- [x] Heartbeat endpoint
-- [x] Basic event query endpoint
-- [x] API validation unit tests
-- [x] Build and run validation in an environment with .NET 8 SDK installed
-- [x] PostgreSQL smoke test using `examples/fake-event-batch.json`
+## Current validation baseline
 
-## Phase 3: Agent MVP
+Before release-oriented changes, run the relevant subset of:
 
-- [x] Windows Worker Service project scaffold: `agent/WindowsAgent`
-- [x] Windows Service hosting integration
-- [x] Config loading from protected-file path or environment
-- [x] Reads configured Windows Event Log channels using Windows Event Log APIs
-- [x] Normalizes Windows events to v1 envelopes
-- [x] Deterministic event IDs for deduplication
-- [x] Tracks last processed record ID per channel in JSON state
-- [x] SQLite local queue before forwarding
-- [x] Sends batches to the ingestion API
-- [x] Sends heartbeat payloads
-- [x] Build validation on the Linux development host
-- [ ] Validate on a real Windows endpoint
-- [x] Add Windows service install/uninstall script
-- [ ] Confirm `Security` channel permissions and document required account rights
+```bash
+./scripts/current-version.sh
+dotnet test Challenger.Siem.sln --no-restore
+./scripts/apply-schema.sh
+./scripts/validate-schema.sh
+./scripts/smoke-test-server.sh
+./scripts/smoke-test-web.sh
+```
 
-## Phase 4: Reliability
+For web-console changes, add Playwright browser E2E covering login, dashboard, affected pages, logout, and unauthenticated redirect behavior.
 
-- [x] Durable SQLite local queue baseline
-- [x] Delete queued events only after server acknowledgement
-- [x] Exponential backoff on failed cycles
-- [x] Server duplicate event handling
-- [ ] Queue poison-event strategy for repeated validation failures
-- [ ] Queue size monitoring and operator-visible warnings
-- [ ] More granular batch acknowledgement handling
+For agent/server integration changes, use the authorized Windows lab runbook and keep all generated configs, responses, logs, traces, screenshots, and telemetry under ignored `.local/` paths.
 
-## Phase 5: Web review application
+## Next milestone themes
 
-- [x] Server-hosted web console in the ASP.NET Core API process
-- [x] Review-token login with HTTP-only operator cookie
-- [x] Dashboard with agent and ingestion health metrics
-- [x] Agent inventory with hostname, agent ID, health, and queue-depth filters
-- [x] Event search page using the MVP review API filters
-- [x] Event detail page with normalized fields, message, and formatted raw JSON
-- [x] System/about page with version, API/schema version, environment, and database connectivity status
-- [x] Web auth/session tests
-
-## Next action
-
-Validate the agent on Windows, then add tests for queue/state behavior and web smoke coverage against a populated PostgreSQL database.
+- Production hardening for operator accounts/RBAC and field-level access controls.
+- Official external `soc-agent` provider abstraction when an approved provider/auth flow is selected.
+- Detection proposal/backtest/approval workflows beyond the current metadata and alert skeleton.
+- Deeper inventory diffing, ETW/file-integrity L4 sources, Sysmon profile management, and role-pack implementation depth.
+- Release packaging/signing, upgrade/migration guidance, and production TLS/mTLS rollout decisions.

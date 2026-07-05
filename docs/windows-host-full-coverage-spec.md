@@ -1,9 +1,11 @@
 # Windows host full-coverage SIEM specification
 
-Status: target capability specification
-Specification version: 0.1
+Status: reference specification; 0.4.x foundation implemented
+Specification version: 0.2
 Primary audience: SIEM engineers, endpoint-agent engineers, detection engineers, operators
-Applies to project release line: 0.4.x foundation and later implementation
+Applies to project release line: 0.4.x foundation and later releases
+
+Implementation note: the generated GitHub issue backlog that originally accompanied this specification has been implemented and archived at `docs/archive/windows-host-full-coverage-github-issues-implemented.md`. This file remains the live target/reference specification for coverage semantics, source expectations, and future hardening.
 
 ## 1. Purpose
 
@@ -719,59 +721,48 @@ Validation must use controlled lab-safe actions or synthetic fixtures and avoid 
 | WHC-ACCEPT-006 | Detections declare missing-source confidence impacts. |
 | WHC-ACCEPT-007 | No secrets or real endpoint telemetry are committed as fixtures; tests use synthetic/fake data. |
 
-## 19. Implementation roadmap for this repository
+## 19. Implementation status for this repository
 
-### Phase A: Native Windows full-source expansion
+### Implemented foundation
 
-- Add configurable channel list for all L2 mandatory channels.
-- Add source-health reporting per channel.
-- Add channel state checks: exists, enabled, readable, oldest/newest record, last collected record, stale state.
-- Add audit-policy snapshot collector and drift reporting.
-- Add expanded normalization tests for Security/System/Application/PowerShell/Defender/TaskScheduler/WMI/RDP/WinRM/firewall events.
+The 0.4.x foundation implemented the original Phase A-D backlog at a practical skeleton/foundation level:
 
-### Phase B: Sysmon and enhanced endpoint telemetry
+- configurable L2/L3 source manifests and default channels;
+- heartbeat source-health reporting with source status, coverage level, record range, log size, gap/clear indicators, queue SLO metrics, configuration hash, and tamper summary fields;
+- PostgreSQL storage and review APIs for source health, coverage summaries, inventory snapshots, detection rule metadata, alerts, alert evidence, and expanded event-search filters;
+- web coverage summary, host/source-health detail, alert list/detail, and audit-policy drift review pages;
+- parser/normalization catalogs and synthetic fixtures for mandatory L2 sources plus Sysmon L3 event groups;
+- audit-policy, PowerShell logging policy, process command-line policy, security-control, role-detection, and role-pack design helpers/docs;
+- detection metadata, detection-engine skeleton, alert/evidence schema, and coverage-aware prerequisite handling;
+- DPAPI protected-token support, raw/script/command-line redaction policy, mTLS readiness design, agent binary/config hash telemetry, validation runbooks, and Windows role-pack designs.
 
-- Add explicit Sysmon source pack and source-health model.
-- Add parsers for process, network, DNS, file, registry, WMI, pipe, image/driver, and tamper events.
-- Add Sysmon config hash/version reporting.
-- Add process entity correlation across Security and Sysmon events.
+### Remaining target work
 
-### Phase C: Inventory and snapshot/diff collectors
+This specification still describes deeper target capabilities beyond the foundation:
 
-- Add local users/groups, services, drivers, scheduled tasks, startup entries, firewall, Defender, installed software, patch state, and network listener snapshots.
-- Emit diff events and maintain current asset state server-side.
-- Add role detection and role source-pack recommendations.
+- production-grade collector implementations for every inventory/diff source rather than design/skeleton helpers;
+- richer field extraction directly from structured event payloads for every parser group;
+- Sysmon configuration management and process/entity correlation depth;
+- full detection evaluation, alert lifecycle/triage mutations, backtesting, and approved detection activation;
+- operator accounts/RBAC and field-level access controls;
+- selected ETW collectors, file integrity monitoring, and higher-assurance agent self-protection;
+- production TLS/mTLS rollout decisions, release packaging/signing, and upgrade/migration guidance.
 
-### Phase D: Detections, alerts, and coverage-aware analytics
+## 20. Current project status summary
 
-- Implement rule metadata and evidence storage.
-- Build initial detection families listed in this spec.
-- Add coverage-aware confidence and missing-source annotations.
-- Add alert review workflow in the API/web console.
+The current project includes Windows Event Log collection, source-health coverage reporting, normalized/searchable event fields, durable queueing, enrollment, per-agent tokens, ingestion API, PostgreSQL storage, deduplication, heartbeat, review APIs, alert/detection/inventory skeletons, web review console, and a local `soc-agent` workspace.
 
-### Phase E: L4 hardening
+Use the live operational docs for current behavior:
 
-- Add selected ETW collectors with clear volume budgets.
-- Add file integrity monitoring for high-value paths.
-- Add advanced tamper detection and agent self-protection checks.
-- Add RBAC, field-level access controls, and optional mTLS.
-
-## 20. Current project gap summary
-
-The current project already includes important MVP foundations: Windows Event Log collection, normalization to v1 envelopes, durable SQLite queueing, enrollment, per-agent tokens, ingestion API, PostgreSQL storage, deduplication, heartbeat, basic search, and a web review console.
-
-Major gaps to reach this full-coverage specification:
-
-- Expanded mandatory channel coverage beyond the current initial channels.
-- Per-source health model and coverage-level reporting.
-- Audit-policy and Windows configuration validation.
-- Source-specific parsers for PowerShell, Defender, Sysmon, WMI, RDP, WinRM, firewall, and role channels.
-- Sysmon configuration management and process/entity correlation.
-- Host inventory snapshots and state-diff events.
-- Role-specific source packs.
-- Detection rule engine, alert storage, and coverage-aware detection metadata.
-- Privacy controls for script content/raw payloads and future RBAC.
-- L4 ETW and file integrity monitoring.
+- `docs/agent.md`
+- `docs/api.md`
+- `docs/schema.md`
+- `docs/web.md`
+- `docs/soc-agent.md`
+- `docs/security-hardening-roadmap.md`
+- `docs/windows-l2-validation-runbook.md`
+- `docs/sysmon-l3-validation-runbook.md`
+- `docs/windows-role-packs.md`
 
 ## Appendix A: High-value Windows event IDs
 
