@@ -222,6 +222,40 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
+    public void SubscriptionOAuthCanReadPiOpenAiCodexAuthJsonWithoutSecrets()
+    {
+        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
+            "synthetic-pi-access-token",
+            "synthetic-pi-refresh-token",
+            DateTimeOffset.UtcNow.AddHours(2)));
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            Model = "gpt-test",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            SubscriptionAuthFileProviderKey = "openai-codex"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("connected", status.Status);
+        Assert.Equal("pi_auth_json", status.AuthMode);
+        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
+        Assert.Equal("pi_auth_json", status.AuthFileMode);
+        Assert.Equal("pi_auth_json", status.ScopeStatus);
+        Assert.Equal("not_checked", status.EntitlementStatus);
+        Assert.Equal("pi_managed", status.RefreshStatus);
+        Assert.Equal("Pi auth.json OpenAI Codex OAuth credential", status.CredentialSource);
+        Assert.False(status.RequiresConnection);
+        Assert.True(status.DataMayLeaveLocalSiem);
+        Assert.DoesNotContain("synthetic-pi-access-token", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-pi-refresh-token", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(authFile.FilePath, status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SubscriptionOAuthMissingModelScopeFailsClosed()
     {
         using var authFile = SyntheticAuthFile.Create(ValidSubscriptionAuthJson(
@@ -287,6 +321,27 @@ public sealed class SocAgentProviderStatusTests
         Assert.Equal("plan_limited", status.EntitlementStatus);
         Assert.False(status.RequiresConnection);
         Assert.DoesNotContain("synthetic-subscription-access-token", status.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubscriptionOAuthMissingCredentialWithInteractiveConnectReportsLocalConnectAction()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionConnectEnabled = true,
+            SubscriptionAuthFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "auth.json")
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("auth_required", status.Status);
+        Assert.Equal("subscription_oauth", status.AuthMode);
+        Assert.Equal("/soc-agent/oauth/start", status.ConnectUrl);
+        Assert.Equal("Connect ChatGPT subscription OAuth", status.ConnectLabel);
+        Assert.True(status.RequiresConnection);
     }
 
     [Fact]
@@ -448,6 +503,20 @@ public sealed class SocAgentProviderStatusTests
               "audience": "{{audience}}",
               "issuer": "https://auth.openai.com/"{{refreshLine}}
             }
+          }
+        }
+        """;
+    }
+
+    private static string PiOpenAiCodexAuthJson(string accessToken, string refreshToken, DateTimeOffset expiresAt)
+    {
+        return $$"""
+        {
+          "openai-codex": {
+            "type": "oauth",
+            "access": "{{accessToken}}",
+            "refresh": "{{refreshToken}}",
+            "expires": {{expiresAt.ToUnixTimeMilliseconds()}}
           }
         }
         """;

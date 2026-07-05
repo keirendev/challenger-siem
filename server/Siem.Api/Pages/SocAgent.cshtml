@@ -18,6 +18,10 @@
 {
     <div class="alert" role="alert">@Model.ErrorMessage</div>
 }
+@if (Model.NoticeMessage is not null)
+{
+    <div class="notice" role="status">@Model.NoticeMessage</div>
+}
 
 <section class="card provider-status" aria-labelledby="provider-status-title">
     <div>
@@ -73,10 +77,16 @@
             <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
         }
     </div>
-    @if (Model.ProviderStatus.RequiresConnection)
+    @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
     {
         <div class="provider-action">
-            @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
+            @if (Model.CanStartSubscriptionOAuthConnect)
+            {
+                <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
+                    <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
+                </form>
+            }
+            else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
             {
                 <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
             }
@@ -91,7 +101,7 @@
         <div>
             <p class="page-kicker">Primary external path</p>
             <h3>ChatGPT subscription OAuth</h3>
-            <p>Configure <code>SocAgent:AuthMode=SubscriptionOAuth</code> with a server-side, ignored <code>auth.json</code>-style credential file. Challenger SIEM validates official issuer/audience/scope metadata, refresh state, and entitlement hints before any bounded prompt can leave the local SIEM.</p>
+            <p>Configure <code>SocAgent:AuthMode=SubscriptionOAuth</code> with Pi's server-side <code>~/.pi/agent/auth.json</code> <code>openai-codex</code> entry after Pi <code>/login</code>, or with a dedicated ignored <code>auth.json</code>-style credential file. When interactive connect is enabled with official OAuth client settings, operators can start the authorization-code/PKCE flow from this page. Challenger SIEM validates official issuer/audience/scope metadata, refresh state, and entitlement hints before any bounded prompt can leave the local SIEM.</p>
         </div>
         <div>
             <p class="page-kicker">Advanced alternatives</p>

@@ -53,7 +53,8 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
         "chatgpt-subscription-oauth",
         "chatgpt_oauth",
         "oauth_subscription",
-        "oauth_access_token"
+        "oauth_access_token",
+        "oauth"
     };
 
     private static readonly HashSet<string> AllowedIssuerHosts = new(StringComparer.OrdinalIgnoreCase)
@@ -85,7 +86,10 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             configuration["CHATGPT_SUBSCRIPTION_AUTH_FILE"],
             configuration["CHATGPT_AUTH_FILE"],
             UsesSubscriptionOAuth(options.AuthMode) ? options.AuthFilePath : null,
-            UsesSubscriptionOAuth(options.AuthMode) ? configuration["SocAgent:AuthFilePath"] : null);
+            UsesSubscriptionOAuth(options.AuthMode) ? configuration["SocAgent:AuthFilePath"] : null,
+            options.SubscriptionUsePiAuthFile ? configuration["SocAgent:SubscriptionPiAuthFilePath"] : null,
+            options.SubscriptionUsePiAuthFile ? configuration["PI_AGENT_AUTH_FILE"] : null,
+            options.SubscriptionUsePiAuthFile ? options.SubscriptionPiAuthFilePath : null);
 
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -97,7 +101,9 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             configuration["SocAgent:SubscriptionAuthFileProviderKey"],
             configuration["SocAgent:ChatGptSubscriptionAuthFileProviderKey"],
             configuration["CHATGPT_SUBSCRIPTION_AUTH_FILE_PROVIDER_KEY"],
-            UsesSubscriptionOAuth(options.AuthMode) ? options.AuthFileProviderKey : null) ?? "chatgpt";
+            UsesSubscriptionOAuth(options.AuthMode) ? options.AuthFileProviderKey : null,
+            options.SubscriptionUsePiAuthFile ? configuration["SocAgent:SubscriptionPiAuthFileProviderKey"] : null,
+            options.SubscriptionUsePiAuthFile ? options.SubscriptionPiAuthFileProviderKey : null) ?? "chatgpt";
 
         if (!TryResolveSafePath(path, out var fullPath))
         {
@@ -141,8 +147,14 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 return AuthRequired("The ChatGPT subscription OAuth auth file does not contain the configured provider entry. Verify SocAgent:SubscriptionAuthFileProviderKey and reconnect using a supported credential file.");
             }
 
+            var isPiAuthJson = IsPiAuthCredential(entry, entryKey);
+            var credentialSource = isPiAuthJson ? "Pi auth.json OpenAI Codex OAuth credential" : "configured ChatGPT subscription OAuth file";
+            var providerPath = isPiAuthJson ? "pi_auth_json_openai_codex" : "chatgpt_subscription_oauth";
+            var authFileMode = isPiAuthJson ? "pi_auth_json" : "subscription_oauth";
+
             var providerName = GetString(entry, "provider", "provider_name", "providerName", "name");
-            if (!string.IsNullOrWhiteSpace(providerName)
+            if (!isPiAuthJson
+                && !string.IsNullOrWhiteSpace(providerName)
                 && !providerName.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase)
                 && !providerName.Equals("OpenAI", StringComparison.OrdinalIgnoreCase)
                 && !providerName.Equals("OpenAI ChatGPT", StringComparison.OrdinalIgnoreCase))
@@ -151,25 +163,25 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             }
 
             var credentialType = GetString(entry, "auth_type", "authType", "credential_type", "credentialType", "type");
-            if (string.IsNullOrWhiteSpace(credentialType) || !AllowedCredentialTypes.Contains(credentialType.Trim()))
+            if (!isPiAuthJson && (string.IsNullOrWhiteSpace(credentialType) || !AllowedCredentialTypes.Contains(credentialType.Trim())))
             {
                 return Unsupported("The auth file does not declare a supported ChatGPT subscription OAuth credential type. Browser cookies, profiles, and session replay exports are not supported.");
             }
 
             var tokenType = GetString(entry, "token_type", "tokenType");
-            if (!string.IsNullOrWhiteSpace(tokenType) && !tokenType.Equals("Bearer", StringComparison.OrdinalIgnoreCase))
+            if (!isPiAuthJson && !string.IsNullOrWhiteSpace(tokenType) && !tokenType.Equals("Bearer", StringComparison.OrdinalIgnoreCase))
             {
                 return Unsupported("The ChatGPT subscription OAuth token type is unsupported. Only bearer access tokens from an official OAuth flow are accepted.");
             }
 
-            var accessToken = GetString(entry, "access_token", "accessToken", "accessTokenValue");
+            var accessToken = GetString(entry, "access_token", "accessToken", "accessTokenValue", "access");
             if (string.IsNullOrWhiteSpace(accessToken))
             {
                 return AuthRequired("The ChatGPT subscription OAuth auth file does not contain an access token for the configured provider entry. Reconnect using a supported server-side credential file format.");
             }
 
             var audience = GetString(entry, "audience", "resource", "token_audience", "tokenAudience", "aud");
-            if (!IsOfficialOpenAiAudience(audience))
+            if (!isPiAuthJson && !IsOfficialOpenAiAudience(audience))
             {
                 return Unsupported("The ChatGPT subscription OAuth credential does not declare the official OpenAI API audience for model invocation. Challenger SIEM will not attempt consumer-web or unofficial endpoints.");
             }
@@ -187,7 +199,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
 
             var requiredScopes = ParseRequiredScopes(options, configuration);
             var scopes = GetScopes(entry);
-            if (!HasRequiredScopes(scopes, requiredScopes))
+            if (!isPiAuthJson && !HasRequiredScopes(scopes, requiredScopes))
             {
                 return new SocAgentSubscriptionOAuthResult
                 {
@@ -195,7 +207,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                     OperatorMessage = "The ChatGPT subscription OAuth credential is missing the required model-invocation scope. Reconnect through an official flow that grants the documented scope; no external call will be attempted.",
                     RequiresConnection = true,
                     ConnectLabel = "Reconnect ChatGPT subscription OAuth",
-                    CredentialSource = "configured ChatGPT subscription OAuth file",
+                    CredentialSource = credentialSource,
                     ExpiresAt = expiresAt,
                     RefreshStatus = RefreshTokenStatus(entry, options, configuration, expiresAt, checkedAt),
                     ScopeStatus = "model_scope_missing",
@@ -207,7 +219,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 };
             }
 
-            var entitlementStatus = NormalizeEntitlementStatus(entry);
+            var entitlementStatus = isPiAuthJson ? "not_checked" : NormalizeEntitlementStatus(entry);
             if (string.Equals(entitlementStatus, "unsupported", StringComparison.OrdinalIgnoreCase))
             {
                 return new SocAgentSubscriptionOAuthResult
@@ -216,11 +228,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                     OperatorMessage = "The ChatGPT subscription OAuth credential indicates that model invocation is unsupported for this application. No external call will be attempted.",
                     RequiresConnection = true,
                     ConnectLabel = "Review supported ChatGPT subscription OAuth setup",
-                    CredentialSource = "configured ChatGPT subscription OAuth file",
+                    CredentialSource = credentialSource,
                     ExpiresAt = expiresAt,
                     RefreshStatus = RefreshTokenStatus(entry, options, configuration, expiresAt, checkedAt),
-                    ScopeStatus = "model_scope_present",
+                    ScopeStatus = isPiAuthJson ? "pi_auth_json" : "model_scope_present",
                     EntitlementStatus = entitlementStatus,
+                    ProviderPath = providerPath,
+                    AuthFileMode = authFileMode,
                     FilePath = fullPath,
                     ProviderKey = entryKey,
                     Scopes = scopes,
@@ -236,11 +250,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                     OperatorMessage = "The ChatGPT subscription OAuth credential does not currently have a plan or entitlement that permits model invocation for this application. No external call will be attempted.",
                     RequiresConnection = false,
                     ConnectLabel = null,
-                    CredentialSource = "configured ChatGPT subscription OAuth file",
+                    CredentialSource = credentialSource,
                     ExpiresAt = expiresAt,
                     RefreshStatus = RefreshTokenStatus(entry, options, configuration, expiresAt, checkedAt),
-                    ScopeStatus = "model_scope_present",
+                    ScopeStatus = isPiAuthJson ? "pi_auth_json" : "model_scope_present",
                     EntitlementStatus = entitlementStatus,
+                    ProviderPath = providerPath,
+                    AuthFileMode = authFileMode,
                     FilePath = fullPath,
                     ProviderKey = entryKey,
                     Scopes = scopes,
@@ -248,11 +264,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 };
             }
 
-            var refreshToken = GetString(entry, "refresh_token", "refreshToken");
-            var tokenEndpoint = ResolveTokenEndpoint(entry, options, configuration);
+            var refreshToken = GetString(entry, "refresh_token", "refreshToken", "refresh");
+            var tokenEndpoint = isPiAuthJson ? null : ResolveTokenEndpoint(entry, options, configuration);
             var now = checkedAt ?? DateTimeOffset.UtcNow;
             var skewSeconds = Math.Clamp(options.AuthFileExpirySkewSeconds, 0, 3600);
-            var refreshStatus = RefreshTokenStatus(entry, options, configuration, expiresAt, checkedAt);
+            var refreshStatus = isPiAuthJson
+                ? (string.IsNullOrWhiteSpace(refreshToken) ? "not_configured" : "pi_managed")
+                : RefreshTokenStatus(entry, options, configuration, expiresAt, checkedAt);
             if (expiresAt <= now)
             {
                 return new SocAgentSubscriptionOAuthResult
@@ -261,11 +279,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                     OperatorMessage = "The ChatGPT subscription OAuth access token is expired. Reconnect or refresh the server-side auth file through the official provider flow before external calls are attempted.",
                     RequiresConnection = true,
                     ConnectLabel = "Reconnect ChatGPT subscription OAuth",
-                    CredentialSource = "configured ChatGPT subscription OAuth file",
+                    CredentialSource = credentialSource,
                     ExpiresAt = expiresAt,
                     RefreshStatus = refreshStatus,
-                    ScopeStatus = "model_scope_present",
+                    ScopeStatus = isPiAuthJson ? "pi_auth_json" : "model_scope_present",
                     EntitlementStatus = entitlementStatus,
+                    ProviderPath = providerPath,
+                    AuthFileMode = authFileMode,
                     FilePath = fullPath,
                     ProviderKey = entryKey,
                     Scopes = scopes,
@@ -273,7 +293,8 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 };
             }
 
-            if (expiresAt <= now.AddSeconds(skewSeconds)
+            if (!isPiAuthJson
+                && expiresAt <= now.AddSeconds(skewSeconds)
                 && (string.IsNullOrWhiteSpace(refreshToken) || string.IsNullOrWhiteSpace(tokenEndpoint)))
             {
                 return new SocAgentSubscriptionOAuthResult
@@ -284,11 +305,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                         : "The ChatGPT subscription OAuth access token is near expiry, but no official allowlisted refresh endpoint is configured. Reconnect and replace the server-side auth file.",
                     RequiresConnection = true,
                     ConnectLabel = "Reconnect ChatGPT subscription OAuth",
-                    CredentialSource = "configured ChatGPT subscription OAuth file",
+                    CredentialSource = credentialSource,
                     ExpiresAt = expiresAt,
                     RefreshStatus = refreshStatus,
-                    ScopeStatus = "model_scope_present",
+                    ScopeStatus = isPiAuthJson ? "pi_auth_json" : "model_scope_present",
                     EntitlementStatus = entitlementStatus,
+                    ProviderPath = providerPath,
+                    AuthFileMode = authFileMode,
                     FilePath = fullPath,
                     ProviderKey = entryKey,
                     Scopes = scopes,
@@ -299,14 +322,18 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             return new SocAgentSubscriptionOAuthResult
             {
                 Status = "connected",
-                OperatorMessage = "Server-side ChatGPT subscription OAuth credentials are available for an official OpenAI API model path. Browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths.",
+                OperatorMessage = isPiAuthJson
+                    ? "Pi auth.json OpenAI Codex OAuth credentials are available server-side. Challenger SIEM will use only the configured official provider endpoint; browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths."
+                    : "Server-side ChatGPT subscription OAuth credentials are available for an official OpenAI API model path. Browser clients never receive provider tokens, account identifiers, raw auth-file metadata, or full auth-file paths.",
                 RequiresConnection = false,
                 ConnectLabel = null,
-                CredentialSource = "configured ChatGPT subscription OAuth file",
+                CredentialSource = credentialSource,
                 ExpiresAt = expiresAt,
                 RefreshStatus = refreshStatus,
-                ScopeStatus = "model_scope_present",
+                ScopeStatus = isPiAuthJson ? "pi_auth_json" : "model_scope_present",
                 EntitlementStatus = entitlementStatus,
+                ProviderPath = providerPath,
+                AuthFileMode = authFileMode,
                 AccessToken = includeSecret ? accessToken.Trim() : null,
                 RefreshToken = includeSecret ? refreshToken?.Trim() : null,
                 TokenEndpoint = tokenEndpoint,
@@ -518,7 +545,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
         {
             var currentDirectory = Directory.GetCurrentDirectory();
             repoRoot = FindRepositoryRoot(currentDirectory);
-            var expanded = Environment.ExpandEnvironmentVariables(configuredPath.Trim());
+            var expanded = ExpandHomeDirectory(Environment.ExpandEnvironmentVariables(configuredPath.Trim()));
             fullPath = Path.IsPathRooted(expanded)
                 ? Path.GetFullPath(expanded)
                 : Path.GetFullPath(expanded, repoRoot ?? currentDirectory);
@@ -572,17 +599,58 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
             || fileName.EndsWith(".auth.json", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string ExpandHomeDirectory(string path)
+    {
+        if (path.Equals("~", StringComparison.Ordinal))
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
+        }
+
+        return path;
+    }
+
+    private static bool IsPiAuthCredential(JsonElement entry, string entryKey)
+    {
+        var type = GetString(entry, "auth_type", "authType", "credential_type", "credentialType", "type");
+        return entryKey.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(type) || string.Equals(type, "oauth", StringComparison.OrdinalIgnoreCase))
+            && TryGetObjectProperty(entry, out _, "access")
+            && TryGetObjectProperty(entry, out _, "refresh")
+            && TryGetObjectProperty(entry, out _, "expires");
+    }
+
     private static bool TryFindCredentialEntry(JsonElement root, string providerKey, out JsonElement entry, out string entryKey)
     {
-        if (TryGetObjectProperty(root, out var providers, "providers") && providers.ValueKind == JsonValueKind.Object)
+        var hasProviders = TryGetObjectProperty(root, out var providers, "providers") && providers.ValueKind == JsonValueKind.Object;
+        if (hasProviders && TryGetObjectProperty(providers, out entry, providerKey) && entry.ValueKind == JsonValueKind.Object)
         {
-            if (TryGetObjectProperty(providers, out entry, providerKey) && entry.ValueKind == JsonValueKind.Object)
+            entryKey = providerKey;
+            return true;
+        }
+
+        if (TryGetObjectProperty(root, out entry, providerKey) && entry.ValueKind == JsonValueKind.Object)
+        {
+            entryKey = providerKey;
+            return true;
+        }
+
+        foreach (var fallback in new[] { "openai-codex", "chatgpt", "openai" })
+        {
+            if (TryGetObjectProperty(root, out entry, fallback) && entry.ValueKind == JsonValueKind.Object)
             {
-                entryKey = providerKey;
+                entryKey = fallback;
                 return true;
             }
+        }
 
-            foreach (var fallback in new[] { "chatgpt", "openai" })
+        if (hasProviders)
+        {
+            foreach (var fallback in new[] { "openai-codex", "chatgpt", "openai" })
             {
                 if (TryGetObjectProperty(providers, out entry, fallback) && entry.ValueKind == JsonValueKind.Object)
                 {
@@ -607,7 +675,7 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
     private static bool LooksLikeSubscriptionEntry(JsonElement root)
     {
         return root.ValueKind == JsonValueKind.Object
-            && TryGetObjectProperty(root, out _, "access_token", "accessToken")
+            && TryGetObjectProperty(root, out _, "access_token", "accessToken", "access")
             && (TryGetObjectProperty(root, out _, "auth_type", "authType", "credential_type", "credentialType", "type")
                 || TryGetObjectProperty(root, out _, "provider", "provider_name", "providerName", "name"));
     }
@@ -671,6 +739,13 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
         return null;
     }
 
+    private static DateTimeOffset FromUnixSecondsOrMilliseconds(long value)
+    {
+        return value > 10_000_000_000
+            ? DateTimeOffset.FromUnixTimeMilliseconds(value)
+            : DateTimeOffset.FromUnixTimeSeconds(value);
+    }
+
     private static bool TryGetExpiresAt(JsonElement parent, out DateTimeOffset expiresAt)
     {
         if (TryGetObjectProperty(parent, out var rawValue, "expires_at", "expiresAt", "expires_on", "expiresOn", "expiry", "expires"))
@@ -687,14 +762,14 @@ internal static class SocAgentSubscriptionOAuthCredentialLoader
                 if (!string.IsNullOrWhiteSpace(raw)
                     && long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rawSeconds))
                 {
-                    expiresAt = DateTimeOffset.FromUnixTimeSeconds(rawSeconds);
+                    expiresAt = FromUnixSecondsOrMilliseconds(rawSeconds);
                     return true;
                 }
             }
 
             if (rawValue.ValueKind == JsonValueKind.Number && rawValue.TryGetInt64(out var seconds))
             {
-                expiresAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                expiresAt = FromUnixSecondsOrMilliseconds(seconds);
                 return true;
             }
         }

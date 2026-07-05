@@ -71,8 +71,8 @@ public sealed class SocAgentProviderStatusService(
                 authMode,
                 message: "An external ChatGPT/OpenAI provider is selected, but external model calls are disabled. Configure ChatGPT subscription OAuth or another official server-side provider mode before data leaves the local SIEM.",
                 requiresConnection: true,
-                connectUrl: SafeSetupUrl(current, authMode),
-                connectLabel: IsSubscriptionOAuth(authMode) ? "Review ChatGPT subscription OAuth setup" : "Open official provider setup",
+                connectUrl: IsSubscriptionOAuth(authMode) ? SubscriptionConnectOrSetupUrl(current) : SafeSetupUrl(current, authMode),
+                connectLabel: IsSubscriptionOAuth(authMode) ? SubscriptionConnectLabel(current, "Review ChatGPT subscription OAuth setup") : "Open official provider setup",
                 dataMayLeaveLocalSiem: true,
                 providerPath: IsSubscriptionOAuth(authMode) ? "chatgpt_subscription_oauth" : null,
                 authFileMode: IsSubscriptionOAuth(authMode) ? "subscription_oauth" : null,
@@ -230,7 +230,7 @@ public sealed class SocAgentProviderStatusService(
                 provider,
                 displayName,
                 model: current.Model,
-                authMode: "subscription_oauth",
+                authMode: fileStatus.AuthFileMode,
                 message: "ChatGPT subscription OAuth credentials are configured, but the configured daily budget is exhausted or set to zero. External calls will not be attempted until the budget setting is raised.",
                 requiresConnection: false,
                 connectUrl: null,
@@ -251,11 +251,11 @@ public sealed class SocAgentProviderStatusService(
             provider,
             displayName,
             model: current.Model,
-            authMode: "subscription_oauth",
+            authMode: fileStatus.AuthFileMode,
             message: fileStatus.OperatorMessage,
             requiresConnection: fileStatus.RequiresConnection,
-            connectUrl: fileStatus.RequiresConnection ? SafeSetupUrl(current, "subscription_oauth") : null,
-            connectLabel: fileStatus.ConnectLabel,
+            connectUrl: fileStatus.RequiresConnection ? SubscriptionConnectOrSetupUrl(current) : null,
+            connectLabel: fileStatus.RequiresConnection ? SubscriptionConnectLabel(current, fileStatus.ConnectLabel) : null,
             dataMayLeaveLocalSiem: true,
             credentialSource: fileStatus.CredentialSource,
             expiresAt: fileStatus.ExpiresAt,
@@ -483,6 +483,16 @@ public sealed class SocAgentProviderStatusService(
             && string.Equals(uri.Host, "api.openai.com", StringComparison.OrdinalIgnoreCase)
             && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/v1", StringComparison.OrdinalIgnoreCase)
             && string.Equals(path, "chat/completions", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SubscriptionConnectOrSetupUrl(SocAgentOptions options)
+    {
+        return options.SubscriptionConnectEnabled ? "/soc-agent/oauth/start" : SafeSetupUrl(options, "subscription_oauth");
+    }
+
+    private static string SubscriptionConnectLabel(SocAgentOptions options, string? fallback)
+    {
+        return options.SubscriptionConnectEnabled ? "Connect ChatGPT subscription OAuth" : fallback ?? "Review ChatGPT subscription OAuth setup";
     }
 
     private static string SafeSetupUrl(SocAgentOptions options, string authMode)

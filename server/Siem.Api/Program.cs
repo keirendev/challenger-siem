@@ -9,6 +9,7 @@ using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -25,6 +26,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
 });
 
+builder.Services.AddDataProtection();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton(sp =>
 {
@@ -47,6 +49,11 @@ builder.Services.AddScoped<AlertRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
 builder.Services.AddScoped<SocAgentProviderStatusService>();
 builder.Services.AddHttpClient<ISocAgentModelProvider, OpenAiSocAgentModelProvider>((serviceProvider, client) =>
+{
+    var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
+});
+builder.Services.AddHttpClient<SocAgentSubscriptionOAuthConnectService>((serviceProvider, client) =>
 {
     var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
@@ -593,6 +600,35 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
         return Results.NotFound();
     }
 });
+
+app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionOAuthConnectService connect) =>
+{
+    try
+    {
+        var authorizationUri = connect.CreateAuthorizationUri(context, "/soc-agent");
+        return Results.Redirect(authorizationUri.ToString());
+    }
+    catch (SocAgentSubscriptionOAuthConnectException ex)
+    {
+        return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
+    }
+}).RequireAuthorization();
+
+app.MapGet("/soc-agent/oauth/callback", async Task<IResult> (
+    HttpContext context,
+    SocAgentSubscriptionOAuthConnectService connect,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var result = await connect.CompleteAsync(context, cancellationToken);
+        return Results.Redirect(connect.CompleteReturnUrl(result));
+    }
+    catch (SocAgentSubscriptionOAuthConnectException ex)
+    {
+        return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
+    }
+}).AllowAnonymous();
 
 app.MapGet("/api/v1/detections/rules", async Task<IResult> (
     HttpContext context,

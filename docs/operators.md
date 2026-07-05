@@ -100,7 +100,7 @@ Common operator path:
 4. Open event detail to inspect normalized fields, entities, message text, and raw JSON for that event.
 5. Use **Alerts** to review the current alert foundation and empty-state handling until detection execution is expanded.
 6. Use **Graphs** to create operator-managed relationship graphs and optionally request proposal-only `soc-agent` graph updates.
-7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use official server-side provider authentication only: ChatGPT subscription OAuth is the primary setup path, while API-key credentials and documented delegated API-bearer auth files remain advanced alternatives kept out of git.
+7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use official server-side provider authentication only: ChatGPT subscription OAuth is the primary setup path and can reuse Pi's server-side `~/.pi/agent/auth.json` after Pi `/login`, while API-key credentials and documented delegated API-bearer auth files remain advanced alternatives kept out of git.
 8. Use **Audit policy** and **About** for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot examples generated from synthetic data.

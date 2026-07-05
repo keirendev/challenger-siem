@@ -75,6 +75,48 @@ public sealed class SocAgentModelProviderTests
     }
 
     [Fact]
+    public async Task OpenAiProviderUsesPiOpenAiCodexAuthJsonAccessTokenWithoutRefreshOrBodyLeak()
+    {
+        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
+            "synthetic-pi-provider-token",
+            "synthetic-pi-refresh-token",
+            DateTimeOffset.UtcNow.AddMinutes(1)));
+        SequencedHandler.Calls.Clear();
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            {
+              "choices": [
+                { "message": { "content": "Pi auth provider answer" } }
+              ]
+            }
+            """)
+        }));
+        var provider = CreateProvider(httpClient, new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "SubscriptionOAuth",
+            ExternalCallsEnabled = true,
+            SubscriptionAuthFilePath = authFile.FilePath,
+            SubscriptionAuthFileProviderKey = "openai-codex",
+            AuthFileExpirySkewSeconds = 300
+        });
+
+        var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse { Status = "connected", Provider = "ChatGPT", Model = "gpt-test", AuthMode = "pi_auth_json" },
+            "bounded prompt",
+            2000), CancellationToken.None);
+
+        Assert.Equal("Pi auth provider answer", result.Answer);
+        Assert.Single(SequencedHandler.Calls);
+        Assert.Equal(new Uri("https://api.openai.com/v1/chat/completions"), SequencedHandler.Calls[0].Uri);
+        Assert.Equal("Bearer", SequencedHandler.Calls[0].AuthorizationScheme);
+        Assert.Equal("synthetic-pi-provider-token", SequencedHandler.Calls[0].AuthorizationParameter);
+        Assert.DoesNotContain("synthetic-pi-provider-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-pi-refresh-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task OpenAiProviderRefreshesSubscriptionOAuthCredentialBeforeModelCall()
     {
         SequencedHandler.Calls.Clear();
@@ -202,6 +244,20 @@ public sealed class SocAgentModelProviderTests
               "audience": "https://api.openai.com/v1",
               "issuer": "https://auth.openai.com/"
             }
+          }
+        }
+        """;
+    }
+
+    private static string PiOpenAiCodexAuthJson(string accessToken, string refreshToken, DateTimeOffset expiresAt)
+    {
+        return $$"""
+        {
+          "openai-codex": {
+            "type": "oauth",
+            "access": "{{accessToken}}",
+            "refresh": "{{refreshToken}}",
+            "expires": {{expiresAt.ToUnixTimeMilliseconds()}}
           }
         }
         """;
