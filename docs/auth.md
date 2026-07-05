@@ -42,9 +42,11 @@ Do not put real values in committed `appsettings.json`; use environment variable
 
 ## External `soc-agent` provider auth
 
-The `soc-agent` chat UI never asks operators to enter ChatGPT/OpenAI passwords, browser cookies, or unofficial session tokens. External provider credentials must be configured server-side through environment variables or a secret store. If an official delegated OAuth/OIDC/PKCE flow is configured in the future, the UI may link only to that official authorization URL with server-side state/CSRF handling.
+The `soc-agent` chat UI never asks operators to enter ChatGPT/OpenAI passwords, browser cookies, API keys, or unofficial session tokens. The supported external-provider MVP uses server-side OpenAI API-compatible credentials configured through ignored environment variables or a secret store, such as `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Provider credentials are not rendered to browser clients, copied into prompts, logged, or stored in chat history.
 
-When external provider auth is required but unavailable, `/soc-agent` shows a connect/setup action that directs operators to official provider setup guidance and falls back to the configured local provider only when explicitly enabled by `SocAgent:FallbackToLocalWhenUnavailable`.
+When `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and server-side credentials are present, the server may send bounded/redacted tool context to the official `https://api.openai.com/v1/chat/completions` endpoint. If external provider auth is required but unavailable, the configured budget is exhausted, or a provider error is mapped safely, `/soc-agent` shows setup/status guidance and falls back to the configured local provider only when explicitly enabled by `SocAgent:FallbackToLocalWhenUnavailable`.
+
+If an official delegated OAuth/OIDC/PKCE flow is configured in the future, the UI may link only to an allowlisted official provider authorization URL or server-side auth-start endpoint with state/CSRF protections. Non-allowlisted provider URLs fail closed.
 
 ## Transport security
 

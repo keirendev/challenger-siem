@@ -225,7 +225,7 @@ GET /api/v1/soc-agent/status
 Authorization: Bearer <review-token>
 ```
 
-Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `connected`, or `provider_error`, plus a safe official setup/connect URL when applicable. Responses never include provider secrets.
+Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `connected`, `budget_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. Responses never include provider secrets.
 
 Backwards-compatible one-shot ask:
 
@@ -256,7 +256,7 @@ Content-Type: application/json
 }
 ```
 
-Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `OpenAI` is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the official Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use official server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
 ## Alerts and detections
 

@@ -93,6 +93,22 @@ public sealed class SocAgentProviderStatusService(
                     dataMayLeaveLocalSiem: true);
             }
 
+            var authorizationUrl = SafeAuthorizationUrl(current.AuthorizationUrl);
+            if (authorizationUrl is null)
+            {
+                return Create(
+                    status: "provider_error",
+                    provider,
+                    displayName,
+                    model: current.Model,
+                    authMode,
+                    message: "Delegated provider authentication is configured with a URL that is not on the official provider allowlist. No external calls will be attempted.",
+                    requiresConnection: true,
+                    connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                    connectLabel: "View official provider setup",
+                    dataMayLeaveLocalSiem: true);
+            }
+
             return Create(
                 status: "auth_required",
                 provider,
@@ -101,7 +117,7 @@ public sealed class SocAgentProviderStatusService(
                 authMode,
                 message: "Delegated provider authentication is required. The connect action uses only the configured official provider authorization URL.",
                 requiresConnection: true,
-                connectUrl: current.AuthorizationUrl,
+                connectUrl: authorizationUrl,
                 connectLabel: "Connect with official provider login",
                 dataMayLeaveLocalSiem: true);
         }
@@ -118,6 +134,36 @@ public sealed class SocAgentProviderStatusService(
                 requiresConnection: true,
                 connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
                 connectLabel: "Open official provider setup",
+                dataMayLeaveLocalSiem: true);
+        }
+
+        if (!UsesOfficialOpenAiEndpoint(current))
+        {
+            return Create(
+                status: "provider_error",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "api_key",
+                message: "OpenAI provider mode must use the official https://api.openai.com/v1/chat/completions endpoint. No external calls will be attempted with the configured endpoint.",
+                requiresConnection: true,
+                connectUrl: SafeSetupUrl(current.ProviderSetupUrl),
+                connectLabel: "View official provider setup",
+                dataMayLeaveLocalSiem: true);
+        }
+
+        if (current.DailyBudgetUsd.HasValue && current.DailyBudgetUsd.Value <= 0m)
+        {
+            return Create(
+                status: "budget_limited",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "api_key",
+                message: "Server-side official provider credentials are configured, but the configured daily budget is exhausted or set to zero. External calls will not be attempted until the budget setting is raised.",
+                requiresConnection: false,
+                connectUrl: null,
+                connectLabel: null,
                 dataMayLeaveLocalSiem: true);
         }
 
@@ -216,13 +262,60 @@ public sealed class SocAgentProviderStatusService(
         return provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string? SafeSetupUrl(string? url)
+    private static bool UsesOfficialOpenAiEndpoint(SocAgentOptions options)
     {
-        if (string.IsNullOrWhiteSpace(url))
+        var baseUrl = string.IsNullOrWhiteSpace(options.OpenAiBaseUrl)
+            ? "https://api.openai.com/v1"
+            : options.OpenAiBaseUrl.Trim();
+        var path = string.IsNullOrWhiteSpace(options.OpenAiChatCompletionsPath)
+            ? "chat/completions"
+            : options.OpenAiChatCompletionsPath.Trim().TrimStart('/');
+        return Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(uri.Host, "api.openai.com", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/v1", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(path, "chat/completions", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SafeSetupUrl(string? url)
+    {
+        return SafeOfficialProviderUrl(url, setupUrl: true) ?? "https://platform.openai.com/api-keys";
+    }
+
+    private static string? SafeAuthorizationUrl(string? url)
+    {
+        return SafeOfficialProviderUrl(url, setupUrl: false);
+    }
+
+    private static string? SafeOfficialProviderUrl(string? url, bool setupUrl)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
         {
-            return "https://platform.openai.com/api-keys";
+            return null;
         }
 
-        return url.Trim();
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var allowedHosts = setupUrl
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "platform.openai.com",
+                "help.openai.com",
+                "openai.com",
+                "chatgpt.com",
+                "chat.openai.com"
+            }
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "auth.openai.com",
+                "login.openai.com",
+                "platform.openai.com",
+                "chatgpt.com",
+                "chat.openai.com"
+            };
+        return allowedHosts.Contains(uri.Host) ? uri.ToString() : null;
     }
 }
