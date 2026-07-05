@@ -146,14 +146,16 @@ To smoke-test the web console against seeded SIEM data without Docker, run:
 ./scripts/smoke-test-web.sh
 ```
 
-It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, and verifies the dashboard, agent inventory, event search, event detail, and `soc-agent` status pages. Temporary HTML and API responses remain under `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` to remove only the per-run `web-smoke-*` agent data after a successful smoke run.
+It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, creates a synthetic `soc-agent` chat tied to that agent, and verifies the dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` pages. Temporary HTML and API responses remain under `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` to remove only the per-run `web-smoke-*` agent data and its agent-linked `soc-agent` chat history after a successful smoke run.
 
-To inspect or clean accumulated synthetic records without running a smoke test, use the guarded cleanup script. Dry-run is the default and prints only aggregate table counts:
+To inspect or clean accumulated synthetic records without running a smoke test, use the guarded cleanup script. Dry-run is the default and prints only aggregate table counts, including dependent `soc_agent_*` and investigation-graph rows selected by a target agent or explicit synthetic selector:
 
 ```bash
 ./scripts/cleanup-synthetic-data.sh
 ./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id web-smoke-12345
 ```
+
+For contextless synthetic `soc-agent` chats or standalone synthetic graphs, prefer exact IDs or tight synthetic title prefixes such as `--soc-agent-session-id`, `--soc-agent-title-prefix`, `--graph-id`, or `--graph-title-prefix`.
 
 Execute mode requires an explicit confirmation phrase:
 
