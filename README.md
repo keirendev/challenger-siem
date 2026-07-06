@@ -41,6 +41,13 @@ dotnet test Challenger.Siem.sln
 ./scripts/smoke-test-web.sh
 ```
 
+For accumulated disposable test data, start with the dry-run scoped cleanup or fresh-start reset reports. Execute modes require explicit confirmation phrases and are only for operator-owned local test environments:
+
+```bash
+./scripts/cleanup-synthetic-data.sh
+./scripts/reset-test-environment.sh
+```
+
 Run the API and web console locally with the lifecycle helper:
 
 ```bash

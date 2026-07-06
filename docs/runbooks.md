@@ -100,14 +100,62 @@ Synthetic investigation graphs can also be selected explicitly when they are not
 
 The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Web smoke creates a synthetic `soc-agent` chat tied to its per-run agent ID, so opt-in cleanup removes that chat history too. Cleanup output remains aggregate-only under `.local/`.
 
-## 5. Use investigation graphs and soc-agent chat safely
+## 5. Fresh-start reset for a disposable local test environment
+
+Use the full reset workflow only when you want a clean, empty Challenger SIEM test environment. Choose the least destructive path:
+
+1. Retire stale active agents in the web UI when you want to keep historical telemetry.
+2. Use `./scripts/cleanup-synthetic-data.sh` for allowlisted smoke/lab records.
+3. Use `./scripts/reset-test-environment.sh` only for an operator-owned disposable local database and ignored local artifacts.
+
+Preview the reset first. Output is aggregate-only and should show table/category counts, not connection strings, tokens, cookies, chat transcripts, raw telemetry, or generated settings:
+
+```bash
+./scripts/reset-test-environment.sh
+```
+
+Execute database reset only with the exact confirmation phrase and test-data assertion. The script refuses non-local, production-like, shared/client, missing, or unclassified targets and validates that the schema still exists afterward:
+
+```bash
+./scripts/reset-test-environment.sh \
+  --execute \
+  --confirm RESET-TEST-ENVIRONMENT \
+  --i-understand-this-deletes-test-data
+```
+
+Local generated artifacts are separate and opt-in. By default the script preserves `.local/dev.env`, `.local/winrm.env`, provider auth files, SSH/WinRM credentials, platform logs, and generated agent-copy packages. Stop the local platform before artifact cleanup:
+
+```bash
+./scripts/platform.sh stop
+./scripts/reset-test-environment.sh --local-artifacts-only
+./scripts/reset-test-environment.sh \
+  --local-artifacts-only \
+  --include-local-artifacts \
+  --execute \
+  --confirm RESET-TEST-ENVIRONMENT \
+  --i-understand-this-deletes-test-data
+```
+
+Use `--include-platform-logs` only when local logs are no longer needed, and `--include-generated-agent-files` only when generated `dist/` packages/settings are disposable. After reset, run:
+
+```bash
+./scripts/validate-schema.sh
+./scripts/platform.sh start
+curl --silent --fail http://127.0.0.1:5081/health
+./scripts/smoke-test-server.sh
+./scripts/smoke-test-web.sh
+```
+
+Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/config removal, service uninstall, event-log clearing, host reboot, firewall/auth changes, or remote deletion require separate explicit operator approval and a scoped runbook.
+
+## 6. Use investigation graphs and soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/graphs`, create a graph with synthetic or bounded operator-authored context, and add nodes/edges that reference SIEM pages instead of copying raw telemetry.
 3. On a graph detail page, use the `soc-agent` proposal form only for bounded suggested updates. Review the diff and check the approval box before applying; no graph mutation occurs from a proposal alone.
 4. Archive graphs when they should leave the active investigation list.
 
-## 6. Use soc-agent chat safely
+## 7. Use soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/soc-agent` and confirm the provider status pill or any inline provider notice.
@@ -115,7 +163,7 @@ The smoke scripts also support opt-in cleanup after a successful run with `SIEM_
 4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is ChatGPT subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) using either Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` for the ChatGPT Codex Responses backend, or a dedicated `SocAgent__SubscriptionAuthFilePath` for the OpenAI API path; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes the returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
-## 7. Retire stale lab agents safely
+## 8. Retire stale lab agents safely
 
 Use the web console instead of destructive database deletes when old smoke-test or lab registrations inflate inventory counts:
 
@@ -127,7 +175,7 @@ Use the web console instead of destructive database deletes when old smoke-test 
 
 Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
 
-## 8. Prepare Windows agent package
+## 9. Prepare Windows agent package
 
 ```bash
 ./scripts/publish-windows-agent.sh
@@ -141,7 +189,7 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
 
 Copy only the generated executable and ignored generated `agentsettings.json` from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
 
-## 9. Windows service install/start/stop
+## 10. Windows service install/start/stop
 
 Preview without changing the host:
 
@@ -167,7 +215,7 @@ The uninstall script preserves data by default:
 
 Use `-RemoveData` only for disposable lab cleanup after explicit approval.
 
-## 10. Windows lab E2E validation
+## 11. Windows lab E2E validation
 
 Authorized current lab VM: `192.168.122.240`.
 

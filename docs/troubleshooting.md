@@ -110,7 +110,13 @@ Checks that do not require destructive host actions:
 
 ## PostgreSQL contains old synthetic smoke data
 
-Synthetic rows from smoke tests may remain in local development databases. Use unique agent IDs and filters for validation and screenshots. Do not delete data as part of routine issue resolution unless the operator explicitly approves the cleanup. The cleanup script is guarded and dry-run by default; read [runbooks.md](runbooks.md) before using it.
+Synthetic rows from smoke tests may remain in local development databases. Use unique agent IDs and filters for validation and screenshots. Choose the least destructive cleanup path:
+
+1. Retire stale active registrations in `/agents` when you want to hide old lab agents but preserve historical telemetry.
+2. Run `./scripts/cleanup-synthetic-data.sh` for allowlisted smoke/lab rows selected by exact agent IDs or tight synthetic prefixes.
+3. Run `./scripts/reset-test-environment.sh` only for a full fresh start in an operator-owned disposable local test environment.
+
+Both scripts are dry-run by default and print aggregate counts only. Full reset requires `--execute --confirm RESET-TEST-ENVIRONMENT --i-understand-this-deletes-test-data`, refuses production-like/non-local/unclassified databases, preserves secret-bearing local config by default, and should be followed by `./scripts/validate-schema.sh`, `./scripts/platform.sh restart`, `/health`, and smoke tests. Do not delete data as part of routine issue resolution unless the operator explicitly approves the cleanup; read [runbooks.md](runbooks.md) before using destructive modes.
 
 ## Screenshot contains sensitive data
 
