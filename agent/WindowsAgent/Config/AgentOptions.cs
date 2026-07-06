@@ -14,6 +14,7 @@ public sealed class AgentOptions
     public bool StartAtEndWhenNoState { get; set; } = true;
     public int PollIntervalSeconds { get; set; } = 10;
     public int HeartbeatIntervalSeconds { get; set; } = 60;
+    public int InventoryIntervalSeconds { get; set; } = 3600;
     public BatchingOptions Batching { get; set; } = new();
     public QueueOptions Queue { get; set; } = new();
     public StateOptions State { get; set; } = new();

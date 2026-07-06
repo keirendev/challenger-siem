@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added agent-scoped Windows telemetry coverage validation with expected-source matrix overlays, recent event counts, agent-uploaded bounded inventory/audit-policy snapshots, detection prerequisite status, a `/api/v1/telemetry-coverage` review endpoint, expanded host coverage web detail, and clearer missing-vs-error source status handling for readable empty Windows logs.
 - Added a guarded fresh-start reset script and runbook for disposable local test environments with dry-run default, local target safety checks, confirmation-gated database reset, and opt-in local artifact cleanup.
 - Added safe Markdown rendering for `/soc-agent` assistant chat output in persisted and live messages while keeping operator messages plain text and blocking unsafe links/raw HTML.
 - Fixed `/soc-agent` chat auto-follow scrolling so live conversation updates keep the latest message above the sticky composer while still respecting manual scroll-away behavior.

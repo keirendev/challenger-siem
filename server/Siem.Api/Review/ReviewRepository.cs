@@ -132,7 +132,8 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     else 'L0'
                 end as current_coverage_level,
                 case
-                    when coalesce(sh.missing_mandatory_sources, 0) > 0 or coalesce(sh.error_sources, 0) > 0 then 'error'
+                    when coalesce(sh.error_sources, 0) > 0 then 'error'
+                    when coalesce(sh.missing_mandatory_sources, 0) > 0 then 'missing'
                     when coalesce(sh.stale_sources, 0) > 0 then 'stale'
                     when coalesce(sh.healthy_sources, 0) = 0 then 'missing'
                     else 'healthy'

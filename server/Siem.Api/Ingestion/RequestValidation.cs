@@ -122,6 +122,51 @@ public static class RequestValidation
         return ToValidationProblem(errors);
     }
 
+    public static Dictionary<string, string[]> ValidateInventoryBatch(AssetInventoryBatchRequest request)
+    {
+        var errors = NewErrorBag();
+        RequireLength(errors, nameof(request.AgentId), request.AgentId, 1, 128);
+        if (request.SentAt == default)
+        {
+            Add(errors, nameof(request.SentAt), "Sent timestamp is required.");
+        }
+
+        if (request.Snapshots is null || request.Snapshots.Count == 0)
+        {
+            Add(errors, nameof(request.Snapshots), "At least one inventory snapshot is required.");
+            return ToValidationProblem(errors);
+        }
+
+        if (request.Snapshots.Count > 20)
+        {
+            Add(errors, nameof(request.Snapshots), "Inventory batch contains more than 20 snapshots.");
+        }
+
+        for (var index = 0; index < request.Snapshots.Count; index++)
+        {
+            var snapshot = request.Snapshots[index];
+            RequireLength(errors, $"snapshots[{index}].agent_id", snapshot.AgentId, 1, 128);
+            if (!string.Equals(snapshot.AgentId, request.AgentId, StringComparison.Ordinal))
+            {
+                Add(errors, $"snapshots[{index}].agent_id", "Snapshot agent_id must match the batch agent_id.");
+            }
+
+            RequireLength(errors, $"snapshots[{index}].hostname", snapshot.Hostname, 1, 255);
+            RequireLength(errors, $"snapshots[{index}].snapshot_type", snapshot.SnapshotType, 1, 128);
+            if (snapshot.CollectedAt == default)
+            {
+                Add(errors, $"snapshots[{index}].collected_at", "Collected timestamp is required.");
+            }
+
+            if (snapshot.Items.Count > 200)
+            {
+                Add(errors, $"snapshots[{index}].items", "Snapshot contains more than 200 inventory items.");
+            }
+        }
+
+        return ToValidationProblem(errors);
+    }
+
     private static void ValidateEvent(Dictionary<string, List<string>> errors, string batchAgentId, EventEnvelope? envelope, int index)
     {
         var prefix = $"events[{index}]";

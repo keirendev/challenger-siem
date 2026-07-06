@@ -21,7 +21,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 ## Server, APIs, and contracts
 
-- [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
+- [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, telemetry coverage validation, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
 - [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
 - [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
 - [Authentication design](auth.md) - enrollment token, per-agent token, review token, and external `soc-agent` provider guardrails.

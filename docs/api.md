@@ -143,6 +143,16 @@ Request:
 
 Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`.
 
+## Agent inventory upload
+
+```http
+POST /api/v1/agents/inventory
+Authorization: Bearer <per-agent-token>
+Content-Type: application/json
+```
+
+Agents send bounded inventory and audit-policy snapshots independently of raw event batches. Snapshot payloads include `agent_id`, `hostname`, `snapshot_type`, `collected_at`, bounded `items`, and summary counts/statuses. The server validates that every snapshot `agent_id` matches the authenticated batch agent and stores the snapshots for `/api/v1/inventory`, `/api/v1/telemetry-coverage`, `/audit-policy`, and host coverage review.
+
 ## Search events
 
 ```http
@@ -173,11 +183,20 @@ Supported filters:
 ## Source health
 
 ```http
-GET /api/v1/source-health?agent_id=win11-test-001
+GET /api/v1/source-health?agent_id=win11-test-001&target_level=L2
 Authorization: Bearer <review-token>
 ```
 
-Returns coverage summaries and per-source health rows populated from agent heartbeat data.
+Returns coverage summaries and per-source health rows populated from agent heartbeat data. When `agent_id` is supplied, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported sources appear as `missing` or `excepted` rows instead of disappearing from the operator view.
+
+## Telemetry coverage validation
+
+```http
+GET /api/v1/telemetry-coverage?agent_id=win11-test-001&target_level=L2&lookback_hours=24
+Authorization: Bearer <review-token>
+```
+
+Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
 
 ## Inventory
 

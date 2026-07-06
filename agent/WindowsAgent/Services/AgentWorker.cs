@@ -3,6 +3,7 @@ using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Coverage;
+using Challenger.Siem.WindowsAgent.Inventory;
 using Challenger.Siem.WindowsAgent.Queue;
 using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.State;
@@ -36,24 +37,31 @@ public sealed class AgentWorker(
         await queue.InitializeAsync(stoppingToken);
 
         var nextHeartbeat = DateTimeOffset.MinValue;
+        var nextInventory = DateTimeOffset.MinValue;
         var consecutiveFailures = 0;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                if (DateTimeOffset.UtcNow >= nextHeartbeat)
+                {
+                    await TrySendHeartbeatAsync(stoppingToken);
+                    nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
+                }
+
+                if (DateTimeOffset.UtcNow >= nextInventory)
+                {
+                    await TrySendInventoryAsync(stoppingToken);
+                    nextInventory = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, options.InventoryIntervalSeconds));
+                }
+
                 var collected = await CollectConfiguredChannelsAsync(stoppingToken);
                 var sent = await DrainQueueAsync(stoppingToken);
 
                 if (collected > 0 || sent > 0)
                 {
                     logger.LogInformation("Agent cycle completed. Collected={Collected}, SentOrDeduplicated={Sent}.", collected, sent);
-                }
-
-                if (DateTimeOffset.UtcNow >= nextHeartbeat)
-                {
-                    await TrySendHeartbeatAsync(stoppingToken);
-                    nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }
 
                 consecutiveFailures = 0;
@@ -133,6 +141,11 @@ public sealed class AgentWorker(
             {
                 acknowledgement = await client.SendBatchAsync(batch.Select(item => item.Envelope).ToArray(), cancellationToken);
             }
+            catch (HttpRequestException ex) when (IsPayloadTooLarge(ex))
+            {
+                sentOrDeduplicated += await RecoverPayloadTooLargeBatchAsync(batch, cancellationToken);
+                break;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 await QuarantineExhaustedEventsAsync(batch, "send_failed", cancellationToken);
@@ -168,6 +181,35 @@ public sealed class AgentWorker(
         }
 
         return sentOrDeduplicated;
+    }
+
+    private async Task<int> RecoverPayloadTooLargeBatchAsync(
+        IReadOnlyList<QueuedEvent> batch,
+        CancellationToken cancellationToken)
+    {
+        var recovered = 0;
+        foreach (var item in batch)
+        {
+            try
+            {
+                var acknowledgement = await client.SendBatchAsync(new[] { item.Envelope }, cancellationToken);
+                recovered += await DeleteAcknowledgedEventsAsync(new[] { item }, acknowledgement, cancellationToken);
+            }
+            catch (HttpRequestException ex) when (IsPayloadTooLarge(ex))
+            {
+                logger.LogWarning(
+                    "Quarantining queued event {EventId} because the single-event payload exceeded the server request limit.",
+                    item.Envelope.EventId);
+                await queue.MarkPoisonAsync(new[] { item.QueueId }, "payload_too_large", cancellationToken);
+            }
+        }
+
+        if (recovered > 0)
+        {
+            runtimeState.ObserveSuccessfulSend();
+        }
+
+        return recovered;
     }
 
     private async Task<int> DeleteAcknowledgedEventsAsync(
@@ -279,6 +321,19 @@ public sealed class AgentWorker(
         }
     }
 
+    private async Task TrySendInventoryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var snapshots = WindowsInventoryCollectors.CollectAllSnapshots(options.AgentId, hostname);
+            await client.SendInventoryAsync(snapshots, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Inventory snapshot upload failed.");
+        }
+    }
+
     private async Task<IReadOnlyList<SourceHealthReport>> ProbeSourceHealthAsync(CancellationToken cancellationToken)
     {
         var manifest = WindowsSourceManifest.Build(options.Channels, options.OptionalChannels);
@@ -305,6 +360,10 @@ public sealed class AgentWorker(
 
         return results;
     }
+
+    private static bool IsPayloadTooLarge(HttpRequestException exception) =>
+        exception.Message.Contains("413", StringComparison.OrdinalIgnoreCase)
+        || exception.Message.Contains("Payload Too Large", StringComparison.OrdinalIgnoreCase);
 
     private static TimeSpan BackoffDelay(int consecutiveFailures)
     {

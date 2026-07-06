@@ -76,11 +76,14 @@ Default optional L2/L3 source manifest channels:
 - `Microsoft-Windows-WMI-Activity/Operational`
 - `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational`
 - `Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational`
+- `Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational`
 - `Microsoft-Windows-WinRM/Operational`
 - `Microsoft-Windows-Windows Firewall With Advanced Security/Firewall`
 - `Microsoft-Windows-GroupPolicy/Operational`
 - `Microsoft-Windows-CodeIntegrity/Operational`
 - `Microsoft-Windows-AppLocker/EXE and DLL`
+- `Microsoft-Windows-AppLocker/MSI and Script`
+- `Microsoft-Windows-AppLocker/Packaged app-Execution`
 - `Microsoft-Windows-Sysmon/Operational`
 
 ## Reliability decisions

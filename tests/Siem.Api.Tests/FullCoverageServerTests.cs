@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Contracts.V1;
@@ -88,6 +89,54 @@ public sealed class FullCoverageServerTests
         }, DateTimeOffset.UtcNow);
 
         Assert.Equal(SourceHealthStatuses.Stale, status);
+    }
+
+    [Fact]
+    public void WindowsTelemetrySourceCatalogIncludesL2ValidationSources()
+    {
+        var sources = WindowsTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L2);
+
+        Assert.Contains(sources, source => source.SourceId == "security" && source.Required);
+        Assert.Contains(sources, source => source.SourceId == "rdp-corets" && source.Required);
+        Assert.Contains(sources, source => source.SourceId == "applocker-msi-script" && !source.Required);
+        Assert.DoesNotContain(sources, source => source.SourceId == "sysmon-operational");
+    }
+
+    [Fact]
+    public void TelemetryCoverageEvaluatorAddsMissingExpectedSources()
+    {
+        var sources = TelemetryCoverageEvaluator.MergeExpectedSources(new[]
+        {
+            new SourceHealthReport
+            {
+                SourceId = "system",
+                DisplayName = "Windows System",
+                Channel = "System",
+                CoverageLevel = WindowsCoverageLevel.L1,
+                Status = SourceHealthStatuses.Healthy,
+                Required = true,
+                Enabled = true,
+                LastEventTime = DateTimeOffset.UtcNow
+            }
+        }, WindowsCoverageLevel.L2, new HashSet<string>(StringComparer.OrdinalIgnoreCase), DateTimeOffset.UtcNow);
+
+        Assert.Contains(sources, source => source.SourceId == "system" && source.Details["reported_by_agent"] == "true");
+        Assert.Contains(sources, source => source.SourceId == "security" && source.Status == SourceHealthStatuses.Missing && source.Details["reported_by_agent"] == "false");
+        var summary = TelemetryCoverageEvaluator.CreateSummary("agent", "HOST", 0, DateTimeOffset.UtcNow, sources, WindowsCoverageLevel.L2);
+        Assert.Equal(WindowsCoverageLevel.L0, summary.CurrentLevel);
+        Assert.True(summary.MissingMandatorySources > 0);
+        Assert.Equal(SourceHealthStatuses.Missing, summary.OverallStatus);
+    }
+
+    [Fact]
+    public void TelemetryCoverageEvaluatorDoesNotCountOptionalL3SourcesAsMandatoryForL2()
+    {
+        var manifest = WindowsTelemetrySourceCatalog.BuildManifest(
+            new[] { "Security", "System", "Application" },
+            new[] { "Microsoft-Windows-Sysmon/Operational" });
+        var sysmon = Assert.Single(manifest, source => source.SourceId == "sysmon-operational");
+
+        Assert.False(sysmon.Required);
     }
 
     [Fact]
