@@ -411,8 +411,11 @@
         let item;
         if (pendingAssistant && message.role !== 'operator') {
             item = pendingAssistant;
+            item.classList.remove('pending');
+            item.removeAttribute('aria-busy');
             item.id = `message-${message.message_id}`;
             item.dataset.messageId = message.message_id;
+            item.dataset.role = message.role;
             item.querySelector('.message-box').textContent = message.content || pendingAssistantContent;
             pendingAssistant = null;
             pendingAssistantContent = '';
@@ -441,6 +444,39 @@
 
         scrollToLatest();
         return item;
+    }
+
+    function appendOptimisticOperatorMessage(content) {
+        emptyState.hidden = true;
+        const item = createElement('li', 'message-bubble operator sending');
+        item.id = `message-pending-operator-${Date.now()}`;
+        item.dataset.role = 'operator';
+        const meta = createElement('div', 'message-meta');
+        meta.appendChild(createElement('strong', '', 'Operator'));
+        meta.appendChild(createElement('span', 'badge warning', 'sending'));
+        item.appendChild(meta);
+        item.appendChild(createElement('pre', 'message-box', content));
+        messageList.appendChild(item);
+        scrollToLatest();
+        return item;
+    }
+
+    function hydrateOptimisticOperatorMessage(item, message) {
+        if (!item || !message?.message_id) return;
+        item.classList.remove('sending');
+        item.id = `message-${message.message_id}`;
+        item.dataset.messageId = message.message_id;
+        const meta = item.querySelector('.message-meta');
+        meta.textContent = '';
+        hydrateMessageMeta(meta, message);
+        item.querySelector('.message-box').textContent = message.content || item.querySelector('.message-box').textContent;
+    }
+
+    function removeOptimisticOperatorMessage(item) {
+        if (item?.classList.contains('sending')) {
+            item.remove();
+            emptyState.hidden = hasThreadContent();
+        }
     }
 
     function hydrateMessageMeta(meta, message) {
@@ -494,13 +530,30 @@
         emptyState.hidden = true;
         pendingAssistant = createElement('li', 'message-bubble assistant pending', '');
         pendingAssistant.id = `message-pending-${currentRunId || 'run'}`;
+        pendingAssistant.setAttribute('aria-busy', 'true');
         const meta = createElement('div', 'message-meta');
         meta.appendChild(createElement('strong', '', 'soc-agent'));
         meta.appendChild(createElement('span', 'badge warning', 'streaming'));
         pendingAssistant.appendChild(meta);
-        pendingAssistant.appendChild(createElement('pre', 'message-box', ''));
+        pendingAssistant.appendChild(createElement('pre', 'message-box', 'Preparing live response…'));
         messageList.appendChild(pendingAssistant);
         return pendingAssistant;
+    }
+
+    function setPendingAssistantPlaceholder(message) {
+        const item = ensurePendingAssistant();
+        if (!pendingAssistantContent) {
+            item.querySelector('.message-box').textContent = message;
+        }
+        scrollToLatest();
+    }
+
+    function removePendingAssistantIfEmpty() {
+        if (pendingAssistant && !pendingAssistantContent) {
+            pendingAssistant.remove();
+            pendingAssistant = null;
+            emptyState.hidden = hasThreadContent();
+        }
     }
 
     function appendContentDelta(delta) {
@@ -538,6 +591,12 @@
         }
     }
 
+    function providerNeedsAttention(status) {
+        if (!status) return false;
+        if (status.requires_connection) return true;
+        return ['disabled', 'provider_not_configured', 'auth_required', 'expired', 'refresh_failed', 'unsupported_delegated_auth', 'unsupported_subscription_oauth', 'scope_missing', 'plan_limited', 'budget_limited', 'rate_limited', 'provider_error'].includes(status.status || '');
+    }
+
     function updateProvider(status) {
         if (!status) return;
         const statusText = status.status || 'unknown';
@@ -550,7 +609,7 @@
         if (providerName) providerName.textContent = status.display_name || status.provider || 'Provider';
         if (providerMessage) providerMessage.textContent = status.message || '';
         if (providerInlineNotice) {
-            providerInlineNotice.hidden = !(status.requires_connection || status.data_may_leave_local_siem);
+            providerInlineNotice.hidden = !providerNeedsAttention(status);
         }
     }
 
@@ -580,12 +639,19 @@
                 break;
             case 'run_started':
                 setRunning(true, 'Running');
+                setPendingAssistantPlaceholder('soc-agent is running SIEM tools…');
                 showAlert(data.message || 'soc-agent run started.');
                 break;
             case 'provider_status':
                 updateProvider(data.provider_status);
+                if (data.provider_status?.data_may_leave_local_siem && !data.provider_status?.requires_connection) {
+                    setPendingAssistantPlaceholder('Using the configured external provider after local SIEM tool context is bounded and redacted…');
+                }
                 break;
             case 'tool_started':
+                setPendingAssistantPlaceholder(data.summary || `Running ${data.tool_name || 'soc-agent tool'}…`);
+                upsertActivity(type, data, payload.sequence);
+                break;
             case 'tool_finished':
                 upsertActivity(type, data, payload.sequence);
                 break;
@@ -597,9 +663,11 @@
                 break;
             case 'run_cancel_requested':
                 setRunning(true, 'Cancelling');
+                setPendingAssistantPlaceholder(data.message || 'Cancellation requested…');
                 showAlert(data.message || 'Cancellation requested.');
                 break;
             case 'run_error':
+                setPendingAssistantPlaceholder(data.message || 'soc-agent run reported an error.');
                 showAlert(data.message || 'soc-agent run reported an error.', 'error');
                 setBanner(data.message || 'soc-agent run reported an error.', true);
                 break;
@@ -613,6 +681,15 @@
                 if (reconnectTimer) {
                     window.clearTimeout(reconnectTimer);
                     reconnectTimer = null;
+                }
+                if (pendingAssistant && !pendingAssistantContent && data.assistant_message) {
+                    appendMessage(data.assistant_message);
+                } else if (pendingAssistant && !pendingAssistantContent) {
+                    pendingAssistant.classList.remove('pending');
+                    pendingAssistant.removeAttribute('aria-busy');
+                    pendingAssistant.querySelector('.message-box').textContent = data.status === 'complete'
+                        ? 'soc-agent completed. Refresh if the final response is not shown.'
+                        : pendingAssistant.querySelector('.message-box').textContent;
                 }
                 setBanner('soc-agent run complete.');
                 if (data.status === 'complete') hideAlert();
@@ -652,6 +729,11 @@
 
         setRunning(true, 'Starting');
         setBanner('Starting soc-agent run…');
+        setAutoFollow(true);
+        const optimisticOperator = appendOptimisticOperatorMessage(message);
+        setPendingAssistantPlaceholder('Starting soc-agent live run…');
+        textarea.value = '';
+        updateCharacterCount();
         try {
             const response = await fetch(root.dataset.liveStartUrl, {
                 method: 'POST',
@@ -680,12 +762,15 @@
                 url.searchParams.delete('agent_id');
                 window.history.replaceState({}, '', url);
             }
-            setAutoFollow(true);
-            appendMessage(result.user_message);
-            textarea.value = '';
-            updateCharacterCount();
-            openEventStream(result.run_id, result.next_sequence || 0);
+            hydrateOptimisticOperatorMessage(optimisticOperator, result.user_message);
+            setPendingAssistantPlaceholder('soc-agent is running SIEM tools…');
+            openEventStream(result.run_id, 0);
+            setRunning(true, 'Running');
         } catch (error) {
+            removeOptimisticOperatorMessage(optimisticOperator);
+            removePendingAssistantIfEmpty();
+            textarea.value = message;
+            updateCharacterCount();
             setRunning(false, 'Idle');
             showAlert('soc-agent live run could not start. Use the form fallback or confirm your operator session is still signed in.', 'error');
             setBanner(error.message, true);
