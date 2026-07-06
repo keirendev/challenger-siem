@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added a guarded fresh-start reset script and runbook for disposable local test environments with dry-run default, local target safety checks, confirmation-gated database reset, and opt-in local artifact cleanup.
 - Added safe Markdown rendering for `/soc-agent` assistant chat output in persisted and live messages while keeping operator messages plain text and blocking unsafe links/raw HTML.
 - Fixed `/soc-agent` chat auto-follow scrolling so live conversation updates keep the latest message above the sticky composer while still respecting manual scroll-away behavior.
 - Fixed the `/soc-agent` live workspace so normal connected/local provider states use the compact title pill instead of a large inline status box, activity cards fit long tool names, and no-reload sends show immediate operator/pending progress while live events stream.

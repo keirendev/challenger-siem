@@ -24,7 +24,7 @@ EOF
 ./scripts/validate-schema.sh
 ```
 
-To reset a disposable local lab database, drop and recreate the database with PostgreSQL admin tools, then rerun the two schema scripts. Do not run destructive reset commands against shared or client databases.
+For routine cleanup, prefer the scoped synthetic cleanup flow later in this page. For a full fresh start in an operator-owned disposable local test database, use the guarded reset workflow in [Fresh-start reset for disposable test environments](#fresh-start-reset-for-disposable-test-environments) instead of ad hoc SQL. Do not run destructive reset commands against shared, production, client, or unclassified databases.
 
 ## Configure secrets via environment variables
 
@@ -175,6 +175,50 @@ Execute mode requires an explicit confirmation phrase:
 ```
 
 Do not use broad selectors or run cleanup against shared/client databases. Prefer exact `--agent-id` values for manual validation records.
+
+## Fresh-start reset for disposable test environments
+
+Use `scripts/reset-test-environment.sh` only when you intentionally want a fresh disposable local test environment. It is broader than synthetic cleanup: it can truncate Challenger SIEM application data tables such as agents, events, heartbeats, source health, inventory snapshots, coverage exceptions, ingestion errors, alerts/evidence, investigation graphs/proposals/audit, and `soc_agent` sessions/messages/turns while preserving schema and built-in detection-rule metadata.
+
+Dry-run is the default and prints only aggregate table/category counts plus local artifact categories; it does not print connection strings, tokens, cookies, chat text, raw event payloads, generated agent settings, or local secret file contents:
+
+```bash
+./scripts/reset-test-environment.sh
+```
+
+Full database reset is high-friction and fails closed unless the target is classified as local/disposable, `ASPNETCORE_ENVIRONMENT` is not `Production`, and the operator supplies all destructive flags:
+
+```bash
+./scripts/reset-test-environment.sh \
+  --execute \
+  --confirm RESET-TEST-ENVIRONMENT \
+  --i-understand-this-deletes-test-data
+```
+
+Known ignored local artifacts can be included explicitly. Secret-bearing config and auth files such as `.local/dev.env`, `.local/winrm.env`, provider auth files, SSH/WinRM credentials, and other operator-managed secrets are preserved by default. Platform logs and generated agent-copy packages require separate opt-in flags because they may contain sensitive local validation details or generated agent tokens:
+
+```bash
+./scripts/reset-test-environment.sh --local-artifacts-only
+./scripts/reset-test-environment.sh \
+  --local-artifacts-only \
+  --include-local-artifacts \
+  --execute \
+  --confirm RESET-TEST-ENVIRONMENT \
+  --i-understand-this-deletes-test-data
+./scripts/reset-test-environment.sh --include-local-artifacts --include-platform-logs --include-generated-agent-files
+```
+
+Stop the local platform before executing artifact cleanup so the script does not remove live PID/state files. After a full reset, validate and restart:
+
+```bash
+./scripts/validate-schema.sh
+./scripts/platform.sh restart
+curl --silent --fail http://127.0.0.1:5081/health
+./scripts/smoke-test-server.sh
+./scripts/smoke-test-web.sh
+```
+
+Endpoint-side cleanup is separate. Do not clear Windows Event Logs, delete endpoint queue/state/config files, uninstall services, reboot hosts, or mutate lab VMs unless a separate operator-approved runbook explicitly scopes that work.
 
 Manual equivalent:
 

@@ -119,7 +119,7 @@ Agent heartbeats can include source manifests and per-channel health. The server
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
 - Check local health: `curl http://127.0.0.1:<port>/health`.
 - Search events through `GET /api/v1/events` with the review token; see [api.md](api.md#search-events).
-- Retire stale lab registrations only through the deliberate web/API workflow; it disables registrations and preserves telemetry.
+- Retire stale lab registrations through the deliberate web/API workflow when preserving telemetry; use scoped synthetic cleanup for smoke/lab rows and `./scripts/reset-test-environment.sh` only for a full fresh start in a disposable local test environment.
 - Follow [release-readiness.md](release-readiness.md) before tagging or publishing a release.
 
 ## Troubleshooting
