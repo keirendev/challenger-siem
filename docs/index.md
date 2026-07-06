@@ -30,6 +30,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 ## Windows endpoint agent
 
 - [Windows agent](agent.md) - current capabilities, build, install, state/queue behavior, and Windows validation notes.
+- [Windows agent installer workflow](windows-agent-installer.md) - plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and Sysmon L3 management.
 - [Agent configuration format](agent-config.md) - configuration keys, enrollment modes, queue fields, and channel state paths.
 - [L2 Windows validation runbook](windows-l2-validation-runbook.md) - safe L2 source-health validation.
 - [Sysmon L3 validation runbook](sysmon-l3-validation-runbook.md) - safe Sysmon validation path.

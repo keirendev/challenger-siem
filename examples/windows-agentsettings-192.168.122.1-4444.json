@@ -48,6 +48,10 @@
     },
     "State": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json"
+    },
+    "Sysmon": {
+      "ConfigPath": "C:\\ProgramData\\ChallengerSIEM\\Agent\\sysmon\\challenger-siem-sysmon-l3.xml",
+      "ProfileVersion": "challenger-siem-l3-2026.07.06"
     }
   }
 }

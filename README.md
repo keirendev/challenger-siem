@@ -5,6 +5,7 @@ Challenger SIEM is a custom, no-Docker SIEM prototype focused first on Windows e
 ## Current capabilities
 
 - Windows Event Log collection with local agent queueing, retries, channel position state, and heartbeat/source-health reporting.
+- Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
 - Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`.
@@ -77,7 +78,7 @@ For the authorized local WinRM validation VM, start the API on this host and pre
   demo-agent-001 DEMO-WIN11 "Windows 11"
 ```
 
-Copy `dist/windows-agent-copy/WindowsAgent.exe` and the generated `agentsettings.json` to the Windows host together. The generated settings file contains an API token; do not print or commit it.
+Copy `dist/windows-agent-copy/WindowsAgent.exe`, the generated `agentsettings.json`, and the optional `dist/windows-agent-copy/Sysmon/` profile directory to the Windows host together. The generated settings file contains an API token; do not print or commit it.
 
 ## Repository layout
 
@@ -101,7 +102,7 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Challenger family alignment](docs/challenger-family-alignment.md)
 - [Architecture](docs/architecture.md)
 - [API contract v1](docs/api.md) and [schema design](docs/schema.md)
-- [Windows agent](docs/agent.md) and [agent configuration](docs/agent-config.md)
+- [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
 - [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
 - [Web review console](docs/web.md) and [sanitized screenshot demo](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)

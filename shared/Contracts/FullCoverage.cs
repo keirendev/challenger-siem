@@ -72,6 +72,21 @@ public sealed record SourceManifestEntry
 
     [JsonPropertyName("parser_id")]
     public string ParserId { get; init; } = string.Empty;
+
+    [JsonPropertyName("prerequisites")]
+    public IReadOnlyList<string> Prerequisites { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("event_families")]
+    public IReadOnlyList<string> EventFamilies { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("validation_scenarios")]
+    public IReadOnlyList<string> ValidationScenarios { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("privacy")]
+    public string Privacy { get; init; } = "standard";
+
+    [JsonPropertyName("installer_managed")]
+    public bool InstallerManaged { get; init; }
 }
 
 public sealed record SourceHealthReport
@@ -321,6 +336,15 @@ public sealed record SourceTelemetryCoverage
 
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
+
+    [JsonPropertyName("source_version")]
+    public string? SourceVersion { get; init; }
+
+    [JsonPropertyName("config_hash")]
+    public string? ConfigHash { get; init; }
+
+    [JsonPropertyName("details")]
+    public IReadOnlyDictionary<string, string> Details { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     [JsonPropertyName("recent_event_count")]
     public int RecentEventCount { get; init; }

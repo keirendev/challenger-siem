@@ -154,7 +154,7 @@
                         <tr>
                             <td class="mono">@agent.AgentId</td>
                             <td><strong>@agent.Hostname</strong><div class="muted">@agent.OsVersion · @agent.AgentVersion</div></td>
-                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId">@agent.CurrentCoverageLevel</a> <span class="badge @(agent.CoverageStatus == "healthy" ? "ok" : agent.CoverageStatus == "missing" ? "warning" : "danger")">@agent.CoverageStatus</span></td>
+                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L3">@agent.CurrentCoverageLevel</a> <span class="badge @(agent.CoverageStatus == "healthy" ? "ok" : agent.CoverageStatus == "missing" ? "warning" : "danger")">@agent.CoverageStatus</span></td>
                             <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.ErrorSources error</td>
                             <td>@agent.FirstSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                             <td>

@@ -31,6 +31,9 @@ SHA256:
 The agent still requires configuration at:
   C:\\ProgramData\\ChallengerSIEM\\Agent\\agentsettings.json
 
+The published directory also includes the versioned Sysmon L3 profile at:
+  $ROOT_DIR/$OUTPUT_DIR/Sysmon/challenger-siem-sysmon-l3.xml
+
 Example config:
   $ROOT_DIR/examples/windows-agentsettings-192.168.122.1-4444.json
 EOF

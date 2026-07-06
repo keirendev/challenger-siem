@@ -13,6 +13,24 @@
     <a class="button secondary" asp-page="/Agents/Index">Back to agents</a>
 </div>
 
+@if (!string.IsNullOrWhiteSpace(Model.AgentId))
+{
+    <section class="card filters filter-panel" aria-label="Coverage target selector">
+        <div class="table-title">
+            <div>
+                <h2>Coverage target</h2>
+                <p class="muted">Review the same host against L1 native, L2 Windows security, L3 Sysmon, or L4 role-pack expectations.</p>
+            </div>
+            <div class="actions">
+                @foreach (var level in Model.TargetLevels)
+                {
+                    <a class="button @(level == Model.TargetLevel ? null : "secondary")" asp-page="/Agents/Detail" asp-route-agent_id="@Model.AgentId" asp-route-target_level="@level">@level</a>
+                }
+            </div>
+        </div>
+    </section>
+}
+
 @if (Model.ErrorMessage is not null)
 {
     <div class="alert" role="alert">@Model.ErrorMessage</div>
@@ -25,6 +43,7 @@ else
 {
     <section class="metrics" aria-label="Coverage metrics">
         <article class="card"><span class="metric-value">@Model.Summary.CurrentLevel</span><span class="metric-label">current coverage</span></article>
+        <article class="card"><span class="metric-value">@Model.TargetLevel</span><span class="metric-label">target coverage</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.OverallStatus</span><span class="metric-label">coverage status</span></article>
         <article class="card"><span class="metric-value">@(Model.Coverage?.RecentEventCount.ToString() ?? "—")</span><span class="metric-label">recent events / 24h</span></article>
         <article class="card"><span class="metric-value">@(Model.Coverage is null ? "—" : $"{Model.Coverage.ReportedSourceCount}/{Model.Coverage.ExpectedSourceCount}")</span><span class="metric-label">reported / expected sources</span></article>
@@ -58,7 +77,7 @@ else
         <div class="table-title">
             <div>
                 <h2>Expected source matrix</h2>
-                <p class="muted">L2 validation shows one row per expected Windows source, including synthetic missing rows when a source has not been reported.</p>
+                <p class="muted">Validation shows one row per expected Windows source for the selected target, including synthetic missing rows when a source has not been reported.</p>
             </div>
         </div>
         @if (Model.Sources.Count == 0)
@@ -78,6 +97,7 @@ else
                             <th>Reported</th>
                             <th>Recent events</th>
                             <th>Last event</th>
+                            <th>Config/source</th>
                             <th>Reason</th>
                             <th>Review</th>
                         </tr>
@@ -93,6 +113,18 @@ else
                                 <td>@(source.Reported ? "yes" : "no")</td>
                                 <td>@source.RecentEventCount</td>
                                 <td>@(source.LastEventTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                                <td>
+                                    <span>@(string.IsNullOrWhiteSpace(source.SourceVersion) ? "—" : source.SourceVersion)</span>
+                                    @if (!string.IsNullOrWhiteSpace(source.ConfigHash))
+                                    {
+                                        var shortHash = source.ConfigHash.Length > 12 ? source.ConfigHash[..12] : source.ConfigHash;
+                                        <div class="muted mono">hash @shortHash</div>
+                                    }
+                                    @if (source.Details.TryGetValue("source_pack", out var sourcePack))
+                                    {
+                                        <div class="muted">@sourcePack</div>
+                                    }
+                                </td>
                                 <td>@source.Reason</td>
                                 <td><a href="@source.EventSearchUrl">events</a></td>
                             </tr>

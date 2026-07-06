@@ -8,12 +8,17 @@ namespace Challenger.Siem.Api.Pages.Agents;
 public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCoverageRepository telemetryCoverage) : PageModel
 {
     public string? AgentId { get; private set; }
+    public WindowsCoverageLevel TargetLevel { get; private set; } = WindowsCoverageLevel.L3;
+    public IReadOnlyList<WindowsCoverageLevel> TargetLevels { get; } = new[] { WindowsCoverageLevel.L1, WindowsCoverageLevel.L2, WindowsCoverageLevel.L3, WindowsCoverageLevel.L4 };
     public CoverageSummary? Summary { get; private set; }
     public AgentTelemetryCoverage? Coverage { get; private set; }
     public IReadOnlyList<SourceTelemetryCoverage> Sources { get; private set; } = Array.Empty<SourceTelemetryCoverage>();
     public string? ErrorMessage { get; private set; }
 
-    public async Task<IActionResult> OnGetAsync([FromQuery(Name = "agent_id")] string? agentId, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(
+        [FromQuery(Name = "agent_id")] string? agentId,
+        [FromQuery(Name = "target_level")] string? targetLevel,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(agentId))
         {
@@ -22,11 +27,12 @@ public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCo
         }
 
         AgentId = agentId;
+        TargetLevel = ParseTargetLevel(targetLevel);
         try
         {
-            var response = await sourceHealth.SearchAsync(agentId, cancellationToken);
+            var response = await sourceHealth.SearchAsync(agentId, TargetLevel, cancellationToken);
             Summary = response.Summaries.FirstOrDefault();
-            var coverageResponse = await telemetryCoverage.AssessAsync(agentId, WindowsCoverageLevel.L2, 24, cancellationToken);
+            var coverageResponse = await telemetryCoverage.AssessAsync(agentId, TargetLevel, 24, cancellationToken);
             Coverage = coverageResponse.Agents.FirstOrDefault();
             Sources = Coverage?.Sources ?? response.Sources.Select(source => new SourceTelemetryCoverage
             {
@@ -38,6 +44,9 @@ public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCo
                 Enabled = source.Enabled,
                 Status = source.Status,
                 LastEventTime = source.LastEventTime,
+                SourceVersion = source.SourceVersion,
+                ConfigHash = source.ConfigHash,
+                Details = source.Details,
                 Reason = source.ErrorMessage ?? source.ErrorCode ?? string.Empty
             }).ToArray();
         }
@@ -47,5 +56,12 @@ public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCo
         }
 
         return Page();
+    }
+
+    private static WindowsCoverageLevel ParseTargetLevel(string? targetLevel)
+    {
+        return Enum.TryParse<WindowsCoverageLevel>(targetLevel, ignoreCase: true, out var parsed) && parsed is >= WindowsCoverageLevel.L1 and <= WindowsCoverageLevel.L4
+            ? parsed
+            : WindowsCoverageLevel.L3;
     }
 }

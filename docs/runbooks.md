@@ -187,33 +187,39 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
   "Windows 11"
 ```
 
-Copy only the generated executable and ignored generated `agentsettings.json` from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
+Copy only the generated executable, ignored generated `agentsettings.json`, and optional `Sysmon/` profile from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
 
 ## 10. Windows service install/start/stop
 
 Preview without changing the host:
 
 ```powershell
-.\scripts\install-windows-agent.ps1 -PublishPath .\dist\windows-agent-win-x64 -PlanOnly
-.\scripts\uninstall-windows-agent.ps1 -PlanOnly
+.\scripts\install-windows-agent.ps1 -Mode plan -TargetLevel L3
 ```
 
 From an elevated PowerShell session on Windows:
 
 ```powershell
-.\scripts\install-windows-agent.ps1 -PublishPath .\dist\windows-agent-win-x64
+.\scripts\install-windows-agent.ps1 -Mode install -PublishPath .\dist\windows-agent-win-x64
 Start-Service ChallengerSiemAgent
 Get-Service ChallengerSiemAgent
 Stop-Service ChallengerSiemAgent
+.\scripts\install-windows-agent.ps1 -Mode validate -TargetLevel L3
 ```
 
-The uninstall script preserves data by default:
+Upgrade/repair refuses to overwrite files while the service is running unless `-RestartService` is supplied after plan review:
 
 ```powershell
-.\scripts\uninstall-windows-agent.ps1
+.\scripts\install-windows-agent.ps1 -Mode upgrade -PublishPath .\dist\windows-agent-win-x64 -RestartService
 ```
 
-Use `-RemoveData` only for disposable lab cleanup after explicit approval.
+Uninstall through the same workflow preserves data by default:
+
+```powershell
+.\scripts\install-windows-agent.ps1 -Mode uninstall
+```
+
+Use `-RemoveData` only for disposable lab cleanup after explicit approval. Use `-ConfigurePrerequisites`, `-ConfigurePrivacySensitiveAuditPolicy`, and `-ManageSysmon` only after reviewing [the installer workflow](windows-agent-installer.md) and obtaining host-mutation approval.
 
 ## 11. Windows lab E2E validation
 

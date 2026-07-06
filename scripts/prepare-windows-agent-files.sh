@@ -24,6 +24,10 @@ OUTPUT_DIR="${SIEM_PREPARE_OUTPUT_DIR:-dist/windows-agent-copy}"
 ./scripts/publish-windows-agent.sh >/dev/null
 mkdir -p "$OUTPUT_DIR"
 cp -f dist/WindowsAgent.exe "$OUTPUT_DIR/WindowsAgent.exe"
+if [[ -d dist/windows-agent-win-x64/Sysmon ]]; then
+  rm -rf "$OUTPUT_DIR/Sysmon"
+  cp -R dist/windows-agent-win-x64/Sysmon "$OUTPUT_DIR/Sysmon"
+fi
 
 REQUEST_FILE="$(mktemp)"
 RESPONSE_FILE="$(mktemp)"
@@ -95,6 +99,10 @@ config = {
         "State": {
             "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json",
         },
+        "Sysmon": {
+            "ConfigPath": "C:\\ProgramData\\ChallengerSIEM\\Agent\\sysmon\\challenger-siem-sysmon-l3.xml",
+            "ProfileVersion": "challenger-siem-l3-2026.07.06",
+        },
     }
 }
 output_path.write_text(json.dumps(config, indent=2), encoding='utf-8')
@@ -104,8 +112,9 @@ cat <<EOF
 Prepared Windows agent files:
   $ROOT_DIR/$OUTPUT_DIR/WindowsAgent.exe
   $ROOT_DIR/$OUTPUT_DIR/agentsettings.json
+  $ROOT_DIR/$OUTPUT_DIR/Sysmon/challenger-siem-sysmon-l3.xml (when published)
 
-Copy both files into the same folder on Windows, then run:
+Copy the executable, settings, and optional Sysmon profile together, then run:
   .\\WindowsAgent.exe
 
 The config points the agent at:
