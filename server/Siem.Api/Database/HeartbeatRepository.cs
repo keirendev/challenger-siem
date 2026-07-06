@@ -22,6 +22,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     agent_version,
                     os,
                     last_event_time,
+                    host_timezone,
                     queue_depth,
                     cpu_percent,
                     memory_mb,
@@ -37,6 +38,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @agent_version,
                     @os,
                     @last_event_time,
+                    @host_timezone,
                     @queue_depth,
                     @cpu_percent,
                     @memory_mb,
@@ -52,6 +54,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_version", request.AgentVersion);
             command.Parameters.AddWithValue("os", request.Os);
             command.Parameters.AddWithValue("last_event_time", request.LastEventTime.HasValue ? request.LastEventTime.Value.ToUniversalTime() : (object)DBNull.Value);
+            Jsonb.Add(command, "host_timezone", request.HostTimezone);
             command.Parameters.AddWithValue("queue_depth", request.QueueDepth);
             command.Parameters.AddWithValue("cpu_percent", request.CpuPercent.HasValue ? request.CpuPercent.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("memory_mb", request.MemoryMb.HasValue ? request.MemoryMb.Value : (object)DBNull.Value);
@@ -94,6 +97,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     config_hash,
                     source_version,
                     details,
+                    host_timezone,
                     updated_at
                 )
                 values (
@@ -120,6 +124,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @config_hash,
                     @source_version,
                     @details,
+                    @host_timezone,
                     now()
                 )
                 on conflict (agent_id, source_id) do update set
@@ -144,6 +149,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     config_hash = excluded.config_hash,
                     source_version = excluded.source_version,
                     details = excluded.details,
+                    host_timezone = excluded.host_timezone,
                     updated_at = now();
                 """;
             command.Parameters.AddWithValue("agent_id", request.AgentId);
@@ -169,6 +175,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("config_hash", string.IsNullOrWhiteSpace(source.ConfigHash) ? (object)DBNull.Value : source.ConfigHash);
             command.Parameters.AddWithValue("source_version", string.IsNullOrWhiteSpace(source.SourceVersion) ? (object)DBNull.Value : source.SourceVersion);
             AddJsonb(command, "details", source.Details);
+            Jsonb.Add(command, "host_timezone", source.HostTimezone ?? request.HostTimezone);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -179,6 +186,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                 update agents
                 set hostname = @hostname,
                     agent_version = @agent_version,
+                    host_timezone = coalesce(@host_timezone, host_timezone),
                     last_seen = now(),
                     updated_at = now()
                 where agent_id = @agent_id;
@@ -186,6 +194,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", request.AgentId);
             command.Parameters.AddWithValue("hostname", request.Hostname);
             command.Parameters.AddWithValue("agent_version", request.AgentVersion);
+            Jsonb.Add(command, "host_timezone", request.HostTimezone);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 
 namespace Challenger.Siem.Api.Database;
@@ -57,6 +58,12 @@ public sealed record EventSearchQuery(
     private static DateTimeOffset? ReadDateTimeOffset(IQueryCollection query, string key)
     {
         var value = ReadString(query, key);
-        return DateTimeOffset.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : null;
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed.ToUniversalTime()
+            : null;
     }
 }

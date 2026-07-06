@@ -43,10 +43,11 @@ public sealed class TelemetryCoverageRepository(
             var sources = sourceResponse.Sources;
             var summary = sourceResponse.Summaries.FirstOrDefault()
                 ?? TelemetryCoverageEvaluator.CreateSummary(agent.AgentId, agent.Hostname, 0, null, sources, targetLevel);
+            summary = summary with { HostTimezone = summary.HostTimezone ?? agent.HostTimezone };
             var eventCountsBySource = await LoadRecentEventCountsBySourceAsync(agent.AgentId, lookbackStart, lookbackEnd, cancellationToken);
             var recentEventCount = eventCountsBySource.Values.Sum();
             var sourceCoverage = sources
-                .Select(source => ToSourceCoverage(agent.AgentId, source, lookbackStart, eventCountsBySource))
+                .Select(source => ToSourceCoverage(agent.AgentId, source, lookbackStart, eventCountsBySource, agent.HostTimezone))
                 .ToArray();
             var inventory = await LoadInventoryStatusesAsync(agent.AgentId, lookbackStart, cancellationToken);
             var inventoryByType = inventory.ToDictionary(item => item.SnapshotType, StringComparer.OrdinalIgnoreCase);
@@ -67,6 +68,7 @@ public sealed class TelemetryCoverageRepository(
                 Hostname = agent.Hostname,
                 AgentStatus = agent.Status,
                 LastSeen = agent.LastSeen,
+                HostTimezone = agent.HostTimezone,
                 TargetLevel = targetLevel,
                 CurrentLevel = summary.CurrentLevel,
                 OverallStatus = summary.OverallStatus,
@@ -103,7 +105,7 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select agent_id, hostname, status, last_seen
+            select agent_id, hostname, status, last_seen, host_timezone
             from agents
             """;
         if (string.IsNullOrWhiteSpace(agentId))
@@ -125,7 +127,8 @@ public sealed class TelemetryCoverageRepository(
                 reader.GetString(reader.GetOrdinal("agent_id")),
                 reader.GetString(reader.GetOrdinal("hostname")),
                 reader.GetString(reader.GetOrdinal("status")),
-                ReadDateTimeOffset(reader, "last_seen")));
+                ReadDateTimeOffset(reader, "last_seen"),
+                Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")));
         }
 
         return results;
@@ -173,6 +176,7 @@ public sealed class TelemetryCoverageRepository(
             select distinct on (snapshot_type)
                 snapshot_type,
                 collected_at,
+                host_timezone,
                 jsonb_array_length(items) as item_count,
                 summary
             from asset_inventory_snapshots
@@ -189,6 +193,7 @@ public sealed class TelemetryCoverageRepository(
                 latest[snapshotType] = new InventorySnapshotRecord(
                     snapshotType,
                     ReadDateTimeOffset(reader, "collected_at"),
+                    Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
                     reader.GetInt32(reader.GetOrdinal("item_count")),
                     ReadStringDictionary(reader, "summary"));
             }
@@ -243,7 +248,8 @@ public sealed class TelemetryCoverageRepository(
         string agentId,
         SourceHealthReport source,
         DateTimeOffset lookbackStart,
-        IReadOnlyDictionary<string, int> eventCountsBySource)
+        IReadOnlyDictionary<string, int> eventCountsBySource,
+        HostTimezoneMetadata? fallbackTimezone)
     {
         var recentCount = eventCountsBySource.GetValueOrDefault(source.SourceId);
         return new SourceTelemetryCoverage
@@ -257,6 +263,7 @@ public sealed class TelemetryCoverageRepository(
             Reported = IsReportedByAgent(source),
             Status = source.Status,
             LastEventTime = source.LastEventTime,
+            HostTimezone = source.HostTimezone ?? fallbackTimezone,
             SourceVersion = source.SourceVersion,
             ConfigHash = source.ConfigHash,
             Details = source.Details,
@@ -295,6 +302,7 @@ public sealed class TelemetryCoverageRepository(
                 SnapshotType = snapshotType,
                 Status = SourceHealthStatuses.Stale,
                 LatestCollectedAt = snapshot.CollectedAt,
+                HostTimezone = snapshot.HostTimezone,
                 ItemCount = snapshot.ItemCount,
                 Reason = "Latest inventory snapshot is older than the validation lookback.",
                 Url = url
@@ -311,6 +319,7 @@ public sealed class TelemetryCoverageRepository(
                 SnapshotType = snapshotType,
                 Status = SourceHealthStatuses.Error,
                 LatestCollectedAt = snapshot.CollectedAt,
+                HostTimezone = snapshot.HostTimezone,
                 ItemCount = snapshot.ItemCount,
                 Reason = $"Audit-policy snapshot reports {driftCount} drifted required setting(s).",
                 Url = url
@@ -322,6 +331,7 @@ public sealed class TelemetryCoverageRepository(
             SnapshotType = snapshotType,
             Status = SourceHealthStatuses.Healthy,
             LatestCollectedAt = snapshot.CollectedAt,
+            HostTimezone = snapshot.HostTimezone,
             ItemCount = snapshot.ItemCount,
             Reason = "Recent bounded inventory snapshot is available.",
             Url = url
@@ -459,11 +469,12 @@ public sealed class TelemetryCoverageRepository(
         return new string(chars).Trim('-');
     }
 
-    private sealed record AgentRecord(string AgentId, string Hostname, string Status, DateTimeOffset LastSeen);
+    private sealed record AgentRecord(string AgentId, string Hostname, string Status, DateTimeOffset LastSeen, HostTimezoneMetadata? HostTimezone);
 
     private sealed record InventorySnapshotRecord(
         string SnapshotType,
         DateTimeOffset CollectedAt,
+        HostTimezoneMetadata? HostTimezone,
         int ItemCount,
         IReadOnlyDictionary<string, string> Summary);
 }

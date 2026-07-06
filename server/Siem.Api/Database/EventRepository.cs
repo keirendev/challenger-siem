@@ -39,6 +39,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     windows_event_id,
                     record_id,
                     event_time,
+                    host_timezone,
                     severity,
                     message,
                     raw_json,
@@ -65,6 +66,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     @windows_event_id,
                     @record_id,
                     @event_time,
+                    @host_timezone,
                     @severity,
                     @message,
                     @raw_json,
@@ -93,6 +95,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId);
             command.Parameters.AddWithValue("record_id", envelope.RecordId);
             command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
+            Jsonb.Add(command, "host_timezone", envelope.HostTimezone);
             command.Parameters.AddWithValue("severity", envelope.Severity);
             command.Parameters.AddWithValue("message", envelope.Message);
 
@@ -205,6 +208,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 windows_event_id,
                 record_id,
                 event_time,
+                host_timezone,
                 ingest_time,
                 severity,
                 message,
@@ -247,6 +251,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 windows_event_id,
                 record_id,
                 event_time,
+                host_timezone,
                 ingest_time,
                 severity,
                 message,
@@ -281,6 +286,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             WindowsEventId = reader.GetInt32(reader.GetOrdinal("windows_event_id")),
             RecordId = reader.GetInt64(reader.GetOrdinal("record_id")),
             EventTime = ReadDateTimeOffset(reader, "event_time"),
+            HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
             IngestTime = ReadDateTimeOffset(reader, "ingest_time"),
             Severity = reader.GetString(reader.GetOrdinal("severity")),
             Message = reader.GetString(reader.GetOrdinal("message")),

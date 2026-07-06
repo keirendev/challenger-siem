@@ -29,6 +29,22 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 64
+    },
+    "host_timezone": { "$ref": "#/$defs/host_timezone" }
+  },
+  "$defs": {
+    "host_timezone": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "display_name": { "type": "string", "maxLength": 255 },
+        "standard_name": { "type": ["string", "null"], "maxLength": 255 },
+        "daylight_name": { "type": ["string", "null"], "maxLength": 255 },
+        "base_utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
+        "utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
+        "is_daylight_saving_time": { "type": ["boolean", "null"] }
+      }
     }
   }
 }

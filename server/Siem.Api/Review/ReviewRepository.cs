@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
 using Npgsql;
 
@@ -119,6 +120,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 a.first_seen,
                 a.last_seen,
                 a.status,
+                a.host_timezone,
                 lh.heartbeat_time as latest_heartbeat_time,
                 lh.queue_depth as latest_queue_depth,
                 lh.last_event_time,
@@ -195,7 +197,8 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 reader.GetString(reader.GetOrdinal("coverage_status")),
                 reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
                 reader.GetInt32(reader.GetOrdinal("stale_sources")),
-                reader.GetInt32(reader.GetOrdinal("error_sources"))));
+                reader.GetInt32(reader.GetOrdinal("error_sources")),
+                Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")));
         }
 
         return results;

@@ -115,6 +115,9 @@ public sealed record SourceHealthReport
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
+
     [JsonPropertyName("last_record_id")]
     public long? LastRecordId { get; init; }
 
@@ -210,6 +213,9 @@ public sealed record CoverageSummary
 
     [JsonPropertyName("last_heartbeat_time")]
     public DateTimeOffset? LastHeartbeatTime { get; init; }
+
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
 }
 
 public sealed record SourceHealthResponse
@@ -255,6 +261,9 @@ public sealed record AgentTelemetryCoverage
 
     [JsonPropertyName("last_seen")]
     public DateTimeOffset? LastSeen { get; init; }
+
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
 
     [JsonPropertyName("target_level")]
     public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
@@ -337,6 +346,9 @@ public sealed record SourceTelemetryCoverage
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
+
     [JsonPropertyName("source_version")]
     public string? SourceVersion { get; init; }
 
@@ -369,6 +381,9 @@ public sealed record InventoryTelemetryStatus
 
     [JsonPropertyName("latest_collected_at")]
     public DateTimeOffset? LatestCollectedAt { get; init; }
+
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
 
     [JsonPropertyName("item_count")]
     public int ItemCount { get; init; }
@@ -586,6 +601,9 @@ public sealed record AssetInventorySnapshot
     [JsonPropertyName("collected_at")]
     public DateTimeOffset CollectedAt { get; init; } = DateTimeOffset.UtcNow;
 
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
+
     [JsonPropertyName("items")]
     public IReadOnlyList<InventoryItem> Items { get; init; } = Array.Empty<InventoryItem>();
 
@@ -699,6 +717,9 @@ public sealed record AlertEvidenceRecord
 
     [JsonPropertyName("event_time")]
     public DateTimeOffset? EventTime { get; init; }
+
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
 
     [JsonPropertyName("channel")]
     public string? Channel { get; init; }

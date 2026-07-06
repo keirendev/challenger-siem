@@ -68,7 +68,7 @@ else
                 <td>@graph.NodeCount</td>
                 <td>@graph.EdgeCount</td>
                 <td>@string.Join(", ", graph.Tags)</td>
-                <td>@graph.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                <td>@TimeDisplay.FormatUtc(graph.UpdatedAt, "yyyy-MM-dd HH:mm")</td>
                 <td><a asp-page="/Graphs/Detail" asp-route-graph_id="@graph.GraphId">Open</a></td>
             </tr>
         }

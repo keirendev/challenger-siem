@@ -23,7 +23,7 @@ else if (Model.Alert is not null)
             <dt>Confidence</dt><dd>@Model.Alert.Confidence</dd>
             <dt>Status</dt><dd>@Model.Alert.Status</dd>
             <dt>Host</dt><dd>@(Model.Alert.Hostname ?? Model.Alert.AgentId ?? "—")</dd>
-            <dt>Created</dt><dd>@Model.Alert.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</dd>
+            <dt>Created</dt><dd>@TimeDisplay.FormatUtc(Model.Alert.CreatedAt)</dd>
         </dl>
         <p>@Model.Alert.Summary</p>
     </section>
@@ -60,7 +60,10 @@ else if (Model.Alert is not null)
                     @foreach (var evidence in Model.Alert.Evidence)
                     {
                         <tr>
-                            <td>@(evidence.EventTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</td>
+                            <td>
+                                @TimeDisplay.FormatHostTime(evidence.EventTime, evidence.HostTimezone)
+                                <div class="muted">@TimeDisplay.HostTimezoneLabel(evidence.HostTimezone)</div>
+                            </td>
                             <td>@evidence.AgentId</td>
                             <td>@(evidence.Channel ?? "—")</td>
                             <td>@(evidence.WindowsEventId?.ToString() ?? "—")</td>

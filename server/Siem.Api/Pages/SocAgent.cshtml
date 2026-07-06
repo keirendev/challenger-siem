@@ -80,7 +80,7 @@
                     <li class="session-item">
                         <a class="session-link @(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId" data-session-id="@session.SessionId">
                             <span>@session.Title</span>
-                            <span class="muted">@session.MessageCount messages · @session.Status · @session.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                            <span class="muted">@session.MessageCount messages · @session.Status · @TimeDisplay.FormatUtc(session.UpdatedAt, "yyyy-MM-dd HH:mm")</span>
                         </a>
                         <details class="session-delete">
                             <summary>Delete chat</summary>
@@ -141,7 +141,7 @@
                         <li class="message-bubble @(message.Role == "operator" ? "operator" : "assistant")" id="message-@message.MessageId" data-message-id="@message.MessageId" data-role="@message.Role">
                             <div class="message-meta">
                                 <strong>@Model.RoleLabel(message)</strong>
-                                <span>@message.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
+                                <span>@TimeDisplay.FormatUtc(message.CreatedAt)</span>
                                 @if (!string.IsNullOrWhiteSpace(message.Provider))
                                 {
                                     <span class="badge">@message.Provider / @message.Model</span>

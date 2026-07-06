@@ -153,15 +153,15 @@
                     {
                         <tr>
                             <td class="mono">@agent.AgentId</td>
-                            <td><strong>@agent.Hostname</strong><div class="muted">@agent.OsVersion · @agent.AgentVersion</div></td>
+                            <td><strong>@agent.Hostname</strong><div class="muted">@agent.OsVersion · @agent.AgentVersion</div><div class="muted">host tz @TimeDisplay.HostTimezoneShortLabel(agent.HostTimezone)</div></td>
                             <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L3">@agent.CurrentCoverageLevel</a> <span class="badge @(agent.CoverageStatus == "healthy" ? "ok" : agent.CoverageStatus == "missing" ? "warning" : "danger")">@agent.CoverageStatus</span></td>
                             <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.ErrorSources error</td>
-                            <td>@agent.FirstSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@TimeDisplay.FormatUtc(agent.FirstSeen, "yyyy-MM-dd HH:mm")</td>
                             <td>
-                                @agent.LastSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                                @TimeDisplay.FormatUtc(agent.LastSeen, "yyyy-MM-dd HH:mm")
                                 @if (agent.LatestHeartbeatTime.HasValue)
                                 {
-                                    <div class="muted">heartbeat @agent.LatestHeartbeatTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                    <div class="muted">heartbeat @TimeDisplay.FormatUtc(agent.LatestHeartbeatTime, "yyyy-MM-dd HH:mm")</div>
                                 }
                             </td>
                             <td>

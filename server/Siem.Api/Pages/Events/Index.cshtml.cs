@@ -59,7 +59,7 @@ public sealed class IndexModel(
 
     public string FormatDateTimeInput(DateTimeOffset? value)
     {
-        return value?.ToLocalTime().ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture) ?? string.Empty;
+        return TimeDisplay.FormatUtcInput(value);
     }
 
     public IReadOnlyList<string> ActiveFilters()
@@ -75,8 +75,8 @@ public sealed class IndexModel(
         AddFilter(filters, "User", Query.UserName);
         AddFilter(filters, "Process", Query.ProcessImage);
         AddFilter(filters, "Destination", Query.DestinationIp);
-        if (Query.From.HasValue) AddFilter(filters, "From", Query.From.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
-        if (Query.To.HasValue) AddFilter(filters, "To", Query.To.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+        if (Query.From.HasValue) AddFilter(filters, "From UTC", TimeDisplay.FormatUtc(Query.From, "yyyy-MM-dd HH:mm"));
+        if (Query.To.HasValue) AddFilter(filters, "To UTC", TimeDisplay.FormatUtc(Query.To, "yyyy-MM-dd HH:mm"));
         return filters;
     }
 

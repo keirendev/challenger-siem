@@ -391,7 +391,9 @@ public sealed class SocAgentService(
             answer.AppendLine("Recent event evidence:");
             foreach (var evt in recentEvents.Take(5))
             {
-                answer.AppendLine($"- {evt.EventTime:u} {evt.Hostname} {evt.Channel}/{evt.WindowsEventId} {evt.Normalized?.Category ?? "windows_event"}/{evt.Normalized?.Action ?? "observed"}: {Preview(evt.Message)}");
+                var hostTime = TimeDisplay.FormatHostTime(evt.EventTime, evt.HostTimezone);
+                var timezoneLabel = TimeDisplay.HostTimezoneLabel(evt.HostTimezone);
+                answer.AppendLine($"- {hostTime} ({timezoneLabel}; UTC {evt.EventTime:u}) {evt.Hostname} {evt.Channel}/{evt.WindowsEventId} {evt.Normalized?.Category ?? "windows_event"}/{evt.Normalized?.Action ?? "observed"}: {Preview(evt.Message)}");
             }
         }
 

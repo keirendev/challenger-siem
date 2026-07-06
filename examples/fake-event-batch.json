@@ -13,12 +13,21 @@
       "windows_event_id": 4625,
       "record_id": 123456,
       "event_time": "2026-07-04T12:00:00Z",
+      "host_timezone": {
+        "id": "Pacific Standard Time",
+        "display_name": "(UTC-08:00) Pacific Time (US & Canada)",
+        "standard_name": "Pacific Standard Time",
+        "daylight_name": "Pacific Daylight Time",
+        "base_utc_offset_minutes": -480,
+        "utc_offset_minutes": -420,
+        "is_daylight_saving_time": true
+      },
       "ingest_time": null,
       "severity": "audit_failure",
       "message": "An account failed to log on.",
       "raw": {
         "event_data": {
-          "TargetUserName": "alice",
+          "TargetUserName": "synthetic-user",
           "IpAddress": "192.0.2.10"
         }
       }

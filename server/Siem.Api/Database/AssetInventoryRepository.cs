@@ -12,7 +12,7 @@ public sealed class AssetInventoryRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select agent_id, hostname, snapshot_type, collected_at, items, summary
+            select agent_id, hostname, snapshot_type, collected_at, host_timezone, items, summary
             from asset_inventory_snapshots
             """;
         var where = new List<string>();
@@ -44,6 +44,7 @@ public sealed class AssetInventoryRepository(NpgsqlDataSource dataSource)
                 Hostname = reader.GetString(reader.GetOrdinal("hostname")),
                 SnapshotType = reader.GetString(reader.GetOrdinal("snapshot_type")),
                 CollectedAt = ReadDateTimeOffset(reader, "collected_at"),
+                HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
                 Items = JsonSerializer.Deserialize<IReadOnlyList<InventoryItem>>(reader.GetString(reader.GetOrdinal("items")), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? Array.Empty<InventoryItem>(),
                 Summary = JsonSerializer.Deserialize<IReadOnlyDictionary<string, string>>(reader.GetString(reader.GetOrdinal("summary")), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             });
@@ -57,13 +58,14 @@ public sealed class AssetInventoryRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into asset_inventory_snapshots (agent_id, hostname, snapshot_type, collected_at, items, summary)
-            values (@agent_id, @hostname, @snapshot_type, @collected_at, @items, @summary);
+            insert into asset_inventory_snapshots (agent_id, hostname, snapshot_type, collected_at, host_timezone, items, summary)
+            values (@agent_id, @hostname, @snapshot_type, @collected_at, @host_timezone, @items, @summary);
             """;
         command.Parameters.AddWithValue("agent_id", snapshot.AgentId);
         command.Parameters.AddWithValue("hostname", snapshot.Hostname);
         command.Parameters.AddWithValue("snapshot_type", snapshot.SnapshotType);
         command.Parameters.AddWithValue("collected_at", snapshot.CollectedAt.ToUniversalTime());
+        Jsonb.Add(command, "host_timezone", snapshot.HostTimezone);
         var items = command.Parameters.Add("items", NpgsqlDbType.Jsonb);
         items.Value = JsonSerializer.Serialize(snapshot.Items, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var summary = command.Parameters.Add("summary", NpgsqlDbType.Jsonb);

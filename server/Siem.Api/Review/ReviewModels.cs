@@ -38,7 +38,8 @@ public sealed record AgentInventoryItem(
     string CoverageStatus,
     int MissingMandatorySources,
     int StaleSources,
-    int ErrorSources);
+    int ErrorSources,
+    HostTimezoneMetadata? HostTimezone);
 
 public sealed record StaleAgentCleanupPreview(
     DateTimeOffset Cutoff,

@@ -37,6 +37,9 @@ public sealed record EventEnvelope
     [JsonPropertyName("event_time")]
     public DateTimeOffset EventTime { get; init; }
 
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
+
     [JsonPropertyName("ingest_time")]
     public DateTimeOffset? IngestTime { get; init; }
 

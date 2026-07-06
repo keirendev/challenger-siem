@@ -34,6 +34,7 @@ public static class RequestValidation
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
         RequireLength(errors, nameof(request.OsVersion), request.OsVersion, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
+        ValidateHostTimezone(errors, "host_timezone", request.HostTimezone);
         return ToValidationProblem(errors);
     }
 
@@ -44,6 +45,7 @@ public static class RequestValidation
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
         RequireLength(errors, nameof(request.Os), request.Os, 1, 255);
+        ValidateHostTimezone(errors, "host_timezone", request.HostTimezone);
 
         if (request.QueueDepth < 0)
         {
@@ -83,6 +85,8 @@ public static class RequestValidation
             {
                 Add(errors, $"source_health[{index}].status", "Source status is not supported.");
             }
+
+            ValidateHostTimezone(errors, $"source_health[{index}].host_timezone", source.HostTimezone);
         }
 
         return ToValidationProblem(errors);
@@ -162,6 +166,8 @@ public static class RequestValidation
             {
                 Add(errors, $"snapshots[{index}].items", "Snapshot contains more than 200 inventory items.");
             }
+
+            ValidateHostTimezone(errors, $"snapshots[{index}].host_timezone", snapshot.HostTimezone);
         }
 
         return ToValidationProblem(errors);
@@ -211,6 +217,8 @@ public static class RequestValidation
             Add(errors, $"{prefix}.event_time", "Event timestamp is required.");
         }
 
+        ValidateHostTimezone(errors, $"{prefix}.host_timezone", envelope.HostTimezone);
+
         if (string.IsNullOrWhiteSpace(envelope.Severity) || !AllowedSeverities.Contains(envelope.Severity))
         {
             Add(errors, $"{prefix}.severity", "Severity is not supported.");
@@ -234,6 +242,37 @@ public static class RequestValidation
     private static Dictionary<string, List<string>> NewErrorBag()
     {
         return new Dictionary<string, List<string>>(StringComparer.Ordinal);
+    }
+
+    private static void ValidateHostTimezone(Dictionary<string, List<string>> errors, string prefix, HostTimezoneMetadata? timezone)
+    {
+        if (timezone is null)
+        {
+            return;
+        }
+
+        OptionalMaxLength(errors, $"{prefix}.id", timezone.Id, 128);
+        OptionalMaxLength(errors, $"{prefix}.display_name", timezone.DisplayName, 255);
+        OptionalMaxLength(errors, $"{prefix}.standard_name", timezone.StandardName, 255);
+        OptionalMaxLength(errors, $"{prefix}.daylight_name", timezone.DaylightName, 255);
+        ValidateOffsetMinutes(errors, $"{prefix}.base_utc_offset_minutes", timezone.BaseUtcOffsetMinutes);
+        ValidateOffsetMinutes(errors, $"{prefix}.utc_offset_minutes", timezone.UtcOffsetMinutes);
+    }
+
+    private static void ValidateOffsetMinutes(Dictionary<string, List<string>> errors, string key, int? value)
+    {
+        if (value is < -14 * 60 or > 14 * 60)
+        {
+            Add(errors, key, "UTC offset minutes must be between -840 and 840.");
+        }
+    }
+
+    private static void OptionalMaxLength(Dictionary<string, List<string>> errors, string key, string? value, int maxLength)
+    {
+        if (value is not null && value.Length > maxLength)
+        {
+            Add(errors, key, $"Value length must be less than or equal to {maxLength} characters.");
+        }
     }
 
     private static void RequireLength(Dictionary<string, List<string>> errors, string key, string? value, int minLength, int maxLength)

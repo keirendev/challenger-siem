@@ -1,8 +1,12 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Coverage;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
+using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Primitives;
 using Xunit;
 
 namespace Challenger.Siem.Api.Tests;
@@ -19,6 +23,7 @@ public sealed class FullCoverageServerTests
             AgentVersion = "0.4.0-test",
             Os = "Windows Test",
             QueueDepth = 2,
+            HostTimezone = SyntheticPacificTimezone(),
             ConfigHash = "abc123",
             QueueMetrics = new QueueSloMetrics
             {
@@ -38,12 +43,54 @@ public sealed class FullCoverageServerTests
                     Status = SourceHealthStatuses.Healthy,
                     Required = true,
                     Enabled = true,
-                    NewestRecordId = 100
+                    NewestRecordId = 100,
+                    HostTimezone = SyntheticPacificTimezone()
                 }
             }
         };
 
         Assert.Empty(RequestValidation.ValidateHeartbeat(request));
+    }
+
+    [Fact]
+    public void HostTimezoneValidationRejectsOutOfRangeOffsets()
+    {
+        var request = new HeartbeatRequest
+        {
+            AgentId = "agent-coverage-test",
+            Hostname = "HOST-COVERAGE",
+            AgentVersion = "0.4.0-test",
+            Os = "Windows Test",
+            QueueDepth = 0,
+            HostTimezone = SyntheticPacificTimezone() with { UtcOffsetMinutes = 1000 }
+        };
+
+        var errors = RequestValidation.ValidateHeartbeat(request);
+
+        Assert.Contains("host_timezone.utc_offset_minutes", errors.Keys);
+    }
+
+    [Fact]
+    public void EventSearchDateTimeLocalFiltersAreInterpretedAsUtc()
+    {
+        var query = EventSearchQuery.FromQuery(new QueryCollection(new Dictionary<string, StringValues>
+        {
+            ["from"] = "2026-07-04T12:00",
+            ["to"] = "2026-07-04T13:30"
+        }));
+
+        Assert.Equal(new DateTimeOffset(2026, 7, 4, 12, 0, 0, TimeSpan.Zero), query.From);
+        Assert.Equal(new DateTimeOffset(2026, 7, 4, 13, 30, 0, TimeSpan.Zero), query.To);
+    }
+
+    [Fact]
+    public void TimeDisplayUsesHostOffsetWhenAvailableAndUtcFallbackWhenMissing()
+    {
+        var utc = new DateTimeOffset(2026, 7, 4, 12, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal("2026-07-04 05:00:00 UTC-07:00", TimeDisplay.FormatHostTime(utc, SyntheticPacificTimezone()));
+        Assert.Equal("2026-07-04 12:00:00 UTC", TimeDisplay.FormatHostTime(utc, null));
+        Assert.Contains("Pacific Standard Time", TimeDisplay.HostTimezoneLabel(SyntheticPacificTimezone()), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -218,6 +265,17 @@ public sealed class FullCoverageServerTests
         Assert.Contains("tool_runs", json, StringComparison.Ordinal);
         Assert.Contains("citations", json, StringComparison.Ordinal);
     }
+
+    private static HostTimezoneMetadata SyntheticPacificTimezone() => new()
+    {
+        Id = "Pacific Standard Time",
+        DisplayName = "(UTC-08:00) Pacific Time (US & Canada)",
+        StandardName = "Pacific Standard Time",
+        DaylightName = "Pacific Daylight Time",
+        BaseUtcOffsetMinutes = -480,
+        UtcOffsetMinutes = -420,
+        IsDaylightSavingTime = true
+    };
 
     [Fact]
     public void AlertAndDetectionContractsSerializeWithSnakeCaseFields()

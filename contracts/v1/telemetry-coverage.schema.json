@@ -18,6 +18,19 @@
     "source_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"] },
     "detection_prerequisite_status": { "type": "string", "enum": ["satisfied", "partially_satisfied", "missing_prerequisites", "unknown", "excepted"] },
     "string_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+    "host_timezone": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "display_name": { "type": "string", "maxLength": 255 },
+        "standard_name": { "type": ["string", "null"], "maxLength": 255 },
+        "daylight_name": { "type": ["string", "null"], "maxLength": 255 },
+        "base_utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
+        "utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
+        "is_daylight_saving_time": { "type": ["boolean", "null"] }
+      }
+    },
     "agent_coverage": {
       "type": "object",
       "additionalProperties": false,
@@ -48,6 +61,7 @@
         "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
         "agent_status": { "type": "string" },
         "last_seen": { "type": ["string", "null"], "format": "date-time" },
+        "host_timezone": { "$ref": "#/$defs/host_timezone" },
         "target_level": { "$ref": "#/$defs/coverage_level" },
         "current_level": { "$ref": "#/$defs/coverage_level" },
         "overall_status": { "$ref": "#/$defs/source_status" },
@@ -81,6 +95,7 @@
         "reported": { "type": "boolean" },
         "status": { "$ref": "#/$defs/source_status" },
         "last_event_time": { "type": ["string", "null"], "format": "date-time" },
+        "host_timezone": { "$ref": "#/$defs/host_timezone" },
         "source_version": { "type": ["string", "null"], "maxLength": 128 },
         "config_hash": { "type": ["string", "null"], "maxLength": 128 },
         "details": { "type": "object", "additionalProperties": { "type": "string" } },
@@ -98,6 +113,7 @@
         "snapshot_type": { "type": "string" },
         "status": { "$ref": "#/$defs/source_status" },
         "latest_collected_at": { "type": ["string", "null"], "format": "date-time" },
+        "host_timezone": { "$ref": "#/$defs/host_timezone" },
         "item_count": { "type": "integer", "minimum": 0 },
         "reason": { "type": "string" },
         "url": { "type": "string" }

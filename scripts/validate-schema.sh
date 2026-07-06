@@ -83,6 +83,24 @@ with required_tables(name) as (
     select 'missing index ' || name as problem
     from required_indexes
     where to_regclass('public.' || name) is null
+), required_columns(table_name, column_name) as (
+    values
+        ('agents', 'host_timezone'),
+        ('events', 'host_timezone'),
+        ('agent_heartbeats', 'host_timezone'),
+        ('source_health', 'host_timezone'),
+        ('asset_inventory_snapshots', 'host_timezone'),
+        ('alert_evidence', 'host_timezone')
+), missing_columns as (
+    select 'missing column ' || table_name || '.' || column_name as problem
+    from required_columns rc
+    where not exists (
+        select 1
+        from information_schema.columns c
+        where c.table_schema = 'public'
+          and c.table_name = rc.table_name
+          and c.column_name = rc.column_name
+    )
 ), missing_constraints as (
     select 'missing unique constraint uq_events_agent_event' as problem
     where not exists (
@@ -94,6 +112,7 @@ with required_tables(name) as (
 )
 select problem from missing_tables
 union all select problem from missing_indexes
+union all select problem from missing_columns
 union all select problem from missing_constraints
 order by problem;
 SQL

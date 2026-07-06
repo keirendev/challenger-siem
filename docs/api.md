@@ -20,7 +20,14 @@ Request:
   "hostname": "WIN11-TEST",
   "machine_guid": "machine-guid",
   "os_version": "Windows 11 23H2",
-  "agent_version": "0.1.0"
+  "agent_version": "0.1.0",
+  "host_timezone": {
+    "id": "Pacific Standard Time",
+    "display_name": "(UTC-08:00) Pacific Time (US & Canada)",
+    "base_utc_offset_minutes": -480,
+    "utc_offset_minutes": -420,
+    "is_daylight_saving_time": true
+  }
 }
 ```
 
@@ -60,6 +67,13 @@ Request:
       "windows_event_id": 4625,
       "record_id": 123456,
       "event_time": "2026-07-04T12:00:00Z",
+      "host_timezone": {
+        "id": "Pacific Standard Time",
+        "display_name": "(UTC-08:00) Pacific Time (US & Canada)",
+        "base_utc_offset_minutes": -480,
+        "utc_offset_minutes": -420,
+        "is_daylight_saving_time": true
+      },
       "ingest_time": null,
       "severity": "information",
       "message": "An account failed to log on.",
@@ -93,7 +107,7 @@ Response:
 }
 ```
 
-The event-ID arrays are additive v1 response fields. Agents use them to delete only accepted or duplicate queue rows after acknowledgement. Older clients can continue to rely on the count fields.
+The event-ID arrays are additive v1 response fields. Agents use them to delete only accepted or duplicate queue rows after acknowledgement. Older clients can continue to rely on the count fields. `event_time` remains canonical UTC for storage, filtering, correlation, and deduplication; optional `host_timezone` metadata lets review clients display the endpoint's host-local time with the event-specific UTC offset, including daylight-saving boundaries.
 
 Validation failures after successful agent authentication are also persisted to `ingestion_errors` with bounded payload context that omits authorization headers, bearer tokens, rendered event messages, and raw event payloads.
 
@@ -114,6 +128,13 @@ Request:
   "agent_version": "0.1.0",
   "os": "Windows 11",
   "last_event_time": "2026-07-04T12:00:00Z",
+  "host_timezone": {
+    "id": "Pacific Standard Time",
+    "display_name": "(UTC-08:00) Pacific Time (US & Canada)",
+    "base_utc_offset_minutes": -480,
+    "utc_offset_minutes": -420,
+    "is_daylight_saving_time": true
+  },
   "queue_depth": 42,
   "cpu_percent": 1.5,
   "memory_mb": 90,
@@ -151,13 +172,18 @@ Request:
       "status": "healthy",
       "required": true,
       "enabled": true,
-      "newest_record_id": 123456
+      "newest_record_id": 123456,
+      "host_timezone": {
+        "id": "Pacific Standard Time",
+        "utc_offset_minutes": -420,
+        "is_daylight_saving_time": true
+      }
     }
   ]
 }
 ```
 
-Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`. Source-manifest entries also carry the additive installer/source matrix fields `prerequisites`, `event_families`, `validation_scenarios`, `privacy`, and `installer_managed` for operator validation and coverage reporting.
+Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`. Source-manifest entries also carry the additive installer/source matrix fields `prerequisites`, `event_families`, `validation_scenarios`, `privacy`, and `installer_managed` for operator validation and coverage reporting. `host_timezone` is optional and bounded; for heartbeat it describes the endpoint's current timezone, while source-health/event rows use the offset associated with the reported event time where available.
 
 ## Agent inventory upload
 
@@ -167,7 +193,7 @@ Authorization: Bearer <per-agent-token>
 Content-Type: application/json
 ```
 
-Agents send bounded inventory and audit-policy snapshots independently of raw event batches. Snapshot payloads include `agent_id`, `hostname`, `snapshot_type`, `collected_at`, bounded `items`, and summary counts/statuses. The server validates that every snapshot `agent_id` matches the authenticated batch agent and stores the snapshots for `/api/v1/inventory`, `/api/v1/telemetry-coverage`, `/audit-policy`, and host coverage review.
+Agents send bounded inventory and audit-policy snapshots independently of raw event batches. Snapshot payloads include `agent_id`, `hostname`, `snapshot_type`, `collected_at`, optional `host_timezone`, bounded `items`, and summary counts/statuses. The server validates that every snapshot `agent_id` matches the authenticated batch agent and stores the snapshots for `/api/v1/inventory`, `/api/v1/telemetry-coverage`, `/audit-policy`, and host coverage review.
 
 ## Search events
 
@@ -182,8 +208,8 @@ Supported filters:
 - `agent_id`
 - `channel`
 - `windows_event_id`
-- `from`
-- `to`
+- `from` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
+- `to` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
 - `keyword`
 - `category`
 - `action`
@@ -203,7 +229,7 @@ GET /api/v1/source-health?agent_id=win11-test-001&target_level=L2
 Authorization: Bearer <review-token>
 ```
 
-Returns coverage summaries and per-source health rows populated from agent heartbeat data. When `agent_id` is supplied, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported sources appear as `missing` or `excepted` rows instead of disappearing from the operator view.
+Returns coverage summaries and per-source health rows populated from agent heartbeat data. Coverage summaries and source rows can include optional `host_timezone` metadata for host-local display. When `agent_id` is supplied, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported sources appear as `missing` or `excepted` rows instead of disappearing from the operator view.
 
 ## Telemetry coverage validation
 
@@ -212,7 +238,7 @@ GET /api/v1/telemetry-coverage?agent_id=win11-test-001&target_level=L2&lookback_
 Authorization: Bearer <review-token>
 ```
 
-Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, additive source version/config-hash/details fields for profile-backed sources such as Sysmon, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
+Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, additive source version/config-hash/details fields for profile-backed sources such as Sysmon, host timezone metadata when reported, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
 
 ## Inventory
 

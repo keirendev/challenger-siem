@@ -51,8 +51,8 @@
         <span class="metric-label">events ingested in last @Model.RecentEventWindowHours h</span>
     </article>
     <article class="card">
-        <span class="metric-value">@(Model.Summary.LatestIngestTime.HasValue ? Model.Summary.LatestIngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—")</span>
-        <span class="metric-label">latest ingest time</span>
+        <span class="metric-value">@TimeDisplay.FormatUtc(Model.Summary.LatestIngestTime, "yyyy-MM-dd HH:mm")</span>
+        <span class="metric-label">latest ingest time (UTC)</span>
     </article>
 </section>
 

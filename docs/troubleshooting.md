@@ -66,6 +66,10 @@ Then inspect only the needed bounded files under `.local/`, such as the smoke AP
 
 For browser behavior, run a Playwright harness against the real app. Curl/HTML smoke checks do not validate redirects, cookies, form behavior, or user-visible navigation as fully as a browser.
 
+## Event times show UTC instead of host time
+
+Host-local event, source-health, coverage, audit-policy, and alert-evidence timestamps require optional `host_timezone` metadata from a current agent. Older agents and older stored events continue to display safely as UTC with a `timezone unknown` label. Time range filters on `/events` are always interpreted as UTC.
+
 ## soc-agent external provider remains unavailable
 
 If `/soc-agent` or `GET /api/v1/soc-agent/status` reports `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `plan_limited`, or `provider_error`:

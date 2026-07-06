@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Text;
 using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.WindowsAgent.Time;
 using Microsoft.Win32;
 
 namespace Challenger.Siem.WindowsAgent.Inventory;
@@ -47,6 +48,7 @@ public static class WindowsInventoryCollectors
             Hostname = hostname,
             SnapshotType = "host_identity",
             CollectedAt = DateTimeOffset.UtcNow,
+            HostTimezone = HostTimezoneProvider.Current(),
             Items = new[]
             {
                 new InventoryItem
@@ -78,6 +80,7 @@ public static class WindowsInventoryCollectors
             Hostname = hostname,
             SnapshotType = "audit_policy",
             CollectedAt = DateTimeOffset.UtcNow,
+            HostTimezone = HostTimezoneProvider.Current(),
             Items = policyState.Select(pair => new InventoryItem
             {
                 Kind = "audit_policy_subcategory",
@@ -115,6 +118,7 @@ public static class WindowsInventoryCollectors
             Hostname = hostname,
             SnapshotType = "defender_firewall_bitlocker_policy",
             CollectedAt = DateTimeOffset.UtcNow,
+            HostTimezone = HostTimezoneProvider.Current(),
             Items = new[]
             {
                 new InventoryItem { Kind = "defender", Name = "Microsoft Defender", Status = defenderStatus },
@@ -226,6 +230,7 @@ public static class WindowsInventoryCollectors
             Hostname = hostname,
             SnapshotType = "windows_role_detection",
             CollectedAt = DateTimeOffset.UtcNow,
+            HostTimezone = HostTimezoneProvider.Current(),
             Items = roles.Select(role => new InventoryItem { Kind = "windows_role", Name = role, Status = "detected" }).ToArray(),
             Summary = new Dictionary<string, string>
             {
@@ -319,6 +324,7 @@ public static class WindowsInventoryCollectors
             Hostname = hostname,
             SnapshotType = snapshotType,
             CollectedAt = DateTimeOffset.UtcNow,
+            HostTimezone = HostTimezoneProvider.Current(),
             Items = items,
             Summary = summary
         };
