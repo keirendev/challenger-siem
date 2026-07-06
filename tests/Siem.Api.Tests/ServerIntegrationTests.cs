@@ -86,17 +86,20 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.NotNull(stored.IngestTime);
         Assert.Equal("System", stored.Channel);
         Assert.Equal("system", stored.Normalized?.Category);
+        Assert.Equal("Pacific Standard Time", stored.HostTimezone?.Id);
+        Assert.Equal(-420, stored.HostTimezone?.UtcOffsetMinutes);
 
         var sourceHealth = await GetJsonWithReviewTokenAsync<SourceHealthResponse>(client,
             $"/api/v1/source-health?agent_id={Uri.EscapeDataString(agentId)}");
-        Assert.Contains(sourceHealth.Summaries, summary => summary.AgentId == agentId);
-        Assert.Contains(sourceHealth.Sources, source => source.SourceId == "system");
+        Assert.Contains(sourceHealth.Summaries, summary => summary.AgentId == agentId && summary.HostTimezone?.Id == "Pacific Standard Time");
+        Assert.Contains(sourceHealth.Sources, source => source.SourceId == "system" && source.HostTimezone?.UtcOffsetMinutes == -420);
         Assert.Contains(sourceHealth.Sources, source => source.SourceId == "security" && source.Status == SourceHealthStatuses.Missing);
 
         var telemetryCoverage = await GetJsonWithReviewTokenAsync<TelemetryCoverageResponse>(client,
             $"/api/v1/telemetry-coverage?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2&lookback_hours=24");
         var agentCoverage = Assert.Single(telemetryCoverage.Agents);
         Assert.Equal(agentId, agentCoverage.AgentId);
+        Assert.Equal("Pacific Standard Time", agentCoverage.HostTimezone?.Id);
         Assert.Equal(2, agentCoverage.RecentEventCount);
         Assert.True(agentCoverage.ExpectedSourceCount >= 15);
         Assert.Equal(1, agentCoverage.ReportedSourceCount);
@@ -610,7 +613,8 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                 Hostname = hostname,
                 MachineGuid = Guid.NewGuid().ToString("N"),
                 OsVersion = "Windows Test",
-                AgentVersion = agentVersion
+                AgentVersion = agentVersion,
+                HostTimezone = SyntheticPacificTimezone()
             }, options: JsonOptions.Default)
         };
         request.Headers.Add("X-Enrollment-Token", EnrollmentToken);
@@ -718,6 +722,17 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
+    private static HostTimezoneMetadata SyntheticPacificTimezone() => new()
+    {
+        Id = "Pacific Standard Time",
+        DisplayName = "(UTC-08:00) Pacific Time (US & Canada)",
+        StandardName = "Pacific Standard Time",
+        DaylightName = "Pacific Daylight Time",
+        BaseUtcOffsetMinutes = -480,
+        UtcOffsetMinutes = -420,
+        IsDaylightSavingTime = true
+    };
+
     private static HeartbeatRequest CreateHeartbeat(string agentId, string hostname, int queueDepth)
     {
         return new HeartbeatRequest
@@ -727,6 +742,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             AgentVersion = "0.3.0-test",
             Os = "Windows Test",
             LastEventTime = DateTimeOffset.UtcNow,
+            HostTimezone = SyntheticPacificTimezone(),
             QueueDepth = queueDepth,
             CpuPercent = null,
             MemoryMb = 123,
@@ -749,7 +765,8 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                     Status = SourceHealthStatuses.Healthy,
                     Required = true,
                     Enabled = true,
-                    NewestRecordId = 1234
+                    NewestRecordId = 1234,
+                    HostTimezone = SyntheticPacificTimezone()
                 }
             }
         };
@@ -775,6 +792,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             WindowsEventId = windowsEventId,
             RecordId = Random.Shared.NextInt64(1, long.MaxValue),
             EventTime = eventTime,
+            HostTimezone = SyntheticPacificTimezone(),
             Severity = "information",
             Message = $"Integration event {marker}",
             Normalized = new NormalizedEventFields

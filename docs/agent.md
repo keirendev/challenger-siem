@@ -14,10 +14,11 @@ Project: `agent/WindowsAgent`
 - Supports first-run enrollment with `POST /api/v1/agents/register` and persists the returned per-agent token.
 - Sends batches to `POST /api/v1/ingest/events`.
 - Deletes queued events only after server acknowledgement, using event-id acknowledgement arrays when present.
-- Sends heartbeat data to `POST /api/v1/agents/heartbeat`, including configuration hash, queue SLO metrics, source manifest, source-health probes, and tamper-check summary fields.
+- Sends heartbeat data to `POST /api/v1/agents/heartbeat`, including current host timezone metadata, configuration hash, queue SLO metrics, source manifest, source-health probes, and tamper-check summary fields.
 - Supports DPAPI-protected persisted API tokens for first-run enrollment on Windows.
 - Retries with bounded exponential backoff when collection or forwarding fails.
 - Quarantines repeatedly failing queued events in a local `poison_events` table so later events can continue draining.
+- Reports bounded host timezone metadata on registration, heartbeat, inventory snapshots, source-health rows, and event envelopes. `event_time` remains UTC; the event-specific `host_timezone.utc_offset_minutes` lets the server/web console render host-local time across daylight-saving boundaries.
 
 ## Build
 
@@ -41,7 +42,7 @@ dist/windows-agent-win-x64/WindowsAgent.exe
 
 This is a self-contained single-file executable for `win-x64`. It does not need `WindowsAgent.dll` or a .NET runtime install on the Windows host. It still needs `agentsettings.json` next to `WindowsAgent.exe`, under `C:\ProgramData\ChallengerSIEM\Agent`, or equivalent environment variables.
 
-Running and validating real event collection requires Windows.
+Running and validating real event collection requires Windows. The agent treats `EventRecord.TimeCreated` values with `DateTimeKind.Unspecified` as endpoint-local time before converting to UTC, avoiding server-timezone interpretation.
 
 ## Install on Windows
 

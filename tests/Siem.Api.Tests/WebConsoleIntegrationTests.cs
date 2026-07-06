@@ -34,6 +34,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             AgentVersion = "0.3.0-web-test",
             Os = "Windows Test",
             LastEventTime = DateTimeOffset.UtcNow,
+            HostTimezone = SyntheticPacificTimezone(),
             QueueDepth = 3,
             MemoryMb = 64,
             SourceHealth = new[]
@@ -47,7 +48,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                     Status = SourceHealthStatuses.Healthy,
                     Required = true,
                     Enabled = true,
-                    NewestRecordId = 6005
+                    NewestRecordId = 6005,
+                    HostTimezone = SyntheticPacificTimezone()
                 }
             }
         }, agentToken);
@@ -70,6 +72,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                     WindowsEventId = 6005,
                     RecordId = Random.Shared.NextInt64(1, long.MaxValue),
                     EventTime = DateTimeOffset.UtcNow,
+                    HostTimezone = SyntheticPacificTimezone(),
                     Severity = "information",
                     Message = $"Web console smoke marker {agentId}",
                     Normalized = new NormalizedEventFields { Category = "system", Action = "observed" },
@@ -98,18 +101,23 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         var coverage = await GetHtmlAsync(client, $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}");
         Assert.Contains("Host coverage", coverage, StringComparison.Ordinal);
         Assert.Contains("Windows System", coverage, StringComparison.Ordinal);
+        Assert.Contains("host timezone", coverage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Pacific Standard Time", coverage, StringComparison.Ordinal);
 
         var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&category=system&limit=10");
         Assert.Contains(agentId, events, StringComparison.Ordinal);
         Assert.Contains("Event results", events, StringComparison.Ordinal);
         Assert.Contains("Agent:", events, StringComparison.Ordinal);
         Assert.Contains("WebSmokeProvider", events, StringComparison.Ordinal);
+        Assert.Contains("Host time (Pacific Standard Time", events, StringComparison.Ordinal);
 
         var detail = await GetHtmlAsync(client, $"/events/detail?agent_id={Uri.EscapeDataString(agentId)}&event_id={eventId}");
         Assert.Contains(eventId.ToString(), detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Raw JSON", detail, StringComparison.Ordinal);
         Assert.Contains(agentId, detail, StringComparison.Ordinal);
         Assert.Contains("Entities", detail, StringComparison.Ordinal);
+        Assert.Contains("Event host time", detail, StringComparison.Ordinal);
+        Assert.Contains("Pacific Standard Time", detail, StringComparison.Ordinal);
 
         var alerts = await GetHtmlAsync(client, "/alerts");
         Assert.Contains("Alerts", alerts, StringComparison.Ordinal);
@@ -275,7 +283,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                 Hostname = hostname,
                 MachineGuid = null,
                 OsVersion = "Windows Test",
-                AgentVersion = "0.3.0-web-test"
+                AgentVersion = "0.3.0-web-test",
+                HostTimezone = SyntheticPacificTimezone()
             })
         };
         request.Headers.Add("X-Enrollment-Token", EnrollmentToken);
@@ -284,6 +293,17 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         var registration = await response.Content.ReadFromJsonAsync<AgentRegistrationResponse>();
         return registration?.ApiToken ?? throw new InvalidOperationException("Registration response did not include a token.");
     }
+
+    private static HostTimezoneMetadata SyntheticPacificTimezone() => new()
+    {
+        Id = "Pacific Standard Time",
+        DisplayName = "(UTC-08:00) Pacific Time (US & Canada)",
+        StandardName = "Pacific Standard Time",
+        DaylightName = "Pacific Daylight Time",
+        BaseUtcOffsetMinutes = -480,
+        UtcOffsetMinutes = -420,
+        IsDaylightSavingTime = true
+    };
 
     private static async Task PostWithBearerAsync(HttpClient client, string path, object payload, string token)
     {

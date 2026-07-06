@@ -452,7 +452,7 @@ All collected telemetry MUST be normalized to a common envelope with these conce
 | Field group | Required fields |
 | --- | --- |
 | Event identity | `event_id`, `source`, `channel`, `provider`, `record_id` or source equivalent, `event_code`, `event_action`, `event_category`, `event_type`, `event_outcome`, `severity`, `message`. |
-| Time | `event_time`, `ingest_time`, `agent_observed_time`, optional `source_created_time`, clock-skew metadata. |
+| Time | Canonical UTC `event_time`/`ingest_time`, optional host timezone metadata and event-specific UTC offset for display, `agent_observed_time`, optional `source_created_time`, clock-skew metadata. |
 | Host | `agent_id`, `hostname`, `fqdn`, `domain`, `machine_guid`, `os_name`, `os_version`, `ip_addresses`, `mac_addresses`. |
 | User | `user.name`, `user.domain`, `user.sid`, `user.id`, `user.type`, `user.logon_id`, `user.effective_privileges`. |
 | Process | `process.entity_id`, `pid`, `parent_pid`, `image`, `command_line`, `working_directory`, `hashes`, `signer`, `integrity_level`, `elevation`, `session_id`. |

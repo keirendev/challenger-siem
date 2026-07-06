@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added host timezone metadata across registration, heartbeat, source-health, inventory, event ingest/search, storage, schemas, and web review displays so host-scoped timelines default to clearly labelled endpoint-local time while UTC remains canonical for filtering and correlation.
 - Added a full-capability Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded Windows prerequisite configuration, Microsoft-signed Sysmon management, a versioned Sysmon L3 profile, source-manifest prerequisite/event-family validation metadata, and Sysmon profile hash reporting in source health.
 - Added agent-scoped Windows telemetry coverage validation with expected-source matrix overlays, recent event counts, agent-uploaded bounded inventory/audit-policy snapshots, detection prerequisite status, a `/api/v1/telemetry-coverage` review endpoint, expanded host coverage web detail, and clearer missing-vs-error source status handling for readable empty Windows logs.
 - Added a guarded fresh-start reset script and runbook for disposable local test environments with dry-run default, local target safety checks, confirmation-gated database reset, and opt-in local artifact cleanup.

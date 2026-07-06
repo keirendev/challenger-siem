@@ -30,8 +30,10 @@ else if (Model.Envelope is not null)
             <dt>Provider</dt><dd>@Model.Envelope.Provider</dd>
             <dt>Windows Event ID</dt><dd>@Model.Envelope.WindowsEventId</dd>
             <dt>Record ID</dt><dd>@Model.Envelope.RecordId</dd>
-            <dt>Event time</dt><dd>@Model.Envelope.EventTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")</dd>
-            <dt>Ingest time</dt><dd>@(Model.Envelope.IngestTime.HasValue ? Model.Envelope.IngestTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") : "—")</dd>
+            <dt>Event host time</dt><dd>@TimeDisplay.FormatHostTime(Model.Envelope.EventTime, Model.Envelope.HostTimezone)<div class="muted">@TimeDisplay.HostTimezoneLabel(Model.Envelope.HostTimezone)</div></dd>
+            <dt>Event UTC</dt><dd>@TimeDisplay.FormatUtc(Model.Envelope.EventTime)</dd>
+            <dt>Ingest time</dt><dd>@TimeDisplay.FormatUtc(Model.Envelope.IngestTime)</dd>
+            <dt>Host timezone</dt><dd>@TimeDisplay.HostTimezoneShortLabel(Model.Envelope.HostTimezone)</dd>
             <dt>Severity</dt><dd><span class="badge">@Model.Envelope.Severity</span></dd>
             <dt>Category</dt><dd>@(Model.Envelope.Normalized?.Category ?? "—")</dd>
             <dt>Action</dt><dd>@(Model.Envelope.Normalized?.Action ?? "—")</dd>

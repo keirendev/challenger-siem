@@ -20,11 +20,11 @@
 
 <form method="get" class="card filters filter-panel" aria-label="Event search filters">
     <div class="form-row">
-        <label for="from">From</label>
+        <label for="from">From (UTC)</label>
         <input id="from" name="from" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.From)" />
     </div>
     <div class="form-row">
-        <label for="to">To</label>
+        <label for="to">To (UTC)</label>
         <input id="to" name="to" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.To)" />
     </div>
     <div class="form-row">
@@ -74,6 +74,7 @@
     <div class="actions">
         <button type="submit">Search events</button>
         <a class="button secondary" asp-page="/Events/Index">Clear</a>
+        <span class="muted">Range filters are interpreted as UTC; event rows show host time when reported.</span>
     </div>
 </form>
 
@@ -125,7 +126,12 @@
                     @foreach (var item in Model.Events)
                     {
                         <tr>
-                            <td>@item.EventTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")<div class="muted">ingested @(item.IngestTime.HasValue ? item.IngestTime.Value.ToLocalTime().ToString("HH:mm:ss") : "—")</div></td>
+                            <td>
+                                @TimeDisplay.FormatHostTime(item.EventTime, item.HostTimezone)
+                                <div class="muted">@TimeDisplay.HostTimezoneLabel(item.HostTimezone)</div>
+                                <div class="muted">event UTC @TimeDisplay.FormatUtc(item.EventTime)</div>
+                                <div class="muted">ingested @TimeDisplay.FormatUtc(item.IngestTime, "HH:mm:ss")</div>
+                            </td>
                             <td><strong>@item.Hostname</strong><div class="muted mono">@item.AgentId</div></td>
                             <td>@item.Channel<div class="muted">@item.Provider</div></td>
                             <td>@item.WindowsEventId</td>

@@ -54,7 +54,7 @@ else
             @foreach (var alert in Model.Alerts)
             {
                 <tr>
-                    <td>@alert.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>@TimeDisplay.FormatUtc(alert.CreatedAt, "yyyy-MM-dd HH:mm")</td>
                     <td class="compact-cell"><strong>@alert.Title</strong><div class="muted">@alert.Summary</div></td>
                     <td><span class="badge danger">@alert.Severity</span></td>
                     <td>@alert.Confidence</td>

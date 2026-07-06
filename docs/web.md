@@ -38,14 +38,20 @@ Initial performance/accessibility budgets for local validation:
 - `/login` - operator review-token login.
 - `/` - dashboard with API/operator health metrics, active/recent/stale agent counts, retired agent count, historical registration count, recent ingestion volume, latest ingest time, and active agents reporting non-zero queue depth.
 - `/agents` - paged agent inventory with hostname, agent ID, OS, agent version, coverage level/status through L3 when Sysmon is healthy, source issue counts, first/last seen, latest queue depth, registration status, and stale/recent state. Supports hostname, agent ID, registration status, and health filters. Defaults to active registrations.
-- `/agents/detail?agent_id=<agent>&target_level=L3` - host coverage/source-health detail with a target-level selector, one row per expected Windows source for the selected target, recent normalized event counts, source pack/version/config-hash context such as the Sysmon profile version, explicit completeness gaps, inventory/audit-policy snapshot status, and per-rule detection prerequisite status without implying a confirmed detection miss when evidence is absent.
-- `/events` - paged event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, active filter pills, and bounded limit.
-- `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
+- `/agents/detail?agent_id=<agent>&target_level=L3` - host coverage/source-health detail with a target-level selector, host timezone label when reported, one row per expected Windows source for the selected target, recent normalized event counts, source pack/version/config-hash context such as the Sysmon profile version, explicit completeness gaps, inventory/audit-policy snapshot status, and per-rule detection prerequisite status without implying a confirmed detection miss when evidence is absent.
+- `/events` - paged event search form matching the review API filters: UTC time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, active filter pills, and bounded limit. Event rows default to host-local time when event timezone metadata is present and also show UTC for correlation.
+- `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with host-local event time, UTC event/ingest times, rendered message, entities, and formatted raw JSON.
 - `/alerts` and `/alerts/detail?alert_id=<uuid>` - paged alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.
 - `/graphs` and `/graphs/detail?graph_id=<uuid>` - paged operator-managed investigation graphs with bounded metadata, typed nodes/edges, source links, archive lifecycle, and approval-gated `soc-agent` proposals.
 - `/soc-agent` - local SIEM-aware SOC analyst/detection-engineering live chat workspace using a wider page-specific container, browser/page-level scrolling, a left session rail with confirmation-gated chat deletion, a wider no-reload thread/composer, non-editable agent context chip, Ctrl/Cmd+Enter send support, immediate optimistic send/pending-response state, safe assistant-only Markdown rendering for persisted and live responses, scheduled thread-aware auto-follow scrolling that keeps new content above the sticky composer while respecting manual scroll-away, a collapsible live-tool-activity rail sized for long tool names, cancellation, reconnect recovery, and citations back to review pages.
-- `/audit-policy` - audit-policy drift snapshot review skeleton.
+- `/audit-policy` - audit-policy drift snapshot review skeleton with host-local collected time when snapshot timezone metadata is present.
 - `/about` - application version, API/schema version, environment, and database connectivity status without exposing credentials.
+
+## Timezone display and filtering
+
+Challenger SIEM stores and filters event timestamps in UTC. The web console interprets event range inputs as UTC, including offset-less `datetime-local` values from browsers. Host-scoped event, source-health, coverage, audit-policy, alert-evidence, and `soc-agent` event summaries display endpoint host time when `host_timezone` metadata is available and label the Windows timezone ID plus UTC offset. If timezone metadata is missing from older agents, the console falls back to an explicit UTC/unknown-timezone label instead of implying server-local or browser-local time.
+
+Server-generated timestamps such as ingest time, alert creation time, graph updates, and chat messages are displayed as UTC.
 
 ## Agent lifecycle and cleanup
 

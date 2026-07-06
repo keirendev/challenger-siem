@@ -26,7 +26,7 @@ else
             @foreach (var snapshot in Model.Snapshots)
             {
                 <tr>
-                    <td>@snapshot.CollectedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>@TimeDisplay.FormatHostTime(snapshot.CollectedAt, snapshot.HostTimezone, "yyyy-MM-dd HH:mm")<div class="muted">@TimeDisplay.HostTimezoneLabel(snapshot.HostTimezone)</div></td>
                     <td>@snapshot.AgentId</td>
                     <td>@snapshot.Hostname</td>
                     <td>@string.Join(", ", snapshot.Summary.Select(pair => $"{pair.Key}={pair.Value}"))</td>

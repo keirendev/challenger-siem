@@ -157,10 +157,18 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select agent_id, event_id, event_time, channel, windows_event_id, summary
-            from alert_evidence
-            where alert_id = @alert_id
-            order by event_time desc nulls last, id asc;
+            select
+                ae.agent_id,
+                ae.event_id,
+                ae.event_time,
+                coalesce(ae.host_timezone, e.host_timezone) as host_timezone,
+                ae.channel,
+                ae.windows_event_id,
+                ae.summary
+            from alert_evidence ae
+            left join events e on e.agent_id = ae.agent_id and e.event_id = ae.event_id
+            where ae.alert_id = @alert_id
+            order by ae.event_time desc nulls last, ae.id asc;
             """;
         command.Parameters.AddWithValue("alert_id", alertId);
         var results = new List<AlertEvidenceRecord>();
@@ -172,6 +180,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
                 EventId = reader.GetGuid(reader.GetOrdinal("event_id")),
                 EventTime = ReadNullableDateTimeOffset(reader, "event_time"),
+                HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
                 Channel = ReadNullableString(reader, "channel"),
                 WindowsEventId = ReadNullableInt32(reader, "windows_event_id"),
                 Summary = reader.GetString(reader.GetOrdinal("summary"))

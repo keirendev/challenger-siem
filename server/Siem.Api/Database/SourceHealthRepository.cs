@@ -60,6 +60,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             select
                 a.agent_id,
                 a.hostname,
+                a.host_timezone,
                 coalesce(h.missing_mandatory_sources, 0) as missing_mandatory_sources,
                 coalesce(h.stale_sources, 0) as stale_sources,
                 coalesce(h.error_sources, 0) as error_sources,
@@ -105,7 +106,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 StaleSources = reader.GetInt32(reader.GetOrdinal("stale_sources")),
                 ErrorSources = reader.GetInt32(reader.GetOrdinal("error_sources")),
                 QueueDepth = reader.GetInt32(reader.GetOrdinal("queue_depth")),
-                LastHeartbeatTime = ReadNullableDateTimeOffset(reader, "last_heartbeat_time")
+                LastHeartbeatTime = ReadNullableDateTimeOffset(reader, "last_heartbeat_time"),
+                HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")
             });
         }
 
@@ -141,7 +143,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 bookmark_gap_detected,
                 config_hash,
                 source_version,
-                details
+                details,
+                host_timezone
             from source_health
             """;
         if (!string.IsNullOrWhiteSpace(agentId))
@@ -166,6 +169,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
                 LastEventTime = ReadNullableDateTimeOffset(reader, "last_event_time"),
+                HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
                 LastRecordId = ReadNullableInt64(reader, "last_record_id"),
                 OldestRecordId = ReadNullableInt64(reader, "oldest_record_id"),
                 NewestRecordId = ReadNullableInt64(reader, "newest_record_id"),

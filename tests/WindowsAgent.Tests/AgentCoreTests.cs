@@ -4,6 +4,7 @@ using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Queue;
 using Challenger.Siem.WindowsAgent.State;
+using Challenger.Siem.WindowsAgent.Time;
 using Challenger.Siem.WindowsAgent.Util;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -81,6 +82,56 @@ public sealed class AgentCoreTests
     }
 
     [Fact]
+    public async Task SqliteQueuePreservesHostTimezoneMetadata()
+    {
+        using var temp = new TempDirectory();
+        var queue = CreateQueue(Path.Combine(temp.Path, "queue.sqlite"));
+        var envelope = CreateEvent(Guid.NewGuid()) with
+        {
+            HostTimezone = new HostTimezoneMetadata
+            {
+                Id = "Pacific Standard Time",
+                DisplayName = "(UTC-08:00) Pacific Time (US & Canada)",
+                BaseUtcOffsetMinutes = -480,
+                UtcOffsetMinutes = -420,
+                IsDaylightSavingTime = true
+            }
+        };
+
+        await queue.EnqueueAsync(envelope, CancellationToken.None);
+        var queued = Assert.Single(await queue.DequeueBatchAsync(10, CancellationToken.None));
+
+        Assert.Equal("Pacific Standard Time", queued.Envelope.HostTimezone?.Id);
+        Assert.Equal(-420, queued.Envelope.HostTimezone?.UtcOffsetMinutes);
+    }
+
+    [Fact]
+    public void HostTimezoneProviderTreatsUnspecifiedEventRecordTimesAsHostLocal()
+    {
+        var timeZone = TimeZoneInfo.CreateCustomTimeZone("Synthetic UTC+02", TimeSpan.FromHours(2), "Synthetic UTC+02", "Synthetic UTC+02");
+        var localHostTime = new DateTime(2026, 1, 15, 10, 30, 0, DateTimeKind.Unspecified);
+
+        var utc = HostTimezoneProvider.ToUtc(localHostTime, timeZone);
+
+        Assert.Equal(new DateTimeOffset(2026, 1, 15, 8, 30, 0, TimeSpan.Zero), utc);
+    }
+
+    [Fact]
+    public void HostTimezoneProviderCapturesEventSpecificDstOffset()
+    {
+        var pacific = CreatePacificLikeTimeZone();
+
+        var summer = HostTimezoneProvider.ForInstant(new DateTimeOffset(2026, 7, 4, 12, 0, 0, TimeSpan.Zero), pacific);
+        var winter = HostTimezoneProvider.ForInstant(new DateTimeOffset(2026, 1, 4, 12, 0, 0, TimeSpan.Zero), pacific);
+
+        Assert.Equal("Pacific Standard Time", summer.Id);
+        Assert.Equal(-420, summer.UtcOffsetMinutes);
+        Assert.True(summer.IsDaylightSavingTime);
+        Assert.Equal(-480, winter.UtcOffsetMinutes);
+        Assert.False(winter.IsDaylightSavingTime);
+    }
+
+    [Fact]
     public async Task SqliteQueueEnforcesSizeLimit()
     {
         using var temp = new TempDirectory();
@@ -125,6 +176,34 @@ public sealed class AgentCoreTests
                 }
             }),
             NullLogger<SqliteEventQueue>.Instance);
+    }
+
+    private static TimeZoneInfo CreatePacificLikeTimeZone()
+    {
+        var daylightStart = TimeZoneInfo.TransitionTime.CreateFloatingDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0),
+            3,
+            2,
+            DayOfWeek.Sunday);
+        var daylightEnd = TimeZoneInfo.TransitionTime.CreateFloatingDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0),
+            11,
+            1,
+            DayOfWeek.Sunday);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2020, 1, 1),
+            new DateTime(2030, 12, 31),
+            TimeSpan.FromHours(1),
+            daylightStart,
+            daylightEnd);
+
+        return TimeZoneInfo.CreateCustomTimeZone(
+            "Pacific Standard Time",
+            TimeSpan.FromHours(-8),
+            "(UTC-08:00) Pacific Time (US & Canada)",
+            "Pacific Standard Time",
+            "Pacific Daylight Time",
+            new[] { rule });
     }
 
     private static EventEnvelope CreateEvent(Guid eventId)

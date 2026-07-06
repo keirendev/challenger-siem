@@ -53,6 +53,7 @@ else
         <article class="card"><span class="metric-value">@(Model.Coverage?.NewAlertCount.ToString() ?? "—")</span><span class="metric-label">new alerts / 24h</span></article>
         <article class="card"><span class="metric-value">@(Model.Coverage?.ActiveGraphCount.ToString() ?? "—")</span><span class="metric-label">active graphs</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.QueueDepth</span><span class="metric-label">queue depth</span></article>
+        <article class="card"><span class="metric-value">@TimeDisplay.HostTimezoneShortLabel(Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone)</span><span class="metric-label">host timezone</span></article>
     </section>
 
     @if (Model.Coverage?.Gaps.Count > 0)
@@ -112,7 +113,10 @@ else
                                 <td>@(source.Required ? "yes" : "no")</td>
                                 <td>@(source.Reported ? "yes" : "no")</td>
                                 <td>@source.RecentEventCount</td>
-                                <td>@(source.LastEventTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                                <td>
+                                    @TimeDisplay.FormatHostTime(source.LastEventTime, source.HostTimezone ?? Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone, "yyyy-MM-dd HH:mm")
+                                    <div class="muted">@TimeDisplay.HostTimezoneLabel(source.HostTimezone ?? Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone)</div>
+                                </td>
                                 <td>
                                     <span>@(string.IsNullOrWhiteSpace(source.SourceVersion) ? "—" : source.SourceVersion)</span>
                                     @if (!string.IsNullOrWhiteSpace(source.ConfigHash))
@@ -153,7 +157,10 @@ else
                         <tr>
                             <td>@snapshot.SnapshotType</td>
                             <td><span class="badge @(snapshot.Status == "healthy" ? "ok" : snapshot.Status == "missing" || snapshot.Status == "stale" ? "warning" : "danger")">@snapshot.Status</span></td>
-                            <td>@(snapshot.LatestCollectedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                            <td>
+                                @TimeDisplay.FormatHostTime(snapshot.LatestCollectedAt, snapshot.HostTimezone ?? Model.Coverage.HostTimezone, "yyyy-MM-dd HH:mm")
+                                <div class="muted">@TimeDisplay.HostTimezoneLabel(snapshot.HostTimezone ?? Model.Coverage.HostTimezone)</div>
+                            </td>
                             <td>@snapshot.ItemCount</td>
                             <td>@snapshot.Reason</td>
                             <td>

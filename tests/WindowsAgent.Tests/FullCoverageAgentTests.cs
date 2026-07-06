@@ -105,6 +105,7 @@ public sealed class FullCoverageAgentTests
 
         var snapshot = WindowsInventoryCollectors.CreateAuditPolicySnapshot("agent-1", "HOST1", policy);
         Assert.Equal("audit_policy", snapshot.SnapshotType);
+        Assert.NotNull(snapshot.HostTimezone);
         Assert.True(RequiredAuditPolicy.CountDrift(policy) > 0);
 
         var roles = WindowsRoleDetector.DetectRoles(new[] { "Web-Server" }, new[] { "W3SVC" });

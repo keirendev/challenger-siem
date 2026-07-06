@@ -10,13 +10,14 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, first_seen, last_seen, status, api_token_hash)
-            values (@agent_id, @hostname, @machine_guid, @os_version, @agent_version, now(), now(), 'active', @api_token_hash)
+            insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, first_seen, last_seen, status, api_token_hash, host_timezone)
+            values (@agent_id, @hostname, @machine_guid, @os_version, @agent_version, now(), now(), 'active', @api_token_hash, @host_timezone)
             on conflict (agent_id) do update set
                 hostname = excluded.hostname,
                 machine_guid = excluded.machine_guid,
                 os_version = excluded.os_version,
                 agent_version = excluded.agent_version,
+                host_timezone = coalesce(excluded.host_timezone, agents.host_timezone),
                 last_seen = now(),
                 status = 'active',
                 api_token_hash = excluded.api_token_hash,
@@ -28,6 +29,7 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("os_version", request.OsVersion);
         command.Parameters.AddWithValue("agent_version", request.AgentVersion);
         command.Parameters.AddWithValue("api_token_hash", apiTokenHash);
+        Jsonb.Add(command, "host_timezone", request.HostTimezone);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

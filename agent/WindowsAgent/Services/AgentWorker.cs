@@ -7,6 +7,7 @@ using Challenger.Siem.WindowsAgent.Inventory;
 using Challenger.Siem.WindowsAgent.Queue;
 using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.State;
+using Challenger.Siem.WindowsAgent.Time;
 using Challenger.Siem.WindowsAgent.Transport;
 using Microsoft.Extensions.Options;
 
@@ -297,6 +298,7 @@ public sealed class AgentWorker(
                 AgentVersion = agentVersion,
                 Os = Environment.OSVersion.VersionString,
                 LastEventTime = runtimeState.LastEventTime,
+                HostTimezone = HostTimezoneProvider.Current(),
                 QueueDepth = await queue.CountAsync(cancellationToken),
                 CpuPercent = null,
                 MemoryMb = Convert.ToInt32(GC.GetTotalMemory(forceFullCollection: false) / 1024L / 1024L),

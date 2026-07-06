@@ -5,6 +5,7 @@ using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Normalization;
 using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Serialization;
+using Challenger.Siem.WindowsAgent.Time;
 using Challenger.Siem.WindowsAgent.Util;
 using Microsoft.Extensions.Options;
 
@@ -70,6 +71,7 @@ public sealed class WindowsEventCollector(
                     Enabled = false,
                     Status = SourceHealthStatuses.Disabled,
                     LogSizeBytes = logSizeBytes,
+                    HostTimezone = HostTimezoneProvider.Current(),
                     ErrorCode = "event_log_disabled",
                     ErrorMessage = "Channel exists but is disabled on this host.",
                     ConfigHash = disabledConfigHash,
@@ -87,7 +89,7 @@ public sealed class WindowsEventCollector(
             {
                 using var latestRecord = reverseReader.ReadEvent();
                 latest = latestRecord?.RecordId;
-                latestEventTime = latestRecord is null ? null : ToUtc(latestRecord.TimeCreated);
+                latestEventTime = latestRecord is null ? null : HostTimezoneProvider.ToUtc(latestRecord.TimeCreated);
             }
 
             long? oldest = null;
@@ -125,6 +127,7 @@ public sealed class WindowsEventCollector(
                 OldestRecordId = oldest,
                 NewestRecordId = latest,
                 LogSizeBytes = logSizeBytes,
+                HostTimezone = latestEventTime.HasValue ? HostTimezoneProvider.ForInstant(latestEventTime.Value) : HostTimezoneProvider.Current(),
                 ConfigHash = configHash,
                 SourceVersion = sourceVersion,
                 Details = details
@@ -195,7 +198,8 @@ public sealed class WindowsEventCollector(
         var channel = ReadString(() => record.LogName) ?? requestedChannel;
         var provider = ReadString(() => record.ProviderName) ?? string.Empty;
         var recordId = record.RecordId ?? 0;
-        var eventTime = ToUtc(record.TimeCreated);
+        var eventTime = HostTimezoneProvider.ToUtc(record.TimeCreated);
+        var hostTimezone = HostTimezoneProvider.ForInstant(eventTime);
         var windowsEventId = record.Id;
         var keywords = ReadKeywords(record);
         var message = Truncate(ReadString(record.FormatDescription) ?? string.Empty, 20000) ?? string.Empty;
@@ -242,6 +246,7 @@ public sealed class WindowsEventCollector(
             WindowsEventId = windowsEventId,
             RecordId = recordId,
             EventTime = eventTime,
+            HostTimezone = hostTimezone,
             IngestTime = null,
             Severity = WindowsEventSeverityMapper.Map(record.Level, keywords),
             Message = message,
@@ -262,6 +267,7 @@ public sealed class WindowsEventCollector(
             Required = source.Required,
             Enabled = true,
             Status = status,
+            HostTimezone = HostTimezoneProvider.Current(),
             ErrorCode = errorCode,
             ErrorMessage = errorMessage.Length <= 500 ? errorMessage : errorMessage[..500],
             ConfigHash = configHash,
@@ -319,21 +325,6 @@ public sealed class WindowsEventCollector(
         }
 
         return details;
-    }
-
-    private static DateTimeOffset ToUtc(DateTime? dateTime)
-    {
-        if (!dateTime.HasValue)
-        {
-            return DateTimeOffset.UtcNow;
-        }
-
-        return dateTime.Value.Kind switch
-        {
-            DateTimeKind.Utc => new DateTimeOffset(dateTime.Value),
-            DateTimeKind.Local => new DateTimeOffset(dateTime.Value).ToUniversalTime(),
-            _ => new DateTimeOffset(DateTime.SpecifyKind(dateTime.Value, DateTimeKind.Utc))
-        };
     }
 
     private static string? Truncate(string? value, int maxLength)

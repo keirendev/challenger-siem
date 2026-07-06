@@ -55,6 +55,7 @@ alter table events add column if not exists destination_ip text null;
 alter table events add column if not exists service_name text null;
 alter table events add column if not exists file_path text null;
 alter table events add column if not exists registry_key text null;
+alter table events add column if not exists host_timezone jsonb null;
 create index if not exists idx_events_event_category on events(event_category);
 create index if not exists idx_events_event_action on events(event_action);
 create index if not exists idx_events_user_name on events(user_name);
@@ -85,6 +86,9 @@ alter table agent_heartbeats add column if not exists queue_metrics jsonb null;
 alter table agent_heartbeats add column if not exists source_manifest jsonb null;
 alter table agent_heartbeats add column if not exists source_health_summary jsonb null;
 alter table agent_heartbeats add column if not exists tamper_checks jsonb null;
+alter table agent_heartbeats add column if not exists host_timezone jsonb null;
+
+alter table agents add column if not exists host_timezone jsonb null;
 
 create table if not exists source_health (
     agent_id text not null references agents(agent_id),
@@ -110,6 +114,7 @@ create table if not exists source_health (
     config_hash text null,
     source_version text null,
     details jsonb not null default '{}'::jsonb,
+    host_timezone jsonb null,
     updated_at timestamptz not null default now(),
     primary key (agent_id, source_id),
     constraint ck_source_health_status check (status in ('healthy', 'missing', 'disabled', 'stale', 'error', 'not_applicable', 'excepted')),
@@ -117,6 +122,7 @@ create table if not exists source_health (
 );
 create index if not exists idx_source_health_status on source_health(status);
 create index if not exists idx_source_health_agent on source_health(agent_id);
+alter table source_health add column if not exists host_timezone jsonb null;
 
 create table if not exists coverage_exceptions (
     id bigserial primary key,
@@ -141,6 +147,7 @@ create table if not exists asset_inventory_snapshots (
     created_at timestamptz not null default now()
 );
 create index if not exists idx_asset_inventory_agent_type on asset_inventory_snapshots(agent_id, snapshot_type, collected_at desc);
+alter table asset_inventory_snapshots add column if not exists host_timezone jsonb null;
 
 create table if not exists detection_rules (
     rule_id text not null,
@@ -190,6 +197,7 @@ create table if not exists alert_evidence (
     created_at timestamptz not null default now()
 );
 create index if not exists idx_alert_evidence_alert on alert_evidence(alert_id);
+alter table alert_evidence add column if not exists host_timezone jsonb null;
 
 create table if not exists soc_agent_turns (
     id bigserial primary key,

@@ -19,6 +19,9 @@ public sealed record HeartbeatRequest
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
+
     [JsonPropertyName("queue_depth")]
     public int QueueDepth { get; init; }
 

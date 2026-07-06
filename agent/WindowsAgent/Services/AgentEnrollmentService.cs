@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Security;
+using Challenger.Siem.WindowsAgent.Time;
 using Challenger.Siem.WindowsAgent.Transport;
 using Microsoft.Extensions.Options;
 
@@ -42,7 +43,8 @@ public sealed class AgentEnrollmentService(
             Hostname = Environment.MachineName,
             MachineGuid = string.IsNullOrWhiteSpace(options.Enrollment.MachineGuid) ? null : options.Enrollment.MachineGuid,
             OsVersion = Environment.OSVersion.VersionString,
-            AgentVersion = agentVersion
+            AgentVersion = agentVersion,
+            HostTimezone = HostTimezoneProvider.Current()
         };
 
         logger.LogInformation("Registering Challenger SIEM agent {AgentId} with the configured enrollment token.", options.AgentId);

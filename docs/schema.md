@@ -14,13 +14,14 @@ Required structured fields:
 - `provider` - Windows event provider.
 - `windows_event_id` - Windows Event ID.
 - `record_id` - Windows channel record ID.
-- `event_time` - event timestamp from Windows.
+- `event_time` - event timestamp from Windows, normalized to canonical UTC.
+- `host_timezone` - optional bounded endpoint timezone metadata and event-time UTC offset used only for host-local display.
 - `severity` - normalized severity string.
 - `message` - rendered or synthesized event message.
 - `normalized` - optional normalized category/action/entity/search fields.
 - `raw` - original parsed event payload.
 
-`ingest_time` is set by the server when stored. Server storage extracts selected normalized fields such as category, action, user, process image, IPs, service, file path, and registry key into searchable columns while retaining `normalized_json` and `raw_json`.
+`ingest_time` is set by the server when stored. Server storage extracts selected normalized fields such as category, action, user, process image, IPs, service, file path, and registry key into searchable columns while retaining `normalized_json`, `raw_json`, and optional `host_timezone` JSONB metadata. UTC remains the only timestamp used for range filtering, correlation, and deduplication.
 
 ## Database tables
 
@@ -28,11 +29,11 @@ Implemented in `server/Siem.Api/Database/001_initial.sql`.
 
 ### `agents`
 
-Stores registered endpoints, hashed per-agent API tokens, and lifecycle status. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry. Stale health is computed from `last_seen` rather than stored as a status.
+Stores registered endpoints, hashed per-agent API tokens, lifecycle status, and optional current `host_timezone` metadata from registration/heartbeat. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry. Stale health is computed from `last_seen` rather than stored as a status.
 
 ### `events`
 
-Stores normalized fields plus `raw_json` as JSONB.
+Stores normalized fields plus `raw_json` and optional event-specific `host_timezone` as JSONB.
 
 Deduplication key:
 
@@ -42,11 +43,11 @@ unique (agent_id, event_id)
 
 ### `agent_heartbeats`
 
-Stores heartbeat observations, queue SLO metrics, source manifest, source-health summaries, configuration hash, and tamper-check summaries.
+Stores heartbeat observations, queue SLO metrics, source manifest, source-health summaries, configuration hash, tamper-check summaries, and optional current host timezone metadata.
 
 ### `source_health`
 
-Stores the latest per-agent source-health row keyed by `(agent_id, source_id)`, including coverage level, status, required/enabled flags, record ranges, log-size metrics, stale/gap/clear indicators, source version/config hash, and bounded details.
+Stores the latest per-agent source-health row keyed by `(agent_id, source_id)`, including coverage level, status, required/enabled flags, record ranges, log-size metrics, stale/gap/clear indicators, source version/config hash, bounded details, and optional host timezone metadata for source last-event display.
 
 ### `coverage_exceptions`
 
@@ -54,7 +55,7 @@ Stores approved coverage exceptions for missing/not-applicable sources.
 
 ### `asset_inventory_snapshots`
 
-Stores bounded inventory snapshots for host identity, network, users/groups, services/drivers, scheduled tasks/autoruns, installed software, patches/features, security-control state, audit policy, and Windows role detection.
+Stores bounded inventory snapshots for host identity, network, users/groups, services/drivers, scheduled tasks/autoruns, installed software, patches/features, security-control state, audit policy, and Windows role detection, with optional host timezone metadata for `collected_at` display.
 
 ### `detection_rules`
 
@@ -70,7 +71,7 @@ Store bounded chat workspace session metadata and message history, including rol
 
 ### `alerts` and `alert_evidence`
 
-Stores detection alert review skeleton data and links alerts to event evidence.
+Stores detection alert review skeleton data and links alerts to event evidence. Evidence can carry or derive host timezone metadata from the linked event for display while preserving UTC event timestamps.
 
 ### `investigation_graphs`, `investigation_graph_nodes`, `investigation_graph_edges`, `investigation_graph_proposals`, and `investigation_graph_audit`
 

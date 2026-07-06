@@ -4,7 +4,7 @@ Challenger SIEM is a custom, no-Docker SIEM prototype focused first on Windows e
 
 ## Current capabilities
 
-- Windows Event Log collection with local agent queueing, retries, channel position state, and heartbeat/source-health reporting.
+- Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
 - Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.

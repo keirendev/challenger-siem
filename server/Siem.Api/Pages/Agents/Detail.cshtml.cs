@@ -44,6 +44,7 @@ public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCo
                 Enabled = source.Enabled,
                 Status = source.Status,
                 LastEventTime = source.LastEventTime,
+                HostTimezone = source.HostTimezone ?? Summary?.HostTimezone,
                 SourceVersion = source.SourceVersion,
                 ConfigHash = source.ConfigHash,
                 Details = source.Details,

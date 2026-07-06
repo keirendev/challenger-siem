@@ -18,6 +18,9 @@ public sealed record AgentRegistrationRequest
 
     [JsonPropertyName("agent_version")]
     public string AgentVersion { get; init; } = string.Empty;
+
+    [JsonPropertyName("host_timezone")]
+    public HostTimezoneMetadata? HostTimezone { get; init; }
 }
 
 public sealed record AgentRegistrationResponse
