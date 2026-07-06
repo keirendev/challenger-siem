@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Fixed the `/soc-agent` live workspace so normal connected/local provider states use the compact title pill instead of a large inline status box, activity cards fit long tool names, and no-reload sends show immediate operator/pending progress while live events stream.
 - Added authenticated `soc-agent` chat-session deletion from the web workspace and v1 review API, with active-run conflict handling and message cascade semantics.
 - Expanded the `/soc-agent` workspace width, widened the conversation column, moved provider setup into compact status/notice surfaces, and kept the right rail focused on live tool activity.
 - Fixed `/soc-agent` auto-follow scrolling to target the active chat thread sentinel instead of jumping to the document bottom on initial page load.

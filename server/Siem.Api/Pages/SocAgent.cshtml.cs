@@ -52,10 +52,32 @@ public sealed class SocAgentModel(
 
     public bool CanStartSubscriptionOAuthConnect => subscriptionOAuthConnect.CanStartInteractiveConnect();
 
-    public bool ShouldShowProviderInlineNotice =>
-        ProviderStatus.RequiresConnection
-        || ProviderStatus.DataMayLeaveLocalSiem
-        || CanStartSubscriptionOAuthConnect;
+    public bool ShouldShowProviderInlineNotice => ProviderNeedsAttention(ProviderStatus);
+
+    private static bool ProviderNeedsAttention(SocAgentProviderStatusResponse status)
+    {
+        if (status.RequiresConnection)
+        {
+            return true;
+        }
+
+        return status.Status switch
+        {
+            "disabled" or
+            "provider_not_configured" or
+            "auth_required" or
+            "expired" or
+            "refresh_failed" or
+            "unsupported_delegated_auth" or
+            "unsupported_subscription_oauth" or
+            "scope_missing" or
+            "plan_limited" or
+            "budget_limited" or
+            "rate_limited" or
+            "provider_error" => true,
+            _ => false
+        };
+    }
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {

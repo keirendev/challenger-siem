@@ -771,7 +771,7 @@ pre,
     align-items: start;
     display: grid;
     gap: var(--space-4);
-    grid-template-columns: minmax(210px, 270px) minmax(0, 1.75fr) minmax(220px, 290px);
+    grid-template-columns: minmax(210px, 260px) minmax(0, 1.85fr) minmax(260px, 340px);
     min-height: 0;
     min-width: 0;
 }
@@ -958,7 +958,9 @@ pre,
     border-radius: var(--radius-sm);
     background: rgb(8 20 38 / 0.42);
     min-height: 16rem;
-    padding: var(--space-4);
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: var(--space-3);
 }
 
 .activity-feed h3 {
@@ -969,6 +971,7 @@ pre,
 .tool-card-grid {
     display: grid;
     gap: var(--space-3);
+    min-width: 0;
 }
 
 .tool-card-grid {
@@ -980,7 +983,29 @@ pre,
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: rgb(8 20 38 / 0.72);
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: var(--space-3);
+}
+
+.activity-card .tool-card-header,
+.tool-card .tool-card-header {
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.activity-card .tool-card-header strong,
+.tool-card .tool-card-header strong {
+    flex: 1 1 min(12rem, 100%);
+    line-height: 1.25;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.activity-card .tool-card-header .badge,
+.tool-card .tool-card-header .badge {
+    flex: 0 0 auto;
 }
 
 .activity-card.running,
@@ -999,7 +1024,7 @@ pre,
 }
 
 .activity-collapsed {
-    grid-template-columns: minmax(210px, 270px) minmax(0, 1.75fr) minmax(8.5rem, 10rem);
+    grid-template-columns: minmax(210px, 260px) minmax(0, 1.85fr) minmax(8.5rem, 10rem);
 }
 
 .activity-collapsed .soc-agent-activity > :not(.activity-panel-header) {
