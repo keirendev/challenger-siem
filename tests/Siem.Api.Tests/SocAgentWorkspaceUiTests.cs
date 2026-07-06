@@ -24,11 +24,16 @@ public sealed class SocAgentWorkspaceUiTests
         Assert.Contains("let autoFollow = false;", page, StringComparison.Ordinal);
         Assert.Contains("const threadEnd = document.getElementById('soc-agent-thread-end');", page, StringComparison.Ordinal);
         Assert.Contains("function isLatestVisible()", page, StringComparison.Ordinal);
-        Assert.Contains("target.scrollIntoView({ block: 'end', inline: 'nearest', behavior: force ? 'smooth' : 'auto' });", page, StringComparison.Ordinal);
+        Assert.Contains("function latestScrollTop(target)", page, StringComparison.Ordinal);
+        Assert.Contains("window.scrollTo({", page, StringComparison.Ordinal);
+        Assert.Contains("programmaticScrollUntil = Date.now() + (force ? 700 : 250);", page, StringComparison.Ordinal);
         Assert.Contains("function setAutoFollow(shouldFollow)", page, StringComparison.Ordinal);
-        Assert.Contains("window.addEventListener('scroll', () => setAutoFollow(isLatestVisible()), { passive: true });", page, StringComparison.Ordinal);
+        Assert.Contains("function markUserScrollIntent()", page, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener('wheel', markUserScrollIntent, { passive: true });", page, StringComparison.Ordinal);
+        Assert.Contains("Date.now() < programmaticScrollUntil", page, StringComparison.Ordinal);
         Assert.DoesNotContain("function documentScrollHeight()", page, StringComparison.Ordinal);
         Assert.DoesNotContain("window.scrollTo({ top: documentScrollHeight()", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("target.scrollIntoView", page, StringComparison.Ordinal);
         Assert.DoesNotContain("scrollToLatest(true);\n    resumeActiveRun();", page, StringComparison.Ordinal);
         Assert.DoesNotContain("threadScroll.addEventListener('scroll'", page, StringComparison.Ordinal);
         Assert.Contains("scrollButton.addEventListener('click', () => scrollToLatest(true));", page, StringComparison.Ordinal);

@@ -277,6 +277,8 @@
     let lastSequence = 0;
     let running = false;
     let autoFollow = false;
+    let followScrollFrame = null;
+    let programmaticScrollUntil = 0;
     let pendingAssistant = null;
     let pendingAssistantContent = '';
 
@@ -347,7 +349,7 @@
         }
 
         const rect = target.getBoundingClientRect();
-        return rect.top >= -64 && rect.top <= latestViewportBottom() + 128;
+        return rect.bottom >= -64 && rect.bottom <= latestViewportBottom() + 96;
     }
 
     function updateScrollControl() {
@@ -363,19 +365,50 @@
         updateScrollControl();
     }
 
-    function scrollToLatest(force = false) {
+    function latestScrollTop(target) {
+        const rect = target.getBoundingClientRect();
+        const desired = window.scrollY + rect.bottom - latestViewportBottom();
+        return Math.max(0, Math.ceil(desired));
+    }
+
+    function performScrollToLatest(force = false) {
         if (force) {
             autoFollow = true;
         }
 
         const target = latestThreadTarget();
         if ((force || autoFollow) && target) {
-            target.scrollIntoView({ block: 'end', inline: 'nearest', behavior: force ? 'smooth' : 'auto' });
+            programmaticScrollUntil = Date.now() + (force ? 700 : 250);
+            window.scrollTo({
+                top: latestScrollTop(target),
+                behavior: force ? 'smooth' : 'auto'
+            });
             window.requestAnimationFrame(updateScrollControl);
             return;
         }
 
         updateScrollControl();
+    }
+
+    function scrollToLatest(force = false) {
+        if (force) {
+            autoFollow = true;
+        }
+
+        if (followScrollFrame) {
+            window.cancelAnimationFrame(followScrollFrame);
+        }
+
+        followScrollFrame = window.requestAnimationFrame(() => {
+            followScrollFrame = window.requestAnimationFrame(() => {
+                followScrollFrame = null;
+                performScrollToLatest(force);
+            });
+        });
+    }
+
+    function markUserScrollIntent() {
+        programmaticScrollUntil = 0;
     }
 
     function createElement(tag, className, text) {
@@ -822,7 +855,21 @@
             }
         }
     });
-    window.addEventListener('scroll', () => setAutoFollow(isLatestVisible()), { passive: true });
+    window.addEventListener('scroll', () => {
+        if (Date.now() < programmaticScrollUntil) {
+            window.requestAnimationFrame(updateScrollControl);
+            return;
+        }
+
+        setAutoFollow(isLatestVisible());
+    }, { passive: true });
+    window.addEventListener('wheel', markUserScrollIntent, { passive: true });
+    window.addEventListener('touchmove', markUserScrollIntent, { passive: true });
+    window.addEventListener('keydown', event => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(event.code)) {
+            markUserScrollIntent();
+        }
+    });
     window.addEventListener('resize', () => {
         if (autoFollow) {
             scrollToLatest();

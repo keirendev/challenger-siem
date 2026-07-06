@@ -34,7 +34,7 @@ The `/soc-agent` page shows:
 - compact provider/model/auth status in the title pill, plus a small inline notice/connect action only when external-provider setup, auth, budget/rate, or provider-error state needs operator attention;
 - ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup documented as advanced alternatives instead of occupying persistent right-rail space;
 - bounded chat history, confirmation-gated per-session deletion controls in the Recent chats rail, and a message thread with operator and `soc-agent` bubbles;
-- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, immediate optimistic operator bubbles, a pending assistant/progress placeholder, a non-editable agent-context chip, thread-end-sentinel auto-follow scrolling, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, immediate optimistic operator bubbles, a pending assistant/progress placeholder, a non-editable agent-context chip, scheduled thread-end-sentinel auto-follow scrolling that keeps new chat content above the sticky composer, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
 - live tool activity cards with running/ok states, bounded row counts/summaries, wrapping for long tool names such as `external_model_provider`, and final citation links back to SIEM review pages;
 - loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.
