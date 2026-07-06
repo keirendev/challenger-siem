@@ -3,6 +3,7 @@ using System.Diagnostics.Eventing.Reader;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Normalization;
+using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Serialization;
 using Challenger.Siem.WindowsAgent.Util;
 using Microsoft.Extensions.Options;
@@ -58,6 +59,7 @@ public sealed class WindowsEventCollector(
 
             if (!enabled)
             {
+                var disabledDetails = CreateSourceDetails(source, out var disabledConfigHash, out var disabledSourceVersion);
                 return Task.FromResult(new SourceHealthReport
                 {
                     SourceId = source.SourceId,
@@ -70,11 +72,9 @@ public sealed class WindowsEventCollector(
                     LogSizeBytes = logSizeBytes,
                     ErrorCode = "event_log_disabled",
                     ErrorMessage = "Channel exists but is disabled on this host.",
-                    Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["parser_id"] = source.ParserId,
-                        ["source_pack"] = source.SourcePack
-                    }
+                    ConfigHash = disabledConfigHash,
+                    SourceVersion = disabledSourceVersion,
+                    Details = disabledDetails
                 });
             }
 
@@ -105,11 +105,7 @@ public sealed class WindowsEventCollector(
                 // The latest probe already captures source readability; oldest is best effort.
             }
 
-            var details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["parser_id"] = source.ParserId,
-                ["source_pack"] = source.SourcePack
-            };
+            var details = CreateSourceDetails(source, out var configHash, out var sourceVersion);
             if (!latest.HasValue)
             {
                 details["empty_enabled_log"] = "true";
@@ -129,6 +125,8 @@ public sealed class WindowsEventCollector(
                 OldestRecordId = oldest,
                 NewestRecordId = latest,
                 LogSizeBytes = logSizeBytes,
+                ConfigHash = configHash,
+                SourceVersion = sourceVersion,
                 Details = details
             });
         }
@@ -252,8 +250,9 @@ public sealed class WindowsEventCollector(
         };
     }
 
-    private static SourceHealthReport SourceProbeError(SourceManifestEntry source, string status, string errorCode, string errorMessage)
+    private SourceHealthReport SourceProbeError(SourceManifestEntry source, string status, string errorCode, string errorMessage)
     {
+        var details = CreateSourceDetails(source, out var configHash, out var sourceVersion);
         return new SourceHealthReport
         {
             SourceId = source.SourceId,
@@ -265,12 +264,61 @@ public sealed class WindowsEventCollector(
             Status = status,
             ErrorCode = errorCode,
             ErrorMessage = errorMessage.Length <= 500 ? errorMessage : errorMessage[..500],
-            Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["parser_id"] = source.ParserId,
-                ["source_pack"] = source.SourcePack
-            }
+            ConfigHash = configHash,
+            SourceVersion = sourceVersion,
+            Details = details
         };
+    }
+
+    private Dictionary<string, string> CreateSourceDetails(SourceManifestEntry source, out string? configHash, out string? sourceVersion)
+    {
+        var details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["parser_id"] = source.ParserId,
+            ["source_pack"] = source.SourcePack
+        };
+
+        configHash = null;
+        sourceVersion = null;
+        if (!string.Equals(source.ParserId, "sysmon", StringComparison.OrdinalIgnoreCase))
+        {
+            return details;
+        }
+
+        sourceVersion = options.Sysmon.ProfileVersion;
+        details["sysmon_profile_version"] = string.IsNullOrWhiteSpace(options.Sysmon.ProfileVersion)
+            ? "unknown"
+            : options.Sysmon.ProfileVersion;
+        details["sysmon_config_path_configured"] = string.IsNullOrWhiteSpace(options.Sysmon.ConfigPath) ? "false" : "true";
+
+        if (string.IsNullOrWhiteSpace(options.Sysmon.ConfigPath))
+        {
+            details["sysmon_config_file_present"] = "false";
+            return details;
+        }
+
+        try
+        {
+            if (File.Exists(options.Sysmon.ConfigPath))
+            {
+                configHash = AgentConfigurationHasher.ComputeFileHash(options.Sysmon.ConfigPath);
+                details["sysmon_config_file_present"] = "true";
+            }
+            else
+            {
+                details["sysmon_config_file_present"] = "false";
+            }
+        }
+        catch (IOException)
+        {
+            details["sysmon_config_file_present"] = "error";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            details["sysmon_config_file_present"] = "error";
+        }
+
+        return details;
     }
 
     private static DateTimeOffset ToUtc(DateTime? dateTime)

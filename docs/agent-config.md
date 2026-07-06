@@ -64,6 +64,10 @@ Permissions should be restricted to Administrators and SYSTEM.
     },
     "State": {
       "Path": "C:\\ProgramData\\ChallengerSIEM\\Agent\\state.json"
+    },
+    "Sysmon": {
+      "ConfigPath": "C:\\ProgramData\\ChallengerSIEM\\Agent\\sysmon\\challenger-siem-sysmon-l3.xml",
+      "ProfileVersion": "challenger-siem-l3-2026.07.06"
     }
   }
 }
@@ -84,6 +88,11 @@ Never place enrollment or per-agent tokens in committed examples. Use ignored lo
 - `Queue.MaxSendAttempts` controls when repeatedly failing events are moved to the local `poison_events` table so future events can continue draining.
 - `Queue.MaxBackoffSeconds` caps per-event retry backoff.
 - `InventoryIntervalSeconds` controls how often the agent sends bounded inventory/audit-policy snapshots. The agent sends one snapshot batch soon after startup, then repeats at this interval.
+
+## Sysmon profile fields
+
+- `Sysmon.ConfigPath` points at the versioned approved Sysmon profile copy. When present, the agent includes its SHA-256 hash on the Sysmon source-health row.
+- `Sysmon.ProfileVersion` is an operator-visible source version for the active approved profile, for example `challenger-siem-l3-2026.07.06`.
 
 ## Channel position state
 

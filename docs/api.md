@@ -126,6 +126,22 @@ Request:
     "max_size_mb": 512,
     "warning_size_percent": 80
   },
+  "source_manifest": [
+    {
+      "source_id": "sysmon-operational",
+      "display_name": "Sysmon Operational",
+      "channel": "Microsoft-Windows-Sysmon/Operational",
+      "coverage_level": "L3",
+      "required": false,
+      "source_pack": "windows-l3-sysmon",
+      "parser_id": "sysmon",
+      "prerequisites": ["sysmon_installed", "sysmon_approved_config"],
+      "event_families": ["process", "network", "dns", "file", "registry", "tamper"],
+      "validation_scenarios": ["sysmon_process_event", "sysmon_network_dns_event"],
+      "privacy": "high_sensitivity",
+      "installer_managed": true
+    }
+  ],
   "source_health": [
     {
       "source_id": "system",
@@ -141,7 +157,7 @@ Request:
 }
 ```
 
-Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`.
+Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`. Source-manifest entries also carry the additive installer/source matrix fields `prerequisites`, `event_families`, `validation_scenarios`, `privacy`, and `installer_managed` for operator validation and coverage reporting.
 
 ## Agent inventory upload
 
@@ -196,7 +212,7 @@ GET /api/v1/telemetry-coverage?agent_id=win11-test-001&target_level=L2&lookback_
 Authorization: Bearer <review-token>
 ```
 
-Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
+Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, additive source version/config-hash/details fields for profile-backed sources such as Sysmon, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
 
 ## Inventory
 

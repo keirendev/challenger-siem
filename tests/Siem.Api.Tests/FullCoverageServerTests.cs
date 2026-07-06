@@ -150,6 +150,37 @@ public sealed class FullCoverageServerTests
     }
 
     [Fact]
+    public void TelemetryCoverageSourcesExposeSourceVersionAndConfigHashAdditively()
+    {
+        var source = new SourceTelemetryCoverage
+        {
+            SourceId = "sysmon-operational",
+            DisplayName = "Sysmon Operational",
+            Channel = "Microsoft-Windows-Sysmon/Operational",
+            CoverageLevel = WindowsCoverageLevel.L3,
+            Required = true,
+            Enabled = true,
+            Reported = true,
+            Status = SourceHealthStatuses.Healthy,
+            SourceVersion = "challenger-siem-l3-2026.07.06",
+            ConfigHash = "abcdef123456",
+            Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["source_pack"] = "windows-l3-sysmon"
+            },
+            RecentEventCount = 10,
+            Reason = "healthy",
+            EventSearchUrl = "/events",
+            SourceHealthUrl = "/agents/detail"
+        };
+
+        var json = JsonSerializer.Serialize(source, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains("source_version", json, StringComparison.Ordinal);
+        Assert.Contains("config_hash", json, StringComparison.Ordinal);
+        Assert.Contains("details", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectionEngineReportsCoveragePrerequisiteFailures()
     {
         var engine = new DetectionEngine();

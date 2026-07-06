@@ -127,7 +127,9 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 coalesce(sh.stale_sources, 0) as stale_sources,
                 coalesce(sh.error_sources, 0) as error_sources,
                 case
-                    when coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.healthy_sources, 0) >= 12 then 'L2'
+                    when coalesce(sh.error_sources, 0) = 0 and coalesce(sh.stale_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 and coalesce(sh.l3_required_healthy_sources, 0) >= 1 then 'L3'
+                    when coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 then 'L2'
+                    when coalesce(sh.l1_required_healthy_sources, 0) >= 3 then 'L1'
                     when coalesce(sh.healthy_sources, 0) >= 1 then 'L1'
                     else 'L0'
                 end as current_coverage_level,
@@ -151,7 +153,10 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     count(*) filter (where required_source and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
                     count(*) filter (where status = 'stale')::int as stale_sources,
                     count(*) filter (where status = 'error')::int as error_sources,
-                    count(*) filter (where status = 'healthy')::int as healthy_sources
+                    count(*) filter (where status = 'healthy')::int as healthy_sources,
+                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id in ('security', 'system', 'application'))::int as l1_required_healthy_sources,
+                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id in ('security', 'system', 'application', 'powershell-classic', 'powershell-operational', 'defender-operational', 'task-scheduler', 'wmi-activity', 'terminalservices-local-sessionmanager', 'terminalservices-remoteconnectionmanager', 'rdp-corets', 'winrm-operational', 'firewall-advanced'))::int as l2_required_healthy_sources,
+                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id = 'sysmon-operational')::int as l3_required_healthy_sources
                 from source_health
                 where agent_id = a.agent_id
             ) sh on true

@@ -45,25 +45,35 @@ Running and validating real event collection requires Windows.
 
 ## Install on Windows
 
-Preview the service install plan without changing the host:
+The supported workflow is `scripts/install-windows-agent.ps1`, which can plan, install, upgrade, repair, validate, and uninstall the service while preserving existing config, queue, and state by default.
+
+Preview without changing the host:
 
 ```powershell
-.\scripts\install-windows-agent.ps1 -PublishPath .\dist\windows-agent-win-x64 -PlanOnly
+.\scripts\install-windows-agent.ps1 -Mode plan -TargetLevel L3
 ```
 
-Run from an elevated PowerShell session after publishing:
+Install from an elevated PowerShell session after publishing:
 
 ```powershell
-.\scripts\install-windows-agent.ps1 -PublishPath .\dist\windows-agent-win-x64
+.\scripts\install-windows-agent.ps1 -Mode install -PublishPath .\dist\windows-agent-win-x64
 ```
 
-The script creates:
+Upgrade or repair without silently restarting a running service:
+
+```powershell
+.\scripts\install-windows-agent.ps1 -Mode upgrade -PublishPath .\dist\windows-agent-win-x64 -RestartService
+.\scripts\install-windows-agent.ps1 -Mode validate -TargetLevel L3
+```
+
+The workflow creates:
 
 - service: `ChallengerSiemAgent` with display name `Challenger SIEM Agent`
 - default MVP service account: LocalSystem
 - install directory: `C:\Program Files\ChallengerSIEM\Agent`
 - protected data/config directory: `C:\ProgramData\ChallengerSIEM\Agent`
 - template config: `C:\ProgramData\ChallengerSIEM\Agent\agentsettings.json`
+- optional Sysmon profile copy: `C:\ProgramData\ChallengerSIEM\Agent\sysmon\challenger-siem-sysmon-l3.xml`
 
 The install and data directories are ACL-restricted to `BUILTIN\\Administrators` and `NT AUTHORITY\\SYSTEM`. LocalSystem is the MVP default because it can run as a service and read the protected `Security` event log on standard Windows installations. If a custom service account is used later, grant only the specific Windows Event Log permissions it needs and validate Security-log access explicitly.
 
@@ -73,23 +83,19 @@ Edit the config with either the registered `AgentId` and `ApiToken` or a first-r
 Start-Service ChallengerSiemAgent
 ```
 
-Preview the uninstall plan without changing the host:
+Uninstall through the same workflow while preserving queued data and state:
 
 ```powershell
-.\scripts\uninstall-windows-agent.ps1 -PlanOnly
+.\scripts\install-windows-agent.ps1 -Mode uninstall
 ```
 
-Uninstall while preserving queued data and state:
+Remove queued data and state too only in a disposable lab after explicit approval:
 
 ```powershell
-.\scripts\uninstall-windows-agent.ps1
+.\scripts\install-windows-agent.ps1 -Mode uninstall -RemoveData
 ```
 
-Remove queued data and state too:
-
-```powershell
-.\scripts\uninstall-windows-agent.ps1 -RemoveData
-```
+See [Windows agent installer workflow](windows-agent-installer.md) for guarded prerequisite configuration and Sysmon management.
 
 ## Configuration
 

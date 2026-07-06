@@ -1,0 +1,137 @@
+<!--
+  Challenger SIEM Sysmon L3 profile
+  Profile version: challenger-siem-l3-2026.07.06
+  Purpose: conservative endpoint telemetry for process, network/DNS, file, registry,
+  WMI, pipe, driver/image, process-access, raw-disk, and tamper families.
+  Privacy note: clipboard events are intentionally not enabled; file/image/registry
+  rules are targeted to high-risk paths and persistence/security-control locations.
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation />
+  <DnsLookup>False</DnsLookup>
+
+  <EventFiltering>
+    <RuleGroup name="Process lifecycle - baseline" groupRelation="or">
+      <ProcessCreate onmatch="exclude">
+        <Image condition="is">C:\Windows\System32\conhost.exe</Image>
+        <Image condition="is">C:\Windows\System32\WerFault.exe</Image>
+      </ProcessCreate>
+      <ProcessTerminate onmatch="include">
+        <Image condition="begin with">C:\Users\</Image>
+        <Image condition="begin with">C:\ProgramData\</Image>
+        <Image condition="begin with">C:\Windows\Temp\</Image>
+        <Image condition="contains">\powershell.exe</Image>
+        <Image condition="contains">\pwsh.exe</Image>
+        <Image condition="contains">\cmd.exe</Image>
+        <Image condition="contains">\wscript.exe</Image>
+        <Image condition="contains">\cscript.exe</Image>
+        <Image condition="contains">\mshta.exe</Image>
+        <Image condition="contains">\rundll32.exe</Image>
+        <Image condition="contains">\regsvr32.exe</Image>
+        <Image condition="contains">\wmic.exe</Image>
+      </ProcessTerminate>
+    </RuleGroup>
+
+    <RuleGroup name="Network and DNS - process correlated" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <Image condition="begin with">C:\Users\</Image>
+        <Image condition="begin with">C:\ProgramData\</Image>
+        <DestinationPort condition="is">22</DestinationPort>
+        <DestinationPort condition="is">53</DestinationPort>
+        <DestinationPort condition="is">80</DestinationPort>
+        <DestinationPort condition="is">443</DestinationPort>
+        <DestinationPort condition="is">445</DestinationPort>
+        <DestinationPort condition="is">3389</DestinationPort>
+        <DestinationPort condition="is">5985</DestinationPort>
+        <DestinationPort condition="is">5986</DestinationPort>
+      </NetworkConnect>
+      <DnsQuery onmatch="include">
+        <Image condition="begin with">C:\Users\</Image>
+        <Image condition="begin with">C:\ProgramData\</Image>
+        <Image condition="contains">\powershell.exe</Image>
+        <Image condition="contains">\pwsh.exe</Image>
+        <Image condition="contains">\cmd.exe</Image>
+        <Image condition="contains">\mshta.exe</Image>
+        <Image condition="contains">\rundll32.exe</Image>
+        <Image condition="contains">\regsvr32.exe</Image>
+        <Image condition="contains">\wmic.exe</Image>
+      </DnsQuery>
+    </RuleGroup>
+
+    <RuleGroup name="File activity - high risk paths and executable content" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename condition="begin with">C:\Users\</TargetFilename>
+        <TargetFilename condition="begin with">C:\ProgramData\</TargetFilename>
+        <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
+        <TargetFilename condition="contains">\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\</TargetFilename>
+        <TargetFilename condition="end with">.exe</TargetFilename>
+        <TargetFilename condition="end with">.dll</TargetFilename>
+        <TargetFilename condition="end with">.ps1</TargetFilename>
+        <TargetFilename condition="end with">.vbs</TargetFilename>
+        <TargetFilename condition="end with">.js</TargetFilename>
+        <TargetFilename condition="end with">.hta</TargetFilename>
+        <TargetFilename condition="end with">.bat</TargetFilename>
+        <TargetFilename condition="end with">.cmd</TargetFilename>
+      </FileCreate>
+      <FileCreateStreamHash onmatch="include">
+        <TargetFilename condition="begin with">C:\Users\</TargetFilename>
+        <TargetFilename condition="begin with">C:\ProgramData\</TargetFilename>
+      </FileCreateStreamHash>
+      <FileDelete onmatch="include">
+        <TargetFilename condition="begin with">C:\Users\</TargetFilename>
+        <TargetFilename condition="begin with">C:\ProgramData\</TargetFilename>
+        <TargetFilename condition="end with">.exe</TargetFilename>
+        <TargetFilename condition="end with">.dll</TargetFilename>
+        <TargetFilename condition="end with">.ps1</TargetFilename>
+      </FileDelete>
+      <FileCreateTime onmatch="include">
+        <Image condition="begin with">C:\Users\</Image>
+        <Image condition="begin with">C:\ProgramData\</Image>
+      </FileCreateTime>
+    </RuleGroup>
+
+    <RuleGroup name="Registry persistence and security control changes" groupRelation="or">
+      <RegistryEvent onmatch="include">
+        <TargetObject condition="contains">\Software\Microsoft\Windows\CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows\CurrentVersion\RunOnce</TargetObject>
+        <TargetObject condition="contains">\System\CurrentControlSet\Services\</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows Defender\</TargetObject>
+        <TargetObject condition="contains">\Software\Policies\Microsoft\Windows Defender\</TargetObject>
+        <TargetObject condition="contains">\Software\Policies\Microsoft\Windows\PowerShell\</TargetObject>
+        <TargetObject condition="contains">\System\CurrentControlSet\Control\Lsa\</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows\CurrentVersion\Policies\System\</TargetObject>
+      </RegistryEvent>
+    </RuleGroup>
+
+    <RuleGroup name="Driver, image, access, raw disk, WMI, pipe, and tamper" groupRelation="or">
+      <DriverLoad onmatch="include">
+        <Signature condition="is not">Microsoft Windows</Signature>
+        <ImageLoaded condition="begin with">C:\Users\</ImageLoaded>
+        <ImageLoaded condition="begin with">C:\ProgramData\</ImageLoaded>
+      </DriverLoad>
+      <ImageLoad onmatch="include">
+        <ImageLoaded condition="begin with">C:\Users\</ImageLoaded>
+        <ImageLoaded condition="begin with">C:\ProgramData\</ImageLoaded>
+        <ImageLoaded condition="begin with">C:\Windows\Temp\</ImageLoaded>
+        <Signature condition="is">Unsigned</Signature>
+      </ImageLoad>
+      <CreateRemoteThread onmatch="include" />
+      <RawAccessRead onmatch="include" />
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="is">C:\Windows\System32\lsass.exe</TargetImage>
+        <TargetImage condition="is">C:\Windows\System32\csrss.exe</TargetImage>
+        <TargetImage condition="is">C:\Windows\System32\winlogon.exe</TargetImage>
+      </ProcessAccess>
+      <PipeEvent onmatch="include">
+        <PipeName condition="contains">\psexesvc</PipeName>
+        <PipeName condition="contains">\paexec</PipeName>
+        <PipeName condition="contains">\atsvc</PipeName>
+        <PipeName condition="contains">\lsass</PipeName>
+      </PipeEvent>
+      <WmiEvent onmatch="include" />
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

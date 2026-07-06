@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Coverage;
 using Challenger.Siem.WindowsAgent.Inventory;
@@ -126,5 +127,83 @@ public sealed class FullCoverageAgentTests
         {
             File.Delete(tempPath);
         }
+    }
+
+    [Fact]
+    public void SourceManifestCarriesMachineReadableInstallerAndValidationMatrix()
+    {
+        var security = Assert.Single(WindowsTelemetrySourceCatalog.All, source => source.SourceId == "security");
+        Assert.Contains("audit_policy_baseline", security.Prerequisites);
+        Assert.Contains("authentication", security.EventFamilies);
+        Assert.Contains("synthetic_process_creation", security.ValidationScenarios);
+        Assert.True(security.InstallerManaged);
+
+        var sysmon = Assert.Single(WindowsTelemetrySourceCatalog.SysmonL3, source => source.SourceId == "sysmon-operational");
+        Assert.Contains("sysmon_signed_binary_verified", sysmon.Prerequisites);
+        Assert.Contains("dns", sysmon.EventFamilies);
+        Assert.Contains("sysmon_wmi_pipe_tamper_event", sysmon.ValidationScenarios);
+        Assert.Equal("high_sensitivity", sysmon.Privacy);
+
+        Assert.Contains(WindowsTelemetrySourceCatalog.L4RolePacks, pack => pack.Role == "domain_controller" && pack.Sources.Contains("Directory Service"));
+    }
+
+    [Fact]
+    public void SysmonProfileHasVersionedSafeFamilyCoverage()
+    {
+        var path = RepositoryPath("agent", "WindowsAgent", "Sysmon", "challenger-siem-sysmon-l3.xml");
+        var text = File.ReadAllText(path);
+        var document = XDocument.Parse(text);
+
+        Assert.Contains("Profile version: challenger-siem-l3-2026.07.06", text, StringComparison.Ordinal);
+        foreach (var elementName in new[]
+        {
+            "ProcessCreate",
+            "NetworkConnect",
+            "DnsQuery",
+            "FileCreate",
+            "FileDelete",
+            "RegistryEvent",
+            "DriverLoad",
+            "ImageLoad",
+            "ProcessAccess",
+            "RawAccessRead",
+            "WmiEvent",
+            "PipeEvent"
+        })
+        {
+            Assert.NotEmpty(document.Descendants(elementName));
+        }
+
+        Assert.DoesNotContain("ClipboardChange", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void InstallerWorkflowScriptExposesGuardedFullCapabilityModes()
+    {
+        var script = File.ReadAllText(RepositoryPath("scripts", "install-windows-agent.ps1"));
+        Assert.Contains("ValidateSet(\"plan\", \"install\", \"upgrade\", \"repair\", \"validate\", \"uninstall\")", script, StringComparison.Ordinal);
+        Assert.Contains("ConfigurePrerequisites", script, StringComparison.Ordinal);
+        Assert.Contains("ConfigurePrivacySensitiveAuditPolicy", script, StringComparison.Ordinal);
+        Assert.Contains("ManageSysmon", script, StringComparison.Ordinal);
+        Assert.Contains("AcceptSysmonEula", script, StringComparison.Ordinal);
+        Assert.Contains("Get-AuthenticodeSignature", script, StringComparison.Ordinal);
+        Assert.Contains("RestartService", script, StringComparison.Ordinal);
+        Assert.Contains("Plan complete. No changes were made.", script, StringComparison.Ordinal);
+    }
+
+    private static string RepositoryPath(params string[] segments)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Challenger.Siem.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        if (directory is null)
+        {
+            throw new InvalidOperationException("Could not locate repository root from test output path.");
+        }
+
+        return Path.Combine(new[] { directory.FullName }.Concat(segments).ToArray());
     }
 }

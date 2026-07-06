@@ -87,9 +87,9 @@ The scripts register a synthetic agent, ingest a synthetic event, exercise the r
      demo-agent-001 DEMO-WIN11 "Windows 11"
    ```
 
-4. Copy `dist/windows-agent-copy/WindowsAgent.exe` and `dist/windows-agent-copy/agentsettings.json` together to the Windows host. Do not print or commit `agentsettings.json`; it contains a per-agent API token.
+4. Copy `dist/windows-agent-copy/WindowsAgent.exe`, `dist/windows-agent-copy/agentsettings.json`, and the optional `dist/windows-agent-copy/Sysmon/` profile together to the Windows host. Do not print or commit `agentsettings.json`; it contains a per-agent API token.
 
-5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md) and [runbooks.md](runbooks.md#windows-service-installstartstop).
+5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md), [windows-agent-installer.md](windows-agent-installer.md), and [runbooks.md](runbooks.md#windows-service-installstartstop).
 
 ## Review console workflow
 
@@ -112,6 +112,7 @@ Agent heartbeats can include source manifests and per-channel health. The server
 
 - [windows-host-full-coverage-spec.md](windows-host-full-coverage-spec.md) for target levels and source requirements.
 - [windows-l2-validation-runbook.md](windows-l2-validation-runbook.md) for safe L2 validation.
+- [windows-agent-installer.md](windows-agent-installer.md) for plan/install/upgrade/repair/validate/uninstall and guarded prerequisite/Sysmon management.
 - [sysmon-l3-validation-runbook.md](sysmon-l3-validation-runbook.md) for safe Sysmon validation.
 
 ## Routine operations

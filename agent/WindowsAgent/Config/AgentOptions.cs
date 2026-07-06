@@ -18,6 +18,7 @@ public sealed class AgentOptions
     public BatchingOptions Batching { get; set; } = new();
     public QueueOptions Queue { get; set; } = new();
     public StateOptions State { get; set; } = new();
+    public SysmonOptions Sysmon { get; set; } = new();
 }
 
 public sealed class EnrollmentOptions
@@ -45,4 +46,10 @@ public sealed class QueueOptions
 public sealed class StateOptions
 {
     public string Path { get; set; } = @"C:\ProgramData\ChallengerSIEM\Agent\state.json";
+}
+
+public sealed class SysmonOptions
+{
+    public string ConfigPath { get; set; } = @"C:\ProgramData\ChallengerSIEM\Agent\sysmon\challenger-siem-sysmon-l3.xml";
+    public string ProfileVersion { get; set; } = "challenger-siem-l3-2026.07.06";
 }
