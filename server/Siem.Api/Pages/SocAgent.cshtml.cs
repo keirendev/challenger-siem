@@ -203,6 +203,11 @@ public sealed class SocAgentModel(
             : "soc-agent";
     }
 
+    public bool ShouldRenderMarkdown(SocAgentChatMessageDto message)
+    {
+        return !string.Equals(message.Role, "operator", StringComparison.OrdinalIgnoreCase);
+    }
+
     private IActionResult RedirectAfterDeleteAttempt(Guid? deletedSessionId, bool deleted)
     {
         var keepSession = SessionId.HasValue

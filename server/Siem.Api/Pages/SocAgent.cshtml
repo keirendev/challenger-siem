@@ -151,7 +151,14 @@
                                     <span class="badge danger">@message.ErrorCode</span>
                                 }
                             </div>
-                            <pre class="message-box">@message.Content</pre>
+                            @if (Model.ShouldRenderMarkdown(message))
+                            {
+                                <div class="message-box markdown-content" data-message-markdown="true">@message.Content</div>
+                            }
+                            else
+                            {
+                                <pre class="message-box">@message.Content</pre>
+                            }
 
                             @if (message.ToolRuns.Count > 0)
                             {
@@ -422,16 +429,320 @@
         return role === 'operator' ? 'Operator' : 'soc-agent';
     }
 
-    function safeUrl(url) {
+    function safeUrl(url, allowExternal = false) {
+        const value = String(url || '').trim();
+        if (!value || value.startsWith('//') || /[\u0000-\u001f\u007f]/.test(value)) {
+            return '#';
+        }
+
         try {
-            const parsed = new URL(url || '', window.location.origin);
-            if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/')) {
+            const parsed = new URL(value, window.location.origin);
+            const hasExplicitScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value);
+            if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/') && (!hasExplicitScheme || parsed.protocol === window.location.protocol)) {
                 return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+            }
+
+            if (allowExternal
+                && (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+                && !parsed.username
+                && !parsed.password) {
+                return parsed.href;
             }
         } catch (_) {
             // Fall through to inert link.
         }
         return '#';
+    }
+
+    function sanitizeMarkdownLink(url) {
+        const href = safeUrl(url, true);
+        return href === '#' ? null : href;
+    }
+
+    function isExternalHref(href) {
+        try {
+            const parsed = new URL(href, window.location.origin);
+            return parsed.origin !== window.location.origin && (parsed.protocol === 'https:' || parsed.protocol === 'http:');
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function shouldRenderMarkdown(role) {
+        return role !== 'operator';
+    }
+
+    function hydratePersistedMarkdownMessages() {
+        document.querySelectorAll('[data-message-markdown="true"]').forEach(element => {
+            renderMarkdownInto(element, element.textContent || '');
+        });
+    }
+
+    function createMessageBox(role, content) {
+        if (!shouldRenderMarkdown(role)) {
+            return createElement('pre', 'message-box', content || '');
+        }
+
+        const element = createElement('div', 'message-box markdown-content');
+        element.dataset.messageMarkdown = 'true';
+        renderMarkdownInto(element, content || '');
+        return element;
+    }
+
+    function updateMessageContent(item, role, content) {
+        const box = item?.querySelector('.message-box');
+        if (!box) return;
+
+        if (box.dataset.messageMarkdown === 'true' || shouldRenderMarkdown(role || item.dataset.role)) {
+            if (box.dataset.messageMarkdown !== 'true') {
+                box.dataset.messageMarkdown = 'true';
+                box.classList.add('markdown-content');
+            }
+            renderMarkdownInto(box, content || '');
+            return;
+        }
+
+        box.textContent = content || '';
+    }
+
+    function currentMessageText(item) {
+        return item?.querySelector('.message-box')?.textContent || '';
+    }
+
+    function isFenceClose(line, fenceCharacter, minimumLength) {
+        const trimmed = line.trim();
+        if (trimmed.length < minimumLength) return false;
+        for (const character of trimmed) {
+            if (character !== fenceCharacter) return false;
+        }
+        return true;
+    }
+
+    function parseListMarker(line) {
+        const unordered = line.match(/^\s{0,3}[-*+]\s+(.+)$/);
+        if (unordered) {
+            return { ordered: false, text: unordered[1] };
+        }
+
+        const ordered = line.match(/^\s{0,3}\d+[.)]\s+(.+)$/);
+        if (ordered) {
+            return { ordered: true, text: ordered[1] };
+        }
+
+        return null;
+    }
+
+    function isMarkdownBlockStart(line) {
+        return /^\s*(```+|~~~+)/.test(line)
+            || /^#{1,3}\s+/.test(line)
+            || /^\s{0,3}>/.test(line)
+            || Boolean(parseListMarker(line));
+    }
+
+    function renderMarkdownInto(container, markdown) {
+        container.textContent = '';
+        const source = String(markdown || '').replace(/\r\n?/g, '\n');
+        if (!source.trim()) {
+            return;
+        }
+
+        const lines = source.split('\n');
+        let index = 0;
+
+        while (index < lines.length) {
+            const line = lines[index];
+            if (!line.trim()) {
+                index += 1;
+                continue;
+            }
+
+            const fence = line.match(/^\s*(```+|~~~+)\s*([A-Za-z0-9_-]+)?\s*$/);
+            if (fence) {
+                const fenceToken = fence[1];
+                const codeLines = [];
+                index += 1;
+                while (index < lines.length && !isFenceClose(lines[index], fenceToken[0], fenceToken.length)) {
+                    codeLines.push(lines[index]);
+                    index += 1;
+                }
+                if (index < lines.length) {
+                    index += 1;
+                }
+
+                const pre = createElement('pre', 'markdown-code-block');
+                const code = createElement('code', '', codeLines.join('\n'));
+                pre.appendChild(code);
+                container.appendChild(pre);
+                continue;
+            }
+
+            const heading = line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/);
+            if (heading) {
+                const level = heading[1].length + 2;
+                const element = createElement(`h${level}`, '');
+                renderInlineInto(element, heading[2]);
+                container.appendChild(element);
+                index += 1;
+                continue;
+            }
+
+            if (/^\s{0,3}>/.test(line)) {
+                const quoteLines = [];
+                while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
+                    quoteLines.push(lines[index].replace(/^\s{0,3}>\s?/, ''));
+                    index += 1;
+                }
+                const quote = createElement('blockquote');
+                const paragraph = createElement('p');
+                renderInlineInto(paragraph, quoteLines.join('\n'));
+                quote.appendChild(paragraph);
+                container.appendChild(quote);
+                continue;
+            }
+
+            const firstListMarker = parseListMarker(line);
+            if (firstListMarker) {
+                const list = createElement(firstListMarker.ordered ? 'ol' : 'ul');
+                while (index < lines.length) {
+                    const marker = parseListMarker(lines[index]);
+                    if (!marker || marker.ordered !== firstListMarker.ordered) {
+                        break;
+                    }
+                    const item = createElement('li');
+                    renderInlineInto(item, marker.text);
+                    list.appendChild(item);
+                    index += 1;
+                }
+                container.appendChild(list);
+                continue;
+            }
+
+            const paragraphLines = [];
+            while (index < lines.length && lines[index].trim() && !isMarkdownBlockStart(lines[index])) {
+                paragraphLines.push(lines[index]);
+                index += 1;
+            }
+            const paragraph = createElement('p');
+            renderInlineInto(paragraph, paragraphLines.join('\n'));
+            container.appendChild(paragraph);
+        }
+    }
+
+    function renderInlineInto(parent, text, options = {}) {
+        const allowLinks = options.allowLinks !== false;
+        let index = 0;
+        let buffer = '';
+        const value = String(text || '');
+
+        function flushText() {
+            if (buffer) {
+                parent.appendChild(document.createTextNode(buffer));
+                buffer = '';
+            }
+        }
+
+        while (index < value.length) {
+            if (value[index] === '\n') {
+                flushText();
+                parent.appendChild(document.createElement('br'));
+                index += 1;
+                continue;
+            }
+
+            if (value.startsWith('![', index)) {
+                const image = parseMarkdownLink(value, index + 1);
+                if (image) {
+                    buffer += value.slice(index, image.end);
+                    index = image.end;
+                    continue;
+                }
+            }
+
+            if (value[index] === '`') {
+                const close = value.indexOf('`', index + 1);
+                if (close > index + 1) {
+                    flushText();
+                    parent.appendChild(createElement('code', '', value.slice(index + 1, close)));
+                    index = close + 1;
+                    continue;
+                }
+            }
+
+            if (allowLinks && value[index] === '[') {
+                const link = parseMarkdownLink(value, index);
+                if (link) {
+                    flushText();
+                    const href = sanitizeMarkdownLink(link.url);
+                    if (href) {
+                        const anchor = createElement('a');
+                        anchor.href = href;
+                        if (isExternalHref(href)) {
+                            anchor.target = '_blank';
+                            anchor.rel = 'noreferrer noopener';
+                        }
+                        renderInlineInto(anchor, link.label, { allowLinks: false });
+                        parent.appendChild(anchor);
+                    } else {
+                        parent.appendChild(document.createTextNode(link.label || link.url));
+                    }
+                    index = link.end;
+                    continue;
+                }
+            }
+
+            const strongMarker = value.startsWith('**', index) ? '**' : (value.startsWith('__', index) ? '__' : null);
+            if (strongMarker) {
+                const close = value.indexOf(strongMarker, index + strongMarker.length);
+                if (close > index + strongMarker.length) {
+                    flushText();
+                    const strong = createElement('strong');
+                    renderInlineInto(strong, value.slice(index + strongMarker.length, close), { allowLinks });
+                    parent.appendChild(strong);
+                    index = close + strongMarker.length;
+                    continue;
+                }
+            }
+
+            const emphasisMarker = (value[index] === '*' && value[index + 1] !== '*')
+                ? '*'
+                : ((value[index] === '_' && value[index + 1] !== '_') ? '_' : null);
+            if (emphasisMarker) {
+                const close = value.indexOf(emphasisMarker, index + 1);
+                if (close > index + 1) {
+                    flushText();
+                    const emphasis = createElement('em');
+                    renderInlineInto(emphasis, value.slice(index + 1, close), { allowLinks });
+                    parent.appendChild(emphasis);
+                    index = close + 1;
+                    continue;
+                }
+            }
+
+            buffer += value[index];
+            index += 1;
+        }
+
+        flushText();
+    }
+
+    function parseMarkdownLink(value, start) {
+        const labelEnd = value.indexOf(']', start + 1);
+        if (labelEnd <= start + 1 || value[labelEnd + 1] !== '(') {
+            return null;
+        }
+
+        const urlEnd = value.indexOf(')', labelEnd + 2);
+        if (urlEnd <= labelEnd + 2) {
+            return null;
+        }
+
+        const label = value.slice(start + 1, labelEnd);
+        const url = value.slice(labelEnd + 2, urlEnd).trim();
+        if (!label.trim() || !url) {
+            return null;
+        }
+
+        return { label, url, end: urlEnd + 1 };
     }
 
     function appendMessage(message) {
@@ -449,7 +760,7 @@
             item.id = `message-${message.message_id}`;
             item.dataset.messageId = message.message_id;
             item.dataset.role = message.role;
-            item.querySelector('.message-box').textContent = message.content || pendingAssistantContent;
+            updateMessageContent(item, message.role, message.content || pendingAssistantContent);
             pendingAssistant = null;
             pendingAssistantContent = '';
             const meta = item.querySelector('.message-meta');
@@ -469,7 +780,7 @@
             const meta = createElement('div', 'message-meta');
             hydrateMessageMeta(meta, message);
             item.appendChild(meta);
-            item.appendChild(createElement('pre', 'message-box', message.content || ''));
+            item.appendChild(createMessageBox(message.role, message.content || ''));
             hydrateToolCards(item, message.tool_runs || []);
             hydrateCitations(item, message.citations || []);
             messageList.appendChild(item);
@@ -488,7 +799,7 @@
         meta.appendChild(createElement('strong', '', 'Operator'));
         meta.appendChild(createElement('span', 'badge warning', 'sending'));
         item.appendChild(meta);
-        item.appendChild(createElement('pre', 'message-box', content));
+        item.appendChild(createMessageBox('operator', content));
         messageList.appendChild(item);
         scrollToLatest();
         return item;
@@ -502,7 +813,7 @@
         const meta = item.querySelector('.message-meta');
         meta.textContent = '';
         hydrateMessageMeta(meta, message);
-        item.querySelector('.message-box').textContent = message.content || item.querySelector('.message-box').textContent;
+        updateMessageContent(item, message.role, message.content || currentMessageText(item));
     }
 
     function removeOptimisticOperatorMessage(item) {
@@ -568,7 +879,7 @@
         meta.appendChild(createElement('strong', '', 'soc-agent'));
         meta.appendChild(createElement('span', 'badge warning', 'streaming'));
         pendingAssistant.appendChild(meta);
-        pendingAssistant.appendChild(createElement('pre', 'message-box', 'Preparing live response…'));
+        pendingAssistant.appendChild(createMessageBox('soc_agent', 'Preparing live response…'));
         messageList.appendChild(pendingAssistant);
         return pendingAssistant;
     }
@@ -576,7 +887,7 @@
     function setPendingAssistantPlaceholder(message) {
         const item = ensurePendingAssistant();
         if (!pendingAssistantContent) {
-            item.querySelector('.message-box').textContent = message;
+            updateMessageContent(item, 'soc_agent', message);
         }
         scrollToLatest();
     }
@@ -592,7 +903,7 @@
     function appendContentDelta(delta) {
         const item = ensurePendingAssistant();
         pendingAssistantContent += delta || '';
-        item.querySelector('.message-box').textContent = pendingAssistantContent;
+        updateMessageContent(item, 'soc_agent', pendingAssistantContent);
         scrollToLatest();
     }
 
@@ -720,9 +1031,9 @@
                 } else if (pendingAssistant && !pendingAssistantContent) {
                     pendingAssistant.classList.remove('pending');
                     pendingAssistant.removeAttribute('aria-busy');
-                    pendingAssistant.querySelector('.message-box').textContent = data.status === 'complete'
+                    updateMessageContent(pendingAssistant, 'soc_agent', data.status === 'complete'
                         ? 'soc-agent completed. Refresh if the final response is not shown.'
-                        : pendingAssistant.querySelector('.message-box').textContent;
+                        : currentMessageText(pendingAssistant));
                 }
                 setBanner('soc-agent run complete.');
                 if (data.status === 'complete') hideAlert();
@@ -891,6 +1202,7 @@
         toggleActivity.textContent = collapsed ? 'Expand' : 'Collapse';
     });
 
+    hydratePersistedMarkdownMessages();
     updateCharacterCount();
     updateContextChip();
     setAutoFollow(isLatestVisible());
