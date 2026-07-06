@@ -35,7 +35,7 @@ The inventory screenshot is filtered to the synthetic demo agent so no unrelated
 
 ### Host coverage and source health
 
-The host coverage page shows synthetic heartbeat/source-health rows for Windows Security, System, and Application channels.
+The host coverage page shows synthetic heartbeat/source-health rows overlaid with the expected Windows source matrix, recent event counts, completeness gaps, inventory/audit-policy status, and detection prerequisite status for the synthetic agent.
 
 ![Host coverage detail for a synthetic demo agent](assets/web-console/agent-detail.png)
 

@@ -44,6 +44,7 @@ builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<SourceHealthRepository>();
+builder.Services.AddScoped<TelemetryCoverageRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
 builder.Services.AddScoped<AlertRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
@@ -172,6 +173,32 @@ app.MapPost("/api/v1/agents/heartbeat", async Task<IResult> (
     return Results.Ok(new { status = "accepted" });
 });
 
+app.MapPost("/api/v1/agents/inventory", async Task<IResult> (
+    HttpContext context,
+    AssetInventoryBatchRequest request,
+    AgentAuthenticator authenticator,
+    AssetInventoryRepository inventory,
+    CancellationToken cancellationToken) =>
+{
+    if (!await authenticator.AuthenticateAsync(context, request.AgentId, cancellationToken))
+    {
+        return Results.Unauthorized();
+    }
+
+    var validationErrors = RequestValidation.ValidateInventoryBatch(request);
+    if (validationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(validationErrors);
+    }
+
+    foreach (var snapshot in request.Snapshots)
+    {
+        await inventory.StoreAsync(snapshot, cancellationToken);
+    }
+
+    return Results.Ok(new { status = "accepted", snapshots = request.Snapshots.Count });
+});
+
 app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     HttpContext context,
     IngestBatchRequest request,
@@ -237,7 +264,26 @@ app.MapGet("/api/v1/source-health", async Task<IResult> (
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
-    return Results.Ok(await sourceHealth.SearchAsync(agentId, cancellationToken));
+    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), WindowsCoverageLevel.L2);
+    return Results.Ok(await sourceHealth.SearchAsync(agentId, targetLevel, cancellationToken));
+});
+
+app.MapGet("/api/v1/telemetry-coverage", async Task<IResult> (
+    HttpContext context,
+    TelemetryCoverageRepository telemetryCoverage,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var agentId = context.Request.Query["agent_id"].FirstOrDefault();
+    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), WindowsCoverageLevel.L2);
+    var lookbackHours = ParseIntOrDefault(context.Request.Query["lookback_hours"].FirstOrDefault(), 24);
+    return Results.Ok(await telemetryCoverage.AssessAsync(agentId, targetLevel, lookbackHours, cancellationToken));
 });
 
 app.MapGet("/api/v1/inventory", async Task<IResult> (
@@ -760,6 +806,11 @@ static int ParseIntOrDefault(string? value, int fallback)
 static long ParseLongOrDefault(string? value, long fallback)
 {
     return long.TryParse(value, out var parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+static WindowsCoverageLevel ParseCoverageLevelOrDefault(string? value, WindowsCoverageLevel fallback)
+{
+    return Enum.TryParse<WindowsCoverageLevel>(value, ignoreCase: true, out var parsed) ? parsed : fallback;
 }
 
 static async Task WriteSocAgentLiveEventAsync(HttpContext context, SocAgentLiveEvent liveEvent, CancellationToken cancellationToken)

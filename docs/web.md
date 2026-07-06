@@ -38,7 +38,7 @@ Initial performance/accessibility budgets for local validation:
 - `/login` - operator review-token login.
 - `/` - dashboard with API/operator health metrics, active/recent/stale agent counts, retired agent count, historical registration count, recent ingestion volume, latest ingest time, and active agents reporting non-zero queue depth.
 - `/agents` - paged agent inventory with hostname, agent ID, OS, agent version, coverage level/status, source issue counts, first/last seen, latest queue depth, registration status, and stale/recent state. Supports hostname, agent ID, registration status, and health filters. Defaults to active registrations.
-- `/agents/detail?agent_id=<agent>` - host coverage/source-health detail with required source status, record ranges, log-size metrics, and gap/clear indicators.
+- `/agents/detail?agent_id=<agent>` - host coverage/source-health detail with one row per expected L2 Windows source, recent normalized event counts, explicit completeness gaps, inventory/audit-policy snapshot status, and per-rule detection prerequisite status without implying a confirmed detection miss when evidence is absent.
 - `/events` - paged event search form matching the review API filters: time range, hostname, agent ID, channel, Windows Event ID, keyword, normalized category/action/entity filters, active filter pills, and bounded limit.
 - `/events/detail?agent_id=<agent>&event_id=<uuid>` - normalized event detail with rendered message, entities, and formatted raw JSON.
 - `/alerts` and `/alerts/detail?alert_id=<uuid>` - paged alert review skeleton with status filtering, rule metadata, affected entities, and evidence links.

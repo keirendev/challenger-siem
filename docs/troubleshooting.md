@@ -85,7 +85,7 @@ Never paste raw auth files, tokens, account IDs, email addresses, provider error
 
 ## Host coverage says sources are missing or stale
 
-Coverage depends on heartbeat `source_health` reports. Check that the agent configuration includes the intended channels, that the Windows service account can read them, and that heartbeat payloads include source-health entries. See:
+Coverage depends on heartbeat `source_health` reports plus the canonical expected-source matrix shown by agent-scoped review. If `/agents/detail` or `/api/v1/telemetry-coverage` shows many `missing` rows, check that the agent configuration includes the intended channels, that the Windows service account can read them, that heartbeat payloads include source-health entries, and that recent events exist inside the selected lookback. A missing/unknown detection prerequisite means telemetry is not validated, not that a detection definitely missed activity. See:
 
 - [agent-config.md](agent-config.md)
 - [windows-l2-validation-runbook.md](windows-l2-validation-runbook.md)

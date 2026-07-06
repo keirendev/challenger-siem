@@ -38,6 +38,18 @@ public sealed class FullCoverageAgentTests
         Assert.Contains(WindowsSourceManifest.SysmonL3, source => source.Channel == "Microsoft-Windows-Sysmon/Operational");
     }
 
+    [Fact]
+    public void BuildManifestTreatsOptionalChannelsAsConfiguredButNotLocallyRequired()
+    {
+        var manifest = WindowsSourceManifest.Build(
+            new[] { "Security" },
+            new[] { "Microsoft-Windows-TaskScheduler/Operational", "Microsoft-Windows-Sysmon/Operational" });
+
+        Assert.Contains(manifest, source => source.Channel == "Security" && source.Required);
+        Assert.Contains(manifest, source => source.Channel == "Microsoft-Windows-TaskScheduler/Operational" && !source.Required);
+        Assert.Contains(manifest, source => source.Channel == "Microsoft-Windows-Sysmon/Operational" && !source.Required);
+    }
+
     [Theory]
     [InlineData("Security", "Microsoft-Windows-Security-Auditing", 4624, "authentication", "logon")]
     [InlineData("Security", "Microsoft-Windows-Security-Auditing", 4720, "account", "user_created")]

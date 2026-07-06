@@ -18,15 +18,16 @@ Use only authorized lab hosts. Do not clear event logs, reboot, uninstall servic
 5. Copy `WindowsAgent.exe` and `agentsettings.json` to the VM temporary directory.
 6. Run the agent long enough to emit at least one heartbeat and bounded System-channel events.
 7. Stop only that temporary process if it is still running.
-8. Query `/api/v1/source-health?agent_id=<id>` and `/api/v1/events?agent_id=<id>&limit=10` with the review token.
+8. Query `/api/v1/source-health?agent_id=<id>&target_level=L2`, `/api/v1/telemetry-coverage?agent_id=<id>&target_level=L2&lookback_hours=24`, and `/api/v1/events?agent_id=<id>&limit=10` with the review token.
 
 ## Evidence
 
-Record only bounded, sanitized evidence in `.local/resolve-issues/`: API health, VM health check, temporary process status, event count, source-health count, and command names. Do not commit raw event JSON, generated settings, logs, screenshots, or traces.
+Record only bounded, sanitized evidence in `.local/resolve-issues/`: API health, VM health check, temporary process status, aggregate recent event count, source-health status counts, inventory/audit-policy status counts, detection prerequisite status counts, and command names. Do not commit raw event JSON, generated settings, logs, screenshots, or traces.
 
 ## Pass criteria
 
 - API health is reachable locally and from the VM.
-- Heartbeat is accepted and source-health rows exist or gracefully report missing optional channels.
-- Events or heartbeat evidence exist for the unique test agent.
+- Heartbeat is accepted and source-health shows one row per expected L2 source, with unavailable sources marked `missing`, `not_applicable`, or `excepted` rather than silently absent.
+- Telemetry coverage reports a defined lookback, recent normalized event counts, source-health row counts, inventory/audit-policy status, and detection prerequisite status for the unique test agent.
+- Events or heartbeat evidence exist for the unique test agent, or the telemetry coverage response explains why recent events are unavailable.
 - No secrets or raw telemetry are staged or printed in public output.

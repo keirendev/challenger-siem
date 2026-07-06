@@ -206,6 +206,213 @@ public sealed record SourceHealthResponse
     public IReadOnlyList<SourceHealthReport> Sources { get; init; } = Array.Empty<SourceHealthReport>();
 }
 
+public sealed record TelemetryCoverageResponse
+{
+    [JsonPropertyName("generated_at")]
+    public DateTimeOffset GeneratedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("lookback_start")]
+    public DateTimeOffset LookbackStart { get; init; } = DateTimeOffset.UtcNow.AddHours(-24);
+
+    [JsonPropertyName("lookback_end")]
+    public DateTimeOffset LookbackEnd { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("lookback_hours")]
+    public int LookbackHours { get; init; } = 24;
+
+    [JsonPropertyName("target_level")]
+    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+
+    [JsonPropertyName("agents")]
+    public IReadOnlyList<AgentTelemetryCoverage> Agents { get; init; } = Array.Empty<AgentTelemetryCoverage>();
+}
+
+public sealed record AgentTelemetryCoverage
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("hostname")]
+    public string Hostname { get; init; } = string.Empty;
+
+    [JsonPropertyName("agent_status")]
+    public string AgentStatus { get; init; } = string.Empty;
+
+    [JsonPropertyName("last_seen")]
+    public DateTimeOffset? LastSeen { get; init; }
+
+    [JsonPropertyName("target_level")]
+    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+
+    [JsonPropertyName("current_level")]
+    public WindowsCoverageLevel CurrentLevel { get; init; } = WindowsCoverageLevel.L0;
+
+    [JsonPropertyName("overall_status")]
+    public string OverallStatus { get; init; } = SourceHealthStatuses.Missing;
+
+    [JsonPropertyName("recent_event_count")]
+    public int RecentEventCount { get; init; }
+
+    [JsonPropertyName("expected_source_count")]
+    public int ExpectedSourceCount { get; init; }
+
+    [JsonPropertyName("reported_source_count")]
+    public int ReportedSourceCount { get; init; }
+
+    [JsonPropertyName("source_status_counts")]
+    public IReadOnlyDictionary<string, int> SourceStatusCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    [JsonPropertyName("missing_mandatory_sources")]
+    public int MissingMandatorySources { get; init; }
+
+    [JsonPropertyName("stale_sources")]
+    public int StaleSources { get; init; }
+
+    [JsonPropertyName("error_sources")]
+    public int ErrorSources { get; init; }
+
+    [JsonPropertyName("new_alert_count")]
+    public int NewAlertCount { get; init; }
+
+    [JsonPropertyName("alert_status_counts")]
+    public IReadOnlyDictionary<string, int> AlertStatusCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    [JsonPropertyName("active_graph_count")]
+    public int ActiveGraphCount { get; init; }
+
+    [JsonPropertyName("sources")]
+    public IReadOnlyList<SourceTelemetryCoverage> Sources { get; init; } = Array.Empty<SourceTelemetryCoverage>();
+
+    [JsonPropertyName("inventory")]
+    public IReadOnlyList<InventoryTelemetryStatus> Inventory { get; init; } = Array.Empty<InventoryTelemetryStatus>();
+
+    [JsonPropertyName("detection_prerequisites")]
+    public IReadOnlyList<DetectionPrerequisiteTelemetryStatus> DetectionPrerequisites { get; init; } = Array.Empty<DetectionPrerequisiteTelemetryStatus>();
+
+    [JsonPropertyName("gaps")]
+    public IReadOnlyList<string> Gaps { get; init; } = Array.Empty<string>();
+}
+
+public sealed record SourceTelemetryCoverage
+{
+    [JsonPropertyName("source_id")]
+    public string SourceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = string.Empty;
+
+    [JsonPropertyName("coverage_level")]
+    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+
+    [JsonPropertyName("required")]
+    public bool Required { get; init; }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+
+    [JsonPropertyName("reported")]
+    public bool Reported { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = SourceHealthStatuses.Missing;
+
+    [JsonPropertyName("last_event_time")]
+    public DateTimeOffset? LastEventTime { get; init; }
+
+    [JsonPropertyName("recent_event_count")]
+    public int RecentEventCount { get; init; }
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+
+    [JsonPropertyName("event_search_url")]
+    public string EventSearchUrl { get; init; } = string.Empty;
+
+    [JsonPropertyName("source_health_url")]
+    public string SourceHealthUrl { get; init; } = string.Empty;
+}
+
+public sealed record InventoryTelemetryStatus
+{
+    [JsonPropertyName("snapshot_type")]
+    public string SnapshotType { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = SourceHealthStatuses.Missing;
+
+    [JsonPropertyName("latest_collected_at")]
+    public DateTimeOffset? LatestCollectedAt { get; init; }
+
+    [JsonPropertyName("item_count")]
+    public int ItemCount { get; init; }
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+
+    [JsonPropertyName("url")]
+    public string Url { get; init; } = string.Empty;
+}
+
+public sealed record DetectionPrerequisiteTelemetryStatus
+{
+    [JsonPropertyName("rule_id")]
+    public string RuleId { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+
+    [JsonPropertyName("severity")]
+    public string Severity { get; init; } = DetectionSeverities.Medium;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "unknown";
+
+    [JsonPropertyName("required_sources")]
+    public IReadOnlyList<string> RequiredSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("healthy_sources")]
+    public IReadOnlyList<string> HealthySources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("missing_sources")]
+    public IReadOnlyList<string> MissingSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("stale_sources")]
+    public IReadOnlyList<string> StaleSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("recent_event_sources")]
+    public IReadOnlyList<string> RecentEventSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("required_fields")]
+    public IReadOnlyList<string> RequiredFields { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("required_event_ids")]
+    public IReadOnlyList<int> RequiredEventIds { get; init; } = Array.Empty<int>();
+
+    [JsonPropertyName("required_event_categories")]
+    public IReadOnlyList<string> RequiredEventCategories { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("required_event_actions")]
+    public IReadOnlyList<string> RequiredEventActions { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("audit_policy_requirements")]
+    public IReadOnlyList<string> AuditPolicyRequirements { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("inventory_requirements")]
+    public IReadOnlyList<string> InventoryRequirements { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("optional_sources")]
+    public IReadOnlyList<string> OptionalSources { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+}
+
 public sealed record CoverageExceptionRecord
 {
     [JsonPropertyName("agent_id")]
@@ -327,6 +534,18 @@ public sealed record EventEntity
 
     [JsonPropertyName("role")]
     public string Role { get; init; } = string.Empty;
+}
+
+public sealed record AssetInventoryBatchRequest
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("sent_at")]
+    public DateTimeOffset SentAt { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("snapshots")]
+    public IReadOnlyList<AssetInventorySnapshot> Snapshots { get; init; } = Array.Empty<AssetInventorySnapshot>();
 }
 
 public sealed record AssetInventorySnapshot

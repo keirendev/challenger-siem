@@ -47,7 +47,49 @@ public sealed class WindowsEventCollector(
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var latest = GetLatestRecordIdAsync(source.Channel, cancellationToken).GetAwaiter().GetResult();
+
+            bool enabled;
+            long? logSizeBytes;
+            using (var config = new EventLogConfiguration(source.Channel))
+            {
+                enabled = config.IsEnabled;
+                logSizeBytes = config.MaximumSizeInBytes;
+            }
+
+            if (!enabled)
+            {
+                return Task.FromResult(new SourceHealthReport
+                {
+                    SourceId = source.SourceId,
+                    DisplayName = source.DisplayName,
+                    Channel = source.Channel,
+                    CoverageLevel = source.CoverageLevel,
+                    Required = source.Required,
+                    Enabled = false,
+                    Status = SourceHealthStatuses.Disabled,
+                    LogSizeBytes = logSizeBytes,
+                    ErrorCode = "event_log_disabled",
+                    ErrorMessage = "Channel exists but is disabled on this host.",
+                    Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["parser_id"] = source.ParserId,
+                        ["source_pack"] = source.SourcePack
+                    }
+                });
+            }
+
+            long? latest = null;
+            DateTimeOffset? latestEventTime = null;
+            using (var reverseReader = new EventLogReader(new EventLogQuery(source.Channel, PathType.LogName, "*")
+            {
+                ReverseDirection = true
+            }))
+            {
+                using var latestRecord = reverseReader.ReadEvent();
+                latest = latestRecord?.RecordId;
+                latestEventTime = latestRecord is null ? null : ToUtc(latestRecord.TimeCreated);
+            }
+
             long? oldest = null;
             try
             {
@@ -60,21 +102,19 @@ public sealed class WindowsEventCollector(
             }
             catch (EventLogException)
             {
-                // The latest probe already captures the source health status; oldest is best effort.
+                // The latest probe already captures source readability; oldest is best effort.
             }
 
-            long? logSizeBytes = null;
-            try
+            var details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                using var config = new EventLogConfiguration(source.Channel);
-                logSizeBytes = config.MaximumSizeInBytes;
-            }
-            catch (EventLogException)
+                ["parser_id"] = source.ParserId,
+                ["source_pack"] = source.SourcePack
+            };
+            if (!latest.HasValue)
             {
-                // Best effort only; not all channels expose a size through the API for every caller.
+                details["empty_enabled_log"] = "true";
             }
 
-            var status = latest.HasValue ? SourceHealthStatuses.Healthy : SourceHealthStatuses.Missing;
             return Task.FromResult(new SourceHealthReport
             {
                 SourceId = source.SourceId,
@@ -83,16 +123,13 @@ public sealed class WindowsEventCollector(
                 CoverageLevel = source.CoverageLevel,
                 Required = source.Required,
                 Enabled = true,
-                Status = status,
+                Status = SourceHealthStatuses.Healthy,
+                LastEventTime = latestEventTime,
                 LastRecordId = latest,
                 OldestRecordId = oldest,
                 NewestRecordId = latest,
                 LogSizeBytes = logSizeBytes,
-                Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["parser_id"] = source.ParserId,
-                    ["source_pack"] = source.SourcePack
-                }
+                Details = details
             });
         }
         catch (EventLogNotFoundException)
@@ -163,13 +200,13 @@ public sealed class WindowsEventCollector(
         var eventTime = ToUtc(record.TimeCreated);
         var windowsEventId = record.Id;
         var keywords = ReadKeywords(record);
-        var message = ReadString(record.FormatDescription) ?? string.Empty;
-        var xml = ReadString(record.ToXml);
+        var message = Truncate(ReadString(record.FormatDescription) ?? string.Empty, 20000) ?? string.Empty;
+        var xml = Truncate(ReadString(record.ToXml), 20000);
         var rawProperties = record.Properties
             .Select((property, index) => new
             {
                 index,
-                value = property.Value?.ToString()
+                value = Truncate(property.Value?.ToString(), 4096)
             })
             .ToArray();
 
@@ -249,6 +286,16 @@ public sealed class WindowsEventCollector(
             DateTimeKind.Local => new DateTimeOffset(dateTime.Value).ToUniversalTime(),
             _ => new DateTimeOffset(DateTime.SpecifyKind(dateTime.Value, DateTimeKind.Utc))
         };
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..maxLength];
     }
 
     private static IReadOnlyList<string> ReadKeywords(EventRecord record)

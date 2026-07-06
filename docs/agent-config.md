@@ -37,16 +37,20 @@ Permissions should be restricted to Administrators and SYSTEM.
       "Microsoft-Windows-WMI-Activity/Operational",
       "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
       "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational",
+      "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational",
       "Microsoft-Windows-WinRM/Operational",
       "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
       "Microsoft-Windows-GroupPolicy/Operational",
       "Microsoft-Windows-CodeIntegrity/Operational",
       "Microsoft-Windows-AppLocker/EXE and DLL",
+      "Microsoft-Windows-AppLocker/MSI and Script",
+      "Microsoft-Windows-AppLocker/Packaged app-Execution",
       "Microsoft-Windows-Sysmon/Operational"
     ],
     "StartAtEndWhenNoState": true,
     "PollIntervalSeconds": 10,
     "HeartbeatIntervalSeconds": 60,
+    "InventoryIntervalSeconds": 3600,
     "Batching": {
       "MaxEvents": 100,
       "MaxIntervalSeconds": 10
@@ -79,6 +83,7 @@ Never place enrollment or per-agent tokens in committed examples. Use ignored lo
 - `Queue.WarningSizePercent` emits operator-visible warnings before the cap.
 - `Queue.MaxSendAttempts` controls when repeatedly failing events are moved to the local `poison_events` table so future events can continue draining.
 - `Queue.MaxBackoffSeconds` caps per-event retry backoff.
+- `InventoryIntervalSeconds` controls how often the agent sends bounded inventory/audit-policy snapshots. The agent sends one snapshot batch soon after startup, then repeats at this interval.
 
 ## Channel position state
 

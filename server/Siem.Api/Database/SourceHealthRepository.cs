@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Contracts.V1;
 using Npgsql;
 
@@ -6,11 +7,24 @@ namespace Challenger.Siem.Api.Database;
 
 public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 {
-    public async Task<SourceHealthResponse> SearchAsync(string? agentId, CancellationToken cancellationToken)
+    public Task<SourceHealthResponse> SearchAsync(string? agentId, CancellationToken cancellationToken) =>
+        SearchAsync(agentId, WindowsCoverageLevel.L2, cancellationToken);
+
+    public async Task<SourceHealthResponse> SearchAsync(string? agentId, WindowsCoverageLevel targetLevel, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var summaries = await LoadSummariesAsync(connection, agentId, cancellationToken);
         var sources = await LoadSourcesAsync(connection, agentId, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0)
+        {
+            var exceptions = await LoadActiveCoverageExceptionsAsync(connection, agentId, summaries.FirstOrDefault()?.Hostname, cancellationToken);
+            sources = TelemetryCoverageEvaluator.MergeExpectedSources(sources, targetLevel, exceptions, DateTimeOffset.UtcNow);
+            summaries = summaries
+                .Select(summary => TelemetryCoverageEvaluator.RecalculateSummary(summary, sources, targetLevel))
+                .ToArray();
+        }
+
         return new SourceHealthResponse
         {
             Summaries = summaries,
@@ -58,7 +72,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     else 'L0'
                 end as current_level,
                 case
-                    when coalesce(h.missing_mandatory_sources, 0) > 0 or coalesce(h.error_sources, 0) > 0 then 'error'
+                    when coalesce(h.error_sources, 0) > 0 then 'error'
+                    when coalesce(h.missing_mandatory_sources, 0) > 0 then 'missing'
                     when coalesce(h.stale_sources, 0) > 0 then 'stale'
                     when coalesce(h.healthy_sources, 0) = 0 then 'missing'
                     else 'healthy'
@@ -166,6 +181,31 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 SourceVersion = ReadNullableString(reader, "source_version"),
                 Details = ReadStringDictionary(reader, "details")
             });
+        }
+
+        return results;
+    }
+
+    private static async Task<IReadOnlySet<string>> LoadActiveCoverageExceptionsAsync(
+        NpgsqlConnection connection,
+        string agentId,
+        string? hostname,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select distinct source_id
+            from coverage_exceptions
+            where (agent_id = @agent_id or (agent_id is null and (hostname is null or hostname = @hostname)))
+              and (expires_at is null or expires_at > now());
+            """;
+        command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("hostname", string.IsNullOrWhiteSpace(hostname) ? string.Empty : hostname);
+        var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(reader.GetString(reader.GetOrdinal("source_id")));
         }
 
         return results;

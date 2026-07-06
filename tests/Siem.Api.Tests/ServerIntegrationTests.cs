@@ -91,6 +91,18 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             $"/api/v1/source-health?agent_id={Uri.EscapeDataString(agentId)}");
         Assert.Contains(sourceHealth.Summaries, summary => summary.AgentId == agentId);
         Assert.Contains(sourceHealth.Sources, source => source.SourceId == "system");
+        Assert.Contains(sourceHealth.Sources, source => source.SourceId == "security" && source.Status == SourceHealthStatuses.Missing);
+
+        var telemetryCoverage = await GetJsonWithReviewTokenAsync<TelemetryCoverageResponse>(client,
+            $"/api/v1/telemetry-coverage?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2&lookback_hours=24");
+        var agentCoverage = Assert.Single(telemetryCoverage.Agents);
+        Assert.Equal(agentId, agentCoverage.AgentId);
+        Assert.Equal(2, agentCoverage.RecentEventCount);
+        Assert.True(agentCoverage.ExpectedSourceCount >= 15);
+        Assert.Equal(1, agentCoverage.ReportedSourceCount);
+        Assert.Contains(agentCoverage.Gaps, gap => gap.Contains("source-health row", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(agentCoverage.Sources, source => source.SourceId == "system" && source.RecentEventCount == 1);
+        Assert.Contains(agentCoverage.DetectionPrerequisites, rule => rule.RuleId == "auth.bruteforce.windows" && rule.Status == "missing_prerequisites");
 
         var rules = await GetJsonWithReviewTokenAsync<JsonElement>(client, "/api/v1/detections/rules");
         Assert.True(rules.GetProperty("rules").GetArrayLength() >= 10);

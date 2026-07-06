@@ -81,6 +81,30 @@ public sealed class SiemIngestClient(HttpClient httpClient, IOptions<AgentOption
         }
     }
 
+    public async Task SendInventoryAsync(IReadOnlyList<AssetInventorySnapshot> snapshots, CancellationToken cancellationToken)
+    {
+        var request = new AssetInventoryBatchRequest
+        {
+            AgentId = options.AgentId,
+            SentAt = DateTimeOffset.UtcNow,
+            Snapshots = snapshots
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/inventory")
+        {
+            Content = JsonContent.Create(request, options: JsonDefaults.Options)
+        };
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiToken);
+
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Server returned {(int)response.StatusCode} {response.ReasonPhrase} for inventory. Body: {Truncate(responseBody, 500)}");
+        }
+    }
+
     private static string Truncate(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
