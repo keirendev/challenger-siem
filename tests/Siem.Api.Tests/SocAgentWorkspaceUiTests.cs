@@ -107,6 +107,38 @@ public sealed class SocAgentWorkspaceUiTests
     }
 
     [Fact]
+    public void AssistantMessagesRenderSafeMarkdownWhileOperatorMessagesStayPlainText()
+    {
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var codeBehind = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml.cs");
+        var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
+
+        Assert.Contains("Model.ShouldRenderMarkdown(message)", page, StringComparison.Ordinal);
+        Assert.Contains("data-message-markdown=\"true\"", page, StringComparison.Ordinal);
+        Assert.Contains("function renderMarkdownInto(container, markdown)", page, StringComparison.Ordinal);
+        Assert.Contains("function renderInlineInto(parent, text, options = {})", page, StringComparison.Ordinal);
+        Assert.Contains("function sanitizeMarkdownLink(url)", page, StringComparison.Ordinal);
+        Assert.Contains("function shouldRenderMarkdown(role)", page, StringComparison.Ordinal);
+        Assert.Contains("return role !== 'operator';", page, StringComparison.Ordinal);
+        Assert.Contains("item.appendChild(createMessageBox(message.role, message.content || ''));", page, StringComparison.Ordinal);
+        Assert.Contains("pendingAssistant.appendChild(createMessageBox('soc_agent', 'Preparing live response…'));", page, StringComparison.Ordinal);
+        Assert.Contains("updateMessageContent(item, 'soc_agent', pendingAssistantContent);", page, StringComparison.Ordinal);
+        Assert.Contains("value.startsWith('//')", page, StringComparison.Ordinal);
+        Assert.Contains("parsed.protocol === 'https:' || parsed.protocol === 'http:'", page, StringComparison.Ordinal);
+        Assert.Contains("anchor.rel = 'noreferrer noopener';", page, StringComparison.Ordinal);
+        Assert.Contains("parent.appendChild(document.createTextNode(link.label || link.url));", page, StringComparison.Ordinal);
+        Assert.Contains("buffer += value.slice(index, image.end);", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("innerHTML", page, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("ShouldRenderMarkdown", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("!string.Equals(message.Role, \"operator\", StringComparison.OrdinalIgnoreCase)", codeBehind, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-workspace .markdown-content", css, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-workspace .markdown-content .markdown-code-block", css, StringComparison.Ordinal);
+        Assert.Contains("white-space: pre;", css, StringComparison.Ordinal);
+        Assert.Contains("outline: 2px solid var(--focus);", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SessionDeletionControlsAreConfirmationGatedAndCollapsedActivityPanelRemainsFocusable()
     {
         var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
