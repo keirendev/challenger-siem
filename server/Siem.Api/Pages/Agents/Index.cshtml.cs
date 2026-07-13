@@ -1,6 +1,7 @@
 using System.Globalization;
 using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Review;
+using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -27,6 +28,24 @@ public sealed class IndexModel(
 
     [BindProperty(SupportsGet = true, Name = "status")]
     public string? Status { get; set; } = "active";
+
+    [BindProperty(SupportsGet = true, Name = "platform")]
+    public string? Platform { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "coverage")]
+    public string? Coverage { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "source_issue")]
+    public string? SourceIssue { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "pressure")]
+    public string? Pressure { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "gap")]
+    public string? Gap { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "capacity")]
+    public string? Capacity { get; set; }
 
     [BindProperty(SupportsGet = true, Name = "page")]
     public int PageNumber { get; set; } = 1;
@@ -105,6 +124,12 @@ public sealed class IndexModel(
         AddOptionalQueryValue(query, "hostname", Hostname);
         AddOptionalQueryValue(query, "agent_id", AgentId);
         AddOptionalQueryValue(query, "health", Health);
+        AddOptionalQueryValue(query, "platform", Platform);
+        AddOptionalQueryValue(query, "coverage", Coverage);
+        AddOptionalQueryValue(query, "source_issue", SourceIssue);
+        AddOptionalQueryValue(query, "pressure", Pressure);
+        AddOptionalQueryValue(query, "gap", Gap);
+        AddOptionalQueryValue(query, "capacity", Capacity);
 
         return "/agents" + QueryString.Create(query).ToUriComponent();
     }
@@ -162,7 +187,7 @@ public sealed class IndexModel(
                 CleanupSampleLimit,
                 cancellationToken);
             var loadedAgents = await reviewRepository.SearchAgentsAsync(
-                new AgentInventoryQuery(Hostname, AgentId, Health, Status),
+                new AgentInventoryQuery(Hostname, AgentId, Health, Status, Platform, ParseCoverage(Coverage), SourceIssue, Pressure, Gap, Capacity),
                 options.StaleAgentAfter,
                 cancellationToken,
                 PageSize + 1,
@@ -175,6 +200,11 @@ public sealed class IndexModel(
             logger.LogWarning(ex, "Agent inventory could not be loaded.");
             ErrorMessage = "Agent inventory is currently unavailable.";
         }
+    }
+
+    private static WindowsCoverageLevel? ParseCoverage(string? coverage)
+    {
+        return Enum.TryParse<WindowsCoverageLevel>(coverage, ignoreCase: true, out var parsed) ? parsed : null;
     }
 
     private static string NormalizeStatus(string? status)

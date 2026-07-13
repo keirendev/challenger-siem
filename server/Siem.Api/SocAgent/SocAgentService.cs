@@ -279,7 +279,7 @@ public sealed class SocAgentService(
 
         await StartToolAsync("agent_inventory_search", "Loading recent agent inventory and coverage summary rows.");
         var agents = await review.SearchAgentsAsync(
-            new AgentInventoryQuery(null, request.ContextAgentId, null, "active"),
+            new AgentInventoryQuery(null, request.ContextAgentId, null, "active", null, null, null, null, null, null),
             TimeSpan.FromMinutes(15),
             cancellationToken);
         var selectedAgents = agents.Take(Math.Clamp(options.MaxAgents, 1, 50)).ToArray();

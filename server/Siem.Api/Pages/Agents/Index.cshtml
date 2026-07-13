@@ -49,12 +49,76 @@
         </select>
     </div>
     <div class="form-row">
-        <label for="health">Health</label>
+        <label for="health">Freshness</label>
         <select id="health" asp-for="Health">
             <option value="">Any</option>
             <option value="recent">Recent</option>
             <option value="stale">Stale</option>
             <option value="queued">Queued events</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="platform">Platform</label>
+        <select id="platform" asp-for="Platform">
+            <option value="">Any</option>
+            <option value="windows">Windows</option>
+            <option value="linux">Linux</option>
+            <option value="unknown">Unknown</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="coverage">Coverage</label>
+        <select id="coverage" asp-for="Coverage">
+            <option value="">Any</option>
+            <option value="L0">L0</option>
+            <option value="L1">L1</option>
+            <option value="L2">L2</option>
+            <option value="L3">L3</option>
+            <option value="L4">L4</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="source_issue">Source issue</label>
+        <select id="source_issue" asp-for="SourceIssue">
+            <option value="">Any</option>
+            <option value="missing">Missing/disabled mandatory</option>
+            <option value="stale">Stale</option>
+            <option value="degraded">Degraded</option>
+            <option value="permission_denied">Permission denied</option>
+            <option value="unsupported">Unsupported</option>
+            <option value="error">Error</option>
+            <option value="gap">Gap/drop</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="pressure">Pressure</label>
+        <select id="pressure" asp-for="Pressure">
+            <option value="">Any</option>
+            <option value="any">Any pressure</option>
+            <option value="warning">Warning</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+            <option value="full">Full</option>
+            <option value="throttled">Throttled</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="gap">Gap</label>
+        <select id="gap" asp-for="Gap">
+            <option value="">Any</option>
+            <option value="yes">Any source gap/drop</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="capacity">Queue capacity</label>
+        <select id="capacity" asp-for="Capacity">
+            <option value="">Any</option>
+            <option value="normal">Normal (&lt;70%)</option>
+            <option value="warning_70">70% warning</option>
+            <option value="warning_85">85% warning</option>
+            <option value="critical_95">95% critical</option>
+            <option value="over_capacity">100% full</option>
+            <option value="unknown">Unknown</option>
         </select>
     </div>
     <div class="actions">
@@ -100,6 +164,12 @@
         <input type="hidden" name="agent_id" value="@Model.AgentId" />
         <input type="hidden" name="health" value="@Model.Health" />
         <input type="hidden" name="status" value="@Model.Status" />
+        <input type="hidden" name="platform" value="@Model.Platform" />
+        <input type="hidden" name="coverage" value="@Model.Coverage" />
+        <input type="hidden" name="source_issue" value="@Model.SourceIssue" />
+        <input type="hidden" name="pressure" value="@Model.Pressure" />
+        <input type="hidden" name="gap" value="@Model.Gap" />
+        <input type="hidden" name="capacity" value="@Model.Capacity" />
         <input type="hidden" name="page" value="@Model.PageNumber" />
         <label class="inline-check">
             <input type="checkbox" asp-for="ConfirmCleanup" value="true" required />
@@ -133,7 +203,13 @@ else
         </div>
         <div class="query-pills" aria-label="Active agent filters">
             <span class="pill">status: @Model.Status</span>
-            @if (!string.IsNullOrWhiteSpace(Model.Health)) { <span class="pill">health: @Model.Health</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Health)) { <span class="pill">freshness: @Model.Health</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Platform)) { <span class="pill">platform: @Model.Platform</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Coverage)) { <span class="pill">coverage: @Model.Coverage</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.SourceIssue)) { <span class="pill">source: @Model.SourceIssue</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Pressure)) { <span class="pill">pressure: @Model.Pressure</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Gap)) { <span class="pill">gap: @Model.Gap</span> }
+            @if (!string.IsNullOrWhiteSpace(Model.Capacity)) { <span class="pill">capacity: @Model.Capacity</span> }
             @if (!string.IsNullOrWhiteSpace(Model.AgentId)) { <span class="pill">agent: @Model.AgentId</span> }
             @if (!string.IsNullOrWhiteSpace(Model.Hostname)) { <span class="pill">host: @Model.Hostname</span> }
         </div>
@@ -151,11 +227,12 @@ else
                     <tr>
                         <th>Agent</th>
                         <th>Host / OS</th>
+                        <th>Platform</th>
                         <th>Coverage</th>
                         <th>Source issues</th>
                         <th>First seen</th>
                         <th>Last seen</th>
-                        <th>Queue</th>
+                        <th>Queue / capacity</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -165,8 +242,9 @@ else
                         <tr>
                             <td class="mono">@agent.AgentId</td>
                             <td><strong>@agent.Hostname</strong><div class="muted">@agent.OsVersion · @agent.AgentVersion</div><div class="muted">host tz @TimeDisplay.HostTimezoneShortLabel(agent.HostTimezone)</div></td>
-                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L3">@agent.CurrentCoverageLevel</a> <span class="badge @(agent.CoverageStatus == "healthy" ? "ok" : agent.CoverageStatus == "missing" ? "warning" : "danger")">@agent.CoverageStatus</span></td>
-                            <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.ErrorSources error</td>
+                            <td><span class="badge neutral">@agent.Platform</span></td>
+                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L3">@agent.CurrentCoverageLevel</a> <span class="badge @agent.CoverageStatus">@agent.CoverageStatus</span></td>
+                            <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.DegradedSources degraded / @agent.PermissionDeniedSources denied / @agent.UnsupportedSources unsupported / @agent.GapSources gap / @agent.ErrorSources error</td>
                             <td>@TimeDisplay.FormatUtc(agent.FirstSeen, "yyyy-MM-dd HH:mm")</td>
                             <td>
                                 @TimeDisplay.FormatUtc(agent.LastSeen, "yyyy-MM-dd HH:mm")
@@ -176,13 +254,19 @@ else
                                 }
                             </td>
                             <td>
-                                @if (agent.LatestQueueDepth.GetValueOrDefault() > 0)
+                                @if (agent.LatestQueueDepth.GetValueOrDefault() > 0 || agent.HasPressure)
                                 {
-                                    <span class="badge warning">@agent.LatestQueueDepth</span>
+                                    <span class="badge @(agent.HasPressure ? "warning" : "neutral")">depth @agent.LatestQueueDepth.GetValueOrDefault()</span>
                                 }
                                 else
                                 {
                                     <span>@(agent.LatestQueueDepth?.ToString() ?? "—")</span>
+                                }
+                                <div class="muted">pressure @agent.QueuePressureState</div>
+                                <div class="muted">capacity @agent.CapacityState@(agent.QueueUsedPercent.HasValue ? $" ({agent.QueueUsedPercent:0.###}%)" : string.Empty)</div>
+                                @if (agent.IsThrottled)
+                                {
+                                    <div><span class="badge warning">throttled</span></div>
                                 }
                             </td>
                             <td>
@@ -206,8 +290,8 @@ else
     <nav class="pagination" aria-label="Agent result pages">
         <span class="muted">Page @Model.PageNumber · @Agents.IndexModel.PageSize results per page</span>
         <div class="actions">
-            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Agents/Index" asp-route-hostname="@Model.Hostname" asp-route-agent_id="@Model.AgentId" asp-route-health="@Model.Health" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
-            <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Agents/Index" asp-route-hostname="@Model.Hostname" asp-route-agent_id="@Model.AgentId" asp-route-health="@Model.Health" asp-route-status="@Model.Status" asp-route-page="@(Model.PageNumber + 1)">Next</a>
+            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Agents/Index" asp-route-hostname="@Model.Hostname" asp-route-agent_id="@Model.AgentId" asp-route-health="@Model.Health" asp-route-status="@Model.Status" asp-route-platform="@Model.Platform" asp-route-coverage="@Model.Coverage" asp-route-source_issue="@Model.SourceIssue" asp-route-pressure="@Model.Pressure" asp-route-gap="@Model.Gap" asp-route-capacity="@Model.Capacity" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
+            <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Agents/Index" asp-route-hostname="@Model.Hostname" asp-route-agent_id="@Model.AgentId" asp-route-health="@Model.Health" asp-route-status="@Model.Status" asp-route-platform="@Model.Platform" asp-route-coverage="@Model.Coverage" asp-route-source_issue="@Model.SourceIssue" asp-route-pressure="@Model.Pressure" asp-route-gap="@Model.Gap" asp-route-capacity="@Model.Capacity" asp-route-page="@(Model.PageNumber + 1)">Next</a>
         </div>
     </nav>
 </section>

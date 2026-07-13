@@ -23,9 +23,18 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 select distinct on (agent_id)
                     agent_id,
                     heartbeat_time,
-                    queue_depth
+                    queue_depth,
+                    queue_metrics
                 from agent_heartbeats
                 order by agent_id, heartbeat_time desc
+            ), health_rollup as (
+                select
+                    agent_id,
+                    count(*) filter (where status in ('degraded','stale','permission_denied','unsupported','error'))::int as degraded_source_count,
+                    count(*) filter (where gap_detected or bookmark_gap_detected or coalesce(gap_count, 0) > 0 or coalesce(dropped_events, 0) > 0)::int as gap_source_count,
+                    count(*) filter (where coalesce(transition_state, '') = 'degraded' or details ->> 'throttle_state' = 'throttled')::int as throttled_source_count
+                from source_health
+                group by agent_id
             )
             select
                 count(*) filter (where a.status = 'active')::bigint as active_agents,
@@ -34,10 +43,15 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 count(*) filter (where a.status = 'disabled')::bigint as retired_agents,
                 count(*)::bigint as historical_agents,
                 count(*) filter (where a.status = 'active' and coalesce(lh.queue_depth, 0) > 0)::bigint as agents_with_queued_events,
+                count(*) filter (where a.status = 'active' and (coalesce(nullif(lh.queue_metrics ->> 'pressure_state',''), 'normal') not in ('normal','unknown') or coalesce(hr.throttled_source_count, 0) > 0))::bigint as agents_with_pressure,
+                count(*) filter (where a.status = 'active' and coalesce(hr.gap_source_count, 0) > 0)::bigint as agents_with_source_gaps,
+                count(*) filter (where a.status = 'active' and coalesce(hr.degraded_source_count, 0) > 0)::bigint as agents_with_degraded_sources,
+                count(*) filter (where a.status = 'active' and coalesce((lh.queue_metrics ->> 'used_percent')::numeric, 0) >= 70)::bigint as agents_with_capacity_warnings,
                 (select count(*)::bigint from events where ingest_time >= @recent_event_cutoff) as recent_event_count,
                 (select max(ingest_time) from events) as latest_ingest_time
             from agents a
-            left join latest_heartbeat lh on lh.agent_id = a.agent_id;
+            left join latest_heartbeat lh on lh.agent_id = a.agent_id
+            left join health_rollup hr on hr.agent_id = a.agent_id;
             """;
         command.Parameters.AddWithValue("stale_cutoff", staleCutoff.ToUniversalTime());
         command.Parameters.AddWithValue("recent_event_cutoff", recentEventCutoff.ToUniversalTime());
@@ -55,6 +69,10 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             ReadInt64(reader, "retired_agents"),
             ReadInt64(reader, "historical_agents"),
             ReadInt64(reader, "agents_with_queued_events"),
+            ReadInt64(reader, "agents_with_pressure"),
+            ReadInt64(reader, "agents_with_source_gaps"),
+            ReadInt64(reader, "agents_with_degraded_sources"),
+            ReadInt64(reader, "agents_with_capacity_warnings"),
             ReadInt64(reader, "recent_event_count"),
             ReadNullableDateTimeOffset(reader, "latest_ingest_time"));
     }
@@ -110,6 +128,83 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 break;
         }
 
+        switch (query.Platform?.Trim().ToLowerInvariant())
+        {
+            case TelemetryPlatforms.Windows:
+                where.Add("coalesce(a.platform, sh.platform, 'windows') = 'windows'");
+                break;
+            case TelemetryPlatforms.Linux:
+                where.Add("coalesce(a.platform, sh.platform, 'windows') = 'linux'");
+                break;
+            case "unknown":
+                where.Add("a.platform is null and sh.platform is null");
+                break;
+        }
+
+        if (query.CoverageLevel.HasValue)
+        {
+            where.Add("coverage.current_coverage_level = @coverage_level");
+            command.Parameters.AddWithValue("coverage_level", query.CoverageLevel.Value.ToString());
+        }
+
+        switch (query.SourceIssue?.Trim().ToLowerInvariant())
+        {
+            case "missing":
+                where.Add("coalesce(sh.missing_mandatory_sources, 0) > 0");
+                break;
+            case "stale":
+                where.Add("coalesce(sh.stale_sources, 0) > 0");
+                break;
+            case "degraded":
+                where.Add("coalesce(sh.degraded_sources, 0) > 0");
+                break;
+            case "permission_denied":
+                where.Add("coalesce(sh.permission_denied_sources, 0) > 0");
+                break;
+            case "unsupported":
+                where.Add("coalesce(sh.unsupported_sources, 0) > 0");
+                break;
+            case "error":
+                where.Add("coalesce(sh.error_sources, 0) > 0");
+                break;
+            case "gap":
+                where.Add("coalesce(sh.gap_sources, 0) > 0");
+                break;
+        }
+
+        switch (query.Pressure?.Trim().ToLowerInvariant())
+        {
+            case "any":
+                where.Add("pressure.has_pressure");
+                break;
+            case "warning":
+            case "high":
+            case "critical":
+            case "full":
+            case "throttled":
+                where.Add("pressure.pressure_state = @pressure_state");
+                command.Parameters.AddWithValue("pressure_state", query.Pressure.Trim().ToLowerInvariant());
+                break;
+        }
+
+        if (string.Equals(query.Gap, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+            where.Add("coalesce(sh.gap_sources, 0) > 0");
+        }
+
+        switch (query.Capacity?.Trim().ToLowerInvariant())
+        {
+            case "warning_70":
+            case "warning_85":
+            case "critical_95":
+            case "over_capacity":
+            case "unknown":
+            case "normal":
+                where.Add("capacity.capacity_state = @capacity_state");
+                command.Parameters.AddWithValue("capacity_state", query.Capacity.Trim().ToLowerInvariant());
+                break;
+        }
+
         var sql = new StringBuilder("""
             select
                 a.agent_id,
@@ -121,30 +216,28 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 a.last_seen,
                 a.status,
                 a.host_timezone,
+                coalesce(a.platform, sh.platform, 'windows') as platform,
                 lh.heartbeat_time as latest_heartbeat_time,
                 lh.queue_depth as latest_queue_depth,
+                nullif(lh.queue_metrics ->> 'used_percent', '')::numeric as queue_used_percent,
+                pressure.pressure_state as queue_pressure_state,
                 lh.last_event_time,
                 (a.last_seen < @stale_cutoff) as is_stale,
                 coalesce(sh.missing_mandatory_sources, 0) as missing_mandatory_sources,
                 coalesce(sh.stale_sources, 0) as stale_sources,
                 coalesce(sh.error_sources, 0) as error_sources,
-                case
-                    when coalesce(sh.error_sources, 0) = 0 and coalesce(sh.stale_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 and coalesce(sh.l3_required_healthy_sources, 0) >= 1 then 'L3'
-                    when coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 then 'L2'
-                    when coalesce(sh.l1_required_healthy_sources, 0) >= 3 then 'L1'
-                    when coalesce(sh.healthy_sources, 0) >= 1 then 'L1'
-                    else 'L0'
-                end as current_coverage_level,
-                case
-                    when coalesce(sh.error_sources, 0) > 0 then 'error'
-                    when coalesce(sh.missing_mandatory_sources, 0) > 0 then 'missing'
-                    when coalesce(sh.stale_sources, 0) > 0 then 'stale'
-                    when coalesce(sh.healthy_sources, 0) = 0 then 'missing'
-                    else 'healthy'
-                end as coverage_status
+                coalesce(sh.degraded_sources, 0) as degraded_sources,
+                coalesce(sh.permission_denied_sources, 0) as permission_denied_sources,
+                coalesce(sh.unsupported_sources, 0) as unsupported_sources,
+                coalesce(sh.gap_sources, 0) as gap_sources,
+                coverage.current_coverage_level,
+                coverage.coverage_status,
+                pressure.has_pressure,
+                pressure.is_throttled,
+                capacity.capacity_state
             from agents a
             left join lateral (
-                select heartbeat_time, queue_depth, last_event_time
+                select heartbeat_time, queue_depth, queue_metrics, last_event_time
                 from agent_heartbeats
                 where agent_id = a.agent_id
                 order by heartbeat_time desc
@@ -152,16 +245,62 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             ) lh on true
             left join lateral (
                 select
-                    count(*) filter (where required_source and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
+                    max(platform) as platform,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
                     count(*) filter (where status = 'stale')::int as stale_sources,
                     count(*) filter (where status = 'error')::int as error_sources,
+                    count(*) filter (where status = 'degraded')::int as degraded_sources,
+                    count(*) filter (where status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (where status = 'unsupported')::int as unsupported_sources,
                     count(*) filter (where status = 'healthy')::int as healthy_sources,
-                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id in ('security', 'system', 'application'))::int as l1_required_healthy_sources,
-                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id in ('security', 'system', 'application', 'powershell-classic', 'powershell-operational', 'defender-operational', 'task-scheduler', 'wmi-activity', 'terminalservices-local-sessionmanager', 'terminalservices-remoteconnectionmanager', 'rdp-corets', 'winrm-operational', 'firewall-advanced'))::int as l2_required_healthy_sources,
-                    count(*) filter (where status in ('healthy', 'excepted', 'not_applicable') and source_id = 'sysmon-operational')::int as l3_required_healthy_sources
+                    count(*) filter (where gap_detected or bookmark_gap_detected or coalesce(gap_count, 0) > 0 or coalesce(dropped_events, 0) > 0)::int as gap_sources,
+                    count(*) filter (where coalesce(transition_state, '') = 'degraded' or details ->> 'throttle_state' = 'throttled')::int as throttled_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l1_required_healthy_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l2_required_healthy_sources,
+                    count(*) filter (where source_id = 'sysmon-operational' and status in ('healthy', 'excepted'))::int as l3_required_healthy_sources
                 from source_health
                 where agent_id = a.agent_id
             ) sh on true
+            cross join lateral (
+                select
+                    case
+                        when coalesce(a.platform, sh.platform, 'windows') = 'linux' and coalesce(sh.l1_required_healthy_sources, 0) > 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 7 and coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.permission_denied_sources, 0) = 0 and coalesce(sh.stale_sources, 0) = 0 and coalesce(sh.degraded_sources, 0) = 0 then 'L2'
+                        when coalesce(sh.l1_required_healthy_sources, 0) >= 1 then 'L1'
+                        when coalesce(a.platform, sh.platform, 'windows') <> 'linux' and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.stale_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 and coalesce(sh.l3_required_healthy_sources, 0) >= 1 then 'L3'
+                        when coalesce(a.platform, sh.platform, 'windows') <> 'linux' and coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.l2_required_healthy_sources, 0) >= 13 then 'L2'
+                        when coalesce(sh.healthy_sources, 0) >= 1 then 'L1'
+                        else 'L0'
+                    end as current_coverage_level,
+                    case
+                        when coalesce(sh.error_sources, 0) > 0 then 'error'
+                        when coalesce(sh.permission_denied_sources, 0) > 0 then 'permission_denied'
+                        when coalesce(sh.unsupported_sources, 0) > 0 then 'unsupported'
+                        when coalesce(sh.missing_mandatory_sources, 0) > 0 then 'missing'
+                        when coalesce(sh.stale_sources, 0) > 0 then 'stale'
+                        when coalesce(sh.degraded_sources, 0) > 0 then 'degraded'
+                        when coalesce(sh.healthy_sources, 0) = 0 then 'missing'
+                        else 'healthy'
+                    end as coverage_status
+            ) coverage
+            cross join lateral (
+                select
+                    case
+                        when coalesce(sh.throttled_sources, 0) > 0 then 'throttled'
+                        else coalesce(nullif(lh.queue_metrics ->> 'pressure_state', ''), 'unknown')
+                    end as pressure_state,
+                    (coalesce(nullif(lh.queue_metrics ->> 'pressure_state', ''), 'normal') not in ('normal','unknown') or coalesce(sh.throttled_sources, 0) > 0) as has_pressure,
+                    (coalesce(sh.throttled_sources, 0) > 0 or coalesce(nullif(lh.queue_metrics ->> 'pressure_state', ''), '') = 'throttled') as is_throttled
+            ) pressure
+            cross join lateral (
+                select case
+                    when nullif(lh.queue_metrics ->> 'used_percent', '') is null then 'unknown'
+                    when nullif(lh.queue_metrics ->> 'used_percent', '')::numeric >= 100 then 'over_capacity'
+                    when nullif(lh.queue_metrics ->> 'used_percent', '')::numeric >= 95 then 'critical_95'
+                    when nullif(lh.queue_metrics ->> 'used_percent', '')::numeric >= 85 then 'warning_85'
+                    when nullif(lh.queue_metrics ->> 'used_percent', '')::numeric >= 70 then 'warning_70'
+                    else 'normal'
+                end as capacity_state
+            ) capacity
             """);
 
         if (where.Count > 0)
@@ -191,13 +330,23 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 reader.GetString(reader.GetOrdinal("status")),
                 ReadNullableDateTimeOffset(reader, "latest_heartbeat_time"),
                 ReadNullableInt32(reader, "latest_queue_depth"),
+                ReadNullableDecimal(reader, "queue_used_percent"),
+                reader.GetString(reader.GetOrdinal("queue_pressure_state")),
                 ReadNullableDateTimeOffset(reader, "last_event_time"),
                 reader.GetBoolean(reader.GetOrdinal("is_stale")),
+                reader.GetString(reader.GetOrdinal("platform")),
                 Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_coverage_level"))),
                 reader.GetString(reader.GetOrdinal("coverage_status")),
                 reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
                 reader.GetInt32(reader.GetOrdinal("stale_sources")),
                 reader.GetInt32(reader.GetOrdinal("error_sources")),
+                reader.GetInt32(reader.GetOrdinal("degraded_sources")),
+                reader.GetInt32(reader.GetOrdinal("permission_denied_sources")),
+                reader.GetInt32(reader.GetOrdinal("unsupported_sources")),
+                reader.GetInt32(reader.GetOrdinal("gap_sources")),
+                reader.GetBoolean(reader.GetOrdinal("has_pressure")),
+                reader.GetBoolean(reader.GetOrdinal("is_throttled")),
+                reader.GetString(reader.GetOrdinal("capacity_state")),
                 Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")));
         }
 
@@ -362,6 +511,12 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+    }
+
+    private static decimal? ReadNullableDecimal(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDecimal(ordinal);
     }
 
     private static string? ReadNullableString(NpgsqlDataReader reader, string columnName)

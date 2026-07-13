@@ -58,8 +58,8 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | --- | --- | --- | --- |
 | `/login` | anonymous | Operator username/password sign-in | Empty fields in public screenshots only. |
 | `/` | authenticated | Overview dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations, lifecycle-state guidance. |
-| `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
-| `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, tabs, inventory/audit snapshots, and detection prerequisites. |
+| `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Filters include platform, registration status/freshness, coverage level, source issue, queue pressure/throttle, gap/drop, and queue-capacity state. Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
+| `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, queue/resource/source rate/lag/checkpoint/retention/capacity metrics, explicit missing/unsupported/not-applicable/excepted/disabled/permission-denied/stale/throttled/gap/error states, bounded role-redacted inventory/posture changes, and guidance-only remediation. |
 | `/events` | authenticated | Search / event search | Bounded structured filters, cursor pagination, configurable columns, UTC timeline buckets, saved searches, entity/detail pivots, and admin-only confirmation-gated CSV export. Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
 | `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
@@ -197,11 +197,12 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 
 ### 3. Asset/coverage investigation (current plus target)
 
-- Start at Assets (`/agents` today), filter by hostname/agent ID/status/health, and open host detail.
-- Review platform, timezone, coverage target, source matrix, prerequisite status, queue/resource metrics, inventory state, detection prerequisites, and recent counts.
-- Stale/degraded/denied/unsupported states must show reason, last observed time, affected source, whether mandatory/optional/role-specific, and recommended non-mutating next step.
+- Start at Assets (`/agents` today), filter by hostname/agent ID, platform, registration status, freshness, coverage level, degraded source, queue pressure/throttle, gap/drop, and capacity state, then open host detail.
+- Review platform, timezone, coverage target, source matrix, prerequisite status, queue/resource/source rate/lag/checkpoint metrics, retention/capacity state, inventory posture changes, detection prerequisites, and recent counts.
+- Missing, unsupported, not applicable, excepted, disabled, permission denied, stale, throttled, gap, and error states must show reason, last observed time when known, affected source, whether mandatory/optional/role-specific, and recommended non-mutating next step.
 - Recovery path: compare collected vs acknowledged checkpoints; verify queue drain; check source-health transitions; do not mutate audit/firewall/auth/kernel/service policy from UI unless a future approved runbook exists.
-- Admin stale-agent retirement is non-destructive, confirmation-gated, success/error noticed, and preserves telemetry.
+- Inventory and posture snapshots must be bounded, time-labelled, role-redacted for non-admins, and displayed as partial evidence rather than complete host truth.
+- Admin stale-agent retirement is non-destructive, confirmation-gated, success/error noticed, and preserves telemetry. No asset or detail UI action mutates host policy.
 
 ### 4. Alert-to-case workflow (target)
 

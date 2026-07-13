@@ -526,6 +526,37 @@ tr:last-child td {
     overflow-wrap: anywhere;
 }
 
+.flush-title {
+    margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-5)) var(--space-4);
+}
+
+.state-grid {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.state-chip {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgb(8 20 38 / 0.55);
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+}
+
+.state-chip strong {
+    font-size: 1.45rem;
+}
+
+.compact-list {
+    display: grid;
+    gap: var(--space-2);
+    list-style: none;
+    margin: var(--space-2) 0 0;
+    padding: 0;
+}
+
 pre,
 .raw-json {
     white-space: pre-wrap;
@@ -1583,7 +1614,9 @@ button.small {
 .badge.stale,
 .badge.missing,
 .badge.disabled,
-.badge.unknown {
+.badge.unknown,
+.badge.warning_70,
+.badge.warning_85 {
     border-color: rgb(251 191 36 / 0.38);
     background: rgb(120 53 15 / 0.36);
     color: #fde68a;
@@ -1593,7 +1626,9 @@ button.small {
 .badge.offline,
 .badge.permission_denied,
 .badge.critical,
-.badge.high {
+.badge.high,
+.badge.critical_95,
+.badge.over_capacity {
     border-color: rgb(251 113 133 / 0.42);
     background: rgb(127 29 29 / 0.42);
     color: #fda4af;
@@ -1601,6 +1636,9 @@ button.small {
 
 .badge.healthy,
 .badge.success,
+.badge.normal,
+.badge.not_applicable,
+.badge.excepted,
 .badge.low,
 .badge.informational {
     border-color: rgb(52 211 153 / 0.34);
