@@ -73,6 +73,7 @@ with required_tables(name) as (
         ('idx_agent_heartbeats_time'),
         ('idx_source_health_status'),
         ('idx_source_health_agent'),
+        ('idx_source_health_portable_source'),
         ('idx_asset_inventory_agent_type'),
         ('idx_detection_rules_category'),
         ('idx_alerts_status'),
@@ -101,6 +102,12 @@ with required_tables(name) as (
         ('events', 'data_handling_json'),
         ('agent_heartbeats', 'host_timezone'),
         ('source_health', 'host_timezone'),
+        ('source_health', 'platform'),
+        ('source_health', 'source_kind'),
+        ('source_health', 'source_namespace'),
+        ('source_health', 'applicability'),
+        ('source_health', 'collected_checkpoint'),
+        ('source_health', 'acknowledged_checkpoint'),
         ('asset_inventory_snapshots', 'host_timezone'),
         ('alert_evidence', 'host_timezone')
 ), missing_columns as (

@@ -1,18 +1,31 @@
 # Linux agent
 
-The .NET 8 Linux agent is a first-class endpoint service built on the same `Agent.Core` durable SQLite queue, acknowledgement, retry metadata, deterministic serialization, configuration hashing, and v1 transport used by the Windows agent. It enrolls through `/api/v1/agents/register`, stores the resulting credential in its mode-0600 configuration, sends heartbeats, uploads bounded host and security-posture inventory, and drains already-durable queued events gradually.
+The .NET 8 Linux agent is a first-class endpoint service built on the same `Agent.Core` durable SQLite queue, acknowledgement, retry metadata, deterministic serialization, configuration hashing, and v1 transport used by the Windows agent. It enrolls through `/api/v1/agents/register`, stores the resulting credential in its mode-0600 configuration, sends heartbeats, passively collects bounded L1 system-journal records, uploads bounded host and security-posture inventory, and drains already-durable queued events gradually.
 
-Passive journal and audit event collection remains planned. An empty source manifest is therefore an explicit foundation state, not a claim of L1 event coverage. Inventory snapshots provide current-state observations; they do not change server coverage calculations or prove that passive telemetry sources are healthy.
+The implemented journal source covers kernel, boot, systemd service, authentication, and core-system records available to the dedicated service identity. Linux audit and non-journal file sources remain planned. Inventory snapshots remain current-state observations and do not substitute for journal source health.
 
 ## Supported capability
 
 - Linux on x86-64 or ARM64 with systemd and a .NET 8 published application payload.
 - Dedicated locked `challenger-siem` service identity created by the operator or package manager before installation.
 - HTTPS server URL only. Configuration: `/etc/challenger-siem-agent/agentsettings.json` (dedicated identity, 0600, writable only within its private configuration directory so enrollment can persist the credential). Queue/state: `/var/lib/challenger-siem-agent` (0700). Binary: `/opt/challenger-siem-agent`. Unit: `/etc/systemd/system/challenger-siem-agent.service`.
-- Enrollment, heartbeat, durable queue delivery, and read-only inventory upload through the existing v1 agent APIs.
+- Enrollment, heartbeat, passive L1 journal collection, durable queue delivery, and read-only inventory upload through the existing v1 agent APIs.
+- Fixed direct `/usr/bin/journalctl` or `/bin/journalctl` execution with machine-readable JSON, an allowlisted field projection, no shell, and no configurable executable, arguments, source path, or fallback reader.
 - No Linux capability, audit/firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, privileged helper, or arbitrary command/path collection interface.
 
 The unit passes only the configuration path, never a credential. It denies privilege escalation, capabilities, home/device/kernel/control-group access, write access outside private state, and limits memory/tasks and restart bursts.
+
+## Passive L1 system-journal collection
+
+The single stable source `linux-journal-l1` reads the system journal in bounded polls. After startup it resumes with the last durably collected opaque journald cursor. Each accepted record is normalized and committed to the Agent.Core SQLite queue before the atomically written state file advances `collected_checkpoint`. A server accepted/duplicate acknowledgement is persisted as `acknowledged_checkpoint` before the corresponding queue row is deleted. A crash at any boundary can replay a deterministic ID, but cannot make a cursor claim data that was never durable.
+
+The reader requests JSON from a fixed `journalctl` path and projects only cursor, real-time timestamp, boot ID, transport, unit, identifier, facility, priority, message ID, PID, UID, and message. It classifies records into `kernel`, `boot`, `service`, `authentication`, or `system`; it does not execute a shell or accept remote/configured commands or paths. Event IDs use the existing server-validated `sha256_uuid` recipe over `agent_id`, `source_id`, and `checkpoint.cursor`.
+
+Input records default to a 128 KiB pre-parse ceiling. Retained fields are capped at 2,048 characters, cursor at 1,024, message at 20,000, and compact raw JSON at the v1 65,536-byte ceiling. Control text is replaced, non-text/binary fields become `<binary-or-nontext>`, and common secret-shaped assignments are replaced before enqueue. `data_handling` lists every truncated/redacted field and reports original/retained size without reproducing removed values.
+
+The heartbeat manifest declares source kind, namespace, checkpoint kind, parser/config/version, prerequisites, event families, and validation scenarios. Health separately reports latest event and lag, collected and acknowledged cursors, collector/config/version state, permission and throttle state, stable errors, gap state, and bounded duplicate/reordered/malformed counters. Empty, unavailable, denied, invalid-cursor, rotation, vacuum, malformed/binary, reorder, and pressure states are never inferred as healthy. On invalid cursor the next bounded poll re-establishes a cursor from available records while retaining a gap marker. Rotation with continuity remains healthy; an observed rotation/vacuum discontinuity remains a gap.
+
+Queue depth at `QueuePauseDepth` pauses source reads without deleting queued events. Poll and batch limits bound collection rate; heartbeat and drain services remain independent. Operators should fix access or capacity rather than grant root or weaken journal policy. Membership in `systemd-journal`/`adm`, if chosen by an operator, expands readable data and is not added by the installer.
 
 ## Bounded inventory snapshots
 
@@ -48,12 +61,19 @@ Inventory runs in its own non-overlapping hosted service, independently of heart
       "StartupDelaySeconds": 30,
       "CollectionTimeoutSeconds": 120,
       "MaxSerializedBytes": 262144
+    },
+    "Journal": {
+      "Enabled": true,
+      "PollIntervalSeconds": 5,
+      "MaxRecordsPerPoll": 500,
+      "MaxInputRecordBytes": 131072,
+      "QueuePauseDepth": 100000
     }
   }
 }
 ```
 
-Inventory is a periodic current-state upload rather than durable passive telemetry. If an upload fails, the next scheduled collection provides a fresh bounded snapshot; heartbeat and queued-event recovery continue on their separate path.
+Inventory is a periodic current-state upload rather than durable passive telemetry. If an upload fails, the next scheduled collection provides a fresh bounded snapshot; heartbeat, journal collection, and queued-event recovery continue on separate paths. Journal bounds are enforced as follows: poll interval 1-300 seconds, batch 1-5,000 records, input record 4-256 KiB, and pressure pause depth 100-1,000,000 events.
 
 ## Read-only source policy
 
@@ -79,8 +99,10 @@ First publish the app into a private local directory and create a mode-0600 conf
 
 ## Server and contract boundary
 
-Linux snapshots use the existing additive generic `POST /api/v1/agents/inventory` payload and existing v1 snapshot/item fields. The same generic records remain available through `GET /api/v1/inventory`; no `/api/v2`, schema replacement, or incompatible Windows inventory behavior is introduced. This agent capability does not add Linux-specific server coverage evaluation or claim Linux event persistence/search coverage.
+Journal records use the existing additive `linux_journal` v1 envelope and the existing `/api/v1/ingest/events` persistence, deduplication, and portable search path. Source manifests and health use the additive portable heartbeat shape. Linux snapshots continue to use the generic `POST /api/v1/agents/inventory` payload. No `/api/v2`, schema replacement, or incompatible Windows behavior is introduced. Server-side Linux coverage overlays beyond the reported source row remain future work.
 
 ## Validation and recovery
 
-Run `dotnet test Challenger.Siem.sln` and `./scripts/validate-repository-safety.sh`. On a specifically approved disposable systemd host, inspect `systemctl show` for the documented identity, capability, restart, memory, and filesystem restrictions; keep raw output under `.local/`. Stop rollout on credential exposure, unauthorized host mutation, queue corruption, host impact, or resource-bound breach. Uninstall the project-owned files, revoke the agent credential, and retain only sanitized aggregate findings.
+Run `dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj`, `dotnet test Challenger.Siem.sln`, `./scripts/validate-contracts.sh`, and `./scripts/validate-repository-safety.sh`. The tracked tests use only hand-authored synthetic records and cover cursor restart, queue-before-checkpoint, acknowledgement, outage/replay, deterministic deduplication, rotation/vacuum/invalid cursor, denied/empty/malformed/binary input, duplicate/reorder, pressure, and a bounded 5,000-record benchmark. That benchmark is a regression guard, not a host CPU/write measurement or a 24-hour soak claim.
+
+On a separately approved disposable systemd host, operators may later inspect source health and service restrictions while keeping raw output under `.local/`. This release did not perform or claim the required private 24-hour canary soak. Stop rollout on credential exposure, unauthorized host mutation, queue corruption, silent loss, host impact, or resource-bound breach. Uninstall project-owned files, revoke the agent credential, and retain only sanitized aggregate findings.
