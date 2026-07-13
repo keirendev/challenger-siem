@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: planned design; no Linux agent or installer is implemented
+Status: foundation implemented; passive collectors remain planned
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the future Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). It does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). It does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 

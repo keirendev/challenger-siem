@@ -40,3 +40,7 @@ The project should remain open-source and custom-built.
 - Docker / Compose-based development or deployment.
 - Proprietary SaaS ingestion, analytics, or alerting platforms.
 - OpenSearch, Elasticsearch, ClickHouse, or object storage until the custom PostgreSQL-backed MVP is proven.
+
+## Linux agent runtime
+
+The Linux agent targets .NET 8 and uses the existing Agent.Core SQLite/HTTP reliability dependencies plus the official `Microsoft.Extensions.Hosting.Systemd` integration. systemd is the supported init boundary for this foundation. No audit, eBPF, firewall, kernel-module, privileged-helper, or host-policy package is installed.

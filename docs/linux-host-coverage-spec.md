@@ -1,12 +1,12 @@
 # Linux host coverage specification
 
-Status: planned design; no Linux collector or installer is implemented
+Status: agent/service foundation implemented; Linux collectors remain planned
 Specification version: 0.1
 Primary audience: SIEM engineers, Linux agent engineers, detection engineers, operators
 
 ## Purpose and current boundary
 
-This document defines the target Linux host visibility model for Challenger SIEM. It is a design contract for future work, not a statement of current product behavior. Challenger SIEM remains Windows-first: there is currently no supported Linux agent, installer, Linux source-health implementation, or Linux-specific API contract.
+This document defines the target Linux host visibility model for Challenger SIEM. It is a design contract for future work, not a statement of current product behavior. Challenger SIEM remains Windows-first: a supported Linux agent/service foundation now provides enrollment, heartbeat, inventory transport, durable queueing, and safe lifecycle packaging; Linux collection and source-health remain planned.
 
 Like the [Windows full-coverage specification](windows-host-full-coverage-spec.md), this specification treats collection, reliability, source health, operational verification, and detection prerequisites as one coverage problem. It differs where Linux distributions, init systems, audit frameworks, and role logs are heterogeneous. A host can report only the level whose mandatory applicable sources are healthy; unavailable or operator-disabled sources must be shown as gaps or approved exceptions, never silently treated as covered.
 

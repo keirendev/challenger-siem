@@ -29,6 +29,10 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Authentication design](auth.md) - enrollment token, per-agent token, review token, and external `soc-agent` provider guardrails.
 - [HTTPS/TLS deployment path](tls.md) - local HTTP exception, production HTTPS options, and agent trust expectations.
 
+## Linux endpoint agent
+
+- [Linux agent foundation](linux-agent.md) - configuration, systemd hardening, lifecycle workflows, and validation.
+
 ## Windows endpoint agent
 
 - [Windows agent](agent.md) - current capabilities, build, install, state/queue behavior, and Windows validation notes.
