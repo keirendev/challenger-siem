@@ -78,8 +78,22 @@
       "required": true,
       "enabled": true,
       "last_event_time": "2026-07-11T11:00:00Z",
-      "collected_checkpoint": {"cursor":"s=synthetic;i=0001","recorded_at":"2026-07-11T11:00:01Z"},
-      "acknowledged_checkpoint": {"cursor":"s=synthetic;i=0001","recorded_at":"2026-07-11T11:00:05Z"}
+      "collected_checkpoint": {
+        "cursor": "s=synthetic;i=0001",
+        "recorded_at": "2026-07-11T11:00:01Z"
+      },
+      "acknowledged_checkpoint": {
+        "cursor": "s=synthetic;i=0001",
+        "recorded_at": "2026-07-11T11:00:05Z"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     },
     {
       "source_id": "audit-exec",
@@ -93,8 +107,22 @@
       "required": false,
       "enabled": true,
       "last_event_time": "2026-07-11T11:00:01Z",
-      "collected_checkpoint": {"sequence":2001,"recorded_at":"2026-07-11T11:00:02Z"},
-      "acknowledged_checkpoint": {"sequence":2001,"recorded_at":"2026-07-11T11:00:05Z"}
+      "collected_checkpoint": {
+        "sequence": 2001,
+        "recorded_at": "2026-07-11T11:00:02Z"
+      },
+      "acknowledged_checkpoint": {
+        "sequence": 2001,
+        "recorded_at": "2026-07-11T11:00:05Z"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     },
     {
       "source_id": "inventory-packages",
@@ -108,8 +136,22 @@
       "required": true,
       "enabled": true,
       "last_event_time": "2026-07-11T11:00:02Z",
-      "collected_checkpoint": {"sequence":30,"recorded_at":"2026-07-11T11:00:03Z"},
-      "acknowledged_checkpoint": {"sequence":30,"recorded_at":"2026-07-11T11:00:05Z"}
+      "collected_checkpoint": {
+        "sequence": 30,
+        "recorded_at": "2026-07-11T11:00:03Z"
+      },
+      "acknowledged_checkpoint": {
+        "sequence": 30,
+        "recorded_at": "2026-07-11T11:00:05Z"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     },
     {
       "source_id": "agent-runtime-health",
@@ -123,8 +165,48 @@
       "required": true,
       "enabled": true,
       "last_event_time": "2026-07-11T11:00:03Z",
-      "collected_checkpoint": {"sequence":81,"recorded_at":"2026-07-11T11:00:04Z"},
-      "acknowledged_checkpoint": {"sequence":81,"recorded_at":"2026-07-11T11:00:05Z"}
+      "collected_checkpoint": {
+        "sequence": 81,
+        "recorded_at": "2026-07-11T11:00:04Z"
+      },
+      "acknowledged_checkpoint": {
+        "sequence": 81,
+        "recorded_at": "2026-07-11T11:00:05Z"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     }
-  ]
+  ],
+  "resource_metrics": {
+    "observed_at": "2026-07-11T11:00:06Z",
+    "cpu_percent": null,
+    "rss_bytes": 94371840,
+    "managed_memory_bytes": 31457280,
+    "status": "partial"
+  },
+  "queue_metrics": {
+    "queue_depth": 0,
+    "poison_depth": 0,
+    "oldest_queued_age_seconds": null,
+    "queue_size_bytes": 4096,
+    "max_size_bytes": 536870912,
+    "used_percent": 0.001,
+    "pressure_state": "normal",
+    "send_state": "succeeded",
+    "backoff_seconds": null,
+    "last_attempt_time": "2026-07-11T11:00:04Z",
+    "last_failed_send_time": null,
+    "last_successful_send_time": "2026-07-11T11:00:05Z",
+    "last_recovery_time": null,
+    "poison_events_total": 0,
+    "dropped_events_total": 0,
+    "max_size_mb": 512,
+    "warning_size_percent": 80
+  }
 }

@@ -39,6 +39,9 @@ public sealed record HeartbeatRequest
     [JsonPropertyName("memory_mb")]
     public int? MemoryMb { get; init; }
 
+    [JsonPropertyName("resource_metrics")]
+    public AgentResourceMetrics? ResourceMetrics { get; init; }
+
     [JsonPropertyName("config_hash")]
     public string? ConfigHash { get; init; }
 

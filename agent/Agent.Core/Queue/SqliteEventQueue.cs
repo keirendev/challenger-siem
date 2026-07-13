@@ -264,6 +264,9 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
                 }
             }
 
+            var queueBytes = QueueFileBytes();
+            var maxBytes = options.MaxSizeMb * 1024L * 1024L;
+            decimal? usedPercent = maxBytes > 0 ? Math.Round(queueBytes * 100m / maxBytes, 3, MidpointRounding.AwayFromZero) : null;
             return new QueueSloMetrics
             {
                 QueueDepth = queueDepth,
@@ -271,7 +274,14 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
                 OldestQueuedAgeSeconds = oldestQueuedAt.HasValue
                     ? Math.Max(0, (long)Math.Floor((DateTimeOffset.UtcNow - oldestQueuedAt.Value).TotalSeconds))
                     : null,
+                QueueSizeBytes = queueBytes,
+                MaxSizeBytes = maxBytes,
+                UsedPercent = usedPercent,
+                PressureState = QueuePressureState(queueBytes, maxBytes),
+                SendState = queueDepth == 0 ? QueueSendStates.Idle : QueueSendStates.Unknown,
                 LastSuccessfulSendTime = lastSuccessfulSendTime,
+                PoisonEventsTotal = poisonDepth,
+                DroppedEventsTotal = 0,
                 MaxSizeMb = options.MaxSizeMb,
                 WarningSizePercent = options.WarningSizePercent
             };
@@ -360,6 +370,31 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
         return connection;
+    }
+
+    private long QueueFileBytes()
+    {
+        long total = 0;
+        foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+        {
+            var path = options.Path + suffix;
+            if (File.Exists(path))
+            {
+                total += new FileInfo(path).Length;
+            }
+        }
+        return total;
+    }
+
+    private string QueuePressureState(long currentBytes, long maxBytes)
+    {
+        if (maxBytes <= 0) return QueuePressureStates.Unknown;
+        if (currentBytes >= maxBytes) return QueuePressureStates.Full;
+        var percent = currentBytes * 100m / maxBytes;
+        if (percent >= 95) return QueuePressureStates.Critical;
+        if (percent >= 85) return QueuePressureStates.High;
+        if (percent >= Math.Clamp(options.WarningSizePercent, 1, 100)) return QueuePressureStates.Warning;
+        return QueuePressureStates.Normal;
     }
 
     private void EnforceQueueSizeLimit()

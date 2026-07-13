@@ -13,7 +13,23 @@ public sealed record StoreEventsResult(
     IReadOnlyList<Guid> AcceptedEventIds,
     IReadOnlyList<Guid> DuplicateEventIds);
 
-public sealed record ManagedStorageAccounting(long TableBytes, long IndexBytes, long TotalBytes, long EventRows, DateTimeOffset MeasuredAt);
+public sealed record StorageQuotaThreshold(int Percent, long Bytes, string State);
+
+public sealed record ManagedStorageAccounting(
+    long TableBytes,
+    long IndexBytes,
+    long TotalBytes,
+    long EventRows,
+    DateTimeOffset MeasuredAt,
+    long CapacityBytes,
+    decimal UsedPercent,
+    string WarningState,
+    IReadOnlyList<StorageQuotaThreshold> WarningThresholds,
+    DateTimeOffset? OldestEventTime,
+    DateTimeOffset? NewestEventTime,
+    long? OldestEventAgeSeconds,
+    string RetentionLagState,
+    long? RetentionLagSeconds);
 
 public sealed class EventRepository(NpgsqlDataSource dataSource)
 {
@@ -340,22 +356,80 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         };
     }
 
-    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingAsync(CancellationToken cancellationToken)
+    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingAsync(long capacityBytes, CancellationToken cancellationToken)
     {
+        var boundedCapacityBytes = Math.Clamp(capacityBytes, 1L * 1024 * 1024 * 1024, 10_000L * 1024 * 1024 * 1024);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             select pg_relation_size('public.events'), pg_indexes_size('public.events'),
-                   pg_total_relation_size('public.events'), count(*) from events;
+                   pg_total_relation_size('public.events'), count(*), min(event_time) as oldest_event_time, max(event_time) as newest_event_time from events;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
-        return new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), DateTimeOffset.UtcNow);
+        var totalBytes = reader.GetInt64(2);
+        var measuredAt = DateTimeOffset.UtcNow;
+        var oldest = ReadNullableDateTimeOffset(reader, "oldest_event_time");
+        var newest = ReadNullableDateTimeOffset(reader, "newest_event_time");
+        return new(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            totalBytes,
+            reader.GetInt64(3),
+            measuredAt,
+            boundedCapacityBytes,
+            CalculateUsedPercent(totalBytes, boundedCapacityBytes),
+            CalculateStorageWarningState(totalBytes, boundedCapacityBytes),
+            BuildStorageThresholds(boundedCapacityBytes),
+            oldest,
+            newest,
+            oldest.HasValue ? Math.Max(0, (long)Math.Floor((measuredAt - oldest.Value).TotalSeconds)) : null,
+            "retention_policy_not_enabled",
+            null);
     }
+
+    public static string CalculateStorageWarningState(long totalBytes, long capacityBytes)
+    {
+        if (capacityBytes <= 0) return "unknown";
+        var percent = CalculateUsedPercent(totalBytes, capacityBytes);
+        return percent >= 100 ? "over_capacity"
+            : percent >= 95 ? "critical_95"
+            : percent >= 85 ? "warning_85"
+            : percent >= 70 ? "warning_70"
+            : "normal";
+    }
+
+    private static IReadOnlyList<StorageQuotaThreshold> BuildStorageThresholds(long capacityBytes) => new[]
+    {
+        new StorageQuotaThreshold(70, capacityBytes * 70 / 100, "warning_70"),
+        new StorageQuotaThreshold(85, capacityBytes * 85 / 100, "warning_85"),
+        new StorageQuotaThreshold(95, capacityBytes * 95 / 100, "critical_95")
+    };
+
+    private static decimal CalculateUsedPercent(long totalBytes, long capacityBytes) => capacityBytes <= 0
+        ? 0
+        : Math.Round(totalBytes * 100m / capacityBytes, 3, MidpointRounding.AwayFromZero);
 
     private static string? ReadNullableString(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
     private static int? ReadNullableInt32(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt32(reader.GetOrdinal(name));
     private static long? ReadNullableInt64(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt64(reader.GetOrdinal(name));
+
+    private static DateTimeOffset? ReadNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetValue(ordinal);
+        return value switch
+        {
+            DateTimeOffset dateTimeOffset => dateTimeOffset.ToUniversalTime(),
+            DateTime dateTime => new DateTimeOffset(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)),
+            _ => null
+        };
+    }
 
     private static void AddTextFilter(List<string> where, NpgsqlCommand command, string column, string parameterName, string? value, bool exact)
     {

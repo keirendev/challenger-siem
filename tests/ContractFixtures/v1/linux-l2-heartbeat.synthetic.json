@@ -23,9 +23,18 @@
       "enabled_by_default": false,
       "source_pack": "linux-l2-security",
       "parser_id": "linux-login-session-v1",
-      "prerequisites": ["systemd_journal_readable", "pam_or_logind_journal_visibility"],
-      "event_families": ["login", "session"],
-      "validation_scenarios": ["login_success_failure", "session_open_close"],
+      "prerequisites": [
+        "systemd_journal_readable",
+        "pam_or_logind_journal_visibility"
+      ],
+      "event_families": [
+        "login",
+        "session"
+      ],
+      "validation_scenarios": [
+        "login_success_failure",
+        "session_open_close"
+      ],
       "privacy": "high_sensitivity",
       "installer_managed": false
     },
@@ -44,9 +53,15 @@
       "enabled_by_default": false,
       "source_pack": "linux-l2-security",
       "parser_id": "unsupported",
-      "prerequisites": ["linux_audit_collector"],
-      "event_families": ["audit"],
-      "validation_scenarios": ["unsupported_source_reporting"],
+      "prerequisites": [
+        "linux_audit_collector"
+      ],
+      "event_families": [
+        "audit"
+      ],
+      "validation_scenarios": [
+        "unsupported_source_reporting"
+      ],
       "privacy": "high_sensitivity",
       "installer_managed": false
     }
@@ -66,8 +81,14 @@
       "applicable_roles": [],
       "enabled": true,
       "last_event_time": "2026-07-13T12:00:00Z",
-      "collected_checkpoint": {"cursor":"s=synthetic-l2;i=1","recorded_at":"2026-07-13T12:00:01Z"},
-      "acknowledged_checkpoint": {"cursor":"s=synthetic-l2;i=1","recorded_at":"2026-07-13T12:00:02Z"},
+      "collected_checkpoint": {
+        "cursor": "s=synthetic-l2;i=1",
+        "recorded_at": "2026-07-13T12:00:01Z"
+      },
+      "acknowledged_checkpoint": {
+        "cursor": "s=synthetic-l2;i=1",
+        "recorded_at": "2026-07-13T12:00:02Z"
+      },
       "prerequisite_statuses": {
         "systemd_journal_readable": "satisfied",
         "pam_or_logind_journal_visibility": "satisfied"
@@ -76,7 +97,17 @@
         "login": "not_observed",
         "session": "observed"
       },
-      "details": {"configured_coverage_level":"L2"}
+      "details": {
+        "configured_coverage_level": "L2"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     },
     {
       "source_id": "linux-audit-framework",
@@ -91,9 +122,49 @@
       "required": false,
       "requirement": "optional",
       "enabled": false,
-      "prerequisite_statuses": {"linux_audit_collector":"unsupported"},
-      "event_family_statuses": {"audit":"unsupported"},
-      "details": {"configured_coverage_level":"L2"}
+      "prerequisite_statuses": {
+        "linux_audit_collector": "unsupported"
+      },
+      "event_family_statuses": {
+        "audit": "unsupported"
+      },
+      "details": {
+        "configured_coverage_level": "L2"
+      },
+      "observed_at": "2026-07-11T11:00:06Z",
+      "silence_seconds": 6,
+      "event_rate_per_minute": 1.0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
     }
-  ]
+  ],
+  "resource_metrics": {
+    "observed_at": "2026-07-11T11:00:06Z",
+    "cpu_percent": null,
+    "rss_bytes": 94371840,
+    "managed_memory_bytes": 31457280,
+    "status": "partial"
+  },
+  "queue_metrics": {
+    "queue_depth": 0,
+    "poison_depth": 0,
+    "oldest_queued_age_seconds": null,
+    "queue_size_bytes": 4096,
+    "max_size_bytes": 536870912,
+    "used_percent": 0.001,
+    "pressure_state": "normal",
+    "send_state": "succeeded",
+    "backoff_seconds": null,
+    "last_attempt_time": "2026-07-11T11:00:04Z",
+    "last_failed_send_time": null,
+    "last_successful_send_time": "2026-07-11T11:00:05Z",
+    "last_recovery_time": null,
+    "poison_events_total": 0,
+    "dropped_events_total": 0,
+    "max_size_mb": 512,
+    "warning_size_percent": 80
+  }
 }

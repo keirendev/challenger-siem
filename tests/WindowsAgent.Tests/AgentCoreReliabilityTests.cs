@@ -47,6 +47,34 @@ public sealed class AgentCoreReliabilityTests
         }
     }
 
+    [Fact]
+    public async Task QueueMetricsExposeBytesPressurePoisonAndUnknownVsZero()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"challenger-core-{Guid.NewGuid():N}.sqlite");
+        try
+        {
+            var queue = CreateQueue(path);
+            var empty = await queue.GetMetricsAsync(null, CancellationToken.None);
+            Assert.Equal(0, empty.QueueDepth);
+            Assert.Equal(0, empty.PoisonDepth);
+            Assert.Null(empty.OldestQueuedAgeSeconds);
+            Assert.NotNull(empty.QueueSizeBytes);
+            Assert.Equal(0, empty.DroppedEventsTotal);
+            Assert.Contains(empty.PressureState, new[] { QueuePressureStates.Normal, QueuePressureStates.Warning, QueuePressureStates.High, QueuePressureStates.Critical, QueuePressureStates.Full });
+
+            await queue.EnqueueAsync(QueueItem(0, Guid.NewGuid()).Envelope, CancellationToken.None);
+            var populated = await queue.GetMetricsAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+            Assert.Equal(1, populated.QueueDepth);
+            Assert.NotNull(populated.OldestQueuedAgeSeconds);
+            Assert.True(populated.QueueSizeBytes >= empty.QueueSizeBytes);
+            Assert.True(populated.UsedPercent >= 0);
+        }
+        finally
+        {
+            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(path + suffix);
+        }
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(1, 2)]

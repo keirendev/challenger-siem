@@ -39,6 +39,37 @@ public static class RequestValidation
         SourceCheckpointKinds.CursorAndSequence
     };
 
+    private static readonly HashSet<string> AllowedQueuePressureStates = new(StringComparer.Ordinal)
+    {
+        QueuePressureStates.Unknown,
+        QueuePressureStates.Normal,
+        QueuePressureStates.Warning,
+        QueuePressureStates.High,
+        QueuePressureStates.Critical,
+        QueuePressureStates.Full,
+        QueuePressureStates.Throttled
+    };
+
+    private static readonly HashSet<string> AllowedQueueSendStates = new(StringComparer.Ordinal)
+    {
+        QueueSendStates.Unknown,
+        QueueSendStates.Idle,
+        QueueSendStates.Sending,
+        QueueSendStates.Succeeded,
+        QueueSendStates.BackingOff,
+        QueueSendStates.Failed,
+        QueueSendStates.Recovering
+    };
+
+    private static readonly HashSet<string> AllowedHealthTransitionStates = new(StringComparer.Ordinal)
+    {
+        HealthTransitionStates.Unknown,
+        HealthTransitionStates.Healthy,
+        HealthTransitionStates.Degraded,
+        HealthTransitionStates.Recovering,
+        HealthTransitionStates.Recovered
+    };
+
     public static Dictionary<string, string[]> ValidateRegistration(AgentRegistrationRequest request)
     {
         var errors = NewErrorBag();
@@ -90,6 +121,7 @@ public static class RequestValidation
         }
 
         ValidateQueueMetrics(errors, request.QueueMetrics, enforceLinuxBounds: linuxHeartbeat);
+        ValidateResourceMetrics(errors, "resource_metrics", request.ResourceMetrics, enforceLinuxBounds: linuxHeartbeat);
 
         if (request.SourceManifest is null)
         {
@@ -925,16 +957,27 @@ public static class RequestValidation
         {
             ValidateTimestamp(errors, $"{prefix}.last_event_time", source.LastEventTime);
         }
+        ValidateTimestamp(errors, $"{prefix}.observed_at", source.ObservedAt);
         ValidateHostTimezone(errors, $"{prefix}.host_timezone", source.HostTimezone);
         ValidateNonNegative(errors, $"{prefix}.last_record_id", source.LastRecordId);
         ValidateNonNegative(errors, $"{prefix}.oldest_record_id", source.OldestRecordId);
         ValidateNonNegative(errors, $"{prefix}.newest_record_id", source.NewestRecordId);
         ValidateNonNegative(errors, $"{prefix}.log_size_bytes", source.LogSizeBytes);
         ValidateNonNegative(errors, $"{prefix}.retention_days", source.RetentionDays);
+        ValidateNonNegative(errors, $"{prefix}.silence_seconds", source.SilenceSeconds);
+        if (source.EventRatePerMinute is < 0 or > 1_000_000) Add(errors, $"{prefix}.event_rate_per_minute", "Event rate must be between zero and 1000000 per minute.");
         OptionalMaxLength(errors, $"{prefix}.error_code", source.ErrorCode, 128);
         OptionalMaxLength(errors, $"{prefix}.error_message", source.ErrorMessage, 1000);
         OptionalMaxLength(errors, $"{prefix}.config_hash", source.ConfigHash, 128);
         OptionalMaxLength(errors, $"{prefix}.source_version", source.SourceVersion, 128);
+        ValidateNonNegative(errors, $"{prefix}.gap_count", source.GapCount);
+        ValidateTimestamp(errors, $"{prefix}.permission_denied_since", source.PermissionDeniedSince);
+        ValidateTimestamp(errors, $"{prefix}.recovered_at", source.RecoveredAt);
+        OptionalMaxLength(errors, $"{prefix}.transition_state", source.TransitionState, 64);
+        if (source.TransitionState is not null && !AllowedHealthTransitionStates.Contains(source.TransitionState)) Add(errors, $"{prefix}.transition_state", "Health transition state is not supported.");
+        ValidateTimestamp(errors, $"{prefix}.transitioned_at", source.TransitionedAt);
+        ValidateNonNegative(errors, $"{prefix}.dropped_events", source.DroppedEvents);
+        ValidateNonNegative(errors, $"{prefix}.poison_events", source.PoisonEvents);
         if (source.Details is null)
         {
             Add(errors, $"{prefix}.details", "Details must be an object when supplied.");
@@ -1064,11 +1107,46 @@ public static class RequestValidation
         if (metrics.QueueDepth < 0) Add(errors, "queue_metrics.queue_depth", "Queue depth must be greater than or equal to zero.");
         if (metrics.PoisonDepth < 0) Add(errors, "queue_metrics.poison_depth", "Poison depth must be greater than or equal to zero.");
         ValidateNonNegative(errors, "queue_metrics.oldest_queued_age_seconds", metrics.OldestQueuedAgeSeconds);
+        ValidateNonNegative(errors, "queue_metrics.queue_size_bytes", metrics.QueueSizeBytes);
+        ValidateNonNegative(errors, "queue_metrics.max_size_bytes", metrics.MaxSizeBytes);
+        if (metrics.UsedPercent is < 0 or > 1000) Add(errors, "queue_metrics.used_percent", "Used percent must be between zero and 1000.");
+        OptionalMaxLength(errors, "queue_metrics.pressure_state", metrics.PressureState, 64);
+        if (metrics.PressureState is not null && !AllowedQueuePressureStates.Contains(metrics.PressureState)) Add(errors, "queue_metrics.pressure_state", "Queue pressure state is not supported.");
+        OptionalMaxLength(errors, "queue_metrics.send_state", metrics.SendState, 64);
+        if (metrics.SendState is not null && !AllowedQueueSendStates.Contains(metrics.SendState)) Add(errors, "queue_metrics.send_state", "Queue send state is not supported.");
+        if (metrics.BackoffSeconds is < 0 or > 86_400) Add(errors, "queue_metrics.backoff_seconds", "Backoff seconds must be between zero and 86400.");
+        ValidateTimestamp(errors, "queue_metrics.last_attempt_time", metrics.LastAttemptTime);
+        ValidateTimestamp(errors, "queue_metrics.last_failed_send_time", metrics.LastFailedSendTime);
+        ValidateTimestamp(errors, "queue_metrics.last_recovery_time", metrics.LastRecoveryTime);
+        ValidateNonNegative(errors, "queue_metrics.poison_events_total", metrics.PoisonEventsTotal);
+        ValidateNonNegative(errors, "queue_metrics.dropped_events_total", metrics.DroppedEventsTotal);
         if (enforceLinuxBounds)
         {
             ValidateTimestamp(errors, "queue_metrics.last_successful_send_time", metrics.LastSuccessfulSendTime);
             if (metrics.MaxSizeMb < 1) Add(errors, "queue_metrics.max_size_mb", "Maximum queue size must be at least one MB.");
             if (metrics.WarningSizePercent is < 1 or > 100) Add(errors, "queue_metrics.warning_size_percent", "Warning percent must be between one and 100.");
+        }
+    }
+
+    private static void ValidateResourceMetrics(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        AgentResourceMetrics? metrics,
+        bool enforceLinuxBounds)
+    {
+        if (metrics is null) return;
+        ValidateTimestamp(errors, $"{prefix}.observed_at", metrics.ObservedAt);
+        if (metrics.CpuPercent is < 0 || (enforceLinuxBounds && metrics.CpuPercent > 100))
+        {
+            Add(errors, $"{prefix}.cpu_percent", enforceLinuxBounds
+                ? "CPU percent must be between zero and 100."
+                : "CPU percent must be greater than or equal to zero.");
+        }
+        ValidateNonNegative(errors, $"{prefix}.rss_bytes", metrics.RssBytes);
+        ValidateNonNegative(errors, $"{prefix}.managed_memory_bytes", metrics.ManagedMemoryBytes);
+        if (metrics.Status is not ("observed" or "partial" or "unknown"))
+        {
+            Add(errors, $"{prefix}.status", "Resource metric status is not supported.");
         }
     }
 

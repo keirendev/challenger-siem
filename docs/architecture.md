@@ -100,6 +100,7 @@ The additive v1 contract represents typed Linux journal, audit, inventory-diff, 
 - Agents must maintain durable local source position state and a durable queue.
 - Events are queued before the collected checkpoint advances; queue deletion and acknowledged checkpoint advancement happen only after accepted/duplicate acknowledgement.
 - Collected and acknowledged cursor/sequence positions are reported independently so backlog/gaps remain visible.
+- Heartbeats report bounded queue bytes/depth/oldest age, send/backoff/recovery state, poison/drop counters, and source silence/gap/permission transitions where available; unsupported values remain null/unknown rather than fabricated zero.
 - Server ingest time is generated server-side and does not trust client-provided ingest timestamps.
 
 ## Security decisions

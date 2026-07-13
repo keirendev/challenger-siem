@@ -53,6 +53,7 @@ Open the API base URL in a browser, log in with a synthetic operator username/pa
 - `/events` for event search.
 - `/events/detail?agent_id=<id>&event_id=<uuid>` for raw JSON and normalized fields.
 - `/about` for version/environment/database status.
+- `/api/v1/storage/accounting` with an admin operator API token for managed storage bytes, 100 GiB default capacity, 70/85/95% warning state, and retention-lag status without connection details.
 - `/graphs` for saved investigation graphs with bounded nodes/edges and approval-gated `soc-agent` proposals.
 - `/soc-agent` for bounded chat-based SIEM investigation with provider status, graph context, and citations.
 

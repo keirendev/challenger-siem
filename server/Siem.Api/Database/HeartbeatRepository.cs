@@ -26,6 +26,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     queue_depth,
                     cpu_percent,
                     memory_mb,
+                    resource_metrics,
                     config_hash,
                     queue_metrics,
                     source_manifest,
@@ -42,6 +43,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @queue_depth,
                     @cpu_percent,
                     @memory_mb,
+                    @resource_metrics,
                     @config_hash,
                     @queue_metrics,
                     @source_manifest,
@@ -58,6 +60,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("queue_depth", request.QueueDepth);
             command.Parameters.AddWithValue("cpu_percent", request.CpuPercent.HasValue ? request.CpuPercent.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("memory_mb", request.MemoryMb.HasValue ? request.MemoryMb.Value : (object)DBNull.Value);
+            AddJsonb(command, "resource_metrics", request.ResourceMetrics);
             command.Parameters.AddWithValue("config_hash", string.IsNullOrWhiteSpace(request.ConfigHash) ? (object)DBNull.Value : request.ConfigHash);
             AddJsonb(command, "queue_metrics", request.QueueMetrics);
             AddJsonb(command, "source_manifest", request.SourceManifest);
@@ -90,17 +93,27 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     required_source,
                     enabled,
                     last_event_time,
+                    observed_at,
                     last_record_id,
                     oldest_record_id,
                     newest_record_id,
                     log_size_bytes,
                     retention_days,
                     lag_seconds,
+                    silence_seconds,
+                    event_rate_per_minute,
                     error_code,
                     error_message,
                     gap_detected,
                     cleared_detected,
                     bookmark_gap_detected,
+                    gap_count,
+                    permission_denied_since,
+                    recovered_at,
+                    transition_state,
+                    transitioned_at,
+                    dropped_events,
+                    poison_events,
                     config_hash,
                     source_version,
                     requirement_kind,
@@ -130,17 +143,27 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @required_source,
                     @enabled,
                     @last_event_time,
+                    @observed_at,
                     @last_record_id,
                     @oldest_record_id,
                     @newest_record_id,
                     @log_size_bytes,
                     @retention_days,
                     @lag_seconds,
+                    @silence_seconds,
+                    @event_rate_per_minute,
                     @error_code,
                     @error_message,
                     @gap_detected,
                     @cleared_detected,
                     @bookmark_gap_detected,
+                    @gap_count,
+                    @permission_denied_since,
+                    @recovered_at,
+                    @transition_state,
+                    @transitioned_at,
+                    @dropped_events,
+                    @poison_events,
                     @config_hash,
                     @source_version,
                     @requirement_kind,
@@ -168,17 +191,27 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     required_source = excluded.required_source,
                     enabled = excluded.enabled,
                     last_event_time = excluded.last_event_time,
+                    observed_at = excluded.observed_at,
                     last_record_id = excluded.last_record_id,
                     oldest_record_id = excluded.oldest_record_id,
                     newest_record_id = excluded.newest_record_id,
                     log_size_bytes = excluded.log_size_bytes,
                     retention_days = excluded.retention_days,
                     lag_seconds = excluded.lag_seconds,
+                    silence_seconds = excluded.silence_seconds,
+                    event_rate_per_minute = excluded.event_rate_per_minute,
                     error_code = excluded.error_code,
                     error_message = excluded.error_message,
                     gap_detected = excluded.gap_detected,
                     cleared_detected = excluded.cleared_detected,
                     bookmark_gap_detected = excluded.bookmark_gap_detected,
+                    gap_count = excluded.gap_count,
+                    permission_denied_since = excluded.permission_denied_since,
+                    recovered_at = excluded.recovered_at,
+                    transition_state = excluded.transition_state,
+                    transitioned_at = excluded.transitioned_at,
+                    dropped_events = excluded.dropped_events,
+                    poison_events = excluded.poison_events,
                     config_hash = excluded.config_hash,
                     source_version = excluded.source_version,
                     requirement_kind = excluded.requirement_kind,
@@ -207,17 +240,27 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("required_source", source.Required);
             command.Parameters.AddWithValue("enabled", source.Enabled);
             command.Parameters.AddWithValue("last_event_time", source.LastEventTime.HasValue ? source.LastEventTime.Value.ToUniversalTime() : (object)DBNull.Value);
+            command.Parameters.AddWithValue("observed_at", source.ObservedAt.HasValue ? source.ObservedAt.Value.ToUniversalTime() : (object)DBNull.Value);
             command.Parameters.AddWithValue("last_record_id", source.LastRecordId.HasValue ? source.LastRecordId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("oldest_record_id", source.OldestRecordId.HasValue ? source.OldestRecordId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("newest_record_id", source.NewestRecordId.HasValue ? source.NewestRecordId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("log_size_bytes", source.LogSizeBytes.HasValue ? source.LogSizeBytes.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("retention_days", source.RetentionDays.HasValue ? source.RetentionDays.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("lag_seconds", source.LagSeconds.HasValue ? source.LagSeconds.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("silence_seconds", source.SilenceSeconds.HasValue ? source.SilenceSeconds.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("event_rate_per_minute", source.EventRatePerMinute.HasValue ? source.EventRatePerMinute.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("error_code", string.IsNullOrWhiteSpace(source.ErrorCode) ? (object)DBNull.Value : source.ErrorCode);
             command.Parameters.AddWithValue("error_message", string.IsNullOrWhiteSpace(source.ErrorMessage) ? (object)DBNull.Value : source.ErrorMessage);
             command.Parameters.AddWithValue("gap_detected", source.GapDetected);
             command.Parameters.AddWithValue("cleared_detected", source.ClearedDetected);
             command.Parameters.AddWithValue("bookmark_gap_detected", source.BookmarkGapDetected);
+            command.Parameters.AddWithValue("gap_count", source.GapCount.HasValue ? source.GapCount.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("permission_denied_since", source.PermissionDeniedSince.HasValue ? source.PermissionDeniedSince.Value.ToUniversalTime() : (object)DBNull.Value);
+            command.Parameters.AddWithValue("recovered_at", source.RecoveredAt.HasValue ? source.RecoveredAt.Value.ToUniversalTime() : (object)DBNull.Value);
+            command.Parameters.AddWithValue("transition_state", string.IsNullOrWhiteSpace(source.TransitionState) ? (object)DBNull.Value : source.TransitionState);
+            command.Parameters.AddWithValue("transitioned_at", source.TransitionedAt.HasValue ? source.TransitionedAt.Value.ToUniversalTime() : (object)DBNull.Value);
+            command.Parameters.AddWithValue("dropped_events", source.DroppedEvents.HasValue ? source.DroppedEvents.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("poison_events", source.PoisonEvents.HasValue ? source.PoisonEvents.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("config_hash", string.IsNullOrWhiteSpace(source.ConfigHash) ? (object)DBNull.Value : source.ConfigHash);
             command.Parameters.AddWithValue("source_version", string.IsNullOrWhiteSpace(source.SourceVersion) ? (object)DBNull.Value : source.SourceVersion);
             command.Parameters.AddWithValue("requirement_kind", string.IsNullOrWhiteSpace(source.Requirement) ? (object)DBNull.Value : source.Requirement);

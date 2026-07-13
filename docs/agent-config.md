@@ -83,10 +83,10 @@ Never place enrollment or per-agent tokens in committed examples. Use ignored lo
 
 ## Queue reliability fields
 
-- `Queue.MaxSizeMb` caps the SQLite queue file.
-- `Queue.WarningSizePercent` emits operator-visible warnings before the cap.
-- `Queue.MaxSendAttempts` controls when repeatedly failing events are moved to the local `poison_events` table so future events can continue draining.
-- `Queue.MaxBackoffSeconds` caps per-event retry backoff.
+- `Queue.MaxSizeMb` caps the SQLite queue file and drives reported `max_size_bytes`/used-percent health.
+- `Queue.WarningSizePercent` emits operator-visible warnings before the cap and maps to the `warning` pressure state; 85%, 95%, and full map to higher queue-pressure states.
+- `Queue.MaxSendAttempts` controls when repeatedly failing events are moved to the local `poison_events` table so future events can continue draining; poison depth and cumulative local poison count are reported without payloads.
+- `Queue.MaxBackoffSeconds` caps per-event retry backoff; send/backoff/recovery timestamps are nullable when unknown and zero is reported only for measured zero values.
 - `InventoryIntervalSeconds` controls how often the agent sends bounded inventory/audit-policy snapshots. The agent sends one snapshot batch soon after startup, then repeats at this interval.
 
 ## Sysmon profile fields
