@@ -15,6 +15,8 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Architecture](architecture.md) - pipeline, agent/server flow, reliability, and security decisions.
 - [Schema design](schema.md) - PostgreSQL tables, indexes, and schema application/validation.
 - [Windows host full-coverage SIEM specification](windows-host-full-coverage-spec.md) - target coverage model and implementation status.
+- [Linux host coverage specification](linux-host-coverage-spec.md) - planned L1-L4 sources, performance SLOs, benchmarks, and rollout gates.
+- [Linux agent security and privacy design](linux-agent-security.md) - planned threat model, least-privilege boundaries, exclusions, and change approval.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.

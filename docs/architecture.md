@@ -86,6 +86,10 @@ Default optional L2/L3 source manifest channels:
 - `Microsoft-Windows-AppLocker/Packaged app-Execution`
 - `Microsoft-Windows-Sysmon/Operational`
 
+## Planned Linux host coverage
+
+Linux collection is not currently implemented or part of the Windows MVP architecture. The authoritative future design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), which defines L1-L4 sources, SLOs, pressure behavior, and rollout gates, and the [Linux agent security design](linux-agent-security.md), which defines least privilege, privacy exclusions, and explicit approval for any host-policy change.
+
 ## Reliability decisions
 
 - Server deduplication is based on `(agent_id, event_id)`.
