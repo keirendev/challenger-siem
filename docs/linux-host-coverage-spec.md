@@ -40,7 +40,7 @@ These sources are mandatory when present on a supported host and must be consume
 | Service and scheduler state | L2 | systemd unit changes, cron/at configuration and execution metadata | Passive logs plus bounded metadata snapshots |
 | Host/security inventory | L2 | OS/kernel, packages, users/groups, services, listeners, mounts, firewall/SSH/MAC/Secure Boot state, and agent permission posture | Bounded current-state snapshots are implemented; inventory-diff events remain planned |
 
-The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file metadata. A non-systemd host reports service/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy. Future passive event collectors must define supported distributions and exact paths/providers through tested source manifests rather than assuming every host uses systemd or a particular log layout.
+The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/units/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file permission/fingerprint metadata. A non-systemd host reports service/unit/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy. Future passive event collectors must define supported distributions and exact paths/providers through tested source manifests rather than assuming every host uses systemd or a particular log layout.
 
 ### Optional advanced sources
 
@@ -66,7 +66,7 @@ The inventory service starts after a default 30-second delay and runs independen
 
 Each snapshot uses one exact state: `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, or `malformed`. Absence, denied access, unsupported applicability, malformed output, and timeouts are visible rather than inferred as healthy. These snapshots use the existing generic `/api/v1/agents/inventory` contract; they do not establish L1/L2 event coverage or change server coverage calculations.
 
-The collection is read-only and does not broadly scan the host. It does not mutate packages, services, audit, firewall, SSH, kernel, AppArmor/SELinux, Secure Boot, or agent permissions. Allowlisted parsers omit secrets and raw source output. Agent configuration/executable ownership, mode, and regular-file status are observable posture only, not cryptographic or tamper-proof integrity.
+The collection is read-only and does not broadly scan the host. It does not mutate packages, services, audit, firewall, SSH, kernel, AppArmor/SELinux, Secure Boot, or agent permissions. Allowlisted parsers omit secrets and raw source output. Agent configuration/executable ownership, mode, regular-file status, and bounded SHA-256 fingerprints are observable change posture only, not trusted or tamper-proof attestation.
 
 ## Role-specific source packs
 

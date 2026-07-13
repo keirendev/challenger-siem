@@ -44,17 +44,20 @@ public sealed class LinuxInventory(
         {
             var notApplicable = new Parsed(InventorySourceState.NotApplicable, Array.Empty<InventoryItem>(), false, "non_systemd", init.Source);
             snapshots.Add(Create("linux_services", agentId, hostname, collectedAt, notApplicable));
+            snapshots.Add(Create("linux_units", agentId, hostname, collectedAt, notApplicable));
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, notApplicable));
         }
         else if (init.Source.State != InventorySourceState.Success)
         {
             var unavailable = new Parsed(init.Source.State, Array.Empty<InventoryItem>(), init.Source.Truncated, init.Source.ErrorCode, init.Source);
             snapshots.Add(Create("linux_services", agentId, hostname, collectedAt, unavailable));
+            snapshots.Add(Create("linux_units", agentId, hostname, collectedAt, unavailable));
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, unavailable));
         }
         else
         {
             snapshots.Add(Create("linux_services", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Services, token, cancellationToken)));
+            snapshots.Add(Create("linux_units", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Units, token, cancellationToken)));
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Timers, token, cancellationToken)));
         }
 

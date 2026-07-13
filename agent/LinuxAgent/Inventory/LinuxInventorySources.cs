@@ -15,6 +15,7 @@ public enum LinuxInventoryOperation
     Groups,
     InitSystem,
     Services,
+    Units,
     Timers,
     DpkgPackages,
     RpmPackages,
@@ -52,10 +53,11 @@ public sealed record InventorySourceResult(
     UnixFileMode? FileMode = null,
     long? FileSize = null,
     uint? FileOwnerId = null,
-    int? ExitCode = null)
+    int? ExitCode = null,
+    string? Sha256 = null)
 {
-    public static InventorySourceResult Success(string? content = null, bool truncated = false, UnixFileMode? mode = null, long? size = null, uint? ownerId = null, int? exitCode = null) =>
-        new(InventorySourceState.Success, "none", content, truncated, mode, size, ownerId, exitCode);
+    public static InventorySourceResult Success(string? content = null, bool truncated = false, UnixFileMode? mode = null, long? size = null, uint? ownerId = null, int? exitCode = null, string? sha256 = null) =>
+        new(InventorySourceState.Success, "none", content, truncated, mode, size, ownerId, exitCode, sha256);
 }
 
 public enum InventorySourceKind { Command, File, FileMetadata }
@@ -97,6 +99,7 @@ public static class LinuxInventoryCatalog
         Command(LinuxInventoryOperation.Groups, new[] { "/usr/bin/getent", "/bin/getent" }, new[] { "group" });
         Command(LinuxInventoryOperation.InitSystem, new[] { "/usr/bin/systemctl", "/bin/systemctl" }, new[] { "is-system-running" }, small, 5, 0, 1);
         Command(LinuxInventoryOperation.Services, new[] { "/usr/bin/systemctl", "/bin/systemctl" }, new[] { "list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain" });
+        Command(LinuxInventoryOperation.Units, new[] { "/usr/bin/systemctl", "/bin/systemctl" }, new[] { "list-units", "--all", "--no-legend", "--no-pager", "--plain" });
         Command(LinuxInventoryOperation.Timers, new[] { "/usr/bin/systemctl", "/bin/systemctl" }, new[] { "list-unit-files", "--type=timer", "--no-legend", "--no-pager" });
         Command(LinuxInventoryOperation.DpkgPackages, new[] { "/usr/bin/dpkg-query" }, new[] { "-W", "-f=${binary:Package}\t${Version}\n" });
         Command(LinuxInventoryOperation.RpmPackages, new[] { "/usr/bin/rpm", "/bin/rpm" }, new[] { "-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\n" });
@@ -111,9 +114,9 @@ public static class LinuxInventoryCatalog
         File(LinuxInventoryOperation.SshConfig, "/etc/ssh/sshd_config");
         Command(LinuxInventoryOperation.AppArmor, new[] { "/usr/sbin/aa-status", "/sbin/aa-status" }, new[] { "--enabled" }, small, 5, 0, 1);
         Command(LinuxInventoryOperation.Selinux, new[] { "/usr/sbin/getenforce", "/sbin/getenforce" }, Array.Empty<string>(), small);
-        Command(LinuxInventoryOperation.SecureBoot, new[] { "/usr/bin/mokutil", "/bin/mokutil" }, new[] { "--sb-state" }, small);
-        File(LinuxInventoryOperation.AgentConfig, "/etc/challenger-siem-agent/agentsettings.json", metadata: true);
-        File(LinuxInventoryOperation.AgentExecutable, "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", metadata: true);
+        Command(LinuxInventoryOperation.SecureBoot, new[] { "/usr/bin/mokutil", "/bin/mokutil" }, new[] { "--sb-state" }, small, 5, 0, 1);
+        File(LinuxInventoryOperation.AgentConfig, "/etc/challenger-siem-agent/agentsettings.json", bytes: 64 * 1024, metadata: true);
+        File(LinuxInventoryOperation.AgentExecutable, "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", bytes: 64 * 1024 * 1024, metadata: true);
         return result;
     }
 }
@@ -264,23 +267,32 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
             }
             UnixFileMode? mode = (UnixFileMode)(metadata.Value.Mode & 0x0fff);
             await using var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: true);
-            if (policy.Kind == InventorySourceKind.FileMetadata)
-                return InventorySourceResult.Success(mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId);
             if (metadata.Value.Size > policy.MaxOutputBytes)
                 return new(InventorySourceState.Malformed, "file_too_large", Truncated: true, FileMode: mode, FileSize: metadata.Value.Size);
-            using var memory = new MemoryStream(Math.Min(policy.MaxOutputBytes, 4096));
+            using var memory = policy.Kind == InventorySourceKind.File ? new MemoryStream(Math.Min(policy.MaxOutputBytes, 4096)) : null;
+            using var hasher = policy.Kind == InventorySourceKind.FileMetadata
+                ? System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256)
+                : null;
             var buffer = new byte[4096];
+            long bytesRead = 0;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(policy.Timeout);
             while (true)
             {
                 var count = await stream.ReadAsync(buffer, timeout.Token);
                 if (count == 0) break;
-                if (memory.Length + count > policy.MaxOutputBytes)
+                bytesRead += count;
+                if (bytesRead > policy.MaxOutputBytes)
                     return new(InventorySourceState.Malformed, "file_too_large", Truncated: true, FileMode: mode, FileSize: metadata.Value.Size);
-                memory.Write(buffer, 0, count);
+                if (hasher is not null) hasher.AppendData(buffer, 0, count);
+                else memory!.Write(buffer, 0, count);
             }
-            return InventorySourceResult.Success(Encoding.UTF8.GetString(memory.ToArray()), mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId);
+            if (hasher is not null)
+            {
+                var hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+                return InventorySourceResult.Success(mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId, sha256: hash);
+            }
+            return InventorySourceResult.Success(Encoding.UTF8.GetString(memory!.ToArray()), mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

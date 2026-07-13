@@ -18,7 +18,7 @@ public sealed class LinuxInventoryTests
         foreach (var policy in LinuxInventoryCatalog.All)
         {
             Assert.InRange(policy.Timeout, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
-            Assert.InRange(policy.MaxOutputBytes, 1, 64 * 1024);
+            Assert.InRange(policy.MaxOutputBytes, 1, policy.Kind == InventorySourceKind.Command ? 64 * 1024 : 64 * 1024 * 1024);
             if (policy.Kind == InventorySourceKind.Command)
             {
                 Assert.NotEmpty(policy.ExecutablePaths);
@@ -45,7 +45,7 @@ public sealed class LinuxInventoryTests
 
         var expected = new[]
         {
-            "linux_host_identity", "linux_users", "linux_groups", "linux_services", "linux_timers", "linux_packages",
+            "linux_host_identity", "linux_users", "linux_groups", "linux_services", "linux_units", "linux_timers", "linux_packages",
             "linux_available_updates", "linux_interfaces", "linux_listeners", "linux_mounts", "linux_firewall", "linux_ssh",
             "linux_mandatory_access_control", "linux_secure_boot", "linux_agent_integrity"
         };
@@ -53,8 +53,11 @@ public sealed class LinuxInventoryTests
         Assert.All(snapshots, snapshot => Assert.Equal("success", snapshot.Summary["state"]));
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_users").Items, item => item.Name == "synthetic-user" && item.Metadata["uid"] == "1001");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_services").Items, item => item.Name == "synthetic-api.service" && item.Status == "active");
+        Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_units").Items, item => item.Name == "synthetic-failed.service" && item.Status == "failed");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_listeners").Items, item => item.Name == "tcp:8443");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_ssh").Items.Single().Metadata, pair => pair.Key == "passwordauthentication" && pair.Value == "no");
+        Assert.All(snapshots.Single(x => x.SnapshotType == "linux_agent_integrity").Items,
+            item => Assert.Matches("^[a-f0-9]{64}$", item.Metadata["sha256"]));
     }
 
     [Fact]
@@ -79,7 +82,19 @@ public sealed class LinuxInventoryTests
         Assert.Equal("not_applicable", snapshots.Single(x => x.SnapshotType == "linux_services").Summary["state"]);
         Assert.Equal("not_applicable", snapshots.Single(x => x.SnapshotType == "linux_timers").Summary["state"]);
         Assert.DoesNotContain(LinuxInventoryOperation.Services, source.Calls);
+        Assert.DoesNotContain(LinuxInventoryOperation.Units, source.Calls);
         Assert.DoesNotContain(LinuxInventoryOperation.Timers, source.Calls);
+    }
+
+    [Fact]
+    public async Task NonEfiSecureBootIsExplicitlyNotApplicable()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.SecureBoot, InventorySourceResult.Success("EFI variables are not supported on this system\n", exitCode: 1));
+        var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(x => x.SnapshotType == "linux_secure_boot");
+        Assert.Equal("not_applicable", snapshot.Summary["state"]);
+        Assert.Equal("non_efi_host", snapshot.Summary["error_code"]);
     }
 
     [Theory]
@@ -271,6 +286,7 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Groups, InventorySourceResult.Success("synthetic-group:x:1001:synthetic-user\n"));
         source.Set(LinuxInventoryOperation.InitSystem, InventorySourceResult.Success("running\n"));
         source.Set(LinuxInventoryOperation.Services, InventorySourceResult.Success("synthetic-api.service loaded active running Synthetic API\nsynthetic-idle.service loaded inactive dead Synthetic idle\n"));
+        source.Set(LinuxInventoryOperation.Units, InventorySourceResult.Success("synthetic-api.service loaded active running Synthetic API\n● synthetic-failed.service loaded failed failed Synthetic failed\nsynthetic-data.mount loaded active mounted Synthetic mount\n"));
         source.Set(LinuxInventoryOperation.Timers, InventorySourceResult.Success("synthetic.timer enabled enabled\n"));
         source.Set(LinuxInventoryOperation.DpkgPackages, InventorySourceResult.Success("synthetic-package\t1.2.3-1\n"));
         source.Set(LinuxInventoryOperation.AptUpdates, InventorySourceResult.Success("Listing...\nsynthetic-package/stable 1.2.4 amd64 [upgradable from: 1.2.3]\n"));
@@ -282,8 +298,9 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.AppArmor, InventorySourceResult.Success());
         source.Set(LinuxInventoryOperation.Selinux, InventorySourceResult.Success("Disabled\n"));
         source.Set(LinuxInventoryOperation.SecureBoot, InventorySourceResult.Success("SecureBoot enabled\n"));
-        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 0));
-        source.Set(LinuxInventoryOperation.AgentExecutable, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, size: 4096, ownerId: 0));
+        var syntheticHash = new string('a', 64);
+        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 0, sha256: syntheticHash));
+        source.Set(LinuxInventoryOperation.AgentExecutable, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, size: 4096, ownerId: 0, sha256: syntheticHash));
         return source;
     }
 

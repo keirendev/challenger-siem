@@ -20,7 +20,7 @@ Each collection produces these snapshot categories:
 
 - `linux_host_identity` for allowlisted operating-system and kernel identity fields;
 - `linux_users` and `linux_groups` for names and numeric IDs only;
-- `linux_services` and `linux_timers` for bounded systemd unit state, or `not_applicable` on a detected non-systemd host;
+- `linux_services`, `linux_units`, and `linux_timers` for bounded systemd state, or `not_applicable` on a detected non-systemd host;
 - `linux_packages` and `linux_available_updates` for package names and versions without repository configuration or content;
 - `linux_interfaces` and `linux_listeners` for interface state and listening protocol/port only;
 - `linux_mounts` for filesystem-type counts without mount paths;
@@ -61,7 +61,7 @@ The collector catalog fixes every executable path candidate, argument list, exac
 
 Parsers serialize only bounded allowlisted fields. They exclude raw stdout/stderr, arbitrary file contents and paths, account descriptions/home directories/shells, group membership, IP addresses, process details, command lines, firewall rules, repository configuration/content, and unapproved SSH directives. Errors and logs contain stable types/codes rather than source output.
 
-Collection is strictly observational: it does not install tools, refresh package metadata, alter services, audit policy, firewall rules, SSH settings, kernel state, AppArmor/SELinux policy, Secure Boot, file ownership, or file modes. The `linux_agent_integrity` category reports observable file metadata only. It is not cryptographic attestation, does not currently hash files, and is not tamper-proof against a privileged or kernel-level adversary; heartbeat gaps and permission drift remain review signals rather than proof of integrity.
+Collection is strictly observational: it does not install tools, refresh package metadata, alter services, audit policy, firewall rules, SSH settings, kernel state, AppArmor/SELinux policy, Secure Boot, file ownership, or file modes. The `linux_agent_integrity` category reports observable ownership/mode plus bounded SHA-256 fingerprints for the two fixed agent files. These fingerprints support change review but are not trusted attestation and are not tamper-proof against a privileged or kernel-level adversary; heartbeat gaps, fingerprint changes, and permission drift remain review signals rather than proof of integrity.
 
 ## Safe lifecycle
 

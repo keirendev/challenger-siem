@@ -13,6 +13,9 @@ public static class LinuxInventoryParsers
     {
         if (source.State != InventorySourceState.Success)
             return (source.State, Array.Empty<InventoryItem>(), source.Truncated, source.ErrorCode);
+        if (operation == LinuxInventoryOperation.SecureBoot
+            && source.Content?.Contains("EFI variables are not supported", StringComparison.OrdinalIgnoreCase) == true)
+            return (InventorySourceState.NotApplicable, Array.Empty<InventoryItem>(), source.Truncated, "non_efi_host");
 
         IReadOnlyList<InventoryItem>? parsed = operation switch
         {
@@ -20,7 +23,8 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.Kernel => ParseKernel(source.Content),
             LinuxInventoryOperation.Users => ParseAccounts(source.Content, false),
             LinuxInventoryOperation.Groups => ParseAccounts(source.Content, true),
-            LinuxInventoryOperation.Services => ParseServices(source.Content),
+            LinuxInventoryOperation.Services => ParseServices(source.Content, "service"),
+            LinuxInventoryOperation.Units => ParseServices(source.Content, "unit"),
             LinuxInventoryOperation.Timers => ParseTimers(source.Content),
             LinuxInventoryOperation.DpkgPackages or LinuxInventoryOperation.RpmPackages => ParsePackages(source.Content),
             LinuxInventoryOperation.AptUpdates => ParseAptUpdates(source.Content),
@@ -98,20 +102,20 @@ public static class LinuxInventoryParsers
         return items;
     }
 
-    private static IReadOnlyList<InventoryItem>? ParseServices(string? content)
+    private static IReadOnlyList<InventoryItem>? ParseServices(string? content, string kind)
     {
         if (content is null) return null;
         var items = new List<InventoryItem>();
         foreach (var line in Lines(content))
         {
-            var fields = SplitFields(line);
-            if (fields.Length < 4 || !fields[0].EndsWith(".service", StringComparison.Ordinal)) continue;
+            var fields = SplitFields(line.TrimStart('●', ' '));
+            if (fields.Length < 4 || (kind == "service" && !fields[0].EndsWith(".service", StringComparison.Ordinal))) continue;
             var name = SafeUnit(fields[0]);
             var load = SafeEnum(fields[1], "loaded", "not-found", "masked");
             var active = SafeEnum(fields[2], "active", "inactive", "failed", "activating", "deactivating", "reloading");
             var sub = SafeToken(fields[3]);
             if (name is null || load is null || active is null || sub is null) continue;
-            items.Add(Item("service", name, active, new Dictionary<string, string> { ["load_state"] = load, ["sub_state"] = sub }));
+            items.Add(Item(kind, name, active, new Dictionary<string, string> { ["load_state"] = load, ["sub_state"] = sub }));
         }
         return items;
     }
@@ -276,11 +280,13 @@ public static class LinuxInventoryParsers
         if (!source.FileMode.HasValue || !source.FileSize.HasValue || source.FileSize < 0 || !source.FileOwnerId.HasValue) return null;
         var actual = source.FileMode.Value;
         var status = actual == expected && source.FileOwnerId == 0 ? "expected_permissions" : "permission_drift";
+        if (source.Sha256 is null || source.Sha256.Length != 64 || !source.Sha256.All(char.IsAsciiHexDigit)) return null;
         return new[] { Item("agent_integrity", name, status, new Dictionary<string, string>
         {
             ["mode"] = Convert.ToString((int)actual, 8),
             ["owner_id"] = source.FileOwnerId.Value.ToString(CultureInfo.InvariantCulture),
-            ["regular_file"] = "true"
+            ["regular_file"] = "true",
+            ["sha256"] = source.Sha256
         }) };
     }
 
