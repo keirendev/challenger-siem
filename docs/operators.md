@@ -115,6 +115,8 @@ Agent heartbeats can include source manifests and per-channel health. The server
 - [windows-agent-installer.md](windows-agent-installer.md) for plan/install/upgrade/repair/validate/uninstall and guarded prerequisite/Sysmon management.
 - [sysmon-l3-validation-runbook.md](sysmon-l3-validation-runbook.md) for safe Sysmon validation.
 
+Linux collection is future work, not an available deployment path. Operators evaluating that design should review the [planned Linux coverage levels, SLOs, and soak/rollback gates](linux-host-coverage-spec.md) together with the [least-privilege, privacy, and explicit-change-approval requirements](linux-agent-security.md). Do not mutate a Linux host's audit, firewall, authentication, kernel, service, or security policy on the basis of these planning documents.
+
 ## Routine operations
 
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
