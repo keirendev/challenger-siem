@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../agent/WindowsAgent/WindowsAgent.csproj" />
+    <ProjectReference Include="../../agent/Agent.Core/Agent.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

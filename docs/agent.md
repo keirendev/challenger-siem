@@ -161,3 +161,8 @@ These files should be protected to Administrators and SYSTEM when installed. Use
 - Optional L2/L3 channels are represented in the source manifest and report `missing`/`error` source-health status when unavailable or unreadable.
 - Default `StartAtEndWhenNoState: true` prevents a first-run flood. For bounded lab collection tests, set it to `false` only in ignored temporary configs.
 - The safety runbook avoids reboots, firewall/authentication changes, event-log clearing, and deleting operator data. If a service uninstall must be demonstrated, use a disposable lab and explicit operator approval; the default uninstall script preserves data unless `-RemoveData` is supplied.
+
+
+## Reliability implementation boundary
+
+The Windows process uses `Agent.Core` for its queue, transport, serialization, deterministic IDs, configuration hashing, acknowledgement handling, and retry schedule. Windows-only collection, secret protection, checkpoint path selection, and service integration remain in `WindowsAgent`; there is no second queue or transport path. Queue records survive process restart, duplicate enqueue is suppressed by agent/event identity, and only explicitly accepted or duplicate acknowledgements are deleted after partial responses.

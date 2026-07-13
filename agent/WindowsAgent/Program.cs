@@ -1,10 +1,10 @@
 using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
-using Challenger.Siem.WindowsAgent.Queue;
+using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Services;
 using Challenger.Siem.WindowsAgent.State;
-using Challenger.Siem.WindowsAgent.Transport;
+using Challenger.Siem.Agent.Core.Transport;
 using Microsoft.Extensions.Options;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -53,9 +53,23 @@ builder.Services.AddSingleton(new AgentConfigFile(configPath));
 builder.Services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
 builder.Services.AddSingleton<IWindowsEventCollector, WindowsEventCollector>();
 builder.Services.AddSingleton<IChannelStateStore, JsonChannelStateStore>();
-builder.Services.AddSingleton<IEventQueue, SqliteEventQueue>();
+builder.Services.AddSingleton<IEventQueue>(services =>
+{
+    var queue = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentOptions>>().Value.Queue;
+    return new SqliteEventQueue(
+        new AgentQueueOptions
+        {
+            Path = queue.Path,
+            MaxSizeMb = queue.MaxSizeMb,
+            MaxSendAttempts = queue.MaxSendAttempts,
+            MaxBackoffSeconds = queue.MaxBackoffSeconds,
+            WarningSizePercent = queue.WarningSizePercent
+        },
+        services.GetRequiredService<ILogger<SqliteEventQueue>>());
+});
 builder.Services.AddSingleton<AgentRuntimeState>();
 builder.Services.AddSingleton<AgentEnrollmentService>();
+builder.Services.AddSingleton<IAgentTransportConfiguration>(services => services.GetRequiredService<IOptions<AgentOptions>>().Value);
 builder.Services.AddHttpClient<SiemIngestClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<AgentOptions>>().Value;

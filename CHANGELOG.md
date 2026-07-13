@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Extracted a platform-neutral Agent.Core reliability library for the durable queue, v1 transport, acknowledgement/retry handling, deterministic identity, serialization, and configuration hashing while preserving the Windows agent collection/checkpoint semantics.
+
 - Added numbered idempotent PostgreSQL migrations, multi-platform event persistence/search, portable-source indexes, and authenticated managed event-storage accounting while preserving Windows v1 rows and semantics.
 
 - Added backward-compatible v1 cross-platform telemetry contracts with Linux-native journal/audit sources and platform-neutral Windows-or-Linux inventory-diff/agent-health sources, including explicit source/checkpoint/deduplication/applicability/health metadata, bounded structured concepts and raw-data handling, old-valid Windows boundary regressions, synthetic schema/golden validation, and an honest storage-migration boundary while preserving the exact legacy Windows Event Log payload allowances and semantics.

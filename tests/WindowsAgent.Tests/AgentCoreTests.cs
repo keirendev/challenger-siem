@@ -2,10 +2,10 @@ using System.Text.Json;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
-using Challenger.Siem.WindowsAgent.Queue;
+using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.WindowsAgent.State;
 using Challenger.Siem.WindowsAgent.Time;
-using Challenger.Siem.WindowsAgent.Util;
+using Challenger.Siem.Agent.Core.Util;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -164,17 +164,14 @@ public sealed class AgentCoreTests
     private static SqliteEventQueue CreateQueue(string path, int maxSizeMb = 512)
     {
         return new SqliteEventQueue(
-            Options.Create(new AgentOptions
+            new AgentQueueOptions
             {
-                Queue = new QueueOptions
-                {
-                    Path = path,
-                    MaxSizeMb = maxSizeMb,
-                    MaxSendAttempts = 3,
-                    MaxBackoffSeconds = 300,
-                    WarningSizePercent = 80
-                }
-            }),
+                Path = path,
+                MaxSizeMb = maxSizeMb,
+                MaxSendAttempts = 3,
+                MaxBackoffSeconds = 300,
+                WarningSizePercent = 80
+            },
             NullLogger<SqliteEventQueue>.Instance);
     }
 

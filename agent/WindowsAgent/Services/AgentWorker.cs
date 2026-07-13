@@ -4,11 +4,12 @@ using Challenger.Siem.WindowsAgent.Collectors;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Coverage;
 using Challenger.Siem.WindowsAgent.Inventory;
-using Challenger.Siem.WindowsAgent.Queue;
-using Challenger.Siem.WindowsAgent.Security;
+using Challenger.Siem.Agent.Core.Queue;
+using Challenger.Siem.Agent.Core.Reliability;
+using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.WindowsAgent.State;
 using Challenger.Siem.WindowsAgent.Time;
-using Challenger.Siem.WindowsAgent.Transport;
+using Challenger.Siem.Agent.Core.Transport;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.WindowsAgent.Services;
@@ -218,28 +219,7 @@ public sealed class AgentWorker(
         IngestBatchResponse acknowledgement,
         CancellationToken cancellationToken)
     {
-        var acknowledgedEventIds = acknowledgement.AcceptedEventIds
-            .Concat(acknowledgement.DuplicateEventIds)
-            .ToHashSet();
-
-        long[] queueIds;
-        if (acknowledgedEventIds.Count > 0)
-        {
-            queueIds = batch
-                .Where(item => acknowledgedEventIds.Contains(item.Envelope.EventId))
-                .Select(item => item.QueueId)
-                .ToArray();
-        }
-        else if (acknowledgement.Rejected == 0 && acknowledgement.Accepted + acknowledgement.Duplicates >= batch.Count)
-        {
-            // Backward-compatible fallback for older v1 servers that return counts but not event IDs.
-            queueIds = batch.Select(item => item.QueueId).ToArray();
-        }
-        else
-        {
-            queueIds = Array.Empty<long>();
-        }
-
+        var queueIds = IngestAcknowledgement.AcknowledgedQueueIds(batch, acknowledgement);
         await queue.DeleteAsync(queueIds, cancellationToken);
         return queueIds.Length;
     }
@@ -249,16 +229,8 @@ public sealed class AgentWorker(
         IngestBatchResponse acknowledgement,
         CancellationToken cancellationToken)
     {
-        if (acknowledgement.RejectedEventIds.Count == 0)
-        {
-            return 0;
-        }
-
-        var rejectedEventIds = acknowledgement.RejectedEventIds.ToHashSet();
-        var rejectedQueueIds = batch
-            .Where(item => rejectedEventIds.Contains(item.Envelope.EventId))
-            .Select(item => item.QueueId)
-            .ToArray();
+        var rejectedQueueIds = IngestAcknowledgement.RejectedQueueIds(batch, acknowledgement);
+        if (rejectedQueueIds.Length == 0) return 0;
         await queue.MarkPoisonAsync(rejectedQueueIds, "server_rejected", cancellationToken);
         return rejectedQueueIds.Length;
     }
@@ -302,14 +274,14 @@ public sealed class AgentWorker(
                 QueueDepth = await queue.CountAsync(cancellationToken),
                 CpuPercent = null,
                 MemoryMb = Convert.ToInt32(GC.GetTotalMemory(forceFullCollection: false) / 1024L / 1024L),
-                ConfigHash = AgentConfigurationHasher.ComputeHash(configFile),
+                ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(configFile.Path),
                 QueueMetrics = await queue.GetMetricsAsync(runtimeState.LastSuccessfulSendTime, cancellationToken),
                 SourceManifest = WindowsSourceManifest.Build(options.Channels, options.OptionalChannels),
                 SourceHealth = await ProbeSourceHealthAsync(cancellationToken),
                 TamperChecks = new TamperCheckSummary
                 {
                     BinaryHash = AgentConfigurationHasher.ComputeFileHash(Environment.ProcessPath ?? string.Empty),
-                    ConfigHash = AgentConfigurationHasher.ComputeHash(configFile),
+                    ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(configFile.Path),
                     AclStatus = "not_evaluated",
                     SignatureStatus = "not_evaluated"
                 }

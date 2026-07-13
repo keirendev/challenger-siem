@@ -1,15 +1,18 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Challenger.Siem.Contracts.V1;
-using Challenger.Siem.WindowsAgent.Config;
-using Challenger.Siem.WindowsAgent.Serialization;
-using Microsoft.Extensions.Options;
+using Challenger.Siem.Agent.Core.Serialization;
 
-namespace Challenger.Siem.WindowsAgent.Transport;
+namespace Challenger.Siem.Agent.Core.Transport;
 
-public sealed class SiemIngestClient(HttpClient httpClient, IOptions<AgentOptions> options)
+public interface IAgentTransportConfiguration
 {
-    private readonly AgentOptions options = options.Value;
+    string AgentId { get; }
+    string ApiToken { get; }
+}
+
+public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfiguration options)
+{
 
     public async Task<AgentRegistrationResponse> RegisterAsync(
         AgentRegistrationRequest registration,
