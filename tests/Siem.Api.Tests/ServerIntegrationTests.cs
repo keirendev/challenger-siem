@@ -27,7 +27,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         var username=$"synthetic-operator-{Guid.NewGuid():N}"; var initial="Synthetic-Initial1!"; var recovered="Synthetic-Recovered2!";
         var op=await repository.CreateAsync(username,"Synthetic Operator",Challenger.Siem.Api.Auth.OperatorRoles.Analyst,initial,false,CancellationToken.None);
         var login=await repository.AuthenticatePasswordAsync(username,initial,CancellationToken.None);Assert.Equal("success",login.Status);Assert.NotNull(await repository.ValidateSessionAsync(login.SessionToken!,CancellationToken.None));
-        await using(var expire=dataSource.CreateCommand("update operator_sessions set expires_at=now()-interval '1 second' where session_id=@id")){expire.Parameters.AddWithValue("id",login.Session!.SessionId);await expire.ExecuteNonQueryAsync();}
+        await using(var expire=dataSource.CreateCommand("update operator_sessions set created_at=now()-interval '8 hours 1 second', expires_at=now()-interval '1 second' where session_id=@id")){expire.Parameters.AddWithValue("id",login.Session!.SessionId);await expire.ExecuteNonQueryAsync();}
         Assert.Null(await repository.ValidateSessionAsync(login.SessionToken!,CancellationToken.None));
         var active=await repository.AuthenticatePasswordAsync(username,initial,CancellationToken.None);await repository.ChangePasswordAsync(op.OperatorId,recovered,true,CancellationToken.None);Assert.Null(await repository.ValidateSessionAsync(active.SessionToken!,CancellationToken.None));
         for(var i=0;i<Challenger.Siem.Api.Database.OperatorRepository.LockoutAttempts;i++)await repository.AuthenticatePasswordAsync(username,"Synthetic-Wrong9!",CancellationToken.None);
