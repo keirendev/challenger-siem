@@ -1,14 +1,14 @@
 # ADR: optional Linux L3 telemetry selection
 
-Status: adopted narrow design, no collector shipped
+Status: adopted narrow design; explicit-opt-in self-integrity snapshot implemented
 Date: 2026-07-14
 Scope: Linux L3 audit, eBPF, and file-integrity telemetry spike
 
 ## Decision summary
 
-Challenger SIEM will **not** add or enable Linux audit, eBPF, or live file-integrity collection in this change. The supported Linux endpoint remains the existing passive L1 journal reader, opt-in L2 logical journal classification, and bounded read-only inventory. No audit rules, audit backlog settings, kernel parameters, capabilities, packages, modules, firewall/authentication/security policy, fanotify/inotify watches, IMA policy, or file-integrity watches are installed or changed.
+Challenger SIEM does **not** add or enable Linux audit, eBPF, broad/live file-integrity collection, or any host-policy mutation. The supported Linux endpoint remains the existing passive L1 journal reader, opt-in L2 logical journal classification, bounded read-only inventory, and a disabled-by-default explicit-opt-in L3 snapshot-based agent self-integrity source. No audit rules, audit backlog settings, kernel parameters, capabilities, packages, modules, firewall/authentication/security policy, fanotify/inotify watches, IMA policy, or live file-integrity watches are installed or changed.
 
-For the next Linux L3 implementation candidate, choose only a **snapshot-based, allowlisted agent self-integrity design**. Defer audit integration and eBPF until private compatibility and resource evidence exists. Reject broad or live file-integrity monitoring as an L3 default.
+The only implemented Linux L3 candidate is the **snapshot-based, allowlisted agent self-integrity design** described below. Audit integration and eBPF remain deferred until private compatibility and resource evidence exists. Broad or live file-integrity monitoring remains rejected as an L3 default.
 
 | Option | Decision | Reason |
 | --- | --- | --- |
@@ -148,13 +148,13 @@ No host measurement was performed. The ringbuf documentation supports efficient 
 | IMA/EVM measurements | Defer. Useful for high-assurance environments already operating IMA, but template/policy/boot-time configuration is host security policy and not an agent default. |
 | Broad third-party FIM tools | Reject for this product path. They add separate policy engines, package/runtime dependencies, and duplicate collection paths outside the current agent reliability model. |
 
-### Selected narrow design for future implementation
+### Selected narrow design implemented for explicit opt-in
 
-Adopt only this concept for a later implementation task; this ADR does not implement it.
+This concept is implemented as a disabled-by-default Linux agent source. Operator approval and private soak remain separate rollout gates.
 
 **Name:** `linux-agent-self-integrity-snapshot`
 
-**Default:** disabled until explicit operator opt-in. If implemented, it may be offered as an L3 source candidate but must not be mandatory for L1/L2.
+**Default:** disabled until explicit operator opt-in. It is offered as an optional L3 source and is never mandatory for L1/L2.
 
 **Exact built-in allowlist:**
 
@@ -218,7 +218,7 @@ No symlinks, hard-link surprises, devices, FIFOs, sockets, secret stores, browse
 
 ### Decision
 
-**Adopt the narrow snapshot design for future implementation only; defer broader allowlisted FIM and reject broad/live defaults.** This is the only selected concept from this spike and is intentionally small enough to preserve the no-mutation boundary.
+**Implement only the narrow snapshot design behind explicit opt-in; defer broader allowlisted FIM and reject broad/live defaults.** This is the only selected concept from this spike and is intentionally small enough to preserve the no-mutation boundary.
 
 ## Resource and overhead conclusion
 
@@ -228,11 +228,10 @@ This issue performed design/load analysis only. Existing repository tests alread
 
 - Audit and IMA are best treated as integrations with host-owned security policy, not agent-managed features.
 - eBPF is a separate native/kernel compatibility product surface requiring signed objects, native dependencies, capability design, and rollback tooling.
-- Snapshot self-integrity reuses existing product concepts and has the smallest maintenance surface, but still requires implementation review before release.
+- Snapshot self-integrity reuses existing product concepts and has the smallest maintenance surface, but still requires separate operator approval and private #208 soak/review before rollout recommendation.
 
 ## Validation and cleanup for this ADR
 
-- No prototype was added.
-- No runtime dependency was added.
+- The explicit-opt-in snapshot collector uses existing .NET/POSIX file APIs and no new runtime dependency.
 - No package, policy, kernel, audit, firewall, authentication, service, or security setting was changed.
 - Future tasks must keep private host evidence under ignored local/runtime paths and publish only synthetic aggregate summaries.

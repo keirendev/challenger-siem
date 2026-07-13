@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Contracts.V1;
 using Npgsql;
 using NpgsqlTypes;
@@ -29,7 +30,8 @@ public sealed record ManagedStorageAccounting(
     DateTimeOffset? NewestEventTime,
     long? OldestEventAgeSeconds,
     string RetentionLagState,
-    long? RetentionLagSeconds);
+    long? RetentionLagSeconds,
+    IReadOnlyList<ManagedTelemetryTableAccounting> ManagedTables);
 
 public sealed class EventRepository(NpgsqlDataSource dataSource)
 {
@@ -356,26 +358,70 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         };
     }
 
-    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingAsync(long capacityBytes, CancellationToken cancellationToken)
+    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingAsync(long capacityBytes, CancellationToken cancellationToken, int targetRetentionDays = 30)
     {
-        var boundedCapacityBytes = Math.Clamp(capacityBytes, 1L * 1024 * 1024 * 1024, 10_000L * 1024 * 1024 * 1024);
+        var boundedCapacityBytes = Math.Clamp(capacityBytes, 1024, ManagedRetentionOptions.HardManagedCapacityBytes);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select pg_relation_size('public.events'), pg_indexes_size('public.events'),
-                   pg_total_relation_size('public.events'), count(*), min(event_time) as oldest_event_time, max(event_time) as newest_event_time from events;
+            select * from (
+                select 'events' as table_name, count(*)::bigint as row_count, coalesce(sum(pg_column_size(events.*)),0)::bigint as live_bytes,
+                       pg_relation_size('public.events')::bigint as relation_bytes, pg_indexes_size('public.events')::bigint as index_bytes,
+                       pg_total_relation_size('public.events')::bigint as total_relation_bytes,
+                       min(event_time) as oldest_time, max(event_time) as newest_time
+                from events
+                union all
+                select 'agent_heartbeats', count(*)::bigint, coalesce(sum(pg_column_size(agent_heartbeats.*)),0)::bigint,
+                       pg_relation_size('public.agent_heartbeats')::bigint, pg_indexes_size('public.agent_heartbeats')::bigint,
+                       pg_total_relation_size('public.agent_heartbeats')::bigint,
+                       min(heartbeat_time), max(heartbeat_time)
+                from agent_heartbeats
+                union all
+                select 'asset_inventory_snapshots', count(*)::bigint, coalesce(sum(pg_column_size(asset_inventory_snapshots.*)),0)::bigint,
+                       pg_relation_size('public.asset_inventory_snapshots')::bigint, pg_indexes_size('public.asset_inventory_snapshots')::bigint,
+                       pg_total_relation_size('public.asset_inventory_snapshots')::bigint,
+                       min(collected_at), max(collected_at)
+                from asset_inventory_snapshots
+                union all
+                select 'ingestion_errors', count(*)::bigint, coalesce(sum(pg_column_size(ingestion_errors.*)),0)::bigint,
+                       pg_relation_size('public.ingestion_errors')::bigint, pg_indexes_size('public.ingestion_errors')::bigint,
+                       pg_total_relation_size('public.ingestion_errors')::bigint,
+                       min(error_time), max(error_time)
+                from ingestion_errors
+            ) managed
+            order by table_name;
             """;
+        var tables = new List<ManagedTelemetryTableAccounting>();
+        DateTimeOffset? oldest = null;
+        DateTimeOffset? newest = null;
+        long eventRows = 0;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        await reader.ReadAsync(cancellationToken);
-        var totalBytes = reader.GetInt64(2);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var tableName = reader.GetString(0);
+            var rowCount = reader.GetInt64(1);
+            var liveBytes = reader.GetInt64(2);
+            var relationBytes = reader.GetInt64(3);
+            var indexBytes = reader.GetInt64(4);
+            var totalRelationBytes = reader.GetInt64(5);
+            tables.Add(new ManagedTelemetryTableAccounting(tableName, rowCount, liveBytes, relationBytes, indexBytes, totalRelationBytes));
+            if (tableName == "events") eventRows = rowCount;
+            oldest = MinDateTime(oldest, ReadNullableDateTimeOffset(reader, "oldest_time"));
+            newest = MaxDateTime(newest, ReadNullableDateTimeOffset(reader, "newest_time"));
+        }
+
+        var tableBytes = tables.Sum(item => item.LiveBytes);
+        var indexTotalBytes = tables.Sum(item => item.IndexBytes);
+        var totalBytes = tableBytes + indexTotalBytes;
         var measuredAt = DateTimeOffset.UtcNow;
-        var oldest = ReadNullableDateTimeOffset(reader, "oldest_event_time");
-        var newest = ReadNullableDateTimeOffset(reader, "newest_event_time");
+        var targetRetentionSeconds = Math.Clamp(targetRetentionDays, 1, 3650) * 24L * 60 * 60;
+        var retentionLagSeconds = oldest.HasValue ? Math.Max(0, (long)Math.Floor((measuredAt - oldest.Value).TotalSeconds) - targetRetentionSeconds) : (long?)null;
+        var retentionLagState = retentionLagSeconds is null or <= 0 ? "within_target" : "expired_telemetry_present";
         return new(
-            reader.GetInt64(0),
-            reader.GetInt64(1),
+            tableBytes,
+            indexTotalBytes,
             totalBytes,
-            reader.GetInt64(3),
+            eventRows,
             measuredAt,
             boundedCapacityBytes,
             CalculateUsedPercent(totalBytes, boundedCapacityBytes),
@@ -384,8 +430,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             oldest,
             newest,
             oldest.HasValue ? Math.Max(0, (long)Math.Floor((measuredAt - oldest.Value).TotalSeconds)) : null,
-            "retention_policy_not_enabled",
-            null);
+            retentionLagState,
+            retentionLagSeconds,
+            tables);
     }
 
     public static string CalculateStorageWarningState(long totalBytes, long capacityBytes)
@@ -399,16 +446,20 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             : "normal";
     }
 
-    private static IReadOnlyList<StorageQuotaThreshold> BuildStorageThresholds(long capacityBytes) => new[]
+    public static IReadOnlyList<StorageQuotaThreshold> BuildStorageThresholds(long capacityBytes) => new[]
     {
         new StorageQuotaThreshold(70, capacityBytes * 70 / 100, "warning_70"),
         new StorageQuotaThreshold(85, capacityBytes * 85 / 100, "warning_85"),
-        new StorageQuotaThreshold(95, capacityBytes * 95 / 100, "critical_95")
+        new StorageQuotaThreshold(95, capacityBytes * 95 / 100, "critical_95"),
+        new StorageQuotaThreshold(100, capacityBytes, "over_capacity")
     };
 
     private static decimal CalculateUsedPercent(long totalBytes, long capacityBytes) => capacityBytes <= 0
         ? 0
         : Math.Round(totalBytes * 100m / capacityBytes, 3, MidpointRounding.AwayFromZero);
+
+    private static DateTimeOffset? MinDateTime(DateTimeOffset? left, DateTimeOffset? right) => !left.HasValue ? right : !right.HasValue ? left : left.Value <= right.Value ? left : right;
+    private static DateTimeOffset? MaxDateTime(DateTimeOffset? left, DateTimeOffset? right) => !left.HasValue ? right : !right.HasValue ? left : left.Value >= right.Value ? left : right;
 
     private static string? ReadNullableString(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
     private static int? ReadNullableInt32(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt32(reader.GetOrdinal(name));

@@ -16,6 +16,11 @@
     "required_sources": { "type": "array", "items": { "type": "string" } },
     "required_fields": { "type": "array", "items": { "type": "string" } },
     "mitre_attack": { "type": "array", "items": { "type": "string" } },
+    "tactics": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+    "correlation_window_seconds": { "type": "integer", "minimum": 0, "maximum": 604800 },
+    "suppression_keys": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+    "false_positive_notes": { "type": "string", "maxLength": 4000 },
+    "response_guidance": { "type": "string", "maxLength": 4000 },
     "enabled": { "type": "boolean" }
   }
 }

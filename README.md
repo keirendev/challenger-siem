@@ -5,11 +5,11 @@ Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoin
 ## Current capabilities
 
 - Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
-- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, passive cursor-based L1 journald collection, and an opt-in L2 security source pack for login/session, SSH, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper activity.
+- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, passive cursor-based L1 journald collection, an opt-in L2 security source pack, and a disabled-by-default explicit-opt-in L3 agent self-integrity snapshot for strict agent-owned paths only.
 - Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
-- PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
-- Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`.
+- PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, `soc-agent` persistence, and managed telemetry retention with dry-run/status surfaces.
+- Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`, with bounded prerequisite-aware Linux server-side detection alerts.
 - Role-protected web console for dashboard review, agent inventory, host coverage/source health with telemetry completeness and detection prerequisite status, event search/detail, alert skeletons, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
 - Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
 

@@ -53,7 +53,8 @@ Open the API base URL in a browser, log in with a synthetic operator username/pa
 - `/events` for event search.
 - `/events/detail?agent_id=<id>&event_id=<uuid>` for raw JSON and normalized fields.
 - `/about` for version/environment/database status.
-- `/api/v1/storage/accounting` with an admin operator API token for managed storage bytes, 100 GiB default capacity, 70/85/95% warning state, and retention-lag status without connection details.
+- `/api/v1/storage/accounting` with an admin operator API token for managed telemetry bytes, 100 GiB default capacity, 70/85/95/100% warning state, and retention-lag status without connection details.
+- `/api/v1/storage/retention/status` and `/api/v1/storage/retention/run` for dry-run-first managed telemetry retention. Execute mode is bounded, advisory-locked, resumable, and scoped only to allowlisted managed telemetry rows.
 - `/graphs` for saved investigation graphs with bounded nodes/edges and approval-gated `soc-agent` proposals.
 - `/soc-agent` for bounded chat-based SIEM investigation with provider status, graph context, and citations.
 
@@ -100,7 +101,47 @@ Synthetic investigation graphs can also be selected explicitly when they are not
 
 The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Web smoke creates a synthetic `soc-agent` chat tied to its per-run agent ID, so opt-in cleanup removes that chat history too. Cleanup output remains aggregate-only under `.local/`.
 
-## 5. Fresh-start reset for a disposable local test environment
+## 5. Managed telemetry retention
+
+Use managed retention for day-two SIEM telemetry lifecycle, not for ad-hoc cleanup of operators, configuration, cases, or arbitrary data. Defaults are a 30-day target retention and a 100 GiB managed telemetry capacity ceiling.
+
+Check accounting and status with an admin operator API token:
+
+```bash
+curl --silent --fail \
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" \
+  http://127.0.0.1:5081/api/v1/storage/accounting
+
+curl --silent --fail \
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" \
+  http://127.0.0.1:5081/api/v1/storage/retention/status
+```
+
+Preview cleanup first. Dry-run reports eligible managed tables, categories, estimated bytes, and oldest/newest intervals without deleting:
+
+```bash
+curl --silent --fail \
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"dry_run":true}' \
+  http://127.0.0.1:5081/api/v1/storage/retention/run
+```
+
+Execute only after confirming the target database and output. Runs acquire a PostgreSQL advisory lock and delete in small bounded transactions. If a run reports `bounded_incomplete` or is interrupted, rerun the same command; remaining eligible rows resume idempotently.
+
+```bash
+curl --silent --fail \
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"dry_run":false}' \
+  http://127.0.0.1:5081/api/v1/storage/retention/run
+```
+
+When accounting reaches the configured ceiling, emergency cleanup is deterministic: optional ingestion/heartbeat/inventory history and optional extended events are removed before mandatory event telemetry, oldest first, with exact removed categories and intervals in the response. Alert and evidence rows are not deleted; evidence responses expose whether underlying event telemetry is retained, removed by retention, or missing for another reason.
+
+Do not point retention at non-disposable test databases during validation unless that database is the intended SIEM target. Retention never deletes files, schemas, operators, sessions, security audit, agents, source-health current state, detections, alerts/evidence, graphs, `soc-agent` history, or arbitrary records.
+
+## 6. Fresh-start reset for a disposable local test environment
 
 Use the full reset workflow only when you want a clean, empty Challenger SIEM test environment. Choose the least destructive path:
 
@@ -148,14 +189,14 @@ curl --silent --fail http://127.0.0.1:5081/health
 
 Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/config removal, service uninstall, event-log clearing, host reboot, firewall/auth changes, or remote deletion require separate explicit operator approval and a scoped runbook.
 
-## 6. Use investigation graphs and soc-agent chat safely
+## 7. Use investigation graphs and soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/graphs`, create a graph with synthetic or bounded operator-authored context, and add nodes/edges that reference SIEM pages instead of copying raw telemetry.
 3. On a graph detail page, use the `soc-agent` proposal form only for bounded suggested updates. Review the diff and check the approval box before applying; no graph mutation occurs from a proposal alone.
 4. Archive graphs when they should leave the active investigation list.
 
-## 7. Use soc-agent chat safely
+## 8. Use soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/soc-agent` and confirm the provider status pill or any inline provider notice.
@@ -163,7 +204,7 @@ Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/confi
 4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is ChatGPT subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) using either Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` for the ChatGPT Codex Responses backend, or a dedicated `SocAgent__SubscriptionAuthFilePath` for the OpenAI API path; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes the returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
-## 8. Retire stale lab agents safely
+## 9. Retire stale lab agents safely
 
 Use the web console instead of destructive database deletes when old smoke-test or lab registrations inflate inventory counts:
 
@@ -175,7 +216,7 @@ Use the web console instead of destructive database deletes when old smoke-test 
 
 Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
 
-## 9. Prepare Windows agent package
+## 10. Prepare Windows agent package
 
 ```bash
 ./scripts/publish-windows-agent.sh
@@ -189,7 +230,7 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
 
 Copy only the generated executable, ignored generated `agentsettings.json`, and optional `Sysmon/` profile from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
 
-## 10. Windows service install/start/stop
+## 11. Windows service install/start/stop
 
 Preview without changing the host:
 
@@ -221,7 +262,7 @@ Uninstall through the same workflow preserves data by default:
 
 Use `-RemoveData` only for disposable lab cleanup after explicit approval. Use `-ConfigurePrerequisites`, `-ConfigurePrivacySensitiveAuditPolicy`, and `-ManageSysmon` only after reviewing [the installer workflow](windows-agent-installer.md) and obtaining host-mutation approval.
 
-## 11. Windows lab E2E validation
+## 12. Windows lab E2E validation
 
 Authorized current lab VM: `192.168.122.240`.
 
@@ -245,16 +286,16 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 
 ## Linux agent lifecycle and L2 canary preparation
 
-Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) is a design decision record only; it does not add Linux audit, eBPF, or file-integrity lifecycle steps.
+Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, live file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) permits only the explicit-opt-in agent self-integrity snapshot; it does not add Linux audit, eBPF, broad/live file-integrity, package, kernel, or host-policy lifecycle steps.
 
 The tracked synthetic validation path is:
 
 ```bash
 dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj
-dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2'
+dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2|FullyQualifiedName~LinuxDetection'
 ./scripts/validate-contracts.sh
 ```
 
-Production configuration defaults to `Journal.TargetCoverageLevel=L1`. For a separately approved canary only, set `TargetCoverageLevel` to `L2` and declare bounded host roles such as `ssh_server`/`bastion` only when the operator has established them. Empty roles intentionally leave role applicability unknown. Review `/api/v1/source-health` and `/api/v1/telemetry-coverage` for requirement, applicability, prerequisite/event-family, denied/degraded/unsupported/stale/excepted states and recent counts by portable `source_id`.
+Production configuration defaults to `Journal.TargetCoverageLevel=L1` and `SelfIntegrity.Enabled=false`. For a separately approved canary only, set `TargetCoverageLevel` to `L2` and declare bounded host roles such as `ssh_server`/`bastion` only when the operator has established them. Empty roles intentionally leave role applicability unknown. For self-integrity, first review the non-mutating plan, then set `SelfIntegrity.Enabled=true` and the exact `ApprovedPlanHash`; this snapshots only the built-in agent-owned allowlist and emits metadata/digest `agent_health` events. Review `/api/v1/source-health` and `/api/v1/telemetry-coverage` for requirement, applicability, prerequisite/event-family, denied/degraded/unsupported/stale/excepted, self-integrity approval, pressure gap/drop/sample states, and recent counts by portable `source_id`.
 
-Do not treat unit benchmarks as the required private 24-hour L1 or seven-day L1+L2 soak. Live systemd testing and any host mutation require separate approval; raw telemetry, configs, logs, benchmark samples, screenshots, and detailed results stay under ignored `.local/` or approved OS runtime paths. The staged rollout gate owns the private soak, outage/rotation/restart/pressure windows, aggregate SLO decision, and rollback evidence.
+Linux detection alerts are server-side review signals only. They persist exact rule versions and evidence event IDs, and degraded prerequisite telemetry lowers confidence or suppresses evaluation as a visibility gap. Do not treat unit benchmarks as the required private 24-hour L1 or seven-day L1+L2 soak. Live systemd testing and any host mutation require separate approval; raw telemetry, configs, logs, benchmark samples, screenshots, and detailed results stay under ignored `.local/` or approved OS runtime paths. The staged rollout gate owns the private soak, outage/rotation/restart/pressure windows, aggregate SLO decision, and rollback evidence.

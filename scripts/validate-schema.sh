@@ -46,7 +46,7 @@ psql_args_from_connection_string() {
 
 CHECK_SQL="$(cat <<'SQL'
 with required_tables(name) as (
-    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('ingestion_errors'), ('operators'), ('operator_sessions'), ('security_audit_events')
+    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('ingestion_errors'), ('operators'), ('operator_sessions'), ('security_audit_events'), ('managed_retention_runs'), ('managed_retention_removed_events')
 ), missing_tables as (
     select 'missing table ' || name as problem
     from required_tables
@@ -81,6 +81,9 @@ with required_tables(name) as (
         ('idx_agents_platform'),
         ('idx_asset_inventory_agent_type'),
         ('idx_detection_rules_category'),
+        ('idx_detection_rules_tactics'),
+        ('idx_events_linux_auth_correlation'),
+        ('idx_alerts_rule_agent_created'),
         ('idx_alerts_status'),
         ('idx_alerts_agent'),
         ('idx_alerts_created'),
@@ -89,6 +92,10 @@ with required_tables(name) as (
         ('idx_soc_agent_turns_context_agent'),
         ('idx_ingestion_errors_agent_id'),
         ('idx_ingestion_errors_time'),
+        ('idx_managed_retention_runs_started'),
+        ('idx_managed_retention_runs_status'),
+        ('idx_managed_retention_removed_events_time'),
+        ('idx_managed_retention_removed_events_removed'),
         ('idx_operator_sessions_operator'),
         ('idx_operator_sessions_active'),
         ('idx_security_audit_occurred'),
@@ -134,6 +141,11 @@ with required_tables(name) as (
         ('source_health', 'transitioned_at'),
         ('source_health', 'dropped_events'),
         ('source_health', 'poison_events'),
+        ('detection_rules', 'tactics'),
+        ('detection_rules', 'correlation_window_seconds'),
+        ('detection_rules', 'suppression_keys'),
+        ('detection_rules', 'false_positive_notes'),
+        ('detection_rules', 'response_guidance'),
         ('asset_inventory_snapshots', 'host_timezone'),
         ('alert_evidence', 'host_timezone'),
         ('operators', 'password_hash'),
@@ -161,11 +173,15 @@ with required_tables(name) as (
         where conname = 'uq_events_agent_event'
           and conrelid = 'public.events'::regclass
     )
+), missing_unique_indexes as (
+    select 'missing unique index uq_alert_evidence_alert_agent_event' as problem
+    where to_regclass('public.uq_alert_evidence_alert_agent_event') is null
 )
 select problem from missing_tables
 union all select problem from missing_indexes
 union all select problem from missing_columns
 union all select problem from missing_constraints
+union all select problem from missing_unique_indexes
 order by problem;
 SQL
 )"

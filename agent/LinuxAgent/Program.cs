@@ -1,8 +1,11 @@
+using System.Text.Json;
 using Challenger.Siem.Agent.Core.Queue;
+using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
@@ -24,6 +27,7 @@ builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetS
         "Heartbeat interval or drain batch size is outside the supported range")
     .Validate(options => options.HasValidInventoryBounds(), "Inventory bounds are outside the supported range")
     .Validate(options => options.HasValidJournalBounds(), "Journal bounds are outside the supported range")
+    .Validate(options => options.HasValidSelfIntegrityBounds(), "Self-integrity bounds are outside the supported range")
     .ValidateOnStart();
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -48,6 +52,10 @@ builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
 });
 builder.Services.AddSingleton<LinuxEnrollmentService>();
 builder.Services.AddSingleton<LinuxJournalRuntime>();
+builder.Services.AddSingleton<LinuxSelfIntegrityStateStore>(services => new LinuxSelfIntegrityStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.SelfIntegrity.StatePath));
+builder.Services.AddSingleton<LinuxSelfIntegrityRuntime>();
+builder.Services.AddSingleton<ILinuxSelfIntegritySource, LinuxSelfIntegritySource>();
+builder.Services.AddSingleton<LinuxSelfIntegrityCollector>();
 builder.Services.AddSingleton<LinuxJournalNormalizer>();
 builder.Services.AddSingleton<ILinuxJournalSource, LinuxJournalProcessSource>();
 builder.Services.AddSingleton<LinuxTransportRuntimeState>();
@@ -65,6 +73,17 @@ builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
 builder.Services.AddHostedService<LinuxAgentWorker>();
 builder.Services.AddHostedService<LinuxJournalService>();
 builder.Services.AddHostedService<LinuxInventoryService>();
+builder.Services.AddHostedService<LinuxSelfIntegrityService>();
 builder.Services.AddSystemd();
-await builder.Build().RunAsync();
+
+var app = builder.Build();
+if (args.Contains("--self-integrity-plan", StringComparer.Ordinal))
+{
+    var collector = app.Services.GetRequiredService<LinuxSelfIntegrityCollector>();
+    var plan = await collector.PreflightAsync(CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(plan, JsonDefaults.Options));
+    return 0;
+}
+
+await app.RunAsync();
 return 0;

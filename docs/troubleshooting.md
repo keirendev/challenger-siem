@@ -112,6 +112,19 @@ Checks that do not require destructive host actions:
 - Health from the VM should target `http://192.168.122.1:4444/health`.
 - Do not change firewall/auth settings, reboot, clear event logs, uninstall services, or delete data without explicit operator approval.
 
+## Managed telemetry retention does not remove expected rows
+
+Checks:
+
+1. Confirm the API is pointed at the intended SIEM database and schema migration `007_managed_retention.sql` has been applied.
+2. Call `/api/v1/storage/retention/status` with an admin operator API token. If `advisory_lock_available=false`, another cleanup pass is active; wait or inspect the owning process without forcing deletion.
+3. Run `/api/v1/storage/retention/run` with `{"dry_run":true}` and review aggregate categories, counts, and intervals. Dry-run does not delete.
+4. If execute returns `bounded_incomplete`, rerun execute; cleanup is intentionally bounded and idempotent.
+5. Remember the managed retention allowlist: `events`, `agent_heartbeats`, `asset_inventory_snapshots`, and `ingestion_errors`. Operators, sessions, security audit, agents, source-health current state, alerts/evidence, graphs, detections, `soc-agent`, schemas, files, and arbitrary records are protected.
+6. Alert evidence can remain after an event row is removed. Check `telemetry_retention_state`: `telemetry_removed_by_retention` is expected after policy cleanup, while `underlying_telemetry_missing` means the event was absent without a retention marker.
+
+Do not manually delete rows from protected tables to make accounting look smaller. Use the documented runbook and keep raw responses/logs under ignored `.local/` paths.
+
 ## PostgreSQL contains old synthetic smoke data
 
 Synthetic rows from smoke tests may remain in local development databases. Use unique agent IDs and filters for validation and screenshots. Choose the least destructive cleanup path:

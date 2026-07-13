@@ -17,7 +17,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Windows host full-coverage SIEM specification](windows-host-full-coverage-spec.md) - target coverage model and implementation status.
 - [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1 plus opt-in journald L2 security families, planned advanced sources, performance SLOs, benchmarks, and rollout gates.
 - [Linux agent security and privacy design](linux-agent-security.md) - implemented structured journal/inventory controls, threat model, least-privilege boundaries, exclusions, and change approval.
-- [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - selection/defer report for optional audit, eBPF, and allowlisted file-integrity telemetry; no collector is shipped or enabled by the ADR.
+- [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - selection/defer report for optional audit, eBPF, and file-integrity telemetry; only the explicit-opt-in agent self-integrity snapshot is implemented, while audit/eBPF/broad live FIM remain deferred.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
@@ -25,6 +25,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 ## Server, APIs, and contracts
 
 - [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, telemetry coverage validation, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
+- [Linux server-side detections](linux-detections.md) - bounded prerequisite-aware Linux rule metadata, execution, suppression, evidence, and response guidance.
 - [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
 - [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
 - [Authentication design](auth.md) - enrollment token, per-agent token, operator API credential, and external `soc-agent` provider guardrails.
@@ -33,6 +34,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 ## Linux endpoint agent
 
 - [Linux agent](linux-agent.md) - L1/L2 journald source catalog, structured normalization, cursor/health semantics, configuration, systemd hardening, lifecycle workflows, and validation.
+- [Linux server-side detections](linux-detections.md) - authentication abuse, privilege escalation, SSH/process, service/timer, package/security-control, firewall, tamper/source-silence, and self-integrity alert rules.
 
 ## Windows endpoint agent
 

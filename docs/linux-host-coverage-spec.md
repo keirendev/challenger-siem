@@ -1,12 +1,12 @@
 # Linux host coverage specification
 
-Status: agent/service foundation, bounded host/security inventory, passive L1, and opt-in structured journald L2 security pack implemented; audit/file/advanced collectors remain planned
+Status: agent/service foundation, bounded host/security inventory, passive L1, opt-in structured journald L2 security pack, and explicit-opt-in L3 agent self-integrity snapshot implemented; audit/eBPF/broad file collectors remain deferred
 Specification version: 0.1
 Primary audience: SIEM engineers, Linux agent engineers, detection engineers, operators
 
 ## Purpose and current boundary
 
-This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented L1/L2 journal/inventory capability from planned advanced coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, bounded read-only host/security-posture inventory, one passive cursor-based system-journal reader, and an opt-in L2 logical security source pack. Linux Audit Framework, syslog-file, role, eBPF, and file-integrity collectors remain planned; server-generated Linux source-catalog overlays are implemented. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit and eBPF, selects only a future snapshot-based agent self-integrity design candidate, and does not ship or enable any audit/eBPF/file-integrity collector.
+This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented L1/L2 journal/inventory capability from optional L3+ coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, bounded read-only host/security-posture inventory, one passive cursor-based system-journal reader, an opt-in L2 logical security source pack, and a disabled-by-default explicit-opt-in L3 agent self-integrity snapshot. Linux Audit Framework, syslog-file, role, eBPF, and broad/live file-integrity collectors remain planned or deferred; server-generated Linux source-catalog overlays are implemented. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit/eBPF and permits only the no-watch allowlisted agent self-integrity source.
 
 Like the [Windows full-coverage specification](windows-host-full-coverage-spec.md), this specification treats collection, reliability, source health, operational verification, and detection prerequisites as one coverage problem. It differs where Linux distributions, init systems, audit frameworks, and role logs are heterogeneous. A host can report only the level whose mandatory applicable sources are healthy; unavailable or operator-disabled sources must be shown as gaps or approved exceptions, never silently treated as covered.
 
@@ -17,7 +17,7 @@ Like the [Windows full-coverage specification](windows-host-full-coverage-spec.m
 | L0 | No coverage | Agent absent, unsupported, or not heartbeating | Not acceptable for monitored assets |
 | L1 | Passive native baseline | Read-only system/service logs, authentication/account activity, agent health, durable queue, and source positions | Safe initial rollout and 24-hour soak |
 | L2 | Linux security baseline | L1 plus structured login/session, SSH, sudo/su, package, service, scheduler, firewall, kernel/security-control, and agent/log-tamper journal telemetry with bounded inventory/source-health evidence; audit remains explicitly unsupported | Opt-in canary only until the private seven-day soak passes |
-| L3 | Enhanced endpoint telemetry | L2 plus explicitly approved eBPF or equivalent kernel telemetry and targeted file-integrity watches | Optional higher-fidelity coverage |
+| L3 | Enhanced endpoint telemetry | L2 plus the explicitly approved agent self-integrity snapshot; later eBPF/kernel or broader targeted integrity sources require separate approval and evidence | Optional higher-fidelity coverage |
 | L4 | Full target coverage | L3 plus applicable role packs, policy-drift checks, correlation/detections, and validated source/performance SLOs | Planned target for high-value hosts |
 
 `L1` and `L2` are principally passive: the agent consumes sources already available and reports missing prerequisites. A source is not mandatory when the host platform or role makes it inapplicable, but the reason must be reported. L3/L4 never authorize automatic host-policy changes.
@@ -40,7 +40,7 @@ These sources are mandatory when present on a supported host and must be consume
 | Service and scheduler journal records | L2 | systemd unit changes, cron execution, and systemd timer metadata | Implemented as logical service/scheduler families plus bounded inventory |
 | Host/security inventory | L2 | OS/kernel, packages, users/groups, services, listeners, mounts, firewall/SSH/MAC/Secure Boot state, and agent permission posture | Bounded current-state snapshots are implemented; inventory-diff events remain planned |
 
-The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/units/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file permission/fingerprint metadata. A non-systemd host reports service/unit/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy.
+The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/units/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file permission/fingerprint metadata. A non-systemd host reports service/unit/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy. Server-side Linux detections use this same prerequisite model: missing, stale, denied, throttled, or gapped source evidence lowers confidence or suppresses evaluation and is documented as a visibility gap, not as no-threat evidence.
 
 The implemented `linux-journal-l1` source directly invokes the fixed systemd `journalctl` machine-readable JSON interface, with no shell or arbitrary command/path configuration. L1 retains kernel, boot, service, authentication, and core-system classification. When configured for L2, the same reader/cursor additionally classifies stable logical sources for login/session, SSH, sudo/su, cron/timers, package management, firewall, kernel/security modules, service changes, and agent/log tamper. Structured process/user/PAM/network/result/action/unit/package/module fields take precedence; fixed 4,096-character/50 ms message parsing may supplement missing evidence only. It persists each normalized event to Agent.Core before its collected cursor and persists accepted/duplicate acknowledgement before deletion. Rotation/vacuum/invalid cursor, denial, empty source, malformed/binary data, reorder/duplicate, backlog, and throttle remain explicit.
 
@@ -49,14 +49,14 @@ The implemented `linux-journal-l1` source directly invokes the fixed systemd `jo
 These sources require an explicit operator decision and cannot be prerequisites for L1 or a default install:
 
 - eBPF-based process, network, DNS, file, or kernel-security telemetry, with pinned resource limits and kernel compatibility checks;
-- targeted file-integrity monitoring for approved high-value paths;
+- targeted file-integrity monitoring beyond the implemented agent-owned snapshot source;
 - producer/configuration changes that enable additional Linux Security Module logging (normalization of already-journaled AppArmor/SELinux evidence is implemented);
 - producer/configuration changes that enable firewall logging (normalization of already-journaled UFW/nftables/firewalld evidence is implemented as optional L2);
 - audit rules added for an approved use case;
 - container runtime and orchestration audit sources;
 - targeted application audit plugins or structured logs.
 
-Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors. See the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) for the current adopt/defer/reject decision; no optional advanced collector is enabled by that decision record.
+Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors. See the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) for the current adopt/defer/reject decision. The only enabled-by-configuration L3 source is the explicit-opt-in agent self-integrity snapshot; audit, eBPF, and broad/live FIM remain absent.
 
 ### Unsupported or not applicable
 

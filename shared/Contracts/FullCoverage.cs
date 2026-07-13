@@ -1096,6 +1096,21 @@ public sealed record DetectionRuleMetadata
     [JsonPropertyName("mitre_attack")]
     public IReadOnlyList<string> MitreAttack { get; init; } = Array.Empty<string>();
 
+    [JsonPropertyName("tactics")]
+    public IReadOnlyList<string> Tactics { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("correlation_window_seconds")]
+    public int CorrelationWindowSeconds { get; init; } = 0;
+
+    [JsonPropertyName("suppression_keys")]
+    public IReadOnlyList<string> SuppressionKeys { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("false_positive_notes")]
+    public string FalsePositiveNotes { get; init; } = string.Empty;
+
+    [JsonPropertyName("response_guidance")]
+    public string ResponseGuidance { get; init; } = string.Empty;
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; init; } = true;
 }
@@ -1164,6 +1179,9 @@ public sealed record AlertEvidenceRecord
 
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;
+
+    [JsonPropertyName("telemetry_retention_state")]
+    public string TelemetryRetentionState { get; init; } = "unknown";
 }
 
 public sealed record RoleSourcePackDesign

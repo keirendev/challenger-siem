@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: foundation, bounded read-only inventory, passive L1, and opt-in structured journald L2 security pack implemented; audit/file/advanced collectors remain planned
+Status: foundation, bounded read-only inventory, passive L1, opt-in structured journald L2 security pack, and explicit-opt-in L3 agent self-integrity snapshot implemented; audit/eBPF/broad file collectors remain deferred
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls, passive L1 journal reader, and opt-in L2 structured journal normalization below are implemented; audit/file/eBPF and advanced collectors remain planned. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit and eBPF, adopts only a future snapshot-based agent self-integrity design candidate, and does not ship or enable an audit/eBPF/file-integrity collector. This document does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls, passive L1 journal reader, opt-in L2 structured journal normalization, and explicit-opt-in L3 agent self-integrity snapshot below are implemented; audit, eBPF, and broad/live file collectors remain deferred. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) keeps audit/eBPF deferred and permits only the no-watch agent-owned snapshot source. This document does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 
@@ -86,6 +86,14 @@ The parser boundary emits bounded allowlisted fields rather than raw command/fil
 Collection runs as a non-overlapping service independently of heartbeat, durable queue drain, and future passive work. The one-hour default interval has a five-minute enforced minimum and a default 30-second startup delay. A default 120-second collection deadline, 20-snapshot maximum, 200-item-per-snapshot maximum, and 256 KiB default serialized budget constrain host and transport impact.
 
 The agent observes high-level package/update, network listener, firewall, SSH, mandatory-access-control, Secure Boot, and agent-file posture without changing them. It does not refresh repositories or alter packages, services, audit/firewall/authentication/kernel/MAC policy, Secure Boot, ownership, or modes. The agent-integrity snapshot reports regular-file, numeric owner, and mode observations for the fixed configuration and executable paths plus a bounded SHA-256 fingerprint of the non-secret executable. The credential-bearing configuration is never read or hashed for inventory. The executable fingerprint supports change review but is not trusted attestation and cannot provide tamper-proof guarantees against root or kernel control.
+
+## Implemented L3 self-integrity snapshot controls
+
+The `linux-agent-self-integrity-snapshot` source is disabled by default and cannot be enabled by installation, enrollment, `TargetCoverageLevel`, or missing coverage. It runs only when `Agent:SelfIntegrity:Enabled=true` and `ApprovedPlanHash` exactly matches the non-mutating plan hash for the built-in allowlist and limits. The preflight plan reports platform support, exact allowlist entries, missing/denied/type/oversize findings, privacy/resource impact, sequencing/loss/pressure behavior, and rollback without changing files, permissions, groups, capabilities, packages, services, audit, firewall, authentication, kernel, MAC policy, or journal retention.
+
+The allowlist is literal and agent-owned: the published Linux agent executable and systemd unit receive no-follow regular-file metadata plus bounded streaming SHA-256; the credential-bearing `agentsettings.json` receives metadata only; `/etc/challenger-siem-agent/` and `/var/lib/challenger-siem-agent/` receive directory owner/group/mode/type metadata only. There is no recursion, arbitrary path configuration, symlink following, hard-link acceptance for hashed files, device/FIFO/socket handling, secret-store access, package database hashing, browser/profile/history access, or file-content emission. Denied, missing, unsupported type, oversize, timeout, and pressure conditions become source health or bounded `agent_health` records, not permission to broaden access.
+
+Self-integrity emits additive v1 `agent_health` events with deterministic sequence checkpoints and explicit `added`, `changed`, `deleted`, `unreadable`, `gap`, `drop`, and `sample` states. Raw payloads contain metadata buckets and digests only; the configuration file is never content-read or hashed. Events are queued before collected sequence advances, acknowledged sequence advances only for accepted/duplicate server acknowledgement, and pressure pauses this optional L3 source before journal L1/L2, heartbeat, inventory, or queue drain. Clean disable may remove only `SelfIntegrity.StatePath`; monitored files and host policy are never touched.
 
 ## Collection and privacy boundary
 

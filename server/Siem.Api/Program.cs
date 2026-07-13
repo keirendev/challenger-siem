@@ -8,6 +8,7 @@ using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Api.Platform;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
+using Challenger.Siem.Api.Storage;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -49,6 +50,7 @@ builder.Services.AddScoped<SecurityAuditRepository>();
 builder.Services.AddScoped<OperatorCookieEvents>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
+builder.Services.AddScoped<RetentionRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<SourceHealthRepository>();
 builder.Services.AddScoped<TelemetryCoverageRepository>();
@@ -75,6 +77,11 @@ builder.Services.AddScoped<InvestigationGraphRepository>();
 builder.Services.AddScoped<ReviewRepository>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
 builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
+builder.Services.AddOptions<ManagedRetentionOptions>()
+    .Bind(builder.Configuration.GetSection(ManagedRetentionOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<ManagedRetentionOptions>, ManagedRetentionOptionsValidator>();
+builder.Services.AddHostedService<ManagedRetentionHostedService>();
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");
@@ -320,6 +327,8 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     IngestBatchRequest request,
     AgentAuthenticator authenticator,
     EventRepository events,
+    AlertRepository alerts,
+    DetectionEngine detectionEngine,
     IngestionErrorRepository ingestionErrors,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
@@ -338,6 +347,7 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     }
 
     var result = await events.StoreEventsAsync(request, cancellationToken);
+    await alerts.RunLinuxDetectionsAsync(request, result.AcceptedEventIds, detectionEngine, cancellationToken);
     return Results.Ok(new IngestBatchResponse
     {
         BatchId = request.BatchId,
@@ -372,6 +382,7 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
     EventRepository events,
     TokenService tokens,
     IConfiguration configuration,
+    IOptions<ManagedRetentionOptions> retentionOptions,
     CancellationToken cancellationToken) =>
 {
     if (!tokens.HasOperatorAccess(context))
@@ -379,8 +390,54 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    var capacityBytes = ParseLongOrDefault(configuration["Storage:ManagedCapacityBytes"], 100L * 1024 * 1024 * 1024);
-    return Results.Ok(await events.GetManagedStorageAccountingAsync(capacityBytes, cancellationToken));
+    var configuredCapacity = retentionOptions.Value.ManagedCapacityBytes;
+    var legacyCapacity = ParseLongOrDefault(configuration["Storage:ManagedCapacityBytes"], configuredCapacity);
+    return Results.Ok(await events.GetManagedStorageAccountingAsync(legacyCapacity, cancellationToken, retentionOptions.Value.TargetRetentionDays));
+});
+
+app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
+    HttpContext context,
+    RetentionRepository retention,
+    TokenService tokens,
+    IOptions<ManagedRetentionOptions> retentionOptions,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    return Results.Ok(await retention.GetStatusAsync(retentionOptions.Value, cancellationToken));
+});
+
+app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
+    HttpContext context,
+    RetentionRepository retention,
+    TokenService tokens,
+    IOptions<ManagedRetentionOptions> retentionOptions,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    RetentionRunRequest request;
+    if (context.Request.ContentLength is null or 0)
+    {
+        request = new RetentionRunRequest();
+    }
+    else
+    {
+        request = await JsonSerializer.DeserializeAsync<RetentionRunRequest>(context.Request.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower
+        }, cancellationToken) ?? new RetentionRunRequest();
+    }
+
+    var result = await retention.RunAsync(retentionOptions.Value, request, cancellationToken);
+    return result.Status == "lock_not_acquired" ? Results.Conflict(result) : Results.Ok(result);
 });
 
 app.MapGet("/api/v1/source-health", async Task<IResult> (

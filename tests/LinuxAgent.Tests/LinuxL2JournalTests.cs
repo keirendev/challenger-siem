@@ -230,7 +230,7 @@ public sealed class LinuxL2JournalTests
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
         await runtime.InitializeAsync("1.1.0-test", "synthetic-config", default);
         var l1Snapshot = runtime.Snapshot();
-        Assert.Equal(LinuxTelemetrySourceCatalog.All.Count, l1Snapshot.Manifest.Count);
+        Assert.Equal(LinuxTelemetrySourceCatalog.All.Count(item => item.SourceId != LinuxTelemetrySourceIds.AgentSelfIntegrity), l1Snapshot.Manifest.Count);
         Assert.All(l1Snapshot.Health.Where(item => item.CoverageLevel == WindowsCoverageLevel.L2 && item.SourceId != LinuxTelemetrySourceIds.AuditFramework),
             item => Assert.Equal(SourceHealthStatuses.Disabled, item.Status));
         Assert.Equal(SourceHealthStatuses.Unsupported,

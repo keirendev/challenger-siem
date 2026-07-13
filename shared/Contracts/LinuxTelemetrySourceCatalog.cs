@@ -14,6 +14,7 @@ public static class LinuxTelemetrySourceIds
     public const string ServiceChange = "linux-service-change";
     public const string AgentLogTamper = "linux-agent-log-tamper";
     public const string AuditFramework = "linux-audit-framework";
+    public const string AgentSelfIntegrity = "linux-agent-self-integrity-snapshot";
 }
 
 /// <summary>
@@ -25,6 +26,7 @@ public static class LinuxTelemetrySourceCatalog
 {
     public const string L1PackId = "linux-l1-journal";
     public const string L2PackId = "linux-l2-security";
+    public const string L3SelfIntegrityPackId = "linux-l3-self-integrity-snapshot";
 
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =
     [
@@ -130,6 +132,29 @@ public static class LinuxTelemetrySourceCatalog
     /// Audit is declared honestly but is not collected by this pack. The entry prevents an absent
     /// collector from being mistaken for healthy coverage and does not enable or alter audit policy.
     /// </summary>
+    public static readonly SourceManifestEntry SelfIntegritySnapshot = new()
+    {
+        SourceId = LinuxTelemetrySourceIds.AgentSelfIntegrity,
+        Platform = TelemetryPlatforms.Linux,
+        SourceKind = TelemetrySourceKinds.AgentHealth,
+        SourceNamespace = "challenger.siem.agent",
+        Applicability = SourceApplicabilityStatuses.Unknown,
+        ApplicabilityReason = "explicit_opt_in_required",
+        CheckpointKind = SourceCheckpointKinds.Sequence,
+        DisplayName = "Linux agent self-integrity snapshot",
+        CoverageLevel = WindowsCoverageLevel.L3,
+        Required = false,
+        Requirement = SourceRequirementKinds.Optional,
+        EnabledByDefault = false,
+        SourcePack = L3SelfIntegrityPackId,
+        ParserId = "linux-agent-self-integrity-snapshot-v1",
+        Prerequisites = ["explicit_self_integrity_opt_in", "approval_hash_matches", "allowlist_paths_readable"],
+        EventFamilies = ["self_integrity_snapshot"],
+        ValidationScenarios = ["preflight_plan", "allowlist_escape", "snapshot_change_loss_pressure_restart", "disable_cleanup"],
+        Privacy = "agent_metadata_only",
+        InstallerManaged = false
+    };
+
     public static readonly SourceManifestEntry UnsupportedAuditFramework = new()
     {
         SourceId = LinuxTelemetrySourceIds.AuditFramework,
@@ -156,6 +181,7 @@ public static class LinuxTelemetrySourceCatalog
     public static readonly IReadOnlyList<SourceManifestEntry> All = L1
         .Concat(L2Security)
         .Append(UnsupportedAuditFramework)
+        .Append(SelfIntegritySnapshot)
         .OrderBy(entry => entry.CoverageLevel)
         .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)
         .ToArray();
