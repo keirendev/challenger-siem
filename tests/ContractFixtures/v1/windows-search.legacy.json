@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "event_id": "00000000-0000-4000-8000-000000000102",
+      "agent_id": "win-synthetic-001",
+      "hostname": "WIN-SYNTHETIC",
+      "source": "windows_event_log",
+      "channel": "Security",
+      "provider": "Synthetic-Windows-Provider",
+      "windows_event_id": 4625,
+      "record_id": 4102,
+      "event_time": "2026-07-11T10:00:00Z",
+      "ingest_time": "2026-07-11T10:00:02Z",
+      "severity": "audit_failure",
+      "message": "Synthetic authentication failure.",
+      "raw": {"event_data": {}}
+    }
+  ]
+}

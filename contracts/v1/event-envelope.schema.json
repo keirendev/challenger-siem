@@ -4,29 +4,23 @@
   "title": "Challenger SIEM Event Envelope v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "event_id",
-    "agent_id",
-    "hostname",
-    "source",
-    "channel",
-    "provider",
-    "windows_event_id",
-    "record_id",
-    "event_time",
-    "severity",
-    "message",
-    "raw"
-  ],
+  "required": ["event_id", "agent_id", "hostname", "source", "event_time", "severity", "message", "raw"],
   "properties": {
     "event_id": { "type": "string", "format": "uuid" },
     "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
-    "source": { "type": "string", "const": "windows_event_log" },
+    "platform": { "$ref": "#/$defs/platform" },
+    "source": { "type": "string", "enum": ["windows_event_log", "linux_journal", "linux_audit", "inventory_diff", "agent_health"] },
+    "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
     "provider": { "type": "string", "minLength": 1, "maxLength": 255 },
     "windows_event_id": { "type": "integer", "minimum": 0, "maximum": 65535 },
     "record_id": { "type": "integer", "minimum": 0 },
+    "event_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "facility": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "unit": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "checkpoint": { "$ref": "#/$defs/source_checkpoint" },
+    "deduplication": { "$ref": "#/$defs/deduplication", "x-deterministicEventId": true },
     "event_time": { "type": "string", "format": "date-time" },
     "host_timezone": { "$ref": "#/$defs/host_timezone" },
     "ingest_time": { "type": ["string", "null"], "format": "date-time" },
@@ -36,9 +30,63 @@
     },
     "message": { "type": "string", "maxLength": 20000 },
     "normalized": { "$ref": "#/$defs/normalized_event_fields" },
-    "raw": { "type": "object" }
+    "raw": { "type": "object" },
+    "data_handling": { "$ref": "#/$defs/data_handling", "x-rawSizeMatches": "/raw" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "source": { "const": "windows_event_log" } }, "required": ["source"] },
+      "then": {
+        "required": ["channel", "provider", "windows_event_id", "record_id"],
+        "properties": { "platform": { "const": "windows" } }
+      }
+    },
+    {
+      "if": { "properties": { "source": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source"] },
+      "then": {
+        "required": ["platform", "source_id", "checkpoint", "deduplication", "data_handling"],
+        "properties": {
+          "platform": { "$ref": "#/$defs/platform" },
+          "event_time": { "$ref": "#/$defs/required_timestamp" },
+          "ingest_time": { "oneOf": [{ "$ref": "#/$defs/required_timestamp" }, { "type": "null" }] },
+          "raw": { "type": "object", "x-maxUtf8Bytes": 65536 },
+          "normalized": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/$defs/portable_normalized_bounds" }
+            ]
+          }
+        },
+        "not": {
+          "anyOf": [
+            { "required": ["channel"] },
+            { "required": ["provider"] },
+            { "required": ["windows_event_id"] },
+            { "required": ["record_id"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "source": { "enum": ["linux_journal", "linux_audit"] } }, "required": ["source"] },
+      "then": { "properties": { "platform": { "const": "linux" } } }
+    },
+    {
+      "if": { "properties": { "source": { "const": "linux_journal" } }, "required": ["source"] },
+      "then": { "anyOf": [{ "required": ["event_code"] }, { "required": ["facility"] }, { "required": ["unit"] }] }
+    },
+    {
+      "if": { "properties": { "source": { "enum": ["linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source"] },
+      "then": { "required": ["event_code"] }
+    }
+  ],
   "$defs": {
+    "platform": { "type": "string", "enum": ["windows", "linux"] },
+    "required_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?!0001-)"
+    },
     "host_timezone": {
       "type": ["object", "null"],
       "additionalProperties": false,
@@ -52,6 +100,72 @@
         "is_daylight_saving_time": { "type": ["boolean", "null"] }
       }
     },
+    "source_checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "event_time": { "$ref": "#/$defs/required_timestamp" },
+        "recorded_at": { "$ref": "#/$defs/required_timestamp" }
+      },
+      "anyOf": [{ "required": ["cursor"] }, { "required": ["sequence"] }]
+    },
+    "deduplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "inputs"],
+      "properties": {
+        "algorithm": { "const": "sha256_uuid" },
+        "inputs": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "contains": { "const": "agent_id" },
+          "items": {
+            "type": "string",
+            "enum": ["agent_id", "source_id", "checkpoint.cursor", "checkpoint.sequence", "event_code", "event_time", "raw_sha256"]
+          },
+          "allOf": [{ "contains": { "const": "source_id" } }]
+        },
+        "raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "if": { "properties": { "inputs": { "contains": { "const": "raw_sha256" } } } },
+      "then": { "required": ["raw_sha256"] },
+      "else": { "not": { "required": ["raw_sha256"] } }
+    },
+    "data_handling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_size_bytes", "redaction_applied", "redacted_fields", "truncation_applied", "truncated_fields"],
+      "properties": {
+        "raw_size_bytes": { "type": "integer", "minimum": 0, "maximum": 65536 },
+        "redaction_applied": { "type": "boolean" },
+        "redacted_fields": { "$ref": "#/$defs/handled_fields" },
+        "truncation_applied": { "type": "boolean" },
+        "truncated_fields": { "$ref": "#/$defs/handled_fields" },
+        "original_size_bytes": { "type": "integer", "minimum": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "redaction_applied": { "const": true } }, "required": ["redaction_applied"] },
+          "then": { "properties": { "redacted_fields": { "minItems": 1 } } },
+          "else": { "properties": { "redacted_fields": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "truncation_applied": { "const": true } }, "required": ["truncation_applied"] },
+          "then": { "required": ["original_size_bytes"], "properties": { "truncated_fields": { "minItems": 1 } } },
+          "else": { "not": { "required": ["original_size_bytes"] }, "properties": { "truncated_fields": { "maxItems": 0 } } }
+        }
+      ]
+    },
+    "handled_fields": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
     "entity": {
       "type": "object",
       "additionalProperties": false,
@@ -60,6 +174,45 @@
         "type": { "type": "string", "maxLength": 64 },
         "value": { "type": "string", "maxLength": 2048 },
         "role": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": ["string", "null"], "maxLength": 64 },
+        "parent_pid": { "type": ["string", "null"], "maxLength": 64 },
+        "executable": { "type": ["string", "null"], "maxLength": 2048 },
+        "command_line": { "type": ["string", "null"], "maxLength": 4096 }
+      }
+    },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": ["string", "null"], "maxLength": 512 },
+        "id": { "type": ["string", "null"], "maxLength": 512 },
+        "realm": { "type": ["string", "null"], "maxLength": 255 }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_ip": { "type": ["string", "null"], "maxLength": 128 },
+        "source_port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+        "destination_ip": { "type": ["string", "null"], "maxLength": 128 },
+        "destination_port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+        "protocol": { "type": ["string", "null"], "maxLength": 64 }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": ["string", "null"], "maxLength": 4096 },
+        "operation": { "type": ["string", "null"], "maxLength": 128 },
+        "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
       }
     },
     "normalized_event_fields": {
@@ -93,8 +246,34 @@
         "threat_name": { "type": ["string", "null"], "maxLength": 512 },
         "task_name": { "type": ["string", "null"], "maxLength": 512 },
         "package_name": { "type": ["string", "null"], "maxLength": 512 },
+        "process": { "oneOf": [{ "$ref": "#/$defs/process" }, { "type": "null" }] },
+        "user": { "oneOf": [{ "$ref": "#/$defs/user" }, { "type": "null" }] },
+        "network": { "oneOf": [{ "$ref": "#/$defs/network" }, { "type": "null" }] },
+        "file": { "oneOf": [{ "$ref": "#/$defs/file" }, { "type": "null" }] },
         "entities": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/entity" } },
         "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "portable_normalized_bounds": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "value": { "type": "string", "minLength": 1, "maxLength": 2048 }
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "minLength": 1, "maxLength": 128 },
+          "additionalProperties": { "type": "string", "maxLength": 2048 }
+        }
       }
     }
   }

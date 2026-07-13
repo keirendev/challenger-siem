@@ -4,6 +4,10 @@ Base path: `/api/v1`.
 
 All production traffic must use HTTPS. The operator web review console is hosted by the same ASP.NET Core process outside the `/api/v1` API contract; see `docs/web.md`.
 
+Version 1 now has additive cross-platform contract fields. Every previously valid Windows registration, heartbeat, ingest, search, and source-health JSON shape keeps its original meaning and does not need to send the additions. The current PostgreSQL schema remains Windows-Event-Log-only pending the planned multi-platform storage migration: syntactically valid Linux registration and any heartbeat/event using an additive portable source kind are contract-valid but the current server returns HTTP 422 with `title=cross_platform_storage_pending` before persistence. This contract slice does not claim Linux collection, persistence, or search support and does not introduce `/api/v2`.
+
+Validate all v1 schemas plus synthetic legacy Windows and Linux golden fixtures with `./scripts/validate-contracts.sh`. The canonical conditions, bounds, checkpoint semantics, and deduplication recipe are documented in [schema.md](schema.md#additive-v1-cross-platform-contract).
+
 ## Register agent
 
 ```http
@@ -40,6 +44,8 @@ Response:
   "registered_at": "2026-07-04T12:00:00Z"
 }
 ```
+
+Registration adds optional `platform` (`windows` or `linux`) and `host_id`. Legacy Windows requests may omit both and retain `machine_guid` semantics. A Linux contract document sets `platform=linux`, requires bounded `host_id`, and can omit `machine_guid`; it must not place a Linux identifier into the Windows-specific field.
 
 ## Ingest event batch
 
@@ -107,9 +113,15 @@ Response:
 }
 ```
 
-The event-ID arrays are additive v1 response fields. Agents use them to delete only accepted or duplicate queue rows after acknowledgement. Older clients can continue to rely on the count fields. `event_time` remains canonical UTC for storage, filtering, correlation, and deduplication; optional `host_timezone` metadata lets review clients display the endpoint's host-local time with the event-specific UTC offset, including daylight-saving boundaries.
+The event-ID arrays are additive v1 response fields. Agents use them to delete only accepted or duplicate queue rows after acknowledgement. Older clients can continue to rely on the count fields. `event_time` accepts an RFC 3339 offset and remains canonical UTC after normalization for storage, filtering, correlation, and deduplication; default/minimum timestamps are invalid. Optional `host_timezone` metadata lets review clients display endpoint-local time.
 
-Validation failures after successful agent authentication are also persisted to `ingestion_errors` with bounded payload context that omits authorization headers, bearer tokens, rendered event messages, and raw event payloads.
+`source=windows_event_log` retains the exact existing requirement for `channel`, `provider`, `windows_event_id`, and `record_id`. Additive source values are `linux_journal`, `linux_audit`, `inventory_diff`, and `agent_health`. Journal and audit are Linux-native and require `platform=linux`; inventory-diff and agent-health are platform-neutral and accept explicit `platform=windows` or `platform=linux`. Every additive source uses stable `source_id`, cursor and/or sequence `checkpoint`, explicit `sha256_uuid` deduplication inputs, and `data_handling`, and omits all four Windows Event Log identity fields. Audit, inventory-diff, and agent-health records require bounded `event_code`. Journal records require at least one of `event_code`, `facility`, or `unit`. Additive-source severity values use the exact lowercase v1 enumeration in both schema and runtime validation; legacy Windows Event Log runtime case-insensitive severity handling is unchanged.
+
+For every additive portable source, the `raw` object has a hard 65,536-byte compact UTF-8 ceiling. `data_handling.raw_size_bytes` must match that compact serialization. Redaction/truncation booleans, bounded field-path arrays, and truncation original size are validated. When selected, `raw_sha256` must match the compact raw bytes, and every additive-source `event_id` must match its declared canonical `sha256_uuid` recipe; arbitrary IDs are rejected. Optional bounded `normalized.process`, `normalized.user`, `normalized.network`, and `normalized.file` objects coexist with all legacy flattened normalized fields. The new raw, label, and data-handling ceilings are conditional additive-source requirements: legacy Windows Event Log v1 envelopes retain the exact schema/runtime allowances they had before these additions. See [schema.md](schema.md#event-envelope) for the complete conditions and deterministic recipe.
+
+Collectors queue an event durably before advancing `collected_checkpoint`. They advance `acknowledged_checkpoint` and delete queue data only after the response lists the event as accepted or duplicate. A checkpoint gap therefore remains visible backlog rather than implied complete coverage.
+
+Validation failures after successful agent authentication are persisted to `ingestion_errors` for the supported Windows path with bounded payload context that omits authorization headers, bearer tokens, rendered event messages, and raw event payloads. Contract-valid Linux events and Windows platform-neutral events are stopped by the storage boundary and are not written to either the Windows Event Log table or a fake compatibility path.
 
 ## Agent heartbeat
 
@@ -183,7 +195,13 @@ Request:
 }
 ```
 
-Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`. Source-manifest entries also carry the additive installer/source matrix fields `prerequisites`, `event_families`, `validation_scenarios`, `privacy`, and `installer_managed` for operator validation and coverage reporting. `host_timezone` is optional and bounded; for heartbeat it describes the endpoint's current timezone, while source-health/event rows use the offset associated with the reported event time where available.
+Source status values are `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted`. Coverage levels are `L0` through `L4`. Existing Windows manifest/health items retain required `channel` and all record-ID semantics.
+
+New typed source items add `platform`, `source_kind`, stable `source_id`, `source_namespace`, optional journal `facility`/`unit`, and `applicability` (`applicable`, `not_applicable`, or `unknown`). Non-applicable/unknown entries require a bounded reason. Linux-native kinds accept only `platform=linux`; platform-neutral inventory-diff and agent-health kinds accept Windows or Linux. Every additive portable manifest requires `checkpoint_kind`; applicable portable health entries require both `collected_checkpoint` and `acknowledged_checkpoint` and omit `channel` plus Windows record-ID fields. The acknowledged sequence cannot exceed the collected sequence.
+
+Portable typed `source_id` values are scoped to one agent/source configuration and must be unique within each manifest and health array. Every portable manifest item has exactly one corresponding health item; the pair agrees on platform, kind, namespace, facility, unit, and applicability, and each health checkpoint shape agrees with `checkpoint_kind`. The source platform must match the top-level heartbeat platform and `host_id` is required. Thus Windows can report neutral inventory/health sources without relabelling them as Linux, while a heartbeat containing a Linux source still requires top-level `platform=linux`. Arrays, maps, cross-entry relationships, and existing prerequisite/event-family/validation metadata are checked by deterministic schema tooling and runtime validation.
+
+Heartbeat also adds optional `platform` and `host_id` with the registration conditions. Linux heartbeats enforce the new CPU, queue, timestamp, and tamper-value bounds; every typed portable source entry enforces source-metadata and details-map bounds. If a Linux heartbeat supplies `queue_metrics`, both `max_size_mb` and `warning_size_percent` are required and range-validated. Untyped legacy Windows heartbeats retain the pre-existing v1 limits, including empty or partial `queue_metrics`, unrestricted string sizes in `details` and tamper fields, and no upper bound on reported CPU percentage. `host_timezone` remains optional and bounded; for heartbeat it describes the endpoint's current timezone, while source-health/event rows use the offset associated with the reported event time where available.
 
 ## Agent inventory upload
 
@@ -202,7 +220,9 @@ GET /api/v1/events?windows_event_id=4625
 Authorization: Bearer <review-token>
 ```
 
-Supported filters:
+The current database/search implementation returns persisted Windows Event Log events only. Cross-platform source, event-code, facility, unit, and checkpoint query fields are deferred to the multi-platform storage migration; the additive envelope must not be interpreted as already searchable.
+
+Supported current filters:
 
 - `hostname`
 - `agent_id`
@@ -229,7 +249,7 @@ GET /api/v1/source-health?agent_id=win11-test-001&target_level=L2
 Authorization: Bearer <review-token>
 ```
 
-Returns coverage summaries and per-source health rows populated from agent heartbeat data. Coverage summaries and source rows can include optional `host_timezone` metadata for host-local display. When `agent_id` is supplied, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported sources appear as `missing` or `excepted` rows instead of disappearing from the operator view.
+Returns coverage summaries and per-source health rows populated from persisted Windows heartbeat data. Existing source rows remain valid with their original v1 summary vocabulary and collection sizes; conditional response-size bounds apply when a response contains typed portable records, while Linux summary-field bounds remain Linux-scoped. The response schema can also represent typed Linux-native and platform-neutral source identity, applicability, facility/unit, and collected/acknowledged checkpoints after the downstream storage migration. Coverage summaries and source rows can include optional `platform` and `host_timezone` metadata. When `agent_id` is supplied today, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported Windows sources appear as `missing` or `excepted` rows.
 
 ## Telemetry coverage validation
 

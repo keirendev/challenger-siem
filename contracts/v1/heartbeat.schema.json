@@ -10,93 +10,186 @@
     "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
     "agent_version": { "type": "string", "minLength": 1, "maxLength": 64 },
     "os": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "platform": { "$ref": "event-envelope.schema.json#/$defs/platform" },
+    "host_id": { "type": "string", "minLength": 1, "maxLength": 255 },
     "last_event_time": { "type": ["string", "null"], "format": "date-time" },
-    "host_timezone": { "$ref": "#/$defs/host_timezone" },
+    "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" },
     "queue_depth": { "type": "integer", "minimum": 0 },
     "cpu_percent": { "type": ["number", "null"], "minimum": 0 },
     "memory_mb": { "type": ["integer", "null"], "minimum": 0 },
     "config_hash": { "type": ["string", "null"], "maxLength": 128 },
-    "queue_metrics": { "$ref": "#/$defs/queue_metrics" },
-    "source_manifest": {
-      "type": "array",
-      "maxItems": 100,
-      "items": { "$ref": "#/$defs/source_manifest_entry" }
-    },
-    "source_health": {
-      "type": "array",
-      "maxItems": 100,
-      "items": { "$ref": "#/$defs/source_health_report" }
-    },
-    "tamper_checks": { "$ref": "#/$defs/tamper_checks" }
+    "queue_metrics": { "oneOf": [{ "$ref": "#/$defs/queue_metrics" }, { "type": "null" }] },
+    "source_manifest": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_manifest_entry" } },
+    "source_health": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_health_report" } },
+    "tamper_checks": { "oneOf": [{ "$ref": "#/$defs/tamper_checks" }, { "type": "null" }] }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "platform": { "const": "linux" } }, "required": ["platform"] },
+      "then": {
+        "required": ["host_id"],
+        "properties": {
+          "last_event_time": { "oneOf": [{ "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }, { "type": "null" }] },
+          "cpu_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "queue_metrics": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "allOf": [
+                  { "$ref": "#/$defs/queue_metrics" },
+                  {
+                    "required": ["max_size_mb", "warning_size_percent"],
+                    "properties": {
+                      "last_successful_send_time": { "oneOf": [{ "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }, { "type": "null" }] }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tamper_checks": { "oneOf": [{ "$ref": "#/$defs/linux_tamper_checks" }, { "type": "null" }] }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": ["source_manifest"],
+            "properties": { "source_manifest": { "contains": { "properties": { "platform": { "const": "linux" } }, "required": ["platform"] } } }
+          },
+          {
+            "required": ["source_health"],
+            "properties": { "source_health": { "contains": { "properties": { "platform": { "const": "linux" } }, "required": ["platform"] } } }
+          }
+        ]
+      },
+      "then": {
+        "required": ["platform", "host_id"],
+        "properties": { "platform": { "const": "linux" } }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": ["source_manifest"],
+            "properties": { "source_manifest": { "contains": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source_kind"] } } }
+          },
+          {
+            "required": ["source_health"],
+            "properties": { "source_health": { "contains": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source_kind"] } } }
+          }
+        ]
+      },
+      "then": { "required": ["platform", "host_id"] }
+    }
+  ],
+  "x-crossSourceIdentity": true,
   "$defs": {
     "coverage_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
-    "source_status": {
-      "type": "string",
-      "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"]
+    "source_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"] },
+    "applicability": { "type": "string", "enum": ["applicable", "not_applicable", "unknown"] },
+    "checkpoint_kind": { "type": "string", "enum": ["cursor", "sequence", "cursor_and_sequence"] },
+    "source_kind": { "type": "string", "enum": ["windows_event_log", "linux_journal", "linux_audit", "inventory_diff", "agent_health"] },
+    "legacy_source_list": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 128 }
     },
-    "host_timezone": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "display_name": { "type": "string", "maxLength": 255 },
-        "standard_name": { "type": ["string", "null"], "maxLength": 255 },
-        "daylight_name": { "type": ["string", "null"], "maxLength": 255 },
-        "base_utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
-        "utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
-        "is_daylight_saving_time": { "type": ["boolean", "null"] }
-      }
+    "portable_source_list": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
     },
     "source_manifest_entry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_id", "channel", "display_name", "coverage_level", "required"],
+      "required": ["source_id", "display_name", "coverage_level", "required"],
       "properties": {
         "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "platform": { "$ref": "event-envelope.schema.json#/$defs/platform" },
+        "source_kind": { "$ref": "#/$defs/source_kind" },
         "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "source_namespace": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "facility": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "applicability": { "$ref": "#/$defs/applicability" },
+        "applicability_reason": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "checkpoint_kind": { "$ref": "#/$defs/checkpoint_kind" },
         "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
         "coverage_level": { "$ref": "#/$defs/coverage_level" },
         "required": { "type": "boolean" },
         "enabled_by_default": { "type": "boolean" },
         "source_pack": { "type": "string", "maxLength": 128 },
         "parser_id": { "type": "string", "maxLength": 128 },
-        "prerequisites": {
-          "type": "array",
-          "maxItems": 32,
-          "items": { "type": "string", "maxLength": 128 }
-        },
-        "event_families": {
-          "type": "array",
-          "maxItems": 32,
-          "items": { "type": "string", "maxLength": 128 }
-        },
-        "validation_scenarios": {
-          "type": "array",
-          "maxItems": 32,
-          "items": { "type": "string", "maxLength": 128 }
-        },
+        "prerequisites": { "$ref": "#/$defs/legacy_source_list" },
+        "event_families": { "$ref": "#/$defs/legacy_source_list" },
+        "validation_scenarios": { "$ref": "#/$defs/legacy_source_list" },
         "privacy": { "type": "string", "maxLength": 128 },
         "installer_managed": { "type": "boolean" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "not": { "required": ["source_kind"] } },
+          "then": { "required": ["channel"] }
+        },
+        {
+          "if": { "required": ["platform"] },
+          "then": { "required": ["source_kind"] }
+        },
+        {
+          "if": { "properties": { "source_kind": { "const": "windows_event_log" } }, "required": ["source_kind"] },
+          "then": { "required": ["platform", "channel"], "properties": { "platform": { "const": "windows" } } }
+        },
+        {
+          "if": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source_kind"] },
+          "then": {
+            "required": ["platform", "source_namespace", "applicability", "checkpoint_kind"],
+            "properties": {
+              "prerequisites": { "$ref": "#/$defs/portable_source_list" },
+              "event_families": { "$ref": "#/$defs/portable_source_list" },
+              "validation_scenarios": { "$ref": "#/$defs/portable_source_list" }
+            },
+            "not": { "required": ["channel"] }
+          }
+        },
+        {
+          "if": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit"] } }, "required": ["source_kind"] },
+          "then": { "properties": { "platform": { "const": "linux" } } }
+        },
+        {
+          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown"] } }, "required": ["applicability"] },
+          "then": { "required": ["applicability_reason"] }
+        }
+      ]
     },
     "source_health_report": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_id", "display_name", "channel", "coverage_level", "status", "required", "enabled"],
+      "required": ["source_id", "display_name", "coverage_level", "status", "required", "enabled"],
       "properties": {
         "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "platform": { "$ref": "event-envelope.schema.json#/$defs/platform" },
+        "source_kind": { "$ref": "#/$defs/source_kind" },
         "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
         "channel": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "source_namespace": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "facility": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "applicability": { "$ref": "#/$defs/applicability" },
+        "applicability_reason": { "type": "string", "minLength": 1, "maxLength": 512 },
         "coverage_level": { "$ref": "#/$defs/coverage_level" },
         "status": { "$ref": "#/$defs/source_status" },
         "required": { "type": "boolean" },
         "enabled": { "type": "boolean" },
         "last_event_time": { "type": ["string", "null"], "format": "date-time" },
-        "host_timezone": { "$ref": "#/$defs/host_timezone" },
+        "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" },
         "last_record_id": { "type": ["integer", "null"], "minimum": 0 },
         "oldest_record_id": { "type": ["integer", "null"], "minimum": 0 },
         "newest_record_id": { "type": ["integer", "null"], "minimum": 0 },
+        "collected_checkpoint": { "$ref": "event-envelope.schema.json#/$defs/source_checkpoint" },
+        "acknowledged_checkpoint": { "$ref": "event-envelope.schema.json#/$defs/source_checkpoint" },
         "log_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "retention_days": { "type": ["integer", "null"], "minimum": 0 },
         "lag_seconds": { "type": ["integer", "null"] },
@@ -108,7 +201,58 @@
         "config_hash": { "type": ["string", "null"], "maxLength": 128 },
         "source_version": { "type": ["string", "null"], "maxLength": 128 },
         "details": { "type": "object", "additionalProperties": { "type": "string" } }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "not": { "required": ["source_kind"] } },
+          "then": { "required": ["channel"] }
+        },
+        {
+          "if": { "required": ["platform"] },
+          "then": { "required": ["source_kind"] }
+        },
+        {
+          "if": { "properties": { "source_kind": { "const": "windows_event_log" } }, "required": ["source_kind"] },
+          "then": { "required": ["platform", "channel"], "properties": { "platform": { "const": "windows" } } }
+        },
+        {
+          "if": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source_kind"] },
+          "then": {
+            "required": ["platform", "source_namespace", "applicability"],
+            "properties": {
+              "last_event_time": { "oneOf": [{ "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }, { "type": "null" }] },
+              "details": { "$ref": "#/$defs/portable_details" }
+            },
+            "not": { "anyOf": [{ "required": ["channel"] }, { "required": ["last_record_id"] }, { "required": ["oldest_record_id"] }, { "required": ["newest_record_id"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit"] } }, "required": ["source_kind"] },
+          "then": { "properties": { "platform": { "const": "linux" } } }
+        },
+        {
+          "if": { "properties": { "applicability": { "const": "applicable" } }, "required": ["applicability"] },
+          "then": { "required": ["collected_checkpoint", "acknowledged_checkpoint"] }
+        },
+        {
+          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown"] } }, "required": ["applicability"] },
+          "then": { "required": ["applicability_reason"] }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "not_applicable" } },
+            "required": ["source_kind", "status"]
+          },
+          "then": { "properties": { "applicability": { "const": "not_applicable" } } }
+        },
+        {
+          "if": {
+            "properties": { "applicability": { "const": "not_applicable" } },
+            "required": ["source_kind", "applicability"]
+          },
+          "then": { "properties": { "status": { "const": "not_applicable" } } }
+        }
+      ]
     },
     "queue_metrics": {
       "type": "object",
@@ -131,6 +275,22 @@
         "signature_status": { "type": ["string", "null"] },
         "acl_status": { "type": ["string", "null"] }
       }
+    },
+    "linux_tamper_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binary_hash": { "type": ["string", "null"], "maxLength": 128 },
+        "config_hash": { "type": ["string", "null"], "maxLength": 128 },
+        "signature_status": { "type": ["string", "null"], "maxLength": 128 },
+        "acl_status": { "type": ["string", "null"], "maxLength": 128 }
+      }
+    },
+    "portable_details": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 1000 }
     }
   }
 }

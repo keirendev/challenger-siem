@@ -135,7 +135,7 @@ public sealed class WindowsEventCollector(
         }
         catch (EventLogNotFoundException)
         {
-            LogChannelNotPresentOnce(source.Channel);
+            LogChannelNotPresentOnce(source.Channel!);
             return Task.FromResult(SourceProbeError(source, SourceHealthStatuses.Missing, "event_log_not_found", "Channel is not present on this host."));
         }
         catch (EventLogException ex)

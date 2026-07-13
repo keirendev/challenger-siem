@@ -1,27 +1,122 @@
-# Schema design
+# Schema and contract design
+
+## Additive v1 cross-platform contract
+
+The versioned JSON Schemas remain under `contracts/v1/`. Version 1 preserves the original Windows JSON shapes while adding conditional cross-platform fields. Existing Windows registration, heartbeat, ingest, search, and source-health documents do not need to send any new property.
+
+The C# models are under `shared/Contracts/`. `WindowsCoverageLevel` remains the C# type name for source compatibility with existing clients; its serialized `L0`-`L4` values can also describe new source manifests. No `/api/v2` or `contracts/v2/` contract is introduced.
+
+Run deterministic schema, fixture, serialization, and runtime-validation checks with:
+
+```bash
+./scripts/validate-contracts.sh
+```
+
+Tracked fixtures under `tests/ContractFixtures/v1/` are minimal synthetic records only.
 
 ## Event envelope
 
 Versioned schema: `contracts/v1/event-envelope.schema.json`.
 
-Required structured fields:
+Fields required for every event:
 
-- `event_id` - client-generated UUID for deduplication.
+- `event_id` - non-empty client-generated UUID used with `agent_id` for server deduplication.
 - `agent_id` - endpoint agent identifier.
 - `hostname` - endpoint hostname at collection time.
-- `source` - initial value: `windows_event_log`.
-- `channel` - Windows Event Log channel.
-- `provider` - Windows event provider.
-- `windows_event_id` - Windows Event ID.
-- `record_id` - Windows channel record ID.
-- `event_time` - event timestamp from Windows, normalized to canonical UTC.
-- `host_timezone` - optional bounded endpoint timezone metadata and event-time UTC offset used only for host-local display.
-- `severity` - normalized severity string.
-- `message` - rendered or synthesized event message.
-- `normalized` - optional normalized category/action/entity/search fields.
-- `raw` - original parsed event payload.
+- `source` - source kind.
+- `event_time` - RFC 3339 timestamp with an offset; default/minimum timestamps are invalid. UTC is canonical after normalization.
+- `severity` - one of the exact lowercase values `verbose`, `information`, `warning`, `error`, `critical`, `audit_success`, or `audit_failure`. Additive-source schema and runtime validation use ordinal matching; the legacy Windows Event Log runtime retains its existing case-insensitive acceptance.
+- `message` - rendered or synthesized message, at most 20,000 characters.
+- `raw` - a JSON object; for additive portable sources its compact UTF-8 serialization is at most 65,536 bytes. Legacy Windows Event Log v1 events retain their original unbounded schema allowance.
 
-`ingest_time` is set by the server when stored. Server storage extracts selected normalized fields such as category, action, user, process image, IPs, service, file path, and registry key into searchable columns while retaining `normalized_json`, `raw_json`, and optional `host_timezone` JSONB metadata. UTC remains the only timestamp used for range filtering, correlation, and deduplication.
+Source kinds are:
+
+| `source` | Platform | Conditional identity |
+| --- | --- | --- |
+| `windows_event_log` | Windows | Existing `channel`, `provider`, `windows_event_id`, and `record_id` remain required. Optional `platform`, when present, is `windows`. |
+| `linux_journal` | Linux | `platform=linux`, stable `source_id`, checkpoint, deduplication metadata, data-handling metadata, and at least one of `event_code`, `facility`, or `unit`. Windows-only identity fields must be omitted. |
+| `linux_audit` | Linux | Linux identity metadata plus `event_code`. Windows-only identity fields must be omitted. |
+| `inventory_diff` | Windows or Linux | Explicit platform, portable identity metadata, and `event_code`. Windows Event Log identity fields must be omitted. |
+| `agent_health` | Windows or Linux | Explicit platform, portable identity metadata, and `event_code`. Windows Event Log identity fields must be omitted. |
+
+`event_code` is a bounded platform-native symbolic code. `facility` and `unit` carry bounded journal facility and service/unit identity. They are never populated with fake Windows IDs.
+
+### Source checkpoints
+
+`checkpoint` carries a bounded opaque `cursor`, a non-negative `sequence`, or both, with optional event/recorded timestamps. Cursors are compared as opaque exact strings. Sequences are source-local monotonically increasing integers; they are not globally comparable.
+
+Source-health reports can carry both:
+
+- `collected_checkpoint` - highest position durably placed in the local queue;
+- `acknowledged_checkpoint` - highest position acknowledged as accepted or duplicate by the server.
+
+An acknowledged sequence cannot be ahead of the collected sequence. Collectors must queue before advancing the collected checkpoint, and agents must not advance the acknowledged checkpoint or delete a queued record until an ingest acknowledgement covers that event. A difference between the two positions is visible backlog, not successful coverage.
+
+### Deterministic deduplication
+
+Every additive portable-source event requires `deduplication.algorithm=sha256_uuid` and an ordered `inputs` list. Inputs use these exact field paths:
+
+- `agent_id`
+- `source_id`
+- `checkpoint.cursor`
+- `checkpoint.sequence`
+- `event_code`
+- `event_time`
+- `raw_sha256`
+
+`agent_id` and `source_id` are always included. Every cursor/sequence named as an input must exist, and each checkpoint value present on an additive-source event must be included. `raw_sha256`, when selected, is a 64-character lowercase hexadecimal digest and must be present in the metadata.
+
+For `sha256_uuid`, resolve inputs in declared order, represent integers as invariant base-10 and timestamps in UTC as exactly `yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'`, join the values with U+001F, hash the UTF-8 bytes with SHA-256, use the first 16 digest bytes in network byte order, set RFC 4122 variant bits and the version-5 nibble, and format those bytes as a lowercase UUID. `raw_sha256` is recomputed over the compact UTF-8 serialization of `raw`; neither that declared digest nor `event_id` is trusted. Runtime and deterministic contract validation reject either mismatch. The server's stable uniqueness key remains `(agent_id, event_id)`.
+
+Legacy Windows Event Log events retain their existing deterministic event-ID inputs and semantics. They are not required to add `deduplication` metadata.
+
+### Redaction, truncation, and raw bounds
+
+Every additive portable-source event requires `data_handling`; all limits in this subsection are conditional on an additive source and do not narrow a legacy Windows Event Log envelope:
+
+- `raw_size_bytes` exactly reports the compact UTF-8 serialization size of `raw` and cannot exceed 65,536;
+- `redaction_applied` is true exactly when `redacted_fields` is non-empty;
+- `truncation_applied` is true exactly when `truncated_fields` is non-empty;
+- truncation requires `original_size_bytes` greater than the retained raw size;
+- field lists contain unique bounded field paths.
+
+Redaction and truncation happen before durable queueing. The metadata describes removed or shortened fields; it must not reproduce the removed sensitive value. The JSON Schema carries `x-maxUtf8Bytes: 65536` and `x-rawSizeMatches: /raw`; the deterministic contract validator and API runtime enforce exact raw byte size, original/retained size ordering, and the byte ceiling because JSON Schema has no standard cross-object UTF-8 size keyword. The deterministic validator also applies the runtime checkpoint-ordering and event-ID recipe checks, so `validate-contracts.sh` cannot certify a structurally valid but contradictory document.
+
+### Structured normalized concepts
+
+The existing flattened normalized fields remain unchanged. Additive optional `normalized.process`, `normalized.user`, `normalized.network`, and `normalized.file` objects provide bounded platform-neutral concepts:
+
+- process: PID, parent PID, executable, and command line;
+- user: name, platform identifier, and realm;
+- network: source/destination IP and numeric port plus protocol;
+- file: path, operation, and lowercase SHA-256.
+
+`entities` retains its existing v1 limit of 100 entries. For additive portable-source events, entity identity strings must be non-empty and `labels` is limited to 64 entries with bounded keys and values. Legacy Windows Event Log labels retain their original v1 shape and sizes.
+
+## Registration, heartbeat, source manifest, and source health
+
+Registration and heartbeat add optional `platform` (`windows` or `linux`) and platform-neutral `host_id`. Legacy Windows requests can omit both. Linux requests require both and do not need to fabricate `machine_guid`.
+
+A legacy source-manifest or source-health item can retain its original required `channel` shape. Event envelopes continue to call their discriminator `source`; `source_kind` exists only on manifest and health entries, matching the C# models. New explicitly typed items add:
+
+- `platform` and `source_kind`;
+- stable `source_id` plus `source_namespace` for identity;
+- optional `facility` and `unit`;
+- `applicability` (`applicable`, `not_applicable`, or `unknown`) and a required reason for the latter two states;
+- manifest `checkpoint_kind` (`cursor`, `sequence`, or `cursor_and_sequence`);
+- source-health `collected_checkpoint` and `acknowledged_checkpoint`.
+
+Linux journal/audit kinds require `platform=linux`. Platform-neutral inventory-diff and agent-health kinds accept explicit `platform=windows` or `platform=linux`; source kind never implies platform for those records. All four additive portable kinds omit `channel` and Windows record-ID ranges. Health remains explicit through the existing `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted` statuses. Typed non-applicable sources pair `applicability=not_applicable` with `status=not_applicable`; an applicability reason explains why the source does not apply.
+
+A portable typed `source_id` is stable and unique per agent and source configuration. It occurs at most once in each heartbeat manifest and health array; every portable manifest entry matches exactly one portable health entry with the same `source_id`. The matching pair and top-level heartbeat must agree on platform, while the pair must also agree on source kind, namespace, facility, unit, and applicability. Its collected and acknowledged checkpoint shapes must match the manifest's `checkpoint_kind`: cursor only, sequence only, or both. Portable-source heartbeats require `host_id`; Linux source entries require top-level `platform=linux`, while Windows inventory/health entries require top-level `platform=windows`.
+
+Source manifests and source-health arrays retain their existing limit of 100 entries per heartbeat. Existing prerequisite/event-family/validation lists retain their original 32-item and 128-character limits, including legacy empty-string validity; typed portable list items must additionally be non-empty. Portable source-health `details` is limited to 32 bounded key/value entries, while untyped Windows `details` retains its original unrestricted map sizes. Linux heartbeat CPU, timestamp, and tamper-string bounds are conditional and do not reject a previously valid Windows heartbeat. When `queue_metrics` is present on a Linux heartbeat, `max_size_mb` and `warning_size_percent` are required and range-validated; legacy and portable-source Windows queue-metrics objects retain the existing optional-field shape, including empty and partial objects. JSON Schema annotations `x-uniquePortableBy` and `x-crossSourceIdentity` identify the non-standard cross-entry rules; deterministic contract validation and API runtime enforce them.
+
+## Storage boundary
+
+The active PostgreSQL schema in `server/Siem.Api/Database/001_initial.sql` still has Windows-only non-null/check constraints. The additive contracts deliberately do not alter that database; multi-platform table migration, persistence, and search are deferred to the next storage issue.
+
+Until that migration is applied, the current server validates additive Linux registration plus all portable heartbeat/event shapes, including Windows inventory-diff and agent-health records, but returns HTTP 422 with `cross_platform_storage_pending` before calling a Windows-Event-Log-only repository. This avoids claiming that Linux telemetry was persisted or searchable. Existing Windows v1 storage and search behavior is unchanged.
 
 ## Database tables
 
@@ -29,100 +124,37 @@ Implemented in `server/Siem.Api/Database/001_initial.sql`.
 
 ### `agents`
 
-Stores registered endpoints, hashed per-agent API tokens, lifecycle status, and optional current `host_timezone` metadata from registration/heartbeat. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry. Stale health is computed from `last_seen` rather than stored as a status.
+Stores registered Windows endpoints, hashed per-agent API tokens, lifecycle status, and optional current `host_timezone` metadata. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry.
 
 ### `events`
 
-Stores normalized fields plus `raw_json` and optional event-specific `host_timezone` as JSONB.
+Currently stores Windows event identity, normalized fields, `raw_json`, and optional event-specific `host_timezone` as JSONB.
 
-Deduplication key:
+Current deduplication key:
 
 ```sql
 unique (agent_id, event_id)
 ```
 
-### `agent_heartbeats`
+### `agent_heartbeats` and `source_health`
 
-Stores heartbeat observations, queue SLO metrics, source manifest, source-health summaries, configuration hash, tamper-check summaries, and optional current host timezone metadata.
+Store the current Windows heartbeat, source-manifest, and source-health persistence shape. Cross-platform checkpoint/source columns are intentionally deferred to the multi-platform migration.
 
-### `source_health`
+### Other tables
 
-Stores the latest per-agent source-health row keyed by `(agent_id, source_id)`, including coverage level, status, required/enabled flags, record ranges, log-size metrics, stale/gap/clear indicators, source version/config hash, bounded details, and optional host timezone metadata for source last-event display.
+The current schema also includes asset inventory, coverage exceptions, detection rules, alerts/evidence, investigation graphs, `soc_agent` records, and bounded ingestion errors. Their behavior is unchanged by this contract-only slice.
 
-### `coverage_exceptions`
+## Core current indexes
 
-Stores approved coverage exceptions for missing/not-applicable sources.
+Current Windows event indexes cover agent, hostname, event time, Windows event ID, channel, provider, raw JSON, and selected normalized fields. Heartbeat, source-health, inventory, detection, alert, graph, `soc_agent`, and ingestion-error indexes remain as defined in `001_initial.sql`. Cross-platform source/event-code indexes are deferred with storage migration.
 
-### `asset_inventory_snapshots`
+## Applying and validating PostgreSQL
 
-Stores bounded inventory snapshots for host identity, network, users/groups, services/drivers, scheduled tasks/autoruns, installed software, patches/features, security-control state, audit policy, and Windows role detection, with optional host timezone metadata for `collected_at` display.
-
-### `detection_rules`
-
-Stores detection rule metadata, source prerequisites, normalized field prerequisites, severity/confidence, ATT&CK tags, and enabled state.
-
-### `soc_agent_turns`
-
-Stores bounded backwards-compatible one-shot `soc-agent` question/answer metadata, provider/model, tool-run summaries, citations, and optional context identifiers. It must not store provider secrets or unbounded raw telemetry.
-
-### `soc_agent_sessions` and `soc_agent_messages`
-
-Store bounded chat workspace session metadata and message history, including role, redacted/bounded content, provider/model labels, tool-run summaries, citations, optional context identifiers, and timestamps. `soc_agent_messages.session_id` uses `on delete cascade` so an explicit operator chat-session deletion removes associated messages consistently. Independent one-shot `soc_agent_turns` audit rows are retained by chat-session deletion. These tables must not store provider credentials, browser cookies, unofficial provider tokens, raw provider payloads, or unbounded endpoint telemetry.
-
-### `alerts` and `alert_evidence`
-
-Stores detection alert review skeleton data and links alerts to event evidence. Evidence can carry or derive host timezone metadata from the linked event for display while preserving UTC event timestamps.
-
-### `investigation_graphs`, `investigation_graph_nodes`, `investigation_graph_edges`, `investigation_graph_proposals`, and `investigation_graph_audit`
-
-Store bounded operator-managed investigation graphs, typed nodes/edges, proposal-first `soc-agent` graph changes, and audit records. Nodes link to existing SIEM pages through reference fields and URLs instead of copying raw telemetry. Proposals remain pending until explicitly applied by an operator.
-
-### `ingestion_errors`
-
-Stores reviewable ingest validation failures after an agent has authenticated successfully. Rows include agent ID, batch ID, event ID when it can be safely identified, an error code/message, and bounded JSON context. The context intentionally omits authorization headers, bearer tokens, rendered event messages, and full raw event payloads.
-
-Operators can inspect recent failures with a bounded query such as:
-
-```sql
-select error_time, agent_id, batch_id, event_id, error_code, error_message
-from ingestion_errors
-order by error_time desc
-limit 25;
-```
-
-## Core indexes
-
-- `events(agent_id)`
-- `events(hostname)`
-- `events(event_time desc)`
-- `events(windows_event_id)`
-- `events(channel)`
-- `events(provider)`
-- GIN index on `events(raw_json)`
-- normalized event indexes for category, action, user, process image, and destination IP
-- `agent_heartbeats(agent_id)` and `agent_heartbeats(heartbeat_time desc)`
-- `source_health(agent_id)` and `source_health(status)`
-- `asset_inventory_snapshots(agent_id, snapshot_type, collected_at desc)`
-- `detection_rules(category)`
-- `alerts(status)`, `alerts(agent_id)`, and `alerts(created_at desc)`
-- `alert_evidence(alert_id)`
-- `soc_agent_turns(created_at desc)` and `soc_agent_turns(context_agent_id)`
-- `soc_agent_sessions(updated_at desc)` and `soc_agent_sessions(context_agent_id)`
-- `soc_agent_messages(session_id, created_at asc, id asc)`
-- `investigation_graphs(status, updated_at desc)` and GIN `investigation_graphs(tags)`
-- `investigation_graph_nodes(graph_id, status)` and `investigation_graph_nodes(reference_kind, reference_id)`
-- `investigation_graph_edges(graph_id, status)`
-- `investigation_graph_proposals(graph_id, status, created_at desc)`
-- `investigation_graph_audit(graph_id, created_at desc)`
-- `ingestion_errors(agent_id)` and `ingestion_errors(error_time desc)`
-
-## Applying and validating the schema
-
-No Docker workflow is required. With PostgreSQL client tools installed and `ConnectionStrings__SiemDatabase` set in an ignored `.local/dev.env`, run:
+With PostgreSQL client tools installed and a private ignored connection configuration:
 
 ```bash
 ./scripts/apply-schema.sh
 ./scripts/validate-schema.sh
 ```
 
-Both scripts accept an explicit connection string as their first argument, but do not echo it. The validation script checks required tables, the `(agent_id, event_id)` uniqueness constraint, and the key search/review indexes.
+These commands validate the current Windows persistence schema only; they do not indicate Linux persistence support.

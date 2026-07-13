@@ -5,18 +5,12 @@ namespace Challenger.Siem.Api.Ingestion;
 
 public static class RequestValidation
 {
-    private static readonly HashSet<string> AllowedSeverities = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> AllowedSeverities = new(StringComparer.Ordinal)
     {
-        "verbose",
-        "information",
-        "warning",
-        "error",
-        "critical",
-        "audit_success",
-        "audit_failure"
+        "verbose", "information", "warning", "error", "critical", "audit_success", "audit_failure"
     };
 
-    private static readonly HashSet<string> AllowedSourceStatuses = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> AllowedSourceStatuses = new(StringComparer.Ordinal)
     {
         SourceHealthStatuses.Healthy,
         SourceHealthStatuses.Missing,
@@ -27,13 +21,29 @@ public static class RequestValidation
         SourceHealthStatuses.Excepted
     };
 
+    private static readonly HashSet<string> AllowedApplicabilityStatuses = new(StringComparer.Ordinal)
+    {
+        SourceApplicabilityStatuses.Applicable,
+        SourceApplicabilityStatuses.NotApplicable,
+        SourceApplicabilityStatuses.Unknown
+    };
+
+    private static readonly HashSet<string> AllowedCheckpointKinds = new(StringComparer.Ordinal)
+    {
+        SourceCheckpointKinds.Cursor,
+        SourceCheckpointKinds.Sequence,
+        SourceCheckpointKinds.CursorAndSequence
+    };
+
     public static Dictionary<string, string[]> ValidateRegistration(AgentRegistrationRequest request)
     {
         var errors = NewErrorBag();
         RequireLength(errors, nameof(request.AgentId), request.AgentId, 1, 128);
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
+        OptionalMaxLength(errors, nameof(request.MachineGuid), request.MachineGuid, 255);
         RequireLength(errors, nameof(request.OsVersion), request.OsVersion, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
+        ValidatePlatformAndHostId(errors, request.Platform, request.HostId);
         ValidateHostTimezone(errors, "host_timezone", request.HostTimezone);
         return ToValidationProblem(errors);
     }
@@ -45,16 +55,29 @@ public static class RequestValidation
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
         RequireLength(errors, nameof(request.Os), request.Os, 1, 255);
+        ValidatePlatformAndHostId(errors, request.Platform, request.HostId);
+        var linuxHeartbeat = string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+            || request.SourceManifest?.Any(IsLinuxSource) == true
+            || request.SourceHealth?.Any(IsLinuxSource) == true;
+        if (linuxHeartbeat)
+        {
+            RequireLength(errors, "platform", request.Platform, 1, 16);
+            RequireLength(errors, "host_id", request.HostId, 1, 255);
+            ValidateTimestamp(errors, "last_event_time", request.LastEventTime);
+        }
         ValidateHostTimezone(errors, "host_timezone", request.HostTimezone);
+        OptionalMaxLength(errors, "config_hash", request.ConfigHash, 128);
 
         if (request.QueueDepth < 0)
         {
             Add(errors, nameof(request.QueueDepth), "Queue depth must be greater than or equal to zero.");
         }
 
-        if (request.CpuPercent < 0)
+        if (request.CpuPercent < 0 || (linuxHeartbeat && request.CpuPercent > 100))
         {
-            Add(errors, nameof(request.CpuPercent), "CPU percent must be greater than or equal to zero.");
+            Add(errors, nameof(request.CpuPercent), linuxHeartbeat
+                ? "CPU percent must be between zero and 100."
+                : "CPU percent must be greater than or equal to zero.");
         }
 
         if (request.MemoryMb < 0)
@@ -62,33 +85,46 @@ public static class RequestValidation
             Add(errors, nameof(request.MemoryMb), "Memory MB must be greater than or equal to zero.");
         }
 
-        if (request.QueueMetrics is not null)
-        {
-            if (request.QueueMetrics.QueueDepth < 0)
-            {
-                Add(errors, "queue_metrics.queue_depth", "Queue depth must be greater than or equal to zero.");
-            }
+        ValidateQueueMetrics(errors, request.QueueMetrics, enforceLinuxBounds: linuxHeartbeat);
 
-            if (request.QueueMetrics.PoisonDepth < 0)
+        if (request.SourceManifest is null)
+        {
+            Add(errors, "source_manifest", "Source manifest must be an array when supplied.");
+        }
+        else
+        {
+            if (request.SourceManifest.Count > ContractLimits.MaxSourceEntries)
             {
-                Add(errors, "queue_metrics.poison_depth", "Poison depth must be greater than or equal to zero.");
+                Add(errors, "source_manifest", $"Source manifest contains more than {ContractLimits.MaxSourceEntries} entries.");
+            }
+            for (var index = 0; index < request.SourceManifest.Count; index++)
+            {
+                ValidateSourceManifestEntry(errors, request.SourceManifest[index], index);
             }
         }
 
-        for (var index = 0; index < request.SourceHealth.Count; index++)
+        if (request.SourceHealth is null)
         {
-            var source = request.SourceHealth[index];
-            RequireLength(errors, $"source_health[{index}].source_id", source.SourceId, 1, 128);
-            RequireLength(errors, $"source_health[{index}].display_name", source.DisplayName, 1, 255);
-            RequireLength(errors, $"source_health[{index}].channel", source.Channel, 1, 255);
-            if (!AllowedSourceStatuses.Contains(source.Status))
+            Add(errors, "source_health", "Source health must be an array when supplied.");
+        }
+        else
+        {
+            if (request.SourceHealth.Count > ContractLimits.MaxSourceEntries)
             {
-                Add(errors, $"source_health[{index}].status", "Source status is not supported.");
+                Add(errors, "source_health", $"Source health contains more than {ContractLimits.MaxSourceEntries} entries.");
             }
-
-            ValidateHostTimezone(errors, $"source_health[{index}].host_timezone", source.HostTimezone);
+            for (var index = 0; index < request.SourceHealth.Count; index++)
+            {
+                ValidateSourceHealth(errors, request.SourceHealth[index], index);
+            }
         }
 
+        if (request.SourceManifest is not null && request.SourceHealth is not null)
+        {
+            ValidateHeartbeatSourceRelationships(errors, request);
+        }
+
+        ValidateTamperChecks(errors, request.TamperChecks, enforceLinuxBounds: linuxHeartbeat);
         return ToValidationProblem(errors);
     }
 
@@ -173,6 +209,18 @@ public static class RequestValidation
         return ToValidationProblem(errors);
     }
 
+    public static bool RequiresCrossPlatformStorage(AgentRegistrationRequest request) =>
+        string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal);
+
+    public static bool RequiresCrossPlatformStorage(HeartbeatRequest request) =>
+        string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+        || request.SourceManifest?.Any(source => source is not null && TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind)) == true
+        || request.SourceHealth?.Any(source => source is not null && TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind)) == true;
+
+    public static bool RequiresCrossPlatformStorage(IngestBatchRequest request) =>
+        request.Events.Any(envelope => TelemetrySourceKinds.UsesPortableIdentity(envelope.Source)
+            || string.Equals(envelope.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal));
+
     private static void ValidateEvent(Dictionary<string, List<string>> errors, string batchAgentId, EventEnvelope? envelope, int index)
     {
         var prefix = $"events[{index}]";
@@ -194,32 +242,39 @@ public static class RequestValidation
         }
 
         RequireLength(errors, $"{prefix}.hostname", envelope.Hostname, 1, 255);
-        RequireLength(errors, $"{prefix}.channel", envelope.Channel, 1, 255);
-        RequireLength(errors, $"{prefix}.provider", envelope.Provider, 1, 255);
-
-        if (!string.Equals(envelope.Source, EventSources.WindowsEventLog, StringComparison.Ordinal))
+        if (!TelemetrySourceKinds.All.Contains(envelope.Source))
         {
-            Add(errors, $"{prefix}.source", "Source must be windows_event_log.");
+            Add(errors, $"{prefix}.source", "Source kind is not supported by the v1 contract.");
+        }
+        else if (string.Equals(envelope.Source, EventSources.WindowsEventLog, StringComparison.Ordinal))
+        {
+            ValidateWindowsEventIdentity(errors, prefix, envelope);
+        }
+        else
+        {
+            ValidatePortableEventIdentity(errors, prefix, envelope);
         }
 
-        if (envelope.WindowsEventId < 0 || envelope.WindowsEventId > 65535)
-        {
-            Add(errors, $"{prefix}.windows_event_id", "Windows event ID must be between 0 and 65535.");
-        }
-
-        if (envelope.RecordId < 0)
-        {
-            Add(errors, $"{prefix}.record_id", "Record ID must be greater than or equal to zero.");
-        }
+        OptionalMaxLength(errors, $"{prefix}.event_code", envelope.EventCode, 128);
+        OptionalMaxLength(errors, $"{prefix}.facility", envelope.Facility, 128);
+        OptionalMaxLength(errors, $"{prefix}.unit", envelope.Unit, 255);
 
         if (envelope.EventTime == default)
         {
             Add(errors, $"{prefix}.event_time", "Event timestamp is required.");
         }
 
+        var portableEvent = TelemetrySourceKinds.UsesPortableIdentity(envelope.Source);
+        if (portableEvent)
+        {
+            ValidateTimestamp(errors, $"{prefix}.ingest_time", envelope.IngestTime);
+        }
         ValidateHostTimezone(errors, $"{prefix}.host_timezone", envelope.HostTimezone);
 
-        if (string.IsNullOrWhiteSpace(envelope.Severity) || !AllowedSeverities.Contains(envelope.Severity))
+        var supportedSeverity = portableEvent
+            ? AllowedSeverities.Contains(envelope.Severity)
+            : AllowedSeverities.Any(severity => string.Equals(severity, envelope.Severity, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(envelope.Severity) || !supportedSeverity)
         {
             Add(errors, $"{prefix}.severity", "Severity is not supported.");
         }
@@ -228,29 +283,695 @@ public static class RequestValidation
         {
             Add(errors, $"{prefix}.message", "Message is required.");
         }
-        else if (envelope.Message.Length > 20000)
+        else if (envelope.Message.Length > 20_000)
         {
             Add(errors, $"{prefix}.message", "Message is too long.");
         }
 
-        if (envelope.Raw.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        int? rawSizeBytes = null;
+        if (envelope.Raw.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null or not JsonValueKind.Object)
         {
-            Add(errors, $"{prefix}.raw", "Raw event data is required.");
+            Add(errors, $"{prefix}.raw", "Raw event data must be a JSON object.");
+        }
+        else
+        {
+            rawSizeBytes = JsonSerializer.SerializeToUtf8Bytes(envelope.Raw).Length;
+            if (portableEvent && rawSizeBytes > ContractLimits.RawPayloadMaxUtf8Bytes)
+            {
+                Add(errors, $"{prefix}.raw", $"Raw event data exceeds {ContractLimits.RawPayloadMaxUtf8Bytes} UTF-8 bytes.");
+            }
+        }
+
+        ValidateNormalized(errors, prefix, envelope.Normalized, enforcePortableBounds: portableEvent);
+        ValidateDataHandling(errors, prefix, envelope.DataHandling, rawSizeBytes);
+    }
+
+    private static void ValidateWindowsEventIdentity(Dictionary<string, List<string>> errors, string prefix, EventEnvelope envelope)
+    {
+        if (envelope.Platform is not null && !string.Equals(envelope.Platform, TelemetryPlatforms.Windows, StringComparison.Ordinal))
+        {
+            Add(errors, $"{prefix}.platform", "windows_event_log events may only declare the windows platform.");
+        }
+
+        RequireLength(errors, $"{prefix}.channel", envelope.Channel, 1, 255);
+        RequireLength(errors, $"{prefix}.provider", envelope.Provider, 1, 255);
+        if (envelope.WindowsEventId is < 0 or > 65_535 || !envelope.WindowsEventId.HasValue)
+        {
+            Add(errors, $"{prefix}.windows_event_id", "Windows event ID must be between 0 and 65535.");
+        }
+
+        if (envelope.RecordId < 0 || !envelope.RecordId.HasValue)
+        {
+            Add(errors, $"{prefix}.record_id", "Record ID must be greater than or equal to zero.");
         }
     }
 
-    private static Dictionary<string, List<string>> NewErrorBag()
+    private static void ValidatePortableEventIdentity(Dictionary<string, List<string>> errors, string prefix, EventEnvelope envelope)
     {
-        return new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        if (!TelemetrySourceKinds.IsValidForPlatform(envelope.Source, envelope.Platform))
+        {
+            Add(errors, $"{prefix}.platform", TelemetrySourceKinds.IsLinuxNative(envelope.Source)
+                ? "Linux-native source kinds require platform linux."
+                : "Platform-neutral source kinds require platform windows or linux.");
+        }
+
+        RequireLength(errors, $"{prefix}.source_id", envelope.SourceId, 1, 128);
+        if (envelope.Channel is not null || envelope.Provider is not null
+            || envelope.WindowsEventId.HasValue || envelope.RecordId.HasValue)
+        {
+            Add(errors, $"{prefix}.source", "Portable event sources must omit Windows Event Log identity fields.");
+        }
+
+        if (envelope.Source == EventSources.LinuxJournal)
+        {
+            if (string.IsNullOrWhiteSpace(envelope.EventCode)
+                && string.IsNullOrWhiteSpace(envelope.Facility)
+                && string.IsNullOrWhiteSpace(envelope.Unit))
+            {
+                Add(errors, $"{prefix}.event_code", "Journal events require an event code, facility, or unit.");
+            }
+        }
+        else
+        {
+            RequireLength(errors, $"{prefix}.event_code", envelope.EventCode, 1, 128);
+        }
+
+        ValidateCheckpoint(errors, $"{prefix}.checkpoint", envelope.Checkpoint, required: true);
+        ValidateDeduplication(errors, prefix, envelope);
+        if (envelope.DataHandling is null)
+        {
+            Add(errors, $"{prefix}.data_handling", "Portable event sources require explicit redaction and truncation metadata.");
+        }
     }
 
-    private static void ValidateHostTimezone(Dictionary<string, List<string>> errors, string prefix, HostTimezoneMetadata? timezone)
+    private static void ValidateDeduplication(Dictionary<string, List<string>> errors, string prefix, EventEnvelope envelope)
     {
-        if (timezone is null)
+        var deduplication = envelope.Deduplication;
+        if (deduplication is null)
+        {
+            Add(errors, $"{prefix}.deduplication", "Portable event sources require deterministic deduplication metadata.");
+            return;
+        }
+
+        if (!string.Equals(deduplication.Algorithm, DeduplicationAlgorithms.Sha256Uuid, StringComparison.Ordinal))
+        {
+            Add(errors, $"{prefix}.deduplication.algorithm", "Deduplication algorithm is not supported.");
+        }
+
+        if (deduplication.Inputs is null
+            || deduplication.Inputs.Count is < 3 or > 7
+            || deduplication.Inputs.Distinct(StringComparer.Ordinal).Count() != deduplication.Inputs.Count
+            || deduplication.Inputs.Any(input => !DeduplicationInputs.All.Contains(input)))
+        {
+            Add(errors, $"{prefix}.deduplication.inputs", "Deduplication inputs must contain three to seven unique supported field names.");
+            return;
+        }
+
+        RequireDedupInput(errors, prefix, deduplication.Inputs, DeduplicationInputs.AgentId);
+        RequireDedupInput(errors, prefix, deduplication.Inputs, DeduplicationInputs.SourceId);
+        var checkpoint = envelope.Checkpoint;
+        if (checkpoint?.Cursor is not null)
+        {
+            RequireDedupInput(errors, prefix, deduplication.Inputs, DeduplicationInputs.CheckpointCursor);
+        }
+        else if (deduplication.Inputs.Contains(DeduplicationInputs.CheckpointCursor, StringComparer.Ordinal))
+        {
+            Add(errors, $"{prefix}.deduplication.inputs", "checkpoint.cursor cannot be an input when the cursor is absent.");
+        }
+
+        if (checkpoint?.Sequence is not null)
+        {
+            RequireDedupInput(errors, prefix, deduplication.Inputs, DeduplicationInputs.CheckpointSequence);
+        }
+        else if (deduplication.Inputs.Contains(DeduplicationInputs.CheckpointSequence, StringComparer.Ordinal))
+        {
+            Add(errors, $"{prefix}.deduplication.inputs", "checkpoint.sequence cannot be an input when the sequence is absent.");
+        }
+
+        if (deduplication.Inputs.Contains(DeduplicationInputs.EventCode, StringComparer.Ordinal) && string.IsNullOrWhiteSpace(envelope.EventCode))
+        {
+            Add(errors, $"{prefix}.deduplication.inputs", "event_code cannot be an input when the event code is absent.");
+        }
+
+        if (deduplication.Inputs.Contains(DeduplicationInputs.RawSha256, StringComparer.Ordinal))
+        {
+            if (deduplication.RawSha256 is null || !IsLowerHexSha256(deduplication.RawSha256))
+            {
+                Add(errors, $"{prefix}.deduplication.raw_sha256", "raw_sha256 must be 64 lowercase hexadecimal characters when selected as an input.");
+            }
+            else if (envelope.Raw.ValueKind == JsonValueKind.Object
+                && !string.Equals(deduplication.RawSha256, DeterministicEventIdentity.ComputeRawSha256(envelope.Raw), StringComparison.Ordinal))
+            {
+                Add(errors, $"{prefix}.deduplication.raw_sha256", "raw_sha256 must match the compact UTF-8 serialization of raw.");
+            }
+        }
+        else if (deduplication.RawSha256 is not null)
+        {
+            Add(errors, $"{prefix}.deduplication.raw_sha256", "raw_sha256 must be listed in inputs when supplied.");
+        }
+
+        try
+        {
+            var expectedEventId = DeterministicEventIdentity.ComputeSha256Uuid(envelope);
+            if (envelope.EventId != expectedEventId)
+            {
+                Add(errors, $"{prefix}.event_id", "Event ID must match the declared sha256_uuid input recipe.");
+            }
+        }
+        catch (ArgumentException)
+        {
+            // Specific missing, unsupported, and contradictory input errors are reported above.
+        }
+    }
+
+    private static void RequireDedupInput(Dictionary<string, List<string>> errors, string prefix, IReadOnlyList<string> inputs, string required)
+    {
+        if (!inputs.Contains(required, StringComparer.Ordinal))
+        {
+            Add(errors, $"{prefix}.deduplication.inputs", $"Deduplication inputs must include {required}.");
+        }
+    }
+
+    private static void ValidateDataHandling(Dictionary<string, List<string>> errors, string prefix, DataHandlingMetadata? handling, int? actualRawSizeBytes)
+    {
+        if (handling is null)
         {
             return;
         }
 
+        if (handling.RawSizeBytes is < 0 or > ContractLimits.RawPayloadMaxUtf8Bytes)
+        {
+            Add(errors, $"{prefix}.data_handling.raw_size_bytes", $"Raw size must be between zero and {ContractLimits.RawPayloadMaxUtf8Bytes} bytes.");
+        }
+        else if (actualRawSizeBytes.HasValue && handling.RawSizeBytes != actualRawSizeBytes.Value)
+        {
+            Add(errors, $"{prefix}.data_handling.raw_size_bytes", "Raw size must equal the compact UTF-8 serialization size of raw.");
+        }
+
+        if (handling.RedactedFields is null || handling.TruncatedFields is null)
+        {
+            Add(errors, $"{prefix}.data_handling", "Redacted and truncated field lists must be arrays.");
+            return;
+        }
+
+        ValidateFieldList(errors, $"{prefix}.data_handling.redacted_fields", handling.RedactedFields);
+        ValidateFieldList(errors, $"{prefix}.data_handling.truncated_fields", handling.TruncatedFields);
+        if (handling.RedactionApplied != (handling.RedactedFields.Count > 0))
+        {
+            Add(errors, $"{prefix}.data_handling.redacted_fields", "redaction_applied must be true exactly when redacted_fields is non-empty.");
+        }
+
+        if (handling.TruncationApplied != (handling.TruncatedFields.Count > 0))
+        {
+            Add(errors, $"{prefix}.data_handling.truncated_fields", "truncation_applied must be true exactly when truncated_fields is non-empty.");
+        }
+
+        if (handling.TruncationApplied && (!handling.OriginalSizeBytes.HasValue || handling.OriginalSizeBytes <= handling.RawSizeBytes))
+        {
+            Add(errors, $"{prefix}.data_handling.original_size_bytes", "Truncated data requires an original size greater than the retained raw size.");
+        }
+        else if (!handling.TruncationApplied && handling.OriginalSizeBytes.HasValue)
+        {
+            Add(errors, $"{prefix}.data_handling.original_size_bytes", "original_size_bytes must be omitted when truncation was not applied.");
+        }
+    }
+
+    private static void ValidateNormalized(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        NormalizedEventFields? normalized,
+        bool enforcePortableBounds)
+    {
+        if (normalized is null)
+        {
+            return;
+        }
+
+        var fields = new (string Name, string? Value, int Max)[]
+        {
+            ("category", normalized.Category, 128), ("action", normalized.Action, 128), ("outcome", normalized.Outcome, 128),
+            ("user_name", normalized.UserName, 512), ("user_sid", normalized.UserSid, 512), ("target_user_name", normalized.TargetUserName, 512),
+            ("logon_type", normalized.LogonType, 64), ("process_id", normalized.ProcessId, 64), ("parent_process_id", normalized.ParentProcessId, 64),
+            ("process_image", normalized.ProcessImage, 2048), ("parent_process_image", normalized.ParentProcessImage, 2048),
+            ("process_command_line", normalized.ProcessCommandLine, 4096), ("source_ip", normalized.SourceIp, 128),
+            ("source_port", normalized.SourcePort, 64), ("destination_ip", normalized.DestinationIp, 128),
+            ("destination_port", normalized.DestinationPort, 64), ("protocol", normalized.Protocol, 64),
+            ("service_name", normalized.ServiceName, 512), ("driver_name", normalized.DriverName, 512), ("object_name", normalized.ObjectName, 2048),
+            ("registry_key", normalized.RegistryKey, 2048), ("file_path", normalized.FilePath, 2048), ("hash", normalized.Hash, 512),
+            ("rule_name", normalized.RuleName, 512), ("threat_name", normalized.ThreatName, 512), ("task_name", normalized.TaskName, 512),
+            ("package_name", normalized.PackageName, 512)
+        };
+        foreach (var field in fields)
+        {
+            OptionalMaxLength(errors, $"{prefix}.normalized.{field.Name}", field.Value, field.Max);
+        }
+
+        if (normalized.Entities is null || normalized.Labels is null)
+        {
+            Add(errors, $"{prefix}.normalized", "Entities and labels must use array and object values.");
+            return;
+        }
+
+        if (normalized.Entities.Count > 100)
+        {
+            Add(errors, $"{prefix}.normalized.entities", "Normalized event contains more than 100 entities.");
+        }
+
+        for (var index = 0; index < normalized.Entities.Count; index++)
+        {
+            var entity = normalized.Entities[index];
+            if (entity is null)
+            {
+                Add(errors, $"{prefix}.normalized.entities[{index}]", "Entity must be an object.");
+                continue;
+            }
+            if (enforcePortableBounds)
+            {
+                RequireLength(errors, $"{prefix}.normalized.entities[{index}].type", entity.Type, 1, 64);
+                RequireLength(errors, $"{prefix}.normalized.entities[{index}].value", entity.Value, 1, 2048);
+            }
+            else
+            {
+                OptionalMaxLength(errors, $"{prefix}.normalized.entities[{index}].type", entity.Type, 64);
+                OptionalMaxLength(errors, $"{prefix}.normalized.entities[{index}].value", entity.Value, 2048);
+            }
+            OptionalMaxLength(errors, $"{prefix}.normalized.entities[{index}].role", entity.Role, 128);
+        }
+
+        if (enforcePortableBounds)
+        {
+            ValidateMap(errors, $"{prefix}.normalized.labels", normalized.Labels, ContractLimits.MaxMetadataEntries, 128, 2048);
+        }
+        ValidateProcess(errors, $"{prefix}.normalized.process", normalized.Process);
+        ValidateUser(errors, $"{prefix}.normalized.user", normalized.User);
+        ValidateNetwork(errors, $"{prefix}.normalized.network", normalized.Network);
+        ValidateFile(errors, $"{prefix}.normalized.file", normalized.File);
+    }
+
+    private static void ValidateProcess(Dictionary<string, List<string>> errors, string prefix, ProcessTelemetryConcept? process)
+    {
+        if (process is null) return;
+        OptionalMaxLength(errors, $"{prefix}.pid", process.Pid, 64);
+        OptionalMaxLength(errors, $"{prefix}.parent_pid", process.ParentPid, 64);
+        OptionalMaxLength(errors, $"{prefix}.executable", process.Executable, 2048);
+        OptionalMaxLength(errors, $"{prefix}.command_line", process.CommandLine, 4096);
+    }
+
+    private static void ValidateUser(Dictionary<string, List<string>> errors, string prefix, UserTelemetryConcept? user)
+    {
+        if (user is null) return;
+        OptionalMaxLength(errors, $"{prefix}.name", user.Name, 512);
+        OptionalMaxLength(errors, $"{prefix}.id", user.Id, 512);
+        OptionalMaxLength(errors, $"{prefix}.realm", user.Realm, 255);
+    }
+
+    private static void ValidateNetwork(Dictionary<string, List<string>> errors, string prefix, NetworkTelemetryConcept? network)
+    {
+        if (network is null) return;
+        OptionalMaxLength(errors, $"{prefix}.source_ip", network.SourceIp, 128);
+        OptionalMaxLength(errors, $"{prefix}.destination_ip", network.DestinationIp, 128);
+        OptionalMaxLength(errors, $"{prefix}.protocol", network.Protocol, 64);
+        if (network.SourcePort is < 0 or > 65_535) Add(errors, $"{prefix}.source_port", "Port must be between zero and 65535.");
+        if (network.DestinationPort is < 0 or > 65_535) Add(errors, $"{prefix}.destination_port", "Port must be between zero and 65535.");
+    }
+
+    private static void ValidateFile(Dictionary<string, List<string>> errors, string prefix, FileTelemetryConcept? file)
+    {
+        if (file is null) return;
+        OptionalMaxLength(errors, $"{prefix}.path", file.Path, 4096);
+        OptionalMaxLength(errors, $"{prefix}.operation", file.Operation, 128);
+        if (file.Sha256 is not null && !IsLowerHexSha256(file.Sha256)) Add(errors, $"{prefix}.sha256", "SHA-256 must be 64 lowercase hexadecimal characters.");
+    }
+
+    private static bool IsLinuxSource(SourceManifestEntry? source) => source is not null
+        && (string.Equals(source.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+            || TelemetrySourceKinds.IsLinuxNative(source.SourceKind));
+
+    private static bool IsLinuxSource(SourceHealthReport? source) => source is not null
+        && (string.Equals(source.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+            || TelemetrySourceKinds.IsLinuxNative(source.SourceKind));
+
+    private static void ValidateHeartbeatSourceRelationships(Dictionary<string, List<string>> errors, HeartbeatRequest request)
+    {
+        var portableManifest = request.SourceManifest
+            .Select((source, index) => (Source: source, Index: index))
+            .Where(item => item.Source is not null && TelemetrySourceKinds.UsesPortableIdentity(item.Source.SourceKind))
+            .ToArray();
+        var portableHealth = request.SourceHealth
+            .Select((source, index) => (Source: source, Index: index))
+            .Where(item => item.Source is not null && TelemetrySourceKinds.UsesPortableIdentity(item.Source.SourceKind))
+            .ToArray();
+
+        if (portableManifest.Length == 0 && portableHealth.Length == 0)
+        {
+            return;
+        }
+
+        RequireLength(errors, "host_id", request.HostId, 1, 255);
+        foreach (var item in portableManifest)
+        {
+            if (!string.Equals(request.Platform, item.Source!.Platform, StringComparison.Ordinal))
+            {
+                Add(errors, $"source_manifest[{item.Index}].platform", "Portable source platform must match the heartbeat platform.");
+            }
+        }
+        foreach (var item in portableHealth)
+        {
+            if (!string.Equals(request.Platform, item.Source!.Platform, StringComparison.Ordinal))
+            {
+                Add(errors, $"source_health[{item.Index}].platform", "Portable source platform must match the heartbeat platform.");
+            }
+        }
+
+        ValidateUniquePortableSourceIds(errors, portableManifest.Select(item => (item.Source!.SourceId, item.Index)), "source_manifest");
+        ValidateUniquePortableSourceIds(errors, portableHealth.Select(item => (item.Source!.SourceId, item.Index)), "source_health");
+
+        foreach (var healthItem in portableHealth)
+        {
+            var health = healthItem.Source!;
+            var manifests = portableManifest
+                .Where(item => string.Equals(item.Source!.SourceId, health.SourceId, StringComparison.Ordinal))
+                .ToArray();
+            if (manifests.Length != 1)
+            {
+                Add(errors, $"source_health[{healthItem.Index}].source_id", "Each portable health entry must match exactly one manifest source_id.");
+                continue;
+            }
+
+            var manifest = manifests[0].Source!;
+            ValidateMatchingSourceValue(errors, healthItem.Index, "platform", manifest.Platform, health.Platform);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "source_kind", manifest.SourceKind, health.SourceKind);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "source_namespace", manifest.SourceNamespace, health.SourceNamespace);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "facility", manifest.Facility, health.Facility);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "unit", manifest.Unit, health.Unit);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "applicability", manifest.Applicability, health.Applicability);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "applicability_reason", manifest.ApplicabilityReason, health.ApplicabilityReason);
+            ValidateCheckpointKind(errors, healthItem.Index, "collected_checkpoint", manifest.CheckpointKind, health.CollectedCheckpoint);
+            ValidateCheckpointKind(errors, healthItem.Index, "acknowledged_checkpoint", manifest.CheckpointKind, health.AcknowledgedCheckpoint);
+        }
+
+        foreach (var manifestItem in portableManifest)
+        {
+            var matchingHealthCount = portableHealth.Count(item =>
+                string.Equals(item.Source!.SourceId, manifestItem.Source!.SourceId, StringComparison.Ordinal));
+            if (matchingHealthCount != 1)
+            {
+                Add(errors, $"source_manifest[{manifestItem.Index}].source_id", "Each portable manifest entry must match exactly one health source_id.");
+            }
+        }
+    }
+
+    private static void ValidateUniquePortableSourceIds(
+        Dictionary<string, List<string>> errors,
+        IEnumerable<(string SourceId, int Index)> sources,
+        string collectionName)
+    {
+        foreach (var duplicate in sources
+            .GroupBy(item => item.SourceId, StringComparer.Ordinal)
+            .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1))
+        {
+            foreach (var item in duplicate)
+            {
+                Add(errors, $"{collectionName}[{item.Index}].source_id", "Portable source_id values must be unique within this heartbeat array.");
+            }
+        }
+    }
+
+    private static void ValidateMatchingSourceValue(
+        Dictionary<string, List<string>> errors,
+        int healthIndex,
+        string field,
+        string? manifestValue,
+        string? healthValue)
+    {
+        if (!string.Equals(manifestValue, healthValue, StringComparison.Ordinal))
+        {
+            Add(errors, $"source_health[{healthIndex}].{field}", $"Portable source {field} must match its manifest entry.");
+        }
+    }
+
+    private static void ValidateCheckpointKind(
+        Dictionary<string, List<string>> errors,
+        int healthIndex,
+        string field,
+        string? checkpointKind,
+        SourceCheckpoint? checkpoint)
+    {
+        if (checkpoint is null || checkpointKind is null)
+        {
+            return;
+        }
+
+        var valid = checkpointKind switch
+        {
+            SourceCheckpointKinds.Cursor => checkpoint.Cursor is not null && checkpoint.Sequence is null,
+            SourceCheckpointKinds.Sequence => checkpoint.Cursor is null && checkpoint.Sequence.HasValue,
+            SourceCheckpointKinds.CursorAndSequence => checkpoint.Cursor is not null && checkpoint.Sequence.HasValue,
+            _ => false
+        };
+        if (!valid)
+        {
+            Add(errors, $"source_health[{healthIndex}].{field}", $"Checkpoint fields must match manifest checkpoint_kind {checkpointKind}.");
+        }
+    }
+
+    private static void ValidateSourceManifestEntry(Dictionary<string, List<string>> errors, SourceManifestEntry? source, int index)
+    {
+        var prefix = $"source_manifest[{index}]";
+        if (source is null)
+        {
+            Add(errors, prefix, "Source manifest entry must be an object.");
+            return;
+        }
+        RequireLength(errors, $"{prefix}.source_id", source.SourceId, 1, 128);
+        RequireLength(errors, $"{prefix}.display_name", source.DisplayName, 1, 255);
+        OptionalMaxLength(errors, $"{prefix}.source_pack", source.SourcePack, 128);
+        OptionalMaxLength(errors, $"{prefix}.parser_id", source.ParserId, 128);
+        OptionalMaxLength(errors, $"{prefix}.privacy", source.Privacy, 128);
+        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
+            source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, source.CheckpointKind);
+        if (TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind) && string.IsNullOrWhiteSpace(source.CheckpointKind))
+        {
+            Add(errors, $"{prefix}.checkpoint_kind", "Portable source manifests require a checkpoint kind.");
+        }
+        if (source.Prerequisites is null || source.EventFamilies is null || source.ValidationScenarios is null)
+        {
+            Add(errors, prefix, "Manifest list fields must use array values.");
+        }
+        else
+        {
+            var requireNonEmptyItems = TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind);
+            ValidateStringList(errors, $"{prefix}.prerequisites", source.Prerequisites, requireNonEmptyItems);
+            ValidateStringList(errors, $"{prefix}.event_families", source.EventFamilies, requireNonEmptyItems);
+            ValidateStringList(errors, $"{prefix}.validation_scenarios", source.ValidationScenarios, requireNonEmptyItems);
+        }
+    }
+
+    private static void ValidateSourceHealth(Dictionary<string, List<string>> errors, SourceHealthReport? source, int index)
+    {
+        var prefix = $"source_health[{index}]";
+        if (source is null)
+        {
+            Add(errors, prefix, "Source health entry must be an object.");
+            return;
+        }
+        RequireLength(errors, $"{prefix}.source_id", source.SourceId, 1, 128);
+        RequireLength(errors, $"{prefix}.display_name", source.DisplayName, 1, 255);
+        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
+            source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, checkpointKind: null);
+        var portableSource = TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind);
+        var supportedStatus = portableSource
+            ? AllowedSourceStatuses.Contains(source.Status)
+            : AllowedSourceStatuses.Any(status => string.Equals(status, source.Status, StringComparison.OrdinalIgnoreCase));
+        if (!supportedStatus) Add(errors, $"{prefix}.status", "Source status is not supported.");
+        if (source.SourceKind is not null
+            && source.Status == SourceHealthStatuses.NotApplicable
+            && source.Applicability != SourceApplicabilityStatuses.NotApplicable)
+        {
+            Add(errors, $"{prefix}.applicability", "not_applicable health requires not_applicable source applicability.");
+        }
+        if (source.SourceKind is not null
+            && source.Applicability == SourceApplicabilityStatuses.NotApplicable
+            && source.Status != SourceHealthStatuses.NotApplicable)
+        {
+            Add(errors, $"{prefix}.status", "A non-applicable source must report not_applicable health.");
+        }
+        if (portableSource)
+        {
+            ValidateTimestamp(errors, $"{prefix}.last_event_time", source.LastEventTime);
+        }
+        ValidateHostTimezone(errors, $"{prefix}.host_timezone", source.HostTimezone);
+        ValidateNonNegative(errors, $"{prefix}.last_record_id", source.LastRecordId);
+        ValidateNonNegative(errors, $"{prefix}.oldest_record_id", source.OldestRecordId);
+        ValidateNonNegative(errors, $"{prefix}.newest_record_id", source.NewestRecordId);
+        ValidateNonNegative(errors, $"{prefix}.log_size_bytes", source.LogSizeBytes);
+        ValidateNonNegative(errors, $"{prefix}.retention_days", source.RetentionDays);
+        OptionalMaxLength(errors, $"{prefix}.error_code", source.ErrorCode, 128);
+        OptionalMaxLength(errors, $"{prefix}.error_message", source.ErrorMessage, 1000);
+        OptionalMaxLength(errors, $"{prefix}.config_hash", source.ConfigHash, 128);
+        OptionalMaxLength(errors, $"{prefix}.source_version", source.SourceVersion, 128);
+        if (source.Details is null)
+        {
+            Add(errors, $"{prefix}.details", "Details must be an object when supplied.");
+        }
+        else if (portableSource)
+        {
+            ValidateMap(errors, $"{prefix}.details", source.Details, 32, 128, 1000);
+        }
+
+        if (source.CollectedCheckpoint?.Sequence is long collectedSequence
+            && source.AcknowledgedCheckpoint?.Sequence is long acknowledgedSequence
+            && acknowledgedSequence > collectedSequence)
+        {
+            Add(errors, $"{prefix}.acknowledged_checkpoint.sequence", "Acknowledged sequence cannot be ahead of the collected sequence.");
+        }
+
+        if (portableSource)
+        {
+            if (source.LastRecordId.HasValue || source.OldestRecordId.HasValue || source.NewestRecordId.HasValue)
+            {
+                Add(errors, $"{prefix}.source_kind", "Portable source health must use checkpoints instead of Windows record IDs.");
+            }
+
+            if (source.Applicability == SourceApplicabilityStatuses.Applicable)
+            {
+                ValidateCheckpoint(errors, $"{prefix}.collected_checkpoint", source.CollectedCheckpoint, required: true);
+                ValidateCheckpoint(errors, $"{prefix}.acknowledged_checkpoint", source.AcknowledgedCheckpoint, required: true);
+            }
+        }
+        else
+        {
+            ValidateCheckpoint(errors, $"{prefix}.collected_checkpoint", source.CollectedCheckpoint, required: false);
+            ValidateCheckpoint(errors, $"{prefix}.acknowledged_checkpoint", source.AcknowledgedCheckpoint, required: false);
+        }
+    }
+
+    private static void ValidateSourceDescriptor(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        string? platform,
+        string? sourceKind,
+        string? channel,
+        string? sourceNamespace,
+        string? facility,
+        string? unit,
+        string? applicability,
+        string? applicabilityReason,
+        string? checkpointKind)
+    {
+        var legacy = platform is null && sourceKind is null;
+        if (legacy)
+        {
+            RequireLength(errors, $"{prefix}.channel", channel, 1, 255);
+            return;
+        }
+
+        if (platform is not (TelemetryPlatforms.Windows or TelemetryPlatforms.Linux))
+        {
+            Add(errors, $"{prefix}.platform", "Platform must be windows or linux.");
+        }
+
+        if (sourceKind is null || !TelemetrySourceKinds.All.Contains(sourceKind))
+        {
+            Add(errors, $"{prefix}.source_kind", "Source kind is not supported.");
+            return;
+        }
+
+        if (!TelemetrySourceKinds.IsValidForPlatform(sourceKind, platform))
+        {
+            Add(errors, $"{prefix}.source_kind", "Source kind is not valid for the declared platform.");
+        }
+
+        var portable = TelemetrySourceKinds.UsesPortableIdentity(sourceKind);
+        if (portable)
+        {
+            if (channel is not null) Add(errors, $"{prefix}.channel", "Portable sources must omit the Windows channel field.");
+            RequireLength(errors, $"{prefix}.source_namespace", sourceNamespace, 1, 128);
+            if (applicability is null || !AllowedApplicabilityStatuses.Contains(applicability))
+            {
+                Add(errors, $"{prefix}.applicability", "Portable sources require a supported applicability value.");
+            }
+            if (checkpointKind is not null && !AllowedCheckpointKinds.Contains(checkpointKind))
+            {
+                Add(errors, $"{prefix}.checkpoint_kind", "Checkpoint kind is not supported.");
+            }
+        }
+        else
+        {
+            RequireLength(errors, $"{prefix}.channel", channel, 1, 255);
+        }
+
+        OptionalMaxLength(errors, $"{prefix}.source_namespace", sourceNamespace, 128);
+        OptionalMaxLength(errors, $"{prefix}.facility", facility, 128);
+        OptionalMaxLength(errors, $"{prefix}.unit", unit, 255);
+        OptionalMaxLength(errors, $"{prefix}.applicability_reason", applicabilityReason, 512);
+        if (applicability is SourceApplicabilityStatuses.NotApplicable or SourceApplicabilityStatuses.Unknown
+            && string.IsNullOrWhiteSpace(applicabilityReason))
+        {
+            Add(errors, $"{prefix}.applicability_reason", "Non-applicable or unknown sources require a reason.");
+        }
+    }
+
+    private static void ValidateCheckpoint(Dictionary<string, List<string>> errors, string prefix, SourceCheckpoint? checkpoint, bool required)
+    {
+        if (checkpoint is null)
+        {
+            if (required) Add(errors, prefix, "Checkpoint metadata is required.");
+            return;
+        }
+
+        if (checkpoint.Cursor is null && checkpoint.Sequence is null)
+        {
+            Add(errors, prefix, "A checkpoint requires a cursor, a sequence, or both.");
+        }
+        OptionalMaxLength(errors, $"{prefix}.cursor", checkpoint.Cursor, 1024);
+        ValidateNonNegative(errors, $"{prefix}.sequence", checkpoint.Sequence);
+        ValidateTimestamp(errors, $"{prefix}.event_time", checkpoint.EventTime);
+        ValidateTimestamp(errors, $"{prefix}.recorded_at", checkpoint.RecordedAt);
+    }
+
+    private static void ValidateQueueMetrics(
+        Dictionary<string, List<string>> errors,
+        QueueSloMetrics? metrics,
+        bool enforceLinuxBounds)
+    {
+        if (metrics is null) return;
+        if (metrics.QueueDepth < 0) Add(errors, "queue_metrics.queue_depth", "Queue depth must be greater than or equal to zero.");
+        if (metrics.PoisonDepth < 0) Add(errors, "queue_metrics.poison_depth", "Poison depth must be greater than or equal to zero.");
+        ValidateNonNegative(errors, "queue_metrics.oldest_queued_age_seconds", metrics.OldestQueuedAgeSeconds);
+        if (enforceLinuxBounds)
+        {
+            ValidateTimestamp(errors, "queue_metrics.last_successful_send_time", metrics.LastSuccessfulSendTime);
+            if (metrics.MaxSizeMb < 1) Add(errors, "queue_metrics.max_size_mb", "Maximum queue size must be at least one MB.");
+            if (metrics.WarningSizePercent is < 1 or > 100) Add(errors, "queue_metrics.warning_size_percent", "Warning percent must be between one and 100.");
+        }
+    }
+
+    private static void ValidateTamperChecks(
+        Dictionary<string, List<string>> errors,
+        TamperCheckSummary? tamperChecks,
+        bool enforceLinuxBounds)
+    {
+        if (tamperChecks is null || !enforceLinuxBounds) return;
+        OptionalMaxLength(errors, "tamper_checks.binary_hash", tamperChecks.BinaryHash, 128);
+        OptionalMaxLength(errors, "tamper_checks.config_hash", tamperChecks.ConfigHash, 128);
+        OptionalMaxLength(errors, "tamper_checks.signature_status", tamperChecks.SignatureStatus, 128);
+        OptionalMaxLength(errors, "tamper_checks.acl_status", tamperChecks.AclStatus, 128);
+    }
+
+    private static void ValidatePlatformAndHostId(Dictionary<string, List<string>> errors, string? platform, string? hostId)
+    {
+        if (platform is not null && platform is not (TelemetryPlatforms.Windows or TelemetryPlatforms.Linux))
+        {
+            Add(errors, "platform", "Platform must be windows or linux.");
+        }
+        OptionalMaxLength(errors, "host_id", hostId, 255);
+        if (platform == TelemetryPlatforms.Linux) RequireLength(errors, "host_id", hostId, 1, 255);
+    }
+
+    private static void ValidateHostTimezone(Dictionary<string, List<string>> errors, string prefix, HostTimezoneMetadata? timezone)
+    {
+        if (timezone is null) return;
         OptionalMaxLength(errors, $"{prefix}.id", timezone.Id, 128);
         OptionalMaxLength(errors, $"{prefix}.display_name", timezone.DisplayName, 255);
         OptionalMaxLength(errors, $"{prefix}.standard_name", timezone.StandardName, 255);
@@ -259,20 +980,63 @@ public static class RequestValidation
         ValidateOffsetMinutes(errors, $"{prefix}.utc_offset_minutes", timezone.UtcOffsetMinutes);
     }
 
+    private static void ValidateStringList(
+        Dictionary<string, List<string>> errors,
+        string key,
+        IReadOnlyList<string> values,
+        bool requireNonEmptyItems)
+    {
+        if (values.Count > ContractLimits.MaxMetadataListItems) Add(errors, key, $"List contains more than {ContractLimits.MaxMetadataListItems} entries.");
+        for (var index = 0; index < values.Count; index++)
+        {
+            if (requireNonEmptyItems)
+            {
+                RequireLength(errors, $"{key}[{index}]", values[index], 1, 128);
+            }
+            else
+            {
+                OptionalMaxLength(errors, $"{key}[{index}]", values[index], 128);
+            }
+        }
+    }
+
+    private static void ValidateFieldList(Dictionary<string, List<string>> errors, string key, IReadOnlyList<string> values)
+    {
+        if (values.Count > ContractLimits.MaxMetadataListItems || values.Distinct(StringComparer.Ordinal).Count() != values.Count)
+            Add(errors, key, $"Field list must contain at most {ContractLimits.MaxMetadataListItems} unique entries.");
+        for (var index = 0; index < values.Count; index++) RequireLength(errors, $"{key}[{index}]", values[index], 1, 256);
+    }
+
+    private static void ValidateMap(Dictionary<string, List<string>> errors, string key, IReadOnlyDictionary<string, string> values, int maxEntries, int maxKeyLength, int maxValueLength)
+    {
+        if (values.Count > maxEntries) Add(errors, key, $"Map contains more than {maxEntries} entries.");
+        foreach (var pair in values)
+        {
+            RequireLength(errors, $"{key}.key", pair.Key, 1, maxKeyLength);
+            OptionalMaxLength(errors, $"{key}.{pair.Key}", pair.Value, maxValueLength);
+        }
+    }
+
+    private static bool IsLowerHexSha256(string value) => value.Length == 64 && value.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static void ValidateTimestamp(Dictionary<string, List<string>> errors, string key, DateTimeOffset? value)
+    {
+        if (value.HasValue && value.Value == default) Add(errors, key, "Timestamp must not be the default value.");
+    }
+
+    private static void ValidateNonNegative(Dictionary<string, List<string>> errors, string key, long? value)
+    {
+        if (value < 0) Add(errors, key, "Value must be greater than or equal to zero.");
+    }
+
     private static void ValidateOffsetMinutes(Dictionary<string, List<string>> errors, string key, int? value)
     {
-        if (value is < -14 * 60 or > 14 * 60)
-        {
-            Add(errors, key, "UTC offset minutes must be between -840 and 840.");
-        }
+        if (value is < -14 * 60 or > 14 * 60) Add(errors, key, "UTC offset minutes must be between -840 and 840.");
     }
 
     private static void OptionalMaxLength(Dictionary<string, List<string>> errors, string key, string? value, int maxLength)
     {
-        if (value is not null && value.Length > maxLength)
-        {
-            Add(errors, key, $"Value length must be less than or equal to {maxLength} characters.");
-        }
+        if (value is not null && value.Length > maxLength) Add(errors, key, $"Value length must be less than or equal to {maxLength} characters.");
     }
 
     private static void RequireLength(Dictionary<string, List<string>> errors, string key, string? value, int minLength, int maxLength)
@@ -282,12 +1046,10 @@ public static class RequestValidation
             Add(errors, key, "Value is required.");
             return;
         }
-
-        if (value.Length < minLength || value.Length > maxLength)
-        {
-            Add(errors, key, $"Value length must be between {minLength} and {maxLength} characters.");
-        }
+        if (value.Length < minLength || value.Length > maxLength) Add(errors, key, $"Value length must be between {minLength} and {maxLength} characters.");
     }
+
+    private static Dictionary<string, List<string>> NewErrorBag() => new(StringComparer.Ordinal);
 
     private static void Add(Dictionary<string, List<string>> errors, string key, string message)
     {
@@ -296,12 +1058,9 @@ public static class RequestValidation
             messages = new List<string>();
             errors[key] = messages;
         }
-
         messages.Add(message);
     }
 
-    private static Dictionary<string, string[]> ToValidationProblem(Dictionary<string, List<string>> errors)
-    {
-        return errors.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray(), StringComparer.Ordinal);
-    }
+    private static Dictionary<string, string[]> ToValidationProblem(Dictionary<string, List<string>> errors) =>
+        errors.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray(), StringComparer.Ordinal);
 }

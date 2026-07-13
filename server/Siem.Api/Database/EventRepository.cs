@@ -90,10 +90,10 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", envelope.AgentId);
             command.Parameters.AddWithValue("hostname", envelope.Hostname);
             command.Parameters.AddWithValue("source", envelope.Source);
-            command.Parameters.AddWithValue("channel", envelope.Channel);
-            command.Parameters.AddWithValue("provider", envelope.Provider);
-            command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId);
-            command.Parameters.AddWithValue("record_id", envelope.RecordId);
+            command.Parameters.AddWithValue("channel", envelope.Channel!);
+            command.Parameters.AddWithValue("provider", envelope.Provider!);
+            command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId!.Value);
+            command.Parameters.AddWithValue("record_id", envelope.RecordId!.Value);
             command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
             Jsonb.Add(command, "host_timezone", envelope.HostTimezone);
             command.Parameters.AddWithValue("severity", envelope.Severity);

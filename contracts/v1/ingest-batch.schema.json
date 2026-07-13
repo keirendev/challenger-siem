@@ -6,26 +6,39 @@
   "additionalProperties": false,
   "required": ["agent_id", "batch_id", "sent_at", "events"],
   "properties": {
-    "agent_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
-    },
+    "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "batch_id": {
       "type": "string",
       "format": "uuid"
     },
-    "sent_at": {
-      "type": "string",
-      "format": "date-time"
-    },
+    "sent_at": { "type": "string", "format": "date-time" },
     "events": {
       "type": "array",
       "minItems": 1,
       "maxItems": 500,
-      "items": {
-        "$ref": "./event-envelope.schema.json"
+      "items": { "$ref": "event-envelope.schema.json" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "events": {
+            "contains": {
+              "properties": {
+                "source": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] }
+              },
+              "required": ["source"]
+            }
+          }
+        },
+        "required": ["events"]
+      },
+      "then": {
+        "properties": {
+          "sent_at": { "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }
+        }
       }
     }
-  }
+  ]
 }

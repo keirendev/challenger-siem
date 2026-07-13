@@ -281,7 +281,7 @@ public static class WindowsTelemetrySourceCatalog
             .Concat(optionalChannels.Where(channel => !string.IsNullOrWhiteSpace(channel)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var known = All.ToDictionary(entry => entry.Channel, StringComparer.OrdinalIgnoreCase);
+        var known = All.ToDictionary(entry => entry.Channel!, StringComparer.OrdinalIgnoreCase);
         var results = new List<SourceManifestEntry>();
         foreach (var channel in enabled)
         {
@@ -308,13 +308,13 @@ public static class WindowsTelemetrySourceCatalog
 
     public static IReadOnlyList<string> DefaultRequiredChannels() => L2Default
         .Where(entry => entry.Required && entry.CoverageLevel <= WindowsCoverageLevel.L1)
-        .Select(entry => entry.Channel)
+        .Select(entry => entry.Channel!)
         .ToArray();
 
     public static IReadOnlyList<string> DefaultOptionalChannels() => L2Default
         .Where(entry => entry.CoverageLevel >= WindowsCoverageLevel.L2)
         .Concat(SysmonL3)
-        .Select(entry => entry.Channel)
+        .Select(entry => entry.Channel!)
         .ToArray();
 
     public static SourceManifestEntry? FindByChannel(string channel)

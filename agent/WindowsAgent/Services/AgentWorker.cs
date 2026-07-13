@@ -344,7 +344,7 @@ public sealed class AgentWorker(
         {
             cancellationToken.ThrowIfCancellationRequested();
             var report = await collector.ProbeChannelAsync(source, cancellationToken);
-            var lastRecordId = await stateStore.GetLastRecordIdAsync(source.Channel, cancellationToken);
+            var lastRecordId = await stateStore.GetLastRecordIdAsync(source.Channel!, cancellationToken);
             if (lastRecordId.HasValue)
             {
                 var clearedDetected = report.NewestRecordId.HasValue && report.NewestRecordId.Value < lastRecordId.Value;

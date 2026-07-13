@@ -3,9 +3,17 @@ using System.Text.Json.Serialization;
 
 namespace Challenger.Siem.Contracts.V1;
 
+/// <summary>
+/// Backward-compatible event source constants. WindowsEventLog retains its original v1 value;
+/// additive values identify Linux-native or platform-neutral source kinds for new clients.
+/// </summary>
 public static class EventSources
 {
-    public const string WindowsEventLog = "windows_event_log";
+    public const string WindowsEventLog = TelemetrySourceKinds.WindowsEventLog;
+    public const string LinuxJournal = TelemetrySourceKinds.LinuxJournal;
+    public const string LinuxAudit = TelemetrySourceKinds.LinuxAudit;
+    public const string InventoryDiff = TelemetrySourceKinds.InventoryDiff;
+    public const string AgentHealth = TelemetrySourceKinds.AgentHealth;
 }
 
 public sealed record EventEnvelope
@@ -19,20 +27,52 @@ public sealed record EventEnvelope
     [JsonPropertyName("hostname")]
     public string Hostname { get; init; } = string.Empty;
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
     [JsonPropertyName("source")]
     public string Source { get; init; } = EventSources.WindowsEventLog;
 
+    [JsonPropertyName("source_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceId { get; init; }
+
     [JsonPropertyName("channel")]
-    public string Channel { get; init; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Channel { get; init; }
 
     [JsonPropertyName("provider")]
-    public string Provider { get; init; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Provider { get; init; }
 
     [JsonPropertyName("windows_event_id")]
-    public int WindowsEventId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WindowsEventId { get; init; }
 
     [JsonPropertyName("record_id")]
-    public long RecordId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? RecordId { get; init; }
+
+    [JsonPropertyName("event_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EventCode { get; init; }
+
+    [JsonPropertyName("facility")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Facility { get; init; }
+
+    [JsonPropertyName("unit")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Unit { get; init; }
+
+    [JsonPropertyName("checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? Checkpoint { get; init; }
+
+    [JsonPropertyName("deduplication")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EventDeduplicationMetadata? Deduplication { get; init; }
 
     [JsonPropertyName("event_time")]
     public DateTimeOffset EventTime { get; init; }
@@ -54,4 +94,8 @@ public sealed record EventEnvelope
 
     [JsonPropertyName("raw")]
     public JsonElement Raw { get; init; }
+
+    [JsonPropertyName("data_handling")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DataHandlingMetadata? DataHandling { get; init; }
 }

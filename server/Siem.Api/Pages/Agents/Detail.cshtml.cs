@@ -38,7 +38,7 @@ public sealed class DetailModel(SourceHealthRepository sourceHealth, TelemetryCo
             {
                 SourceId = source.SourceId,
                 DisplayName = source.DisplayName,
-                Channel = source.Channel,
+                Channel = source.Channel ?? string.Empty,
                 CoverageLevel = source.CoverageLevel,
                 Required = source.Required,
                 Enabled = source.Enabled,

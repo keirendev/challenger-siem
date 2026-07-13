@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/event-search.schema.json",
+  "title": "Challenger SIEM Event Search Response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["events"],
+  "properties": {
+    "events": {
+      "type": "array",
+      "maxItems": 500,
+      "items": { "$ref": "event-envelope.schema.json" }
+    }
+  }
+}

@@ -139,6 +139,14 @@ app.MapPost("/api/v1/agents/register", async Task<IResult> (
         return Results.ValidationProblem(validationErrors);
     }
 
+    if (RequestValidation.RequiresCrossPlatformStorage(request))
+    {
+        return Results.Problem(
+            title: "cross_platform_storage_pending",
+            detail: "The additive v1 Linux registration contract is defined, but Linux persistence requires the planned multi-platform storage migration.",
+            statusCode: StatusCodes.Status422UnprocessableEntity);
+    }
+
     var apiToken = tokens.GenerateAgentToken();
     var apiTokenHash = tokens.HashToken(apiToken);
     await agents.UpsertAgentAsync(request, apiTokenHash, cancellationToken);
@@ -167,6 +175,14 @@ app.MapPost("/api/v1/agents/heartbeat", async Task<IResult> (
     if (validationErrors.Count > 0)
     {
         return Results.ValidationProblem(validationErrors);
+    }
+
+    if (RequestValidation.RequiresCrossPlatformStorage(request))
+    {
+        return Results.Problem(
+            title: "cross_platform_storage_pending",
+            detail: "The additive v1 Linux heartbeat contract is defined, but Linux source-health persistence requires the planned multi-platform storage migration.",
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
     await heartbeats.InsertHeartbeatAsync(request, cancellationToken);
@@ -219,6 +235,14 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     {
         await ingestionErrors.RecordValidationErrorsAsync(request, validationErrors, cancellationToken);
         return Results.ValidationProblem(validationErrors);
+    }
+
+    if (RequestValidation.RequiresCrossPlatformStorage(request))
+    {
+        return Results.Problem(
+            title: "cross_platform_storage_pending",
+            detail: "The additive v1 Linux event contract is defined, but Linux event persistence requires the planned multi-platform storage migration.",
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
     var result = await events.StoreEventsAsync(request, cancellationToken);

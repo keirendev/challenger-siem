@@ -9,6 +9,22 @@
     "summaries": { "type": "array", "items": { "$ref": "#/$defs/coverage_summary" } },
     "sources": { "type": "array", "items": { "$ref": "heartbeat.schema.json#/$defs/source_health_report" } }
   },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          { "properties": { "summaries": { "contains": { "properties": { "platform": { "const": "linux" } }, "required": ["platform"] } } } },
+          { "properties": { "sources": { "contains": { "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } }, "required": ["source_kind"] } } } }
+        ]
+      },
+      "then": {
+        "properties": {
+          "summaries": { "maxItems": 500 },
+          "sources": { "maxItems": 1000 }
+        }
+      }
+    }
+  ],
   "$defs": {
     "coverage_summary": {
       "type": "object",
@@ -17,6 +33,7 @@
       "properties": {
         "agent_id": { "type": "string" },
         "hostname": { "type": "string" },
+        "platform": { "$ref": "event-envelope.schema.json#/$defs/platform" },
         "target_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
         "current_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
         "overall_status": { "type": "string" },
@@ -25,21 +42,21 @@
         "error_sources": { "type": "integer", "minimum": 0 },
         "queue_depth": { "type": "integer", "minimum": 0 },
         "last_heartbeat_time": { "type": ["string", "null"], "format": "date-time" },
-        "host_timezone": { "$ref": "#/$defs/host_timezone" }
-      }
-    },
-    "host_timezone": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "display_name": { "type": "string", "maxLength": 255 },
-        "standard_name": { "type": ["string", "null"], "maxLength": 255 },
-        "daylight_name": { "type": ["string", "null"], "maxLength": 255 },
-        "base_utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
-        "utc_offset_minutes": { "type": ["integer", "null"], "minimum": -840, "maximum": 840 },
-        "is_daylight_saving_time": { "type": ["boolean", "null"] }
-      }
+        "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "platform": { "const": "linux" } }, "required": ["platform"] },
+          "then": {
+            "properties": {
+              "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "overall_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"] },
+              "last_heartbeat_time": { "oneOf": [{ "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }, { "type": "null" }] }
+            }
+          }
+        }
+      ]
     }
   }
 }
