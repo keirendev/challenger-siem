@@ -62,6 +62,15 @@ Run the non-Docker smoke paths:
 ./scripts/smoke-test-web.sh
 ```
 
+For release candidates, run the real-app browser/accessibility/security/performance gates against disposable PostgreSQL synthetic data:
+
+```bash
+./scripts/release-gates.sh install-browsers
+./scripts/release-gates.sh run
+```
+
+All release-gate output stays under ignored `.local/release-gates/`; cleanup requires `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES`.
+
 The scripts register a synthetic agent, ingest a synthetic event, exercise the review API or web console, and keep temporary responses/cookies under ignored `.local/` paths. They do not require real endpoint telemetry.
 
 ## Register and run a Windows agent

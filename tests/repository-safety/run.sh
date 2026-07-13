@@ -55,19 +55,25 @@ printf '# Synthetic parser fixtures\n' >"$clean/tests/parsers/fixtures/README.md
 git -C "$clean" add tests/parsers/fixtures
 expect_clean "$clean"
 
-# The validator operates on index names only. An ignored and unreadable local
-# autodev directory must neither affect validation nor be opened or traversed.
-mkdir -p "$clean/.local/autodev"
+# The validator operates on index names only. Ignored and unreadable local
+# evidence directories, including release-gate browser artifacts, must neither
+# affect validation nor be opened or traversed.
+mkdir -p "$clean/.local/autodev" "$clean/.local/release-gates/synthetic-run/browser-profile"
 printf 'canary-content-must-not-be-printed\n' >"$clean/.local/autodev/evidence"
-chmod 000 "$clean/.local/autodev"
+printf 'canary-content-must-not-be-printed\n' >"$clean/.local/release-gates/synthetic-run/browser-profile/cookies"
+chmod 000 "$clean/.local/autodev" "$clean/.local/release-gates/synthetic-run/browser-profile"
 expect_clean "$clean"
-chmod 700 "$clean/.local/autodev"
+chmod 700 "$clean/.local/autodev" "$clean/.local/release-gates/synthetic-run/browser-profile"
 
-# Runtime directory names are prohibited as components at any nesting depth.
+# Runtime directory names and release-gate artifact paths are prohibited when
+# force-added to the index at any nesting depth.
 for path in \
   'nested/linux/queue/pending.data' \
   'agent/runtime/state/checkpoint.data' \
-  'build/output/logs/agent.txt'; do
+  'build/output/logs/agent.txt' \
+  '.local/release-gates/synthetic-run/release-gates-report.jsonl' \
+  '.local/release-gates/synthetic-run/trace.har' \
+  '.local/release-gates/synthetic-run/browser-profile/cookies.txt'; do
   reject_path "$path"
 done
 

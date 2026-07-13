@@ -57,6 +57,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Local development without Docker](development.md) - prerequisites, environment variables, schema, build/test, API run, optional WinRM, and smoke tests.
 - [Dependencies and ownership policy](dependencies.md) - approved components and optional tooling boundaries.
 - [MVP release readiness checklist](release-readiness.md) - required checks, Windows evidence, repository hygiene, and issue disposition.
+- [Release gates](release-gates.md) - real-app PostgreSQL-backed browser, accessibility, security, and performance validation with ignored artifacts and cleanup.
 - [Milestone status](milestones.md) - implemented baseline and next milestone themes.
 - [Versioning](versioning.md) - SemVer policy, `VERSION`, changelog, and compatibility tracks.
 - [Archived planning docs](archive/README.md) - completed planning records kept for historical context.
