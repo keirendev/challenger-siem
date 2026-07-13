@@ -87,7 +87,7 @@ Default optional L2/L3 source manifest channels:
 
 ## Linux host coverage
 
-The Linux agent implements passive L1 system-journal collection, an opt-in L2 logical security source pack, and bounded host/security inventory. One fixed systemd machine-readable reader/cursor carries L1 plus structured login/session, SSH, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper normalization. It normalizes/redacts within fixed limits, commits to Agent.Core before cursor state, and reports requirement/applicability/prerequisite/event-family health. Audit is explicitly unsupported by the current pack; syslog-file, role, eBPF, file-integrity, and other advanced collectors remain planned. L2 defaults off until the private seven-day canary passes. The authoritative design is split between the [Linux host coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md).
+The Linux agent implements passive L1 system-journal collection, an opt-in L2 logical security source pack, and bounded host/security inventory. One fixed systemd machine-readable reader/cursor carries L1 plus structured login/session, SSH, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper normalization. It normalizes/redacts within fixed limits, commits to Agent.Core before cursor state, and reports requirement/applicability/prerequisite/event-family health. Audit is explicitly unsupported by the current pack; syslog-file, role, eBPF, file-integrity, and other advanced collectors remain planned. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit and eBPF and selects only a future snapshot-based agent self-integrity design candidate; no advanced collector is shipped or enabled by that ADR. L2 defaults off until the private seven-day canary passes. The authoritative design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), [Linux agent security design](linux-agent-security.md), and L3 ADR.
 
 ## Cross-platform contract boundary
 
@@ -100,6 +100,7 @@ The additive v1 contract represents typed Linux journal, audit, inventory-diff, 
 - Agents must maintain durable local source position state and a durable queue.
 - Events are queued before the collected checkpoint advances; queue deletion and acknowledged checkpoint advancement happen only after accepted/duplicate acknowledgement.
 - Collected and acknowledged cursor/sequence positions are reported independently so backlog/gaps remain visible.
+- Heartbeats report bounded queue bytes/depth/oldest age, send/backoff/recovery state, poison/drop counters, and source silence/gap/permission transitions where available; unsupported values remain null/unknown rather than fabricated zero.
 - Server ingest time is generated server-side and does not trust client-provided ingest timestamps.
 
 ## Security decisions

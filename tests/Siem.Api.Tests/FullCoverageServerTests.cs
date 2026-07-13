@@ -228,6 +228,58 @@ public sealed class FullCoverageServerTests
     }
 
     [Fact]
+    public void TelemetryCoverageMappingExposesPersistedSourceObservability()
+    {
+        var observedAt = DateTimeOffset.Parse("2026-07-14T00:00:00Z");
+        var deniedSince = observedAt.AddMinutes(-5);
+        var recoveredAt = observedAt.AddMinutes(-1);
+        var source = new SourceHealthReport
+        {
+            SourceId = LinuxTelemetrySourceIds.JournalL1,
+            DisplayName = "Linux journal L1",
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = TelemetrySourceKinds.LinuxJournal,
+            SourceNamespace = "linux.journal",
+            Applicability = SourceApplicabilityStatuses.Applicable,
+            CoverageLevel = WindowsCoverageLevel.L1,
+            Status = SourceHealthStatuses.Degraded,
+            Required = true,
+            Enabled = true,
+            ObservedAt = observedAt,
+            LastEventTime = observedAt.AddSeconds(-20),
+            LagSeconds = 20,
+            SilenceSeconds = 20,
+            EventRatePerMinute = 3.5m,
+            CollectedCheckpoint = new SourceCheckpoint { Cursor = "cursor-collected", EventTime = observedAt.AddSeconds(-20), RecordedAt = observedAt },
+            AcknowledgedCheckpoint = new SourceCheckpoint { Cursor = "cursor-acked", EventTime = observedAt.AddSeconds(-30), RecordedAt = observedAt.AddSeconds(-10) },
+            GapCount = 2,
+            PermissionDeniedSince = deniedSince,
+            RecoveredAt = recoveredAt,
+            TransitionState = HealthTransitionStates.Recovering,
+            TransitionedAt = observedAt,
+            DroppedEvents = 4,
+            PoisonEvents = 1,
+            Details = new Dictionary<string, string>(StringComparer.Ordinal) { ["gap_state"] = "rotation" }
+        };
+
+        var coverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-agent",
+            source,
+            observedAt.AddHours(-1),
+            new Dictionary<string, int>(StringComparer.Ordinal) { [LinuxTelemetrySourceIds.JournalL1] = 7 },
+            null);
+
+        Assert.Equal(20, coverage.LagSeconds);
+        Assert.Equal("cursor-collected", coverage.CollectedCheckpoint!.Cursor);
+        Assert.Equal("cursor-acked", coverage.AcknowledgedCheckpoint!.Cursor);
+        Assert.Equal(deniedSince, coverage.PermissionDeniedSince);
+        Assert.Equal(recoveredAt, coverage.RecoveredAt);
+        Assert.Equal(4, coverage.DroppedEvents);
+        Assert.Equal(1, coverage.PoisonEvents);
+        Assert.Equal(7, coverage.RecentEventCount);
+    }
+
+    [Fact]
     public void DetectionEngineReportsCoveragePrerequisiteFailures()
     {
         var engine = new DetectionEngine();

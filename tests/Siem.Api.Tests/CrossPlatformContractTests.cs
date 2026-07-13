@@ -579,6 +579,8 @@ public sealed class CrossPlatformContractTests
             node["source_health"]!.AsArray()[0]!["details"] = details;
         });
         AssertSchemaMutationInvalid("heartbeat.schema.json", heartbeat, node =>
+            node["source_health"]!.AsArray()[0]!["lag_seconds"] = -1);
+        AssertSchemaMutationInvalid("heartbeat.schema.json", heartbeat, node =>
             node["tamper_checks"] = new JsonObject { ["binary_hash"] = new string('h', 129) });
         AssertSchemaMutationInvalid("heartbeat.schema.json", heartbeat, node => node["cpu_percent"] = 101);
         AssertSchemaMutationInvalid("heartbeat.schema.json", heartbeat, node =>

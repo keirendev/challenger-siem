@@ -96,6 +96,37 @@ public static class DetectionSeverities
     public const string Critical = "critical";
 }
 
+public static class QueuePressureStates
+{
+    public const string Unknown = "unknown";
+    public const string Normal = "normal";
+    public const string Warning = "warning";
+    public const string High = "high";
+    public const string Critical = "critical";
+    public const string Full = "full";
+    public const string Throttled = "throttled";
+}
+
+public static class QueueSendStates
+{
+    public const string Unknown = "unknown";
+    public const string Idle = "idle";
+    public const string Sending = "sending";
+    public const string Succeeded = "succeeded";
+    public const string BackingOff = "backing_off";
+    public const string Failed = "failed";
+    public const string Recovering = "recovering";
+}
+
+public static class HealthTransitionStates
+{
+    public const string Unknown = "unknown";
+    public const string Healthy = "healthy";
+    public const string Degraded = "degraded";
+    public const string Recovering = "recovering";
+    public const string Recovered = "recovered";
+}
+
 public sealed record SourceManifestEntry
 {
     [JsonPropertyName("source_id")]
@@ -242,6 +273,10 @@ public sealed record SourceHealthReport
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 
+    [JsonPropertyName("observed_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ObservedAt { get; init; }
+
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
 
@@ -274,6 +309,14 @@ public sealed record SourceHealthReport
     [JsonPropertyName("lag_seconds")]
     public long? LagSeconds { get; init; }
 
+    [JsonPropertyName("silence_seconds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? SilenceSeconds { get; init; }
+
+    [JsonPropertyName("event_rate_per_minute")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? EventRatePerMinute { get; init; }
+
     [JsonPropertyName("error_code")]
     public string? ErrorCode { get; init; }
 
@@ -288,6 +331,34 @@ public sealed record SourceHealthReport
 
     [JsonPropertyName("bookmark_gap_detected")]
     public bool BookmarkGapDetected { get; init; }
+
+    [JsonPropertyName("gap_count")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? GapCount { get; init; }
+
+    [JsonPropertyName("permission_denied_since")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? PermissionDeniedSince { get; init; }
+
+    [JsonPropertyName("recovered_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RecoveredAt { get; init; }
+
+    [JsonPropertyName("transition_state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TransitionState { get; init; }
+
+    [JsonPropertyName("transitioned_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? TransitionedAt { get; init; }
+
+    [JsonPropertyName("dropped_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DroppedEvents { get; init; }
+
+    [JsonPropertyName("poison_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? PoisonEvents { get; init; }
 
     [JsonPropertyName("config_hash")]
     public string? ConfigHash { get; init; }
@@ -318,8 +389,52 @@ public sealed record QueueSloMetrics
     [JsonPropertyName("oldest_queued_age_seconds")]
     public long? OldestQueuedAgeSeconds { get; init; }
 
+    [JsonPropertyName("queue_size_bytes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? QueueSizeBytes { get; init; }
+
+    [JsonPropertyName("max_size_bytes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MaxSizeBytes { get; init; }
+
+    [JsonPropertyName("used_percent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? UsedPercent { get; init; }
+
+    [JsonPropertyName("pressure_state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PressureState { get; init; }
+
+    [JsonPropertyName("send_state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SendState { get; init; }
+
+    [JsonPropertyName("backoff_seconds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? BackoffSeconds { get; init; }
+
+    [JsonPropertyName("last_attempt_time")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastAttemptTime { get; init; }
+
+    [JsonPropertyName("last_failed_send_time")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastFailedSendTime { get; init; }
+
     [JsonPropertyName("last_successful_send_time")]
     public DateTimeOffset? LastSuccessfulSendTime { get; init; }
+
+    [JsonPropertyName("last_recovery_time")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastRecoveryTime { get; init; }
+
+    [JsonPropertyName("poison_events_total")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? PoisonEventsTotal { get; init; }
+
+    [JsonPropertyName("dropped_events_total")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DroppedEventsTotal { get; init; }
 
     [JsonPropertyName("max_size_mb")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -328,6 +443,24 @@ public sealed record QueueSloMetrics
     [JsonPropertyName("warning_size_percent")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int WarningSizePercent { get; init; }
+}
+
+public sealed record AgentResourceMetrics
+{
+    [JsonPropertyName("observed_at")]
+    public DateTimeOffset ObservedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    [JsonPropertyName("cpu_percent")]
+    public decimal? CpuPercent { get; init; }
+
+    [JsonPropertyName("rss_bytes")]
+    public long? RssBytes { get; init; }
+
+    [JsonPropertyName("managed_memory_bytes")]
+    public long? ManagedMemoryBytes { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "observed";
 }
 
 public sealed record CoverageSummary
@@ -377,6 +510,12 @@ public sealed record CoverageSummary
 
     [JsonPropertyName("queue_depth")]
     public int QueueDepth { get; init; }
+
+    [JsonPropertyName("queue_metrics")]
+    public QueueSloMetrics? QueueMetrics { get; init; }
+
+    [JsonPropertyName("resource_metrics")]
+    public AgentResourceMetrics? ResourceMetrics { get; init; }
 
     [JsonPropertyName("last_heartbeat_time")]
     public DateTimeOffset? LastHeartbeatTime { get; init; }
@@ -456,6 +595,12 @@ public sealed record AgentTelemetryCoverage
 
     [JsonPropertyName("source_status_counts")]
     public IReadOnlyDictionary<string, int> SourceStatusCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    [JsonPropertyName("queue_metrics")]
+    public QueueSloMetrics? QueueMetrics { get; init; }
+
+    [JsonPropertyName("resource_metrics")]
+    public AgentResourceMetrics? ResourceMetrics { get; init; }
 
     [JsonPropertyName("missing_mandatory_sources")]
     public int MissingMandatorySources { get; init; }
@@ -568,8 +713,60 @@ public sealed record SourceTelemetryCoverage
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 
+    [JsonPropertyName("observed_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ObservedAt { get; init; }
+
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
+
+    [JsonPropertyName("lag_seconds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? LagSeconds { get; init; }
+
+    [JsonPropertyName("collected_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? CollectedCheckpoint { get; init; }
+
+    [JsonPropertyName("acknowledged_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? AcknowledgedCheckpoint { get; init; }
+
+    [JsonPropertyName("permission_denied_since")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? PermissionDeniedSince { get; init; }
+
+    [JsonPropertyName("recovered_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RecoveredAt { get; init; }
+
+    [JsonPropertyName("silence_seconds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? SilenceSeconds { get; init; }
+
+    [JsonPropertyName("event_rate_per_minute")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? EventRatePerMinute { get; init; }
+
+    [JsonPropertyName("gap_count")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? GapCount { get; init; }
+
+    [JsonPropertyName("transition_state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TransitionState { get; init; }
+
+    [JsonPropertyName("transitioned_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? TransitionedAt { get; init; }
+
+    [JsonPropertyName("dropped_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DroppedEvents { get; init; }
+
+    [JsonPropertyName("poison_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? PoisonEvents { get; init; }
 
     [JsonPropertyName("source_version")]
     public string? SourceVersion { get; init; }

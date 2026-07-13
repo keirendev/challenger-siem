@@ -44,3 +44,17 @@ The project should remain open-source and custom-built.
 ## Linux agent runtime
 
 The Linux agent targets .NET 8 and uses the existing Agent.Core SQLite/HTTP reliability dependencies plus the official `Microsoft.Extensions.Hosting.Systemd` integration. systemd is the supported init and L1/L2 journal boundary. One collector directly invokes the host's existing `journalctl` machine-readable JSON interface at a fixed approved path and performs L2 classification with .NET library code only; this introduces no NuGet/native library, vendored code, package installation, or additional license. `journalctl` is part of systemd (LGPL-2.1-or-later; individual files retain their SPDX notices) and is an external host prerequisite, not redistributed code. No audit, eBPF, firewall, kernel-module, file-integrity, privileged-helper, or host-policy package is installed or enabled.
+
+## Evaluated Linux L3 telemetry components
+
+The [optional Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) evaluates audit, narrowly scoped eBPF, and allowlisted file-integrity approaches. This documentation-only spike adds **no runtime dependency**, package, collector, kernel object, audit rule, fanotify/inotify watch, IMA policy, or host-policy mutation.
+
+| Component or facility | Evaluated purpose | License / dependency decision |
+| --- | --- | --- |
+| Linux Audit Framework / auditd / audit journal | Future read-only normalization of host-owned audit telemetry when already enabled | Deferred. Treat as an external host facility. Do not bundle or install audit userspace. Upstream audit-userspace repository declares GPL-2.0; any future linking, vendoring, or redistribution requires separate legal/release review. |
+| Linux audit rules / watches | Future syscall/file audit coverage | Deferred. Rule/backlog/failure/loginuid settings are host security policy, not an agent dependency. No rules are installed or managed. |
+| libbpf / BPF CO-RE | Future eBPF process/network metadata collector | Deferred. libbpf is dual licensed BSD-2-Clause or LGPL-2.1 and depends on libelf/zlib; BPF object builds require Clang/LLVM and kernel BTF compatibility. No native library or BPF object is added. |
+| BCC or runtime BPF compilation toolchains | Alternative eBPF implementation path | Rejected for endpoint runtime use because it would add a compiler/kernel-header runtime surface and broader supply-chain burden. |
+| fanotify / inotify | Future file-change hints or live monitoring | Deferred for broad use. Direct kernel APIs do not require a third-party library, but live watches add overflow/interference semantics and are not enabled. |
+| Linux IMA/EVM | Future measurement-policy integration on hosts that already operate it | Deferred. Kernel/boot/policy configuration is host security policy; no IMA policy or template setting is installed or required. |
+| Snapshot-based agent self-integrity | Selected future design candidate for exact agent-owned paths | Adopted as design only. Intended to reuse existing .NET file APIs and Agent.Core transport if implemented; no new dependency is approved by this spike. |

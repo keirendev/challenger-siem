@@ -6,7 +6,7 @@ Primary audience: security reviewers, Linux agent engineers, packagers, operator
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls, passive L1 journal reader, and opt-in L2 structured journal normalization below are implemented; audit/file/eBPF and advanced collectors remain planned. This document does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls, passive L1 journal reader, and opt-in L2 structured journal normalization below are implemented; audit/file/eBPF and advanced collectors remain planned. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit and eBPF, adopts only a future snapshot-based agent self-integrity design candidate, and does not ship or enable an audit/eBPF/file-integrity collector. This document does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 
@@ -119,7 +119,7 @@ Any optional change requires all of the following:
 4. **Post-change verification:** verify effective policy, source availability, host/service health, agent SLOs, and that no unrelated state changed. Emit only secret-safe change metadata.
 5. **Rollback:** provide and test bounded rollback before rollout. Rollback restores the recorded prior state rather than a generic default and verifies the result.
 
-Changes to authentication, firewall, kernel, or mandatory access-control policy warrant separate high-risk approval and can never be bundled into routine agent upgrade. A future central control plane may propose plans but must not bypass host/operator policy.
+Changes to authentication, firewall, kernel, or mandatory access-control policy warrant separate high-risk approval and can never be bundled into routine agent upgrade. A future central control plane may propose plans but must not bypass host/operator policy. Optional L3 audit, eBPF, and file-integrity ideas remain bound by the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) and require a later reviewed implementation before any collection or host change exists.
 
 ## Input, transport, and storage controls
 
@@ -129,7 +129,7 @@ Changes to authentication, firewall, kernel, or mandatory access-control policy 
 - File readers must defend against symlink/hard-link replacement, device/FIFO/socket paths, path escape, permission changes, truncation, and rotation races. Only declared regular files or approved source APIs are read.
 - Local IPC must authenticate peers, use restrictive socket permissions, and frame/cap messages. Network listeners are not enabled by default.
 - Queue/state storage must be bounded and corruption-aware. Resource pressure follows the priority and explicit-gap behavior in the coverage specification; it must never trigger broader permissions or silent data capture.
-- Logs and health events contain error classes/codes and bounded metadata, not raw secret-bearing records, headers, credentials, or environment values.
+- Logs and health events contain error classes/codes and bounded metadata, not raw secret-bearing records, headers, credentials, connection details, process command output, or environment values. Observability values use null/unknown for unsupported metrics and explicit zero only when measured.
 
 ## Security verification gates
 

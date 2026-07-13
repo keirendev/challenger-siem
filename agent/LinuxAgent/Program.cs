@@ -50,6 +50,7 @@ builder.Services.AddSingleton<LinuxEnrollmentService>();
 builder.Services.AddSingleton<LinuxJournalRuntime>();
 builder.Services.AddSingleton<LinuxJournalNormalizer>();
 builder.Services.AddSingleton<ILinuxJournalSource, LinuxJournalProcessSource>();
+builder.Services.AddSingleton<LinuxTransportRuntimeState>();
 builder.Services.AddSingleton<LinuxQueueDrainer>();
 builder.Services.AddSingleton<ILinuxInventorySource, LinuxInventorySource>();
 builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>

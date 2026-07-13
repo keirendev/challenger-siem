@@ -53,6 +53,7 @@ Open the API base URL in a browser, log in with a synthetic operator username/pa
 - `/events` for event search.
 - `/events/detail?agent_id=<id>&event_id=<uuid>` for raw JSON and normalized fields.
 - `/about` for version/environment/database status.
+- `/api/v1/storage/accounting` with an admin operator API token for managed storage bytes, 100 GiB default capacity, 70/85/95% warning state, and retention-lag status without connection details.
 - `/graphs` for saved investigation graphs with bounded nodes/edges and approval-gated `soc-agent` proposals.
 - `/soc-agent` for bounded chat-based SIEM investigation with provider status, graph context, and citations.
 
@@ -244,7 +245,7 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 
 ## Linux agent lifecycle and L2 canary preparation
 
-Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy.
+Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) is a design decision record only; it does not add Linux audit, eBPF, or file-integrity lifecycle steps.
 
 The tracked synthetic validation path is:
 

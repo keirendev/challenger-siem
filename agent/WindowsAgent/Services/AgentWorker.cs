@@ -7,6 +7,7 @@ using Challenger.Siem.WindowsAgent.Inventory;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Reliability;
 using Challenger.Siem.Agent.Core.Security;
+using Challenger.Siem.Agent.Core.Util;
 using Challenger.Siem.WindowsAgent.State;
 using Challenger.Siem.WindowsAgent.Time;
 using Challenger.Siem.Agent.Core.Transport;
@@ -137,6 +138,7 @@ public sealed class AgentWorker(
 
             var queueIds = batch.Select(item => item.QueueId).ToArray();
             await queue.MarkAttemptAsync(queueIds, cancellationToken);
+            runtimeState.ObserveSendAttempt();
 
             IngestBatchResponse acknowledgement;
             try
@@ -150,6 +152,7 @@ public sealed class AgentWorker(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                runtimeState.ObserveSendFailure(BackoffDelay(1));
                 await QuarantineExhaustedEventsAsync(batch, "send_failed", cancellationToken);
                 throw;
             }
@@ -275,9 +278,10 @@ public sealed class AgentWorker(
                 CpuPercent = null,
                 MemoryMb = Convert.ToInt32(GC.GetTotalMemory(forceFullCollection: false) / 1024L / 1024L),
                 ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(configFile.Path),
-                QueueMetrics = await queue.GetMetricsAsync(runtimeState.LastSuccessfulSendTime, cancellationToken),
+                QueueMetrics = EnrichQueueMetrics(await queue.GetMetricsAsync(runtimeState.LastSuccessfulSendTime, cancellationToken)),
                 SourceManifest = WindowsSourceManifest.Build(options.Channels, options.OptionalChannels),
                 SourceHealth = await ProbeSourceHealthAsync(cancellationToken),
+                ResourceMetrics = ResourceMetricsSampler.Sample(),
                 TamperChecks = new TamperCheckSummary
                 {
                     BinaryHash = AgentConfigurationHasher.ComputeFileHash(Environment.ProcessPath ?? string.Empty),
@@ -293,6 +297,19 @@ public sealed class AgentWorker(
         {
             logger.LogWarning(ex, "Heartbeat failed.");
         }
+    }
+
+    private QueueSloMetrics EnrichQueueMetrics(QueueSloMetrics metrics)
+    {
+        var runtime = runtimeState.QueueSnapshot;
+        return metrics with
+        {
+            SendState = runtime.SendState,
+            BackoffSeconds = runtime.BackoffSeconds,
+            LastAttemptTime = runtime.LastAttemptTime,
+            LastFailedSendTime = runtime.LastFailedSendTime,
+            LastRecoveryTime = runtime.LastRecoveryTime
+        };
     }
 
     private async Task TrySendInventoryAsync(CancellationToken cancellationToken)
@@ -329,6 +346,17 @@ public sealed class AgentWorker(
                 };
             }
 
+            var now = DateTimeOffset.UtcNow;
+            report = report with
+            {
+                ObservedAt = now,
+                SilenceSeconds = report.LastEventTime.HasValue ? Math.Max(0, (long)Math.Floor((now - report.LastEventTime.Value).TotalSeconds)) : null,
+                GapCount = report.GapDetected ? 1 : 0,
+                TransitionState = report.Status == SourceHealthStatuses.Healthy ? HealthTransitionStates.Healthy : HealthTransitionStates.Degraded,
+                TransitionedAt = now,
+                DroppedEvents = 0,
+                PoisonEvents = 0
+            };
             results.Add(report);
         }
 

@@ -47,7 +47,9 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 select distinct on (agent_id)
                     agent_id,
                     heartbeat_time,
-                    queue_depth
+                    queue_depth,
+                    queue_metrics,
+                    resource_metrics
                 from agent_heartbeats
                 order by agent_id, heartbeat_time desc
             ), health as (
@@ -86,6 +88,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 coalesce(h.excepted_sources, 0) as excepted_sources,
                 coalesce(h.not_applicable_sources, 0) as not_applicable_sources,
                 coalesce(lh.queue_depth, 0) as queue_depth,
+                lh.queue_metrics,
+                lh.resource_metrics,
                 lh.heartbeat_time as last_heartbeat_time,
                 case
                     when a.last_seen is null then 'L0'
@@ -149,6 +153,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 ExceptedSources = reader.GetInt32(reader.GetOrdinal("excepted_sources")),
                 NotApplicableSources = reader.GetInt32(reader.GetOrdinal("not_applicable_sources")),
                 QueueDepth = reader.GetInt32(reader.GetOrdinal("queue_depth")),
+                QueueMetrics = Jsonb.Read<QueueSloMetrics>(reader, "queue_metrics"),
+                ResourceMetrics = Jsonb.Read<AgentResourceMetrics>(reader, "resource_metrics"),
                 LastHeartbeatTime = ReadNullableDateTimeOffset(reader, "last_heartbeat_time"),
                 HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")
             });
@@ -180,17 +186,27 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 required_source,
                 enabled,
                 last_event_time,
+                observed_at,
                 last_record_id,
                 oldest_record_id,
                 newest_record_id,
                 log_size_bytes,
                 retention_days,
                 lag_seconds,
+                silence_seconds,
+                event_rate_per_minute,
                 error_code,
                 error_message,
                 gap_detected,
                 cleared_detected,
                 bookmark_gap_detected,
+                gap_count,
+                permission_denied_since,
+                recovered_at,
+                transition_state,
+                transitioned_at,
+                dropped_events,
+                poison_events,
                 config_hash,
                 source_version,
                 requirement_kind,
@@ -232,6 +248,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
                 LastEventTime = ReadNullableDateTimeOffset(reader, "last_event_time"),
+                ObservedAt = ReadNullableDateTimeOffset(reader, "observed_at"),
                 HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
                 LastRecordId = ReadNullableInt64(reader, "last_record_id"),
                 OldestRecordId = ReadNullableInt64(reader, "oldest_record_id"),
@@ -239,11 +256,20 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 LogSizeBytes = ReadNullableInt64(reader, "log_size_bytes"),
                 RetentionDays = ReadNullableInt32(reader, "retention_days"),
                 LagSeconds = ReadNullableInt64(reader, "lag_seconds"),
+                SilenceSeconds = ReadNullableInt64(reader, "silence_seconds"),
+                EventRatePerMinute = ReadNullableDecimal(reader, "event_rate_per_minute"),
                 ErrorCode = ReadNullableString(reader, "error_code"),
                 ErrorMessage = ReadNullableString(reader, "error_message"),
                 GapDetected = reader.GetBoolean(reader.GetOrdinal("gap_detected")),
                 ClearedDetected = reader.GetBoolean(reader.GetOrdinal("cleared_detected")),
                 BookmarkGapDetected = reader.GetBoolean(reader.GetOrdinal("bookmark_gap_detected")),
+                GapCount = ReadNullableInt64(reader, "gap_count"),
+                PermissionDeniedSince = ReadNullableDateTimeOffset(reader, "permission_denied_since"),
+                RecoveredAt = ReadNullableDateTimeOffset(reader, "recovered_at"),
+                TransitionState = ReadNullableString(reader, "transition_state"),
+                TransitionedAt = ReadNullableDateTimeOffset(reader, "transitioned_at"),
+                DroppedEvents = ReadNullableInt64(reader, "dropped_events"),
+                PoisonEvents = ReadNullableInt64(reader, "poison_events"),
                 ConfigHash = ReadNullableString(reader, "config_hash"),
                 SourceVersion = ReadNullableString(reader, "source_version"),
                 Requirement = ReadNullableString(reader, "requirement_kind"),
@@ -312,6 +338,12 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    }
+
+    private static decimal? ReadNullableDecimal(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDecimal(ordinal);
     }
 
     private static DateTimeOffset? ReadNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)

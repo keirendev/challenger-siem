@@ -19,12 +19,18 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     private bool gap;
     private bool permissionDenied;
     private bool throttled;
+    private DateTimeOffset? permissionDeniedSince;
+    private DateTimeOffset? recoveredAt;
+    private DateTimeOffset? transitionedAt;
+    private string transitionState = HealthTransitionStates.Unknown;
     private string sourceState = "starting";
     private string gapState = "none";
     private long duplicateCount;
     private long reorderedCount;
     private long malformedCount;
     private long binaryOrInvalidTextCount;
+    private long collectedCount;
+    private DateTimeOffset? firstCollectedAt;
     private DateTimeOffset? latestEvent;
     private string version = "0.0.0";
     private string configHash = string.Empty;
@@ -71,6 +77,14 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 observedFamilies[record.Envelope.SourceId!] = families;
             }
             families.Add(record.EventFamily);
+            collectedCount++;
+            firstCollectedAt ??= DateTimeOffset.UtcNow;
+            if (status is not SourceHealthStatuses.Healthy)
+            {
+                recoveredAt = DateTimeOffset.UtcNow;
+                transitionedAt = recoveredAt;
+                transitionState = HealthTransitionStates.Recovered;
+            }
             status = SourceHealthStatuses.Healthy;
             errorCode = null;
             sourceState = "collecting";
@@ -103,6 +117,12 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         {
             throttled = false;
             permissionDenied = result.Status == JournalReadStatus.PermissionDenied;
+            if (permissionDenied && permissionDeniedSince is null)
+            {
+                permissionDeniedSince = DateTimeOffset.UtcNow;
+                transitionedAt = permissionDeniedSince;
+                transitionState = HealthTransitionStates.Degraded;
+            }
             gap |= result.GapKind != JournalGapKind.None || result.Status == JournalReadStatus.InvalidCursor;
             if (result.GapKind != JournalGapKind.None)
             {
@@ -115,6 +135,13 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 if (result.Records.Count == 0)
                 {
                     sourceState = checkpoint.CollectedCursor is null ? "empty" : "idle";
+                    if (!gap && permissionDeniedSince.HasValue)
+                    {
+                        recoveredAt = DateTimeOffset.UtcNow;
+                        transitionedAt = recoveredAt;
+                        transitionState = HealthTransitionStates.Recovered;
+                        permissionDeniedSince = null;
+                    }
                     if (!gap)
                     {
                         status = checkpoint.CollectedCursor is null ? SourceHealthStatuses.Missing : SourceHealthStatuses.Healthy;
@@ -154,6 +181,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             malformedCount++;
             gap = true;
             gapState = "malformed_record";
+            transitionedAt = DateTimeOffset.UtcNow;
+            transitionState = HealthTransitionStates.Degraded;
             status = SourceHealthStatuses.Error;
             errorCode = code;
         }
@@ -169,6 +198,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             reorderedCount++;
             gap = true;
             gapState = "reordered_input";
+            transitionedAt = DateTimeOffset.UtcNow;
+            transitionState = HealthTransitionStates.Degraded;
         }
     }
 
@@ -178,6 +209,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         {
             gap = true;
             gapState = stateValue;
+            transitionedAt = DateTimeOffset.UtcNow;
+            transitionState = HealthTransitionStates.Degraded;
             status = SourceHealthStatuses.Stale;
             errorCode = $"journal_{stateValue}_gap";
         }
@@ -189,6 +222,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         {
             throttled = true;
             sourceState = "throttled";
+            transitionedAt = DateTimeOffset.UtcNow;
+            transitionState = HealthTransitionStates.Degraded;
             status = SourceHealthStatuses.Degraded;
             errorCode = reason;
         }
@@ -241,13 +276,23 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ApplicableRoles = manifest.ApplicableRoles,
             Enabled = enabled,
             LastEventTime = sourceLatest,
+            ObservedAt = now,
             CollectedCheckpoint = collected,
             AcknowledgedCheckpoint = acknowledged,
             LagSeconds = sourceLatest.HasValue ? Math.Max(0, (long)(now - sourceLatest.Value).TotalSeconds) : null,
+            SilenceSeconds = sourceLatest.HasValue ? Math.Max(0, (long)(now - sourceLatest.Value).TotalSeconds) : null,
+            EventRatePerMinute = EventRatePerMinute(now),
             ErrorCode = ErrorFor(manifest, effectiveStatus),
             ErrorMessage = ErrorFor(manifest, effectiveStatus),
             GapDetected = isJournalSource && gap,
             BookmarkGapDetected = isJournalSource && gap,
+            GapCount = gap ? Math.Max(1, malformedCount + reorderedCount) : 0,
+            PermissionDeniedSince = permissionDenied ? permissionDeniedSince : null,
+            RecoveredAt = recoveredAt,
+            TransitionState = transitionState,
+            TransitionedAt = transitionedAt,
+            DroppedEvents = 0,
+            PoisonEvents = 0,
             ConfigHash = configHash,
             SourceVersion = version,
             PrerequisiteStatuses = BuildPrerequisiteStatuses(manifest, enabled, effectiveStatus),
@@ -269,6 +314,17 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 ["collector_version"] = version
             }
         };
+    }
+
+    private decimal? EventRatePerMinute(DateTimeOffset now)
+    {
+        if (collectedCount == 0 || firstCollectedAt is null)
+        {
+            return 0;
+        }
+
+        var minutes = Math.Max(1m, (decimal)(now - firstCollectedAt.Value).TotalMinutes);
+        return Math.Round(collectedCount / minutes, 3, MidpointRounding.AwayFromZero);
     }
 
     private string DetermineStatus(SourceManifestEntry manifest, bool enabled)
