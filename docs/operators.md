@@ -89,13 +89,13 @@ The scripts register a synthetic agent, ingest a synthetic event, exercise the r
 
 4. Copy `dist/windows-agent-copy/WindowsAgent.exe`, `dist/windows-agent-copy/agentsettings.json`, and the optional `dist/windows-agent-copy/Sysmon/` profile together to the Windows host. Do not print or commit `agentsettings.json`; it contains a per-agent API token.
 
-5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md), [windows-agent-installer.md](windows-agent-installer.md), and [runbooks.md](runbooks.md#windows-service-installstartstop).
+5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md), [windows-agent-installer.md](windows-agent-installer.md), and [runbooks.md](runbooks.md#11-windows-service-installstartstop).
 
 ## Review console workflow
 
-Common operator path:
+Common current operator path (the mature Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration IA is specified in [web.md](web.md)):
 
-1. Open [dashboard](web.md#pages) to check active, stale, retired, queued, and recent-ingest metrics.
+1. Open [dashboard](web.md#current-route-map) to check active, stale, retired, queued, and recent-ingest metrics.
 2. Use **Agents** to filter by hostname/agent ID/status/health and open host coverage details.
 3. Use **Events** to filter by time, host, agent, channel, Windows Event ID, keyword, normalized category/action, user, process, or destination IP.
 4. Open event detail to inspect normalized fields, entities, message text, and raw JSON for that event.
@@ -104,7 +104,7 @@ Common operator path:
 7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use server-side provider authentication only: ChatGPT subscription OAuth is the primary setup path and can reuse Pi's server-side `~/.pi/agent/auth.json` after Pi `/login` for ChatGPT Codex Responses models such as `gpt-5.5`, while API-key credentials and documented delegated API-bearer auth files remain advanced alternatives kept out of git.
 8. Use **Audit policy** and **About** for drift/status views without secret values.
 
-The [sanitized web-console demo](web-console-demo.md) contains screenshot examples generated from synthetic data.
+The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
 
 ## Source health and coverage
 
@@ -121,7 +121,7 @@ Keep Linux generated configuration and credentials under `/etc/challenger-siem-a
 
 ## Routine operations
 
-- Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
+- Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-postgresql).
 - Check local health: `curl http://127.0.0.1:<port>/health`.
 - Search events through `GET /api/v1/events` with the operator API credential; see [api.md](api.md#search-events).
 - Review managed telemetry storage with `/api/v1/storage/accounting` and `/api/v1/storage/retention/status`. Use retention dry-run first; execute only against the intended SIEM database. The default target is 30 days with a hard 100 GiB managed telemetry ceiling and deterministic emergency cleanup that removes optional telemetry before mandatory telemetry while preserving alert/evidence references.

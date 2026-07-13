@@ -46,8 +46,8 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 ## Web console and operator workflows
 
-- [Web review application](web.md) - auth model, pages, lifecycle semantics, settings, and smoke path.
-- [Sanitized web-console demo](web-console-demo.md) - screenshot gallery, synthetic data rules, and regeneration checklist.
+- [Web console product specification](web.md) - current routes, mature IA/page map, role-aware workflows, lifecycle states, sensitive-field rules, accessibility, responsive behavior, and smoke path.
+- [Sanitized web-console demo](web-console-demo.md) - screenshot/wireframe gallery, synthetic data rules, leakage inspection, and regeneration checklist.
 - [Operator runbooks](runbooks.md) - database setup, smoke tests, graph/`soc-agent` use, stale-agent retirement, packaging, and Windows lab E2E.
 - [soc-agent](soc-agent.md) - live workspace, local/external provider model, tools, persistence, citations, and mutation policy.
 

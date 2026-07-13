@@ -1,17 +1,19 @@
 # Sanitized web-console demo
 
-This page is a public-safe visual guide to the web review console. Every screenshot in this page was captured from synthetic issue-specific demo data, not from real endpoint telemetry.
+This page is a public-safe visual guide to the web review console. Every screenshot and text wireframe referenced by this page must be generated from synthetic demo data, not from real endpoint telemetry. The mature console information architecture, target page map, accessibility requirements, and sanitized text wireframes live in [web.md](web.md).
 
-## Screenshot data contract
+## Screenshot and wireframe data contract
 
-Tracked screenshots must satisfy all of these rules:
+Tracked screenshots and documentation wireframes must satisfy all of these rules:
 
-- Synthetic agent IDs, hostnames, users, graph titles, messages, and raw JSON only.
-- No operator API credentials, enrollment tokens, per-agent API tokens, connection strings, cookies, local browser profiles, shell history, private lab hostnames/users, real endpoint telemetry, event-log exports, or raw customer/client data.
-- Browser page screenshots only; avoid browser chrome or OS UI that might reveal local account or path information.
-- Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, and logs stay under ignored `.local/` paths.
+- Synthetic agent IDs, hostnames, users, graph titles, case IDs, alert IDs, messages, event IDs, IP addresses, and raw JSON only.
+- Use fake examples such as `DEMO-WIN11`, `DEMO-LNX-02`, `synthetic-user`, `CASE-DEMO-0007`, `demo-alert-001`, and documentation IP ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`).
+- No operator API credentials, enrollment tokens, per-agent API tokens, connection strings, cookies, local browser profiles, shell history, private lab hostnames/users, real endpoint telemetry, event-log exports, raw customer/client data, provider credentials, auth-file paths, or generated agent settings.
+- Browser page screenshots only; crop or capture the page viewport so browser chrome, bookmarks, extension icons, OS menu bars, local account names, local paths, window titles with private text, and desktop notifications are absent.
+- Text wireframes must be hand-authored synthetic product examples. Do not paste real output and then sanitize it.
+- Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, browser caches, and logs stay under ignored `.local/` paths.
 
-The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph.
+The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph. Future gallery refreshes should align route captions with the page map in [web.md](web.md#current-route-map) while clearly labelling unimplemented IA wireframes as specification sketches rather than current UI.
 
 ## Gallery
 
@@ -97,12 +99,13 @@ Use this process whenever web UI changes make the screenshots stale:
    - Create a synthetic graph through the review API.
 5. Use Playwright or another headless browser to log in with a synthetic operator username/password, navigate the pages, and capture page screenshots. Keep raw traces/videos/temp captures under `.local/`.
 6. Filter data-bearing pages by the synthetic agent ID or unique issue marker.
-7. Inspect every selected PNG before committing:
-   - No token/cookie/connection string.
-   - No real hostname, username, IP address, event payload, browser profile, local path, or lab telemetry.
-   - Raw JSON is synthetic and minimal.
-8. Save selected images under `docs/assets/web-console/` with stable descriptive names and update this page if routes or captions change.
-9. Run a local markdown link/image check and browser E2E validation for the affected web paths.
+7. Inspect every selected PNG before staging or committing:
+   - No token, cookie, connection string, API credential, enrollment token, per-agent token, provider credential, auth-file path, or generated agent setting.
+   - No real hostname, username, IP address, event payload, browser profile, local path, lab telemetry, browser chrome, OS UI, desktop notification, extension icon, bookmark, or local account name.
+   - Raw JSON, command lines, paths, account values, and network values are synthetic and minimal.
+   - Redaction/omission labels match the role used for capture.
+8. Save selected images under `docs/assets/web-console/` with stable descriptive names and update this page if routes, navigation labels, captions, or target IA wireframes change.
+9. Run a local markdown link/image check and browser E2E validation for the affected web paths. For docs-only IA changes, run link/safety checks and record the design-review evidence instead of regenerating screenshots.
 
 ## Browser E2E coverage used for this gallery
 

@@ -107,7 +107,7 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
 - [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), and [security/privacy design](docs/linux-agent-security.md)
 - [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
-- [Web review console](docs/web.md) and [sanitized screenshot demo](docs/web-console-demo.md)
+- [Web console product specification](docs/web.md) and [sanitized screenshot/wireframe demo](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)
 - [Runbooks](docs/runbooks.md) and [troubleshooting](docs/troubleshooting.md)
 - [Contributor guide](docs/contributors.md), [development](docs/development.md), and [versioning](docs/versioning.md)
