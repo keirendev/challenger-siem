@@ -1,0 +1,177 @@
+@page "/detections"
+@model Challenger.Siem.Api.Pages.Detections.IndexModel
+@{
+    ViewData["Title"] = "Detections";
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Detections", IsCurrent: true))' />
+
+<div class="page-header">
+    <div>
+        <p class="page-kicker">Detection engineering</p>
+        <h1>Detections</h1>
+        <p class="muted">Rule catalog, versions, source prerequisites, validation state, tuning notes, and response guidance. Browser workflows mutate only server-side detection metadata; they never enable host collection or change host policy.</p>
+    </div>
+    <div class="actions">
+        <a class="button secondary" asp-page="/Alerts/Index">Review alerts</a>
+        <a class="button" asp-page="/Agents/Index">Review source health</a>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Detection update failed", Model.ErrorMessage, "error", IsAlert: true)' />
+}
+@if (Model.SuccessMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Detection settings updated", Model.SuccessMessage, "ok")' />
+}
+
+<section class="card">
+    <h2>Mutation boundary</h2>
+    <p>Detection-engineer and admin operators can update enablement, lifecycle, validation, and notes with optimistic concurrency and audit. Rule logic remains built-in metadata and bounded server predicates; arbitrary code, expressions, secrets, and host-policy changes are rejected.</p>
+</section>
+
+@if (Model.Rules.Count == 0)
+{
+    <div class="empty">No detection rules are available.</div>
+}
+else
+{
+    <section class="table-card" aria-labelledby="detection-results-title">
+        <div class="table-title">
+            <div>
+                <h2 id="detection-results-title">Detection rules</h2>
+                <p class="muted">@Model.Rules.Count bounded catalog rules, sorted by category and ID.</p>
+            </div>
+        </div>
+        <div class="table-scroll">
+            <table>
+                <caption>Detection rule metadata, prerequisites, validation, and management state.</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Rule</th>
+                        <th scope="col">Version</th>
+                        <th scope="col">Logic metadata</th>
+                        <th scope="col">Prerequisites</th>
+                        <th scope="col">Validation/tests</th>
+                        <th scope="col">Tuning and response</th>
+                        @if (Model.CanManage)
+                        {
+                            <th scope="col">Manage</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var item in Model.Rules)
+                {
+                    <tr>
+                        <td>
+                            <strong>@item.Rule.Name</strong><br />
+                            <span class="mono">@item.Rule.RuleId</span><br />
+                            <span class="badge @BadgeClass(item.EffectiveEnabled ? item.LifecycleState : "disabled")">@(item.EffectiveEnabled ? item.LifecycleState : "disabled")</span>
+                            <span class="badge @SeverityClass(item.Rule.Severity)">@item.Rule.Severity</span>
+                        </td>
+                        <td class="mono">v@item.Rule.Version<br /><span class="muted">settings @item.SettingsVersion</span></td>
+                        <td class="compact-cell">
+                            <div><strong>Category:</strong> @item.Rule.Category</div>
+                            <div><strong>Confidence:</strong> @item.Rule.Confidence; @item.ConfidenceImpact</div>
+                            <div><strong>Window:</strong> @item.Rule.CorrelationWindowSeconds seconds</div>
+                            <div><strong>Tactics:</strong> @string.Join(", ", item.Rule.Tactics)</div>
+                            <div><strong>ATT&amp;CK:</strong> @string.Join(", ", item.Rule.MitreAttack)</div>
+                            <div><strong>Suppression keys:</strong> @string.Join(", ", item.Rule.SuppressionKeys)</div>
+                        </td>
+                        <td class="compact-cell">
+                            <div><strong>Sources:</strong> @string.Join(", ", item.Rule.RequiredSources)</div>
+                            <div><strong>Fields:</strong> @string.Join(", ", item.Rule.RequiredFields)</div>
+                            <div><strong>Coverage impact:</strong> <span class="badge @BadgeClass(item.PrerequisiteState)">@item.PrerequisiteState</span></div>
+                            <ul class="compact-list">
+                            @foreach (var prerequisite in item.Prerequisites)
+                            {
+                                <li><span class="mono">@prerequisite.SourceId</span>: @prerequisite.EffectiveState (healthy @prerequisite.Healthy, degraded @prerequisite.Degraded, missing @prerequisite.Missing)</li>
+                            }
+                            </ul>
+                        </td>
+                        <td class="compact-cell">
+                            <span class="badge @BadgeClass(item.ValidationStatus)">@item.ValidationStatus</span>
+                            <ul class="compact-list">
+                            @foreach (var test in item.SyntheticTests)
+                            {
+                                <li>@test</li>
+                            }
+                            </ul>
+                        </td>
+                        <td class="compact-cell">
+                            <p><strong>False positives:</strong> @item.Rule.FalsePositiveNotes</p>
+                            <p><strong>Response:</strong> @item.Rule.ResponseGuidance</p>
+                            @if (!string.IsNullOrWhiteSpace(item.TuningNotes))
+                            {
+                                <p><strong>Tuning note:</strong> @item.TuningNotes</p>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(item.SuppressionNotes))
+                            {
+                                <p><strong>Suppression note:</strong> @item.SuppressionNotes</p>
+                            }
+                        </td>
+                        @if (Model.CanManage)
+                        {
+                            <td class="compact-cell">
+                                <form method="post" asp-page-handler="Settings" class="stacked-form">
+                                    <input type="hidden" name="RuleId" value="@item.Rule.RuleId" />
+                                    <input type="hidden" name="RuleVersion" value="@item.Rule.Version" />
+                                    <input type="hidden" name="ExpectedVersion" value="@item.SettingsVersion" />
+                                    <input type="hidden" name="Enabled" value="false" />
+                                    <label>
+                                        @if (item.EffectiveEnabled)
+                                        {
+                                            <input type="checkbox" name="Enabled" value="true" checked="checked" />
+                                        }
+                                        else
+                                        {
+                                            <input type="checkbox" name="Enabled" value="true" />
+                                        }
+                                        Server-side enabled
+                                    </label>
+                                    <label for="lifecycle-@SafeId(item.Rule.RuleId)">Lifecycle</label>
+                                    <select id="lifecycle-@SafeId(item.Rule.RuleId)" name="LifecycleState">
+                                        @foreach (var state in new[] { "catalog", "draft", "review", "test_failed", "test_passed", "staged", "active", "deprecated", "disabled" })
+                                        {
+                                            <option value="@state" selected="@(state == item.LifecycleState)">@state</option>
+                                        }
+                                    </select>
+                                    <label for="validation-@SafeId(item.Rule.RuleId)">Validation</label>
+                                    <select id="validation-@SafeId(item.Rule.RuleId)" name="ValidationStatus">
+                                        @foreach (var state in new[] { "not_run", "synthetic_passed", "synthetic_failed", "skipped_with_reason" })
+                                        {
+                                            <option value="@state" selected="@(state == item.ValidationStatus)">@state</option>
+                                        }
+                                    </select>
+                                    <label for="tuning-@SafeId(item.Rule.RuleId)">Tuning notes</label>
+                                    <textarea id="tuning-@SafeId(item.Rule.RuleId)" name="TuningNotes" rows="3" maxlength="2000">@item.TuningNotes</textarea>
+                                    <label for="suppression-@SafeId(item.Rule.RuleId)">Suppression notes</label>
+                                    <textarea id="suppression-@SafeId(item.Rule.RuleId)" name="SuppressionNotes" rows="3" maxlength="2000">@item.SuppressionNotes</textarea>
+                                    <label for="confirm-@SafeId(item.Rule.RuleId)">Type CONFIRM DETECTION SERVER CHANGE</label>
+                                    <input id="confirm-@SafeId(item.Rule.RuleId)" name="ConfirmImpact" autocomplete="off" />
+                                    <button type="submit" class="button secondary">Save rule metadata</button>
+                                </form>
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@functions {
+    private static string SafeId(string value) => new string(value.Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray());
+    private static string BadgeClass(string value) => value switch
+    {
+        "healthy" or "active" or "synthetic_passed" or "test_passed" => "ok",
+        "missing" or "disabled" or "synthetic_failed" or "test_failed" => "danger",
+        "degraded" or "stale" or "unknown" or "not_run" or "skipped_with_reason" => "warning",
+        _ => "neutral"
+    };
+    private static string SeverityClass(string value) => value is "critical" or "high" ? "danger" : value is "medium" ? "warning" : "neutral";
+}

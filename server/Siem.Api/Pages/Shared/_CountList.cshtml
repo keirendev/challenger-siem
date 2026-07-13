@@ -1,0 +1,14 @@
+@model IReadOnlyList<Challenger.Siem.Api.Database.DashboardCount>
+@if (Model.Count == 0)
+{
+    <p class="muted">No data in the selected bounded scope.</p>
+}
+else
+{
+    <ul class="count-list">
+    @foreach (var item in Model)
+    {
+        <li><span class="mono">@item.Key</span><strong>@item.Count</strong></li>
+    }
+    </ul>
+}

@@ -101,8 +101,10 @@ Common current operator path (aligned to the Overview/Search/Assets/Alerts/Cases
 4. Use **Alerts** to review detection output, assign/acknowledge/investigate, suppress with reason/expiry, close/reopen with disposition, and promote synthetic or real review signals into cases. Evidence rows explicitly state whether underlying telemetry is retained, removed by retention, or missing.
 5. Use **Cases** to manage investigations with owner, severity, priority, status, notes, evidence links, related alerts/entities/graphs, activity timeline, confirmed closure, and reopen.
 6. Use the role-aware implemented workspace links for **Investigation graphs** and **soc-agent** when your role permits analyst workflows. `soc-agent` remains citation-oriented and cannot mutate detections, configuration, agents, stored data, or repository files.
-7. Treat **Detections**, **Dashboards**, and broad **Administration** entries as honest planned affordances when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
-8. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
+7. Use **Detections** to review stable rule versions, required sources/fields, coverage/confidence impact, synthetic validation metadata, tuning/suppression notes, and response guidance. Detection-engineer/admin operators can update bounded server-side rule metadata with confirmation, audit, and optimistic concurrency; the page cannot enable host collection or upload arbitrary detection code.
+8. Use **Dashboards** for bounded server-side aggregations with explicit time ranges, freshness/partial-data state, accessible chart/table alternatives, and saved owner/visibility/version layouts. Saved layouts store widget metadata only, not raw telemetry.
+9. Use **Administration** (admin only) for non-secret operator/session metadata, source review notes, retention/capacity effective settings, and audit history. Settings mutations are allowlisted server changes, require confirmations, and do not alter endpoint audit/firewall/authentication/kernel/service policy or L3 collection.
+10. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
 

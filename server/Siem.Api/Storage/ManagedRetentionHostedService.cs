@@ -22,7 +22,9 @@ public sealed class ManagedRetentionHostedService(IServiceScopeFactory scopeFact
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var repository = scope.ServiceProvider.GetRequiredService<RetentionRepository>();
                 var latestOptions = scope.ServiceProvider.GetRequiredService<IOptions<ManagedRetentionOptions>>().Value;
-                await repository.RunAsync(latestOptions, new RetentionRunRequest(DryRun: false), stoppingToken);
+                var admin = scope.ServiceProvider.GetRequiredService<AdminRepository>();
+                var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(latestOptions, stoppingToken);
+                await repository.RunAsync(effectiveOptions, new RetentionRunRequest(DryRun: false), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

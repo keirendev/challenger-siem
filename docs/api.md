@@ -394,10 +394,11 @@ GET /soc-agent/live/sessions/<session-id>/active
 GET /api/v1/alerts
 GET /api/v1/alerts/<alert-id>
 GET /api/v1/detections/rules
+PUT /api/v1/detections/rules/<rule-id>/<version>/settings
 Authorization: Bearer <operator-api-credential>
 ```
 
-The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md).
+The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. The rules response also includes `managed_rules`, which adds effective enablement, lifecycle state, synthetic validation status, tuning/suppression notes, prerequisite source counts, confidence impact, and settings version. Detection-engineer/admin settings mutation accepts only bounded metadata (`enabled`, lifecycle, validation status, notes, expected version, and `CONFIRM DETECTION SERVER CHANGE`); it rejects arbitrary code/expression/secret-shaped content, uses optimistic concurrency, records security audit/history, and never changes host collection policy. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md).
 
 Alert triage mutations are additive v1 analyst/detection-engineer/admin routes. Unsafe calls require an operator bearer credential rather than a browser cookie, use bounded request bodies, write append-only activity/security-audit entries, and use `expected_version` optimistic concurrency with `409` conflict on stale versions:
 
@@ -434,7 +435,30 @@ Authorization: Bearer <operator-api-credential>
 
 Cases support title/description, owner, severity, priority, status, disposition, closure criteria/summary, coverage-gap acknowledgement, related alerts/entities/investigation graphs, immutable notes, explicit evidence links, and activity timeline. Create accepts optional `alert_ids`; relationship endpoints link additional alerts/entities/graphs/evidence. Mutations require analyst-level investigation permission, bounded inputs, optional idempotency keys, optimistic concurrency where lifecycle state changes an existing case, and security audit entries. Closing a case requires explicit confirmation, disposition, closure summary, and coverage-gap acknowledgement state; reopening moves the case back to `investigating`. Browser `/cases` Razor workflows use antiforgery-protected forms for the same lifecycle and confirmation semantics.
 
-Detection rule activation, host remediation, and response actions remain future approved workflows.
+## Dashboards
+
+```http
+GET /api/v1/dashboards/summary?time_range_hours=24
+GET /api/v1/dashboards/layouts
+POST /api/v1/dashboards/layouts
+PUT /api/v1/dashboards/layouts/<layout-id>
+Authorization: Bearer <operator-api-credential>
+```
+
+Dashboard summary returns bounded server-side aggregations over a clamped 1-168 hour range: hourly event buckets, top event sources/severities, alert statuses, source-health states, measured timestamp, latest-ingest timestamp, freshness state, and partial-data flag. Saved layouts store bounded widget metadata only, with owner, `private` or `shared` visibility, time range, refresh interval, and optimistic `version`. Layout mutations require analyst/investigation-capable role or higher; shared layouts require detection-engineer/admin.
+
+## Administration
+
+```http
+GET /api/v1/admin/overview
+PUT /api/v1/admin/settings
+PUT /api/v1/admin/sources
+Authorization: Bearer <operator-api-credential>
+```
+
+Administration APIs are admin-only. Overview returns non-secret operator/session metadata, source state/review notes, retention/capacity effective settings and impact text, and bounded append-only security audit history. Settings mutation is limited to allowlisted server-managed retention/capacity keys and requires `CONFIRM SERVER CONFIG CHANGE`, validation, optimistic concurrency, and audit. Source review-note mutation requires `CONFIRM SOURCE REVIEW CHANGE`, validation, optimistic concurrency, and audit; it does not enable/disable endpoint collection, L3 telemetry, or host policy.
+
+Host remediation and response actions remain future approved workflows.
 
 
 ## Managed telemetry storage accounting and retention

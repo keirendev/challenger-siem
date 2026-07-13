@@ -57,6 +57,9 @@ builder.Services.AddScoped<TelemetryCoverageRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
 builder.Services.AddScoped<AlertRepository>();
 builder.Services.AddScoped<CaseRepository>();
+builder.Services.AddScoped<DetectionManagementRepository>();
+builder.Services.AddScoped<DashboardRepository>();
+builder.Services.AddScoped<AdminRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
 builder.Services.AddScoped<SocAgentProviderStatusService>();
 builder.Services.AddHttpClient<ISocAgentModelProvider, OpenAiSocAgentModelProvider>((serviceProvider, client) =>
@@ -567,6 +570,7 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
     TokenService tokens,
     IConfiguration configuration,
     IOptions<ManagedRetentionOptions> retentionOptions,
+    AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
     if (!tokens.HasOperatorAccess(context))
@@ -574,9 +578,9 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    var configuredCapacity = retentionOptions.Value.ManagedCapacityBytes;
-    var legacyCapacity = ParseLongOrDefault(configuration["Storage:ManagedCapacityBytes"], configuredCapacity);
-    return Results.Ok(await events.GetManagedStorageAccountingAsync(legacyCapacity, cancellationToken, retentionOptions.Value.TargetRetentionDays));
+    var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
+    var legacyCapacity = ParseLongOrDefault(configuration["Storage:ManagedCapacityBytes"], effectiveOptions.ManagedCapacityBytes);
+    return Results.Ok(await events.GetManagedStorageAccountingAsync(legacyCapacity, cancellationToken, effectiveOptions.TargetRetentionDays));
 });
 
 app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
@@ -584,6 +588,7 @@ app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
     RetentionRepository retention,
     TokenService tokens,
     IOptions<ManagedRetentionOptions> retentionOptions,
+    AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
     if (!tokens.HasOperatorAccess(context))
@@ -591,7 +596,8 @@ app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    return Results.Ok(await retention.GetStatusAsync(retentionOptions.Value, cancellationToken));
+    var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
+    return Results.Ok(await retention.GetStatusAsync(effectiveOptions, cancellationToken));
 });
 
 app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
@@ -599,6 +605,7 @@ app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
     RetentionRepository retention,
     TokenService tokens,
     IOptions<ManagedRetentionOptions> retentionOptions,
+    AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
     if (!tokens.HasOperatorAccess(context))
@@ -620,7 +627,8 @@ app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
         }, cancellationToken) ?? new RetentionRunRequest();
     }
 
-    var result = await retention.RunAsync(retentionOptions.Value, request, cancellationToken);
+    var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
+    var result = await retention.RunAsync(effectiveOptions, request, cancellationToken);
     return result.Status == "lock_not_acquired" ? Results.Conflict(result) : Results.Ok(result);
 });
 
@@ -1324,6 +1332,7 @@ app.MapGet("/soc-agent/oauth/callback", async Task<IResult> (
 app.MapGet("/api/v1/detections/rules", async Task<IResult> (
     HttpContext context,
     AlertRepository alerts,
+    DetectionManagementRepository detectionManagement,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
@@ -1333,7 +1342,188 @@ app.MapGet("/api/v1/detections/rules", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    return Results.Ok(new { rules = await alerts.GetRulesAsync(cancellationToken) });
+    var rules = await alerts.GetRulesAsync(cancellationToken);
+    var managedRules = await detectionManagement.ListAsync(rules, cancellationToken);
+    return Results.Ok(new { rules, managed_rules = managedRules });
+});
+
+app.MapPut("/api/v1/detections/rules/{ruleId}/{version:int}/settings", async Task<IResult> (
+    string ruleId,
+    int version,
+    DetectionRuleSettingsRequest request,
+    HttpContext context,
+    AlertRepository alerts,
+    DetectionManagementRepository detectionManagement,
+    SecurityAuditRepository audit,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    try
+    {
+        var rules = await alerts.GetRulesAsync(cancellationToken);
+        var updated = await detectionManagement.UpdateSettingsAsync(rules, ruleId, version, request, context.User.Identity?.Name ?? "operator", context, audit, cancellationToken);
+        return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["settings"] = new[] { ex.Message } });
+    }
+});
+
+app.MapGet("/api/v1/dashboards/summary", async Task<IResult> (
+    HttpContext context,
+    DashboardRepository dashboards,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var hours = ParseIntOrDefault(context.Request.Query["time_range_hours"].FirstOrDefault(), 24);
+    return Results.Ok(await dashboards.GetAggregationsAsync(hours, cancellationToken));
+});
+
+app.MapGet("/api/v1/dashboards/layouts", async Task<IResult> (
+    HttpContext context,
+    DashboardRepository dashboards,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    return operatorId is null ? Results.Unauthorized() : Results.Ok(new { layouts = await dashboards.ListLayoutsAsync(operatorId.Value, cancellationToken) });
+});
+
+app.MapPost("/api/v1/dashboards/layouts", async Task<IResult> (
+    DashboardLayoutRequest request,
+    HttpContext context,
+    DashboardRepository dashboards,
+    SecurityAuditRepository audit,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (operatorId is null) return Results.Unauthorized();
+    try
+    {
+        var saved = await dashboards.SaveLayoutAsync(operatorId.Value, context.User.Identity?.Name ?? "operator", OperatorAuthorization.Role(context.User)!, request, context, audit, cancellationToken);
+        return Results.Ok(saved);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["layout"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPut("/api/v1/dashboards/layouts/{layoutId:guid}", async Task<IResult> (
+    Guid layoutId,
+    DashboardLayoutRequest request,
+    HttpContext context,
+    DashboardRepository dashboards,
+    SecurityAuditRepository audit,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (operatorId is null) return Results.Unauthorized();
+    try
+    {
+        var updated = await dashboards.UpdateLayoutAsync(operatorId.Value, context.User.Identity?.Name ?? "operator", OperatorAuthorization.Role(context.User)!, layoutId, request, context, audit, cancellationToken);
+        return updated is null ? Results.Conflict(new { error = "version_conflict_or_not_owner" }) : Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["layout"] = new[] { ex.Message } });
+    }
+});
+
+app.MapGet("/api/v1/admin/overview", async Task<IResult> (
+    HttpContext context,
+    AdminRepository admin,
+    TokenService tokens,
+    IOptions<ManagedRetentionOptions> retentionOptions,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    return Results.Ok(await admin.GetOverviewAsync(retentionOptions.Value, cancellationToken));
+});
+
+app.MapPut("/api/v1/admin/settings", async Task<IResult> (
+    AdminConfigSettingRequest request,
+    HttpContext context,
+    AdminRepository admin,
+    SecurityAuditRepository audit,
+    TokenService tokens,
+    IOptions<ManagedRetentionOptions> retentionOptions,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    try
+    {
+        var updated = await admin.UpdateSettingAsync(request, context.User.Identity?.Name ?? "operator", context, audit, retentionOptions.Value, cancellationToken);
+        return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["setting"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPut("/api/v1/admin/sources", async Task<IResult> (
+    AdminSourceSettingRequest request,
+    HttpContext context,
+    AdminRepository admin,
+    SecurityAuditRepository audit,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    try
+    {
+        var updated = await admin.UpdateSourceSettingAsync(request, context.User.Identity?.Name ?? "operator", context, audit, cancellationToken);
+        return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["source"] = new[] { ex.Message } });
+    }
 });
 
 app.MapRazorPages();
