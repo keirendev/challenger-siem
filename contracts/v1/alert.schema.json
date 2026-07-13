@@ -12,13 +12,28 @@
     "title": { "type": "string" },
     "severity": { "type": "string", "enum": ["informational", "low", "medium", "high", "critical"] },
     "confidence": { "type": "string" },
-    "status": { "type": "string", "enum": ["new", "triaged", "closed", "suppressed"] },
+    "status": { "type": "string", "enum": ["new", "acknowledged", "triaged", "investigating", "escalated", "contained", "resolved", "closed", "suppressed"] },
+    "owner": { "type": ["string", "null"], "maxLength": 96 },
+    "version": { "type": "integer", "minimum": 1 },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" },
+    "acknowledged_at": { "type": ["string", "null"], "format": "date-time" },
+    "triaged_at": { "type": ["string", "null"], "format": "date-time" },
+    "suppressed_at": { "type": ["string", "null"], "format": "date-time" },
+    "suppressed_until": { "type": ["string", "null"], "format": "date-time" },
+    "suppression_reason": { "type": ["string", "null"], "maxLength": 1000 },
+    "disposition": { "type": ["string", "null"], "enum": ["true_positive", "false_positive", "duplicate", "benign", "authorized_activity", "retention_limited", "unknown", null] },
+    "closed_at": { "type": ["string", "null"], "format": "date-time" },
+    "closure_summary": { "type": ["string", "null"], "maxLength": 2000 },
+    "reopened_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_activity_at": { "type": ["string", "null"], "format": "date-time" },
     "agent_id": { "type": ["string", "null"] },
     "hostname": { "type": ["string", "null"] },
     "created_at": { "type": "string", "format": "date-time" },
     "summary": { "type": "string" },
     "affected_entities": { "type": "array", "items": { "$ref": "event-envelope.schema.json#/$defs/entity" } },
-    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "cases": { "type": "array", "items": { "$ref": "#/$defs/case_link" } },
+    "activity": { "type": "array", "items": { "$ref": "#/$defs/activity" } }
   },
   "$defs": {
     "evidence": {
@@ -32,6 +47,33 @@
         "host_timezone": { "$ref": "#/$defs/host_timezone" },
         "channel": { "type": ["string", "null"] },
         "windows_event_id": { "type": ["integer", "null"] },
+        "summary": { "type": "string" },
+        "telemetry_retention_state": { "type": "string", "enum": ["telemetry_retained", "telemetry_removed_by_retention", "underlying_telemetry_missing", "unknown"] }
+      }
+    },
+    "case_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "case_key", "title", "status", "relationship"],
+      "properties": {
+        "case_id": { "type": "string", "format": "uuid" },
+        "case_key": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "relationship": { "type": "string" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activity_id", "occurred_at", "action", "summary"],
+      "properties": {
+        "activity_id": { "type": "string", "format": "uuid" },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "actor": { "type": ["string", "null"] },
+        "action": { "type": "string" },
+        "from_status": { "type": ["string", "null"] },
+        "to_status": { "type": ["string", "null"] },
         "summary": { "type": "string" }
       }
     },

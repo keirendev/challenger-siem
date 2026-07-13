@@ -10,7 +10,7 @@
     <div>
         <p class="page-kicker">Detection review</p>
         <h1>Alerts</h1>
-        <p class="muted">Detection alert review skeleton with bounded result pages, evidence links, and empty-state handling.</p>
+        <p class="muted">Detection alert triage with bounded result pages, ownership, lifecycle, disposition, evidence links, and case promotion.</p>
     </div>
 </div>
 
@@ -18,7 +18,7 @@
 {
     <partial name="_Notice" model='new NoticeModel("Alerts unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
-<partial name="_Notice" model='new NoticeModel("Read-only alert lifecycle", "Alert triage, case promotion, suppression, and bulk actions are planned. Current pages expose bounded alert review and evidence pivots only.", "planned")' />
+<partial name="_Notice" model='new NoticeModel("Evidence behavior", "Alert evidence keeps immutable event identity and rule-version context. Evidence rows show whether telemetry is retained, removed by retention, or missing.", "info")' />
 
 <form method="get" class="card filters filter-panel" aria-label="Alert filters">
     <div class="form-row">
@@ -26,7 +26,12 @@
         <select id="status" asp-for="Status">
             <option value="">Any</option>
             <option value="new">New</option>
+            <option value="acknowledged">Acknowledged</option>
             <option value="triaged">Triaged</option>
+            <option value="investigating">Investigating</option>
+            <option value="escalated">Escalated</option>
+            <option value="contained">Contained</option>
+            <option value="resolved">Resolved</option>
             <option value="closed">Closed</option>
             <option value="suppressed">Suppressed</option>
         </select>

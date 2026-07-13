@@ -1751,3 +1751,38 @@ button.small {
         flex: 1 1 auto;
     }
 }
+
+.two-column {
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.compact-card {
+    gap: var(--space-3);
+    margin: 0;
+}
+
+.warning-zone {
+    border-color: color-mix(in srgb, var(--warning) 55%, var(--line));
+    background: linear-gradient(180deg, rgb(251 191 36 / 0.08), rgb(17 28 45 / 0.94));
+}
+
+.timeline-list {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.timeline-list li {
+    padding: var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--panel-muted);
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 700;
+}

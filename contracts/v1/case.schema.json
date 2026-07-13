@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/case.schema.json",
+  "title": "Challenger SIEM Case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "case_key", "title", "severity", "priority", "status", "version", "created_at", "updated_at", "last_activity_at"],
+  "properties": {
+    "case_id": { "type": "string", "format": "uuid" },
+    "case_key": { "type": "string" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "description": { "type": ["string", "null"], "maxLength": 4000 },
+    "owner": { "type": ["string", "null"], "maxLength": 96 },
+    "severity": { "type": "string", "enum": ["informational", "low", "medium", "high", "critical"] },
+    "priority": { "type": "string", "enum": ["low", "normal", "high", "urgent"] },
+    "status": { "type": "string", "enum": ["draft", "open", "investigating", "pending_external", "contained", "resolved", "closed"] },
+    "disposition": { "type": ["string", "null"], "enum": ["true_positive", "false_positive", "duplicate", "benign", "authorized_activity", "retention_limited", "unknown", null] },
+    "closure_summary": { "type": ["string", "null"], "maxLength": 4000 },
+    "closure_criteria": { "type": ["string", "null"], "maxLength": 4000 },
+    "coverage_gap_acknowledged": { "type": "boolean" },
+    "version": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "closed_at": { "type": ["string", "null"], "format": "date-time" },
+    "reopened_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_activity_at": { "type": "string", "format": "date-time" },
+    "alert_count": { "type": "integer", "minimum": 0 },
+    "evidence_count": { "type": "integer", "minimum": 0 },
+    "alerts": { "type": "array", "items": { "$ref": "#/$defs/alert_link" } },
+    "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } },
+    "graphs": { "type": "array", "items": { "$ref": "#/$defs/graph_link" } },
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+    "activity": { "type": "array", "items": { "$ref": "#/$defs/activity" } }
+  },
+  "$defs": {
+    "alert_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alert_id", "title", "status", "severity", "relationship"],
+      "properties": {
+        "alert_id": { "type": "string", "format": "uuid" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "severity": { "type": "string" },
+        "relationship": { "type": "string" }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_entity_id", "entity_type", "entity_value", "relationship"],
+      "properties": {
+        "case_entity_id": { "type": "string", "format": "uuid" },
+        "entity_type": { "type": "string" },
+        "entity_value": { "type": "string" },
+        "relationship": { "type": "string" }
+      }
+    },
+    "graph_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graph_id", "title", "status", "relationship"],
+      "properties": {
+        "graph_id": { "type": "string", "format": "uuid" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "relationship": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_evidence_id", "agent_id", "event_id", "evidence_kind", "summary", "telemetry_retention_state"],
+      "properties": {
+        "case_evidence_id": { "type": "string", "format": "uuid" },
+        "alert_id": { "type": ["string", "null"], "format": "uuid" },
+        "agent_id": { "type": "string" },
+        "event_id": { "type": "string", "format": "uuid" },
+        "event_time": { "type": ["string", "null"], "format": "date-time" },
+        "host_timezone": { "type": ["object", "null"] },
+        "evidence_kind": { "type": "string" },
+        "summary": { "type": "string" },
+        "telemetry_retention_state": { "type": "string", "enum": ["telemetry_retained", "telemetry_removed_by_retention", "underlying_telemetry_missing", "unknown"] }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["note_id", "created_at", "body"],
+      "properties": {
+        "note_id": { "type": "string", "format": "uuid" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "created_by": { "type": ["string", "null"] },
+        "body": { "type": "string" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activity_id", "occurred_at", "action", "summary"],
+      "properties": {
+        "activity_id": { "type": "string", "format": "uuid" },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "actor": { "type": ["string", "null"] },
+        "action": { "type": "string" },
+        "from_status": { "type": ["string", "null"] },
+        "to_status": { "type": ["string", "null"] },
+        "summary": { "type": "string" }
+      }
+    }
+  }
+}
