@@ -171,6 +171,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         AddTextFilter(where, command, "platform", "platform", query.Platform, exact: true);
         AddTextFilter(where, command, "source_id", "source_id", query.SourceId, exact: true);
         AddTextFilter(where, command, "event_code", "event_code", query.EventCode, exact: true);
+        AddTextFilter(where, command, "normalized_json->>'package_name'", "package_name", query.PackageName, exact: true);
 
         if (!string.IsNullOrWhiteSpace(query.Channel))
         {
@@ -259,7 +260,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
     {
         if (!OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive))
         {
-            query = query with { Keyword = null, UserName = null, ProcessImage = null, SourceIp = null, DestinationIp = null, ServiceName = null, FilePath = null, RegistryKey = null };
+            query = query with { Keyword = null, UserName = null, ProcessImage = null, SourceIp = null, DestinationIp = null, ServiceName = null, FilePath = null, RegistryKey = null, PackageName = null };
         }
         var events = await SearchEventsAsync(query, cancellationToken, offset);
         return events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();

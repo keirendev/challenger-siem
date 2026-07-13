@@ -31,6 +31,7 @@ public sealed class CrossPlatformContractTests
     [InlineData("windows-source-health.legacy.json", "source-health.schema.json", typeof(SourceHealthResponse))]
     [InlineData("linux-registration.synthetic.json", "agent-registration.schema.json", typeof(AgentRegistrationRequest))]
     [InlineData("linux-heartbeat.synthetic.json", "heartbeat.schema.json", typeof(HeartbeatRequest))]
+    [InlineData("linux-l2-heartbeat.synthetic.json", "heartbeat.schema.json", typeof(HeartbeatRequest))]
     [InlineData("linux-ingest.synthetic.json", "ingest-batch.schema.json", typeof(IngestBatchRequest))]
     public void GoldenFixturesValidateDeserializeAndRoundTrip(string fixtureName, string schemaName, Type contractType)
     {
@@ -636,6 +637,8 @@ public sealed class CrossPlatformContractTests
 
         var heartbeatSchema = JsonNode.Parse(File.ReadAllText(Path.Combine(SchemasRoot, "heartbeat.schema.json")))!;
         Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("source_kind"));
+        Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("requirement"));
+        Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("evidence_status"));
         var linuxQueueRequired = heartbeatSchema["allOf"]![0]!["then"]!["properties"]!["queue_metrics"]!["oneOf"]![1]!["allOf"]![1]!["required"]!.AsArray();
         Assert.Equal(new[] { "max_size_mb", "warning_size_percent" }, linuxQueueRequired.Select(item => item!.GetValue<string>()));
         Assert.Equal("source_id", heartbeatSchema["properties"]!["source_manifest"]!["x-uniquePortableBy"]!.GetValue<string>());

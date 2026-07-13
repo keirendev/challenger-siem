@@ -8,7 +8,7 @@ This guide summarizes how to make safe, reviewable project changes. It complemen
 - Prefer C#/.NET for the Windows agent and ASP.NET Core for server/API/web work unless requirements change.
 - Keep `/api/v1` and `contracts/v1/` backward compatible unless the change deliberately introduces a new versioned contract.
 - Treat reliability and security behavior as core functionality: durable queueing, retry/backoff, deduplication, bookmark/state tracking, token handling, and secret-safe logging.
-- Treat Linux endpoint support as planned only. Future work must conform to the [Linux coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md), including passive defaults, benchmark/soak gates, explicit privacy exclusions, and plan-bound approval for host-policy changes.
+- Treat implemented Linux L1/inventory and opt-in journald L2 as passive, bounded capabilities. Further work must conform to the [Linux coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md), including the L1 default, benchmark/soak gates, privacy exclusions, and plan-bound approval for host-policy changes.
 - This repository is public. Never commit secrets, real endpoint telemetry, local agent settings, browser cookies, raw event exports, logs, dumps, generated `bin/`, `obj/`, `dist/`, `.local/`, `.pi/`, or local coding-agent files.
 
 ## Local workflow

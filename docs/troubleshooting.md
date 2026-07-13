@@ -139,3 +139,14 @@ The same value is used for .NET assembly metadata and default agent version valu
 ## Linux installer preflight fails
 
 Treat unsupported architecture/init, missing locked service identity, non-0600 input configuration, or absent executable payload as blocking. Correct the prerequisite and rerun read-only plan; the workflow performs these checks before creating installation paths. Never bypass the checks or place credentials in command arguments.
+
+## Linux L2 sources show disabled, degraded, denied, or unsupported
+
+- `disabled` on L2 rows is expected while `Agent:Journal:TargetCoverageLevel` is the default `L1`. Use `L2` only in an approved canary.
+- `degraded` with `applicability=unknown` means an optional producer or host role has not been established; absence of an event is not proof of applicability. Declare only verified bounded roles.
+- `permission_denied` means the fixed journal read failed. Do not retry as root, add groups/ACLs, or weaken service hardening merely to change status; access expansion is a separate security decision.
+- `unsupported` on `linux-audit-framework` is intentional in this release. No audit collector or audit-policy enablement exists.
+- `not_applicable` requires a declared platform/role reason. `excepted` comes only from an active server-side coverage exception.
+- `stale` indicates age/discontinuity; inspect collected versus acknowledged cursors, gap state, queue pressure, and recent events by `source_id` without copying raw telemetry into a ticket.
+
+If an expected family remains `not_observed`, verify that its producer already journals the event and that the bounded structured fields/message pattern are supported. Do not fabricate a test from live logs; use the hand-authored synthetic fixture suite. Keep private rollout diagnostics and soak data under ignored `.local/` or approved runtime storage.

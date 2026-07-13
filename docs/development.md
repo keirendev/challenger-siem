@@ -59,9 +59,9 @@ dotnet build Challenger.Siem.sln
 dotnet test Challenger.Siem.sln
 ```
 
-The repository-safety validator examines tracked and staged path names without reading files or scanning ignored `.local/` evidence. Keep Linux agent queues, state, generated settings, journal/audit exports, captures, databases, logs, traces, screenshots, and benchmark/soak output outside the work tree in restrictive OS locations, or under `.local/` for bounded developer evidence. Do not place runtime artifacts in a tracked fixture directory.
+The repository-safety validator examines tracked and staged path names without reading files or scanning ignored `.local/` evidence. Keep Linux agent queues, state, generated settings, journal/audit exports, captures, databases, logs, traces, screenshots, and benchmark/soak output outside the work tree in restrictive OS locations, or under `.local/` for bounded developer evidence. Do not place runtime artifacts in a tracked fixture directory. Focused L2 checks are `dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj` and `dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2'`.
 
-Public fixtures must be hand-authored and wholly synthetic. Files below any `fixtures/` directory use the `synthetic-` prefix (except `README.md`) and fake values such as `SYNTHETIC-LINUX-01`, `synthetic-user`, and documentation-only addresses. Never derive a fixture by sanitizing real journal, audit, endpoint, browser, or benchmark output.
+Public fixtures must be hand-authored and wholly synthetic. Files below any `fixtures/` directory use the `synthetic-` prefix (except `README.md`) and fake values such as `SYNTHETIC-LINUX-01`, `synthetic-user`, and documentation-only addresses. Never derive a fixture by sanitizing real journal, audit, endpoint, browser, or benchmark output. The L2 fixture set includes positive/negative records for each logical family plus ambiguity/bounds tests; it is not a journal export.
 
 The Windows agent targets `net8.0-windows` and is configured to compile on this Linux development host. Running real event collection still requires Windows.
 

@@ -19,7 +19,7 @@
         <div class="table-title">
             <div>
                 <h2>Coverage target</h2>
-                <p class="muted">Review the same host against L1 native, L2 Windows security, L3 Sysmon, or L4 role-pack expectations.</p>
+                <p class="muted">Review the host against its platform catalog. Linux currently implements L1 and opt-in L2; Windows also defines L3/L4 targets.</p>
             </div>
             <div class="actions">
                 @foreach (var level in Model.TargetLevels)
@@ -50,6 +50,9 @@ else
         <article class="card"><span class="metric-value">@Model.Summary.MissingMandatorySources</span><span class="metric-label">missing mandatory</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.StaleSources</span><span class="metric-label">stale sources</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.ErrorSources</span><span class="metric-label">error sources</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.DegradedSources</span><span class="metric-label">degraded sources</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.PermissionDeniedSources</span><span class="metric-label">permission denied</span></article>
+        <article class="card"><span class="metric-value">@Model.Summary.UnsupportedSources</span><span class="metric-label">unsupported sources</span></article>
         <article class="card"><span class="metric-value">@(Model.Coverage?.NewAlertCount.ToString() ?? "—")</span><span class="metric-label">new alerts / 24h</span></article>
         <article class="card"><span class="metric-value">@(Model.Coverage?.ActiveGraphCount.ToString() ?? "—")</span><span class="metric-label">active graphs</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.QueueDepth</span><span class="metric-label">queue depth</span></article>
@@ -78,7 +81,7 @@ else
         <div class="table-title">
             <div>
                 <h2>Expected source matrix</h2>
-                <p class="muted">Validation shows one row per expected Windows source for the selected target, including synthetic missing rows when a source has not been reported.</p>
+                <p class="muted">Validation shows one row per expected platform source, including calculated missing rows and explicit requirement, applicability, and exception state.</p>
             </div>
         </div>
         @if (Model.Sources.Count == 0)
@@ -94,7 +97,7 @@ else
                             <th>Source</th>
                             <th>Level</th>
                             <th>Status</th>
-                            <th>Required</th>
+                            <th>Requirement</th>
                             <th>Reported</th>
                             <th>Recent events</th>
                             <th>Last event</th>
@@ -107,10 +110,19 @@ else
                         @foreach (var source in Model.Sources)
                         {
                             <tr>
-                                <td><strong>@source.DisplayName</strong><div class="muted">@source.Channel</div></td>
+                                <td>
+                                    <strong>@source.DisplayName</strong>
+                                    <div class="muted mono">@(string.IsNullOrWhiteSpace(source.Channel) ? source.SourceId : source.Channel)</div>
+                                </td>
                                 <td>@source.CoverageLevel</td>
-                                <td><span class="badge @(source.Status == "healthy" ? "ok" : source.Status == "stale" || source.Status == "missing" ? "warning" : "danger")">@source.Status</span></td>
-                                <td>@(source.Required ? "yes" : "no")</td>
+                                <td><span class="badge @(source.Status is "healthy" or "not_applicable" or "excepted" ? "ok" : source.Status is "stale" or "missing" or "degraded" or "disabled" ? "warning" : "danger")">@source.Status</span></td>
+                                <td>
+                                    @(source.Requirement ?? (source.Required ? "mandatory" : "optional"))
+                                    @if (!string.IsNullOrWhiteSpace(source.Applicability))
+                                    {
+                                        <div class="muted">@source.Applicability</div>
+                                    }
+                                </td>
                                 <td>@(source.Reported ? "yes" : "no")</td>
                                 <td>@source.RecentEventCount</td>
                                 <td>
@@ -156,7 +168,7 @@ else
                     {
                         <tr>
                             <td>@snapshot.SnapshotType</td>
-                            <td><span class="badge @(snapshot.Status == "healthy" ? "ok" : snapshot.Status == "missing" || snapshot.Status == "stale" ? "warning" : "danger")">@snapshot.Status</span></td>
+                            <td><span class="badge @(snapshot.Status is "healthy" or "not_applicable" or "excepted" ? "ok" : snapshot.Status is "missing" or "stale" or "degraded" ? "warning" : "danger")">@snapshot.Status</span></td>
                             <td>
                                 @TimeDisplay.FormatHostTime(snapshot.LatestCollectedAt, snapshot.HostTimezone ?? Model.Coverage.HostTimezone, "yyyy-MM-dd HH:mm")
                                 <div class="muted">@TimeDisplay.HostTimezoneLabel(snapshot.HostTimezone ?? Model.Coverage.HostTimezone)</div>
@@ -184,7 +196,7 @@ else
             <div class="table-title">
                 <div>
                     <h2 id="detection-prereq-title">Detection prerequisite status</h2>
-                    <p class="muted">Each built-in Windows detection rule is compared with source health, recent event presence, inventory, and audit-policy prerequisites.</p>
+                    <p class="muted">Platform-applicable built-in detection rules are compared with source health, recent event presence, inventory, and audit-policy prerequisites. Executable built-ins remain Windows-focused.</p>
                 </div>
             </div>
             <div class="table-scroll">

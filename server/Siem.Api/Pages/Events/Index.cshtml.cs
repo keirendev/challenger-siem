@@ -13,7 +13,7 @@ public sealed class IndexModel(
     IOptions<ReviewOptions> reviewOptions,
     ILogger<IndexModel> logger) : PageModel
 {
-    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
+    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
 
     [Microsoft.AspNetCore.Mvc.BindProperty(SupportsGet = true, Name = "page")]
     public int PageNumber { get; set; } = 1;
@@ -68,6 +68,11 @@ public sealed class IndexModel(
         var filters = new List<string>();
         AddFilter(filters, "Host", Query.Hostname);
         AddFilter(filters, "Agent", Query.AgentId);
+        AddFilter(filters, "Source kind", Query.Source);
+        AddFilter(filters, "Platform", Query.Platform);
+        AddFilter(filters, "Source ID", Query.SourceId);
+        AddFilter(filters, "Event code", Query.EventCode);
+        AddFilter(filters, "Package", Query.PackageName);
         AddFilter(filters, "Channel", Query.Channel);
         AddFilter(filters, "Event ID", Query.WindowsEventId?.ToString(CultureInfo.InvariantCulture));
         AddFilter(filters, "Keyword", Query.Keyword);

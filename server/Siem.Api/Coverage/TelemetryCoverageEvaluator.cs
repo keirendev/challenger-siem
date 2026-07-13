@@ -23,19 +23,43 @@ public static class TelemetryCoverageEvaluator
         IReadOnlyList<SourceHealthReport> reportedSources,
         WindowsCoverageLevel targetLevel,
         IReadOnlySet<string> exceptedSourceIds,
-        DateTimeOffset now)
+        DateTimeOffset now) => MergeExpectedSources(
+            reportedSources,
+            targetLevel,
+            exceptedSourceIds,
+            now,
+            InferPlatform(reportedSources));
+
+    public static IReadOnlyList<SourceHealthReport> MergeExpectedSources(
+        IReadOnlyList<SourceHealthReport> reportedSources,
+        WindowsCoverageLevel targetLevel,
+        IReadOnlySet<string> exceptedSourceIds,
+        DateTimeOffset now,
+        string platform)
     {
         var reportedBySource = reportedSources
             .GroupBy(source => source.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var merged = new List<SourceHealthReport>();
 
-        foreach (var expected in WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel))
+        foreach (var expected in ExpectedFor(platform, targetLevel))
         {
             if (reportedBySource.TryGetValue(expected.SourceId, out var reported))
             {
                 var status = SourceHealthRules.EffectiveStatus(reported, now);
-                var reportedExcepted = IsExcepted(expected.SourceId, exceptedSourceIds);
+                if (expected.Applicability == SourceApplicabilityStatuses.Unsupported)
+                {
+                    status = SourceHealthStatuses.Unsupported;
+                }
+                var forceRequiredApplicability = expected.Requirement == SourceRequirementKinds.Mandatory
+                    && expected.Applicability == SourceApplicabilityStatuses.Applicable
+                    && reported.Applicability != SourceApplicabilityStatuses.Applicable;
+                if (forceRequiredApplicability)
+                {
+                    status = SourceHealthStatuses.Degraded;
+                }
+                var forceUnsupported = expected.Applicability == SourceApplicabilityStatuses.Unsupported;
+                var reportedExcepted = !forceUnsupported && IsExcepted(expected.SourceId, exceptedSourceIds);
                 if (reportedExcepted && IsGapStatus(status))
                 {
                     status = SourceHealthStatuses.Excepted;
@@ -43,38 +67,85 @@ public static class TelemetryCoverageEvaluator
 
                 merged.Add(reported with
                 {
+                    Platform = reported.Platform ?? expected.Platform,
+                    SourceKind = reported.SourceKind ?? expected.SourceKind,
+                    SourceNamespace = reported.SourceNamespace ?? expected.SourceNamespace,
+                    CoverageLevel = expected.CoverageLevel,
+                    Applicability = forceUnsupported || forceRequiredApplicability
+                        ? expected.Applicability
+                        : reported.Applicability ?? expected.Applicability,
+                    ApplicabilityReason = forceUnsupported || forceRequiredApplicability
+                        ? expected.ApplicabilityReason
+                        : reported.ApplicabilityReason ?? expected.ApplicabilityReason,
                     Status = status,
                     Required = expected.Required,
-                    Enabled = reported.Enabled,
+                    Requirement = expected.Requirement ?? reported.Requirement,
+                    ApplicableRoles = expected.ApplicableRoles ?? reported.ApplicableRoles,
+                    Enabled = forceUnsupported ? false : reported.Enabled,
+                    PrerequisiteStatuses = forceUnsupported
+                        ? expected.Prerequisites.ToDictionary(item => item, _ => SourceEvidenceStatuses.Unsupported, StringComparer.Ordinal)
+                        : forceRequiredApplicability
+                            ? expected.Prerequisites.ToDictionary(item => item, _ => SourceEvidenceStatuses.Degraded, StringComparer.Ordinal)
+                            : reported.PrerequisiteStatuses,
+                    EventFamilyStatuses = forceUnsupported
+                        ? expected.EventFamilies.ToDictionary(item => item, _ => SourceEvidenceStatuses.Unsupported, StringComparer.Ordinal)
+                        : forceRequiredApplicability
+                            ? expected.EventFamilies.ToDictionary(item => item, _ => SourceEvidenceStatuses.Unknown, StringComparer.Ordinal)
+                            : reported.EventFamilyStatuses,
                     Details = MergeDetails(reported.Details, expected, reported: true, reportedExcepted)
                 });
                 continue;
             }
 
-            var missingExcepted = IsExcepted(expected.SourceId, exceptedSourceIds);
+            var missingExcepted = expected.Applicability != SourceApplicabilityStatuses.Unsupported
+                && IsExcepted(expected.SourceId, exceptedSourceIds);
+            var missingStatus = MissingStatus(expected, missingExcepted);
             merged.Add(new SourceHealthReport
             {
                 SourceId = expected.SourceId,
+                Platform = expected.Platform,
+                SourceKind = expected.SourceKind,
                 DisplayName = expected.DisplayName,
                 Channel = expected.Channel,
+                SourceNamespace = expected.SourceNamespace,
+                Facility = expected.Facility,
+                Unit = expected.Unit,
+                Applicability = expected.Applicability,
+                ApplicabilityReason = expected.ApplicabilityReason,
                 CoverageLevel = expected.CoverageLevel,
-                Status = missingExcepted ? SourceHealthStatuses.Excepted : SourceHealthStatuses.Missing,
+                Status = missingStatus,
                 Required = expected.Required,
+                Requirement = expected.Requirement,
+                ApplicableRoles = expected.ApplicableRoles,
                 Enabled = expected.EnabledByDefault,
-                ErrorCode = missingExcepted ? null : "expected_source_not_reported",
-                ErrorMessage = missingExcepted ? null : "Expected source has not been reported by agent source-health heartbeat.",
+                ErrorCode = missingExcepted || missingStatus is SourceHealthStatuses.NotApplicable or SourceHealthStatuses.Unsupported
+                    ? null
+                    : "expected_source_not_reported",
+                ErrorMessage = missingExcepted || missingStatus is SourceHealthStatuses.NotApplicable or SourceHealthStatuses.Unsupported
+                    ? null
+                    : "Expected source has not been reported by agent source-health heartbeat.",
+                PrerequisiteStatuses = expected.Prerequisites.ToDictionary(
+                    prerequisite => prerequisite,
+                    _ => EvidenceStatusForMissing(missingStatus),
+                    StringComparer.Ordinal),
+                EventFamilyStatuses = expected.EventFamilies.ToDictionary(
+                    family => family,
+                    _ => EvidenceStatusForMissing(missingStatus),
+                    StringComparer.Ordinal),
                 Details = MergeDetails(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), expected, reported: false, missingExcepted)
             });
         }
 
-        foreach (var custom in reportedSources.Where(source => !merged.Any(item => string.Equals(item.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase))))
+        var linuxPlatform = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase);
+        foreach (var custom in reportedSources.Where(source => (!linuxPlatform || source.CoverageLevel <= targetLevel)
+            && !merged.Any(item => string.Equals(item.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase))))
         {
             merged.Add(custom with { Status = SourceHealthRules.EffectiveStatus(custom, now) });
         }
 
         return merged
             .OrderBy(source => source.CoverageLevel)
-            .ThenByDescending(source => source.Required)
+            .ThenByDescending(IsMandatoryForCoverage)
             .ThenBy(source => source.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -84,20 +155,37 @@ public static class TelemetryCoverageEvaluator
         IReadOnlyList<SourceHealthReport> sources,
         WindowsCoverageLevel targetLevel)
     {
-        var missingMandatory = sources.Count(source => source.Required && source.Status is SourceHealthStatuses.Missing or SourceHealthStatuses.Disabled);
-        var stale = sources.Count(source => string.Equals(source.Status, SourceHealthStatuses.Stale, StringComparison.OrdinalIgnoreCase));
-        var error = sources.Count(source => string.Equals(source.Status, SourceHealthStatuses.Error, StringComparison.OrdinalIgnoreCase));
-        var currentLevel = CalculateCurrentLevel(sources, targetLevel);
-        var overallStatus = CalculateOverallStatus(sources);
+        var platform = summary.Platform ?? InferPlatform(sources);
+        var inScopeSources = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
+            ? sources.Where(source => source.CoverageLevel <= targetLevel).ToArray()
+            : sources.ToArray();
+        var missingMandatory = inScopeSources.Count(source => IsMandatoryForCoverage(source)
+            && (string.Equals(source.Status, SourceHealthStatuses.Missing, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(source.Status, SourceHealthStatuses.Disabled, StringComparison.OrdinalIgnoreCase)));
+        var stale = CountStatus(inScopeSources, SourceHealthStatuses.Stale);
+        var error = CountStatus(inScopeSources, SourceHealthStatuses.Error);
+        var degraded = CountStatus(inScopeSources, SourceHealthStatuses.Degraded);
+        var permissionDenied = CountStatus(inScopeSources, SourceHealthStatuses.PermissionDenied);
+        var unsupported = CountStatus(inScopeSources, SourceHealthStatuses.Unsupported);
+        var excepted = CountStatus(inScopeSources, SourceHealthStatuses.Excepted);
+        var notApplicable = CountStatus(inScopeSources, SourceHealthStatuses.NotApplicable);
+        var currentLevel = CalculateCurrentLevel(inScopeSources, targetLevel, platform);
+        var overallStatus = CalculateOverallStatus(inScopeSources);
 
         return summary with
         {
+            Platform = platform,
             TargetLevel = targetLevel,
             CurrentLevel = currentLevel,
             OverallStatus = overallStatus,
             MissingMandatorySources = missingMandatory,
             StaleSources = stale,
-            ErrorSources = error
+            ErrorSources = error,
+            DegradedSources = degraded,
+            PermissionDeniedSources = permissionDenied,
+            UnsupportedSources = unsupported,
+            ExceptedSources = excepted,
+            NotApplicableSources = notApplicable
         };
     }
 
@@ -113,24 +201,38 @@ public static class TelemetryCoverageEvaluator
         {
             AgentId = agentId,
             Hostname = hostname,
+            Platform = InferPlatform(sources),
             TargetLevel = targetLevel,
             QueueDepth = queueDepth,
             LastHeartbeatTime = lastHeartbeatTime
         }, sources, targetLevel);
     }
 
-    public static WindowsCoverageLevel CalculateCurrentLevel(IReadOnlyList<SourceHealthReport> sources, WindowsCoverageLevel targetLevel)
+    public static WindowsCoverageLevel CalculateCurrentLevel(
+        IReadOnlyList<SourceHealthReport> sources,
+        WindowsCoverageLevel targetLevel) => CalculateCurrentLevel(sources, targetLevel, InferPlatform(sources));
+
+    public static WindowsCoverageLevel CalculateCurrentLevel(
+        IReadOnlyList<SourceHealthReport> sources,
+        WindowsCoverageLevel targetLevel,
+        string platform)
     {
         var current = WindowsCoverageLevel.L0;
         foreach (var level in new[] { WindowsCoverageLevel.L1, WindowsCoverageLevel.L2, WindowsCoverageLevel.L3, WindowsCoverageLevel.L4 })
         {
-            if (level > targetLevel)
+            if (level > targetLevel
+                || (string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal) && level > WindowsCoverageLevel.L2))
             {
                 break;
             }
 
-            var required = WindowsTelemetrySourceCatalog.ExpectedFor(level, includeOptional: false)
-                .Where(source => source.CoverageLevel <= level)
+            var required = ExpectedFor(platform, level)
+                .Where(expected => expected.CoverageLevel <= level)
+                .Where(expected => expected.Requirement == SourceRequirementKinds.Mandatory
+                    || (expected.Requirement == SourceRequirementKinds.RoleSpecific
+                        && sources.Any(source => string.Equals(source.SourceId, expected.SourceId, StringComparison.OrdinalIgnoreCase)
+                            && source.Applicability == SourceApplicabilityStatuses.Applicable))
+                    || (expected.Requirement is null && expected.Required))
                 .ToArray();
             if (required.Length == 0)
             {
@@ -158,20 +260,37 @@ public static class TelemetryCoverageEvaluator
             return SourceHealthStatuses.Missing;
         }
 
-        if (sources.Any(source => string.Equals(source.Status, SourceHealthStatuses.Error, StringComparison.OrdinalIgnoreCase)))
+        if (HasStatus(sources, SourceHealthStatuses.Error))
         {
             return SourceHealthStatuses.Error;
         }
-
-        if (sources.Any(source => source.Required && (string.Equals(source.Status, SourceHealthStatuses.Missing, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(source.Status, SourceHealthStatuses.Disabled, StringComparison.OrdinalIgnoreCase))))
+        if (sources.Any(source => IsMandatoryForCoverage(source)
+            && string.Equals(source.Status, SourceHealthStatuses.PermissionDenied, StringComparison.OrdinalIgnoreCase)))
+        {
+            return SourceHealthStatuses.PermissionDenied;
+        }
+        if (sources.Any(source => IsMandatoryForCoverage(source)
+            && string.Equals(source.Status, SourceHealthStatuses.Unsupported, StringComparison.OrdinalIgnoreCase)))
+        {
+            return SourceHealthStatuses.Unsupported;
+        }
+        if (sources.Any(source => IsMandatoryForCoverage(source)
+            && (string.Equals(source.Status, SourceHealthStatuses.Missing, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(source.Status, SourceHealthStatuses.Disabled, StringComparison.OrdinalIgnoreCase))))
         {
             return SourceHealthStatuses.Missing;
         }
-
-        if (sources.Any(source => string.Equals(source.Status, SourceHealthStatuses.Stale, StringComparison.OrdinalIgnoreCase)))
+        if (HasStatus(sources, SourceHealthStatuses.Stale))
         {
             return SourceHealthStatuses.Stale;
+        }
+        if (HasStatus(sources, SourceHealthStatuses.PermissionDenied))
+        {
+            return SourceHealthStatuses.PermissionDenied;
+        }
+        if (HasStatus(sources, SourceHealthStatuses.Degraded) || HasStatus(sources, SourceHealthStatuses.Unsupported))
+        {
+            return SourceHealthStatuses.Degraded;
         }
 
         return SourceHealthStatuses.Healthy;
@@ -245,7 +364,7 @@ public static class TelemetryCoverageEvaluator
             }
 
             var matching = sources
-                .Where(source => WindowsTelemetrySourceCatalog.SourceMatches(requiredSource, source.SourceId))
+                .Where(source => SourceMatches(requiredSource, source.SourceId))
                 .ToArray();
             if (matching.Length == 0)
             {
@@ -319,6 +438,7 @@ public static class TelemetryCoverageEvaluator
             .Append(requiredSource)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var matchingEntries = WindowsTelemetrySourceCatalog.All
+            .Concat(LinuxTelemetrySourceCatalog.All)
             .Where(entry => aliases.Contains(entry.SourceId) || aliases.Contains(entry.ParserId))
             .ToArray();
         return matchingEntries.Length == 0 || matchingEntries.Any(entry => entry.CoverageLevel <= targetLevel);
@@ -405,11 +525,67 @@ public static class TelemetryCoverageEvaluator
         return "Prerequisite state could not be fully determined from current telemetry.";
     }
 
-    private static bool IsGapStatus(string status) => status is SourceHealthStatuses.Missing or SourceHealthStatuses.Disabled or SourceHealthStatuses.Stale or SourceHealthStatuses.Error;
+    private static IReadOnlyList<SourceManifestEntry> ExpectedFor(string platform, WindowsCoverageLevel targetLevel) =>
+        string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
+            ? LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel)
+            : WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel);
+
+    private static string InferPlatform(IReadOnlyList<SourceHealthReport> sources) =>
+        sources.Any(source => string.Equals(source.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal))
+            ? TelemetryPlatforms.Linux
+            : TelemetryPlatforms.Windows;
+
+    private static string MissingStatus(SourceManifestEntry expected, bool excepted)
+    {
+        if (expected.Applicability == SourceApplicabilityStatuses.Unsupported) return SourceHealthStatuses.Unsupported;
+        if (excepted) return SourceHealthStatuses.Excepted;
+        if (expected.Applicability == SourceApplicabilityStatuses.NotApplicable) return SourceHealthStatuses.NotApplicable;
+        if (expected.Applicability == SourceApplicabilityStatuses.Unknown) return SourceHealthStatuses.Degraded;
+        return SourceHealthStatuses.Missing;
+    }
+
+    private static string EvidenceStatusForMissing(string sourceStatus) => sourceStatus switch
+    {
+        SourceHealthStatuses.Excepted => SourceEvidenceStatuses.Excepted,
+        SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
+        SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
+        SourceHealthStatuses.Degraded => SourceEvidenceStatuses.Unknown,
+        _ => SourceEvidenceStatuses.Missing
+    };
+
+    private static bool IsMandatoryForCoverage(SourceHealthReport source) => source.Requirement switch
+    {
+        SourceRequirementKinds.Mandatory => true,
+        SourceRequirementKinds.RoleSpecific => source.Applicability == SourceApplicabilityStatuses.Applicable,
+        SourceRequirementKinds.Optional => false,
+        _ => source.Required
+    };
+
+    private static int CountStatus(IReadOnlyList<SourceHealthReport> sources, string status) =>
+        sources.Count(source => string.Equals(source.Status, status, StringComparison.OrdinalIgnoreCase));
+
+    private static bool HasStatus(IReadOnlyList<SourceHealthReport> sources, string status) =>
+        sources.Any(source => string.Equals(source.Status, status, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsGapStatus(string status) => status is
+        SourceHealthStatuses.Missing or
+        SourceHealthStatuses.Disabled or
+        SourceHealthStatuses.Stale or
+        SourceHealthStatuses.Degraded or
+        SourceHealthStatuses.PermissionDenied or
+        SourceHealthStatuses.Unsupported or
+        SourceHealthStatuses.Error;
+
+    private static bool SourceMatches(string expectedOrAlias, string sourceId) =>
+        WindowsTelemetrySourceCatalog.SourceMatches(expectedOrAlias, sourceId)
+        || LinuxTelemetrySourceCatalog.All.Any(entry =>
+            (string.Equals(entry.SourceId, expectedOrAlias, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entry.ParserId, expectedOrAlias, StringComparison.OrdinalIgnoreCase))
+            && string.Equals(entry.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsExcepted(string expectedSourceId, IReadOnlySet<string> exceptedSourceIds) =>
-        exceptedSourceIds.Any(excepted => WindowsTelemetrySourceCatalog.SourceMatches(excepted, expectedSourceId)
-            || WindowsTelemetrySourceCatalog.SourceMatches(expectedSourceId, excepted));
+        exceptedSourceIds.Any(excepted => SourceMatches(excepted, expectedSourceId)
+            || SourceMatches(expectedSourceId, excepted));
 
     private static IReadOnlyDictionary<string, string> MergeDetails(
         IReadOnlyDictionary<string, string> original,

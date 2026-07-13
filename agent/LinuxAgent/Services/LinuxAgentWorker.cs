@@ -42,13 +42,13 @@ public sealed class LinuxAgentWorker(
                         Os = Environment.OSVersion.VersionString,
                         Platform = "linux",
                         HostId = options.AgentId,
-                        LastEventTime = journal.Health.LastEventTime,
+                        LastEventTime = journal.Health.Max(source => source.Enabled ? source.LastEventTime : null),
                         QueueDepth = await queue.CountAsync(cancellationToken),
                         MemoryMb = (int)(GC.GetTotalMemory(false) / 1024 / 1024),
                         ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json"),
                         QueueMetrics = await queue.GetMetricsAsync(null, cancellationToken),
-                        SourceManifest = [journal.Manifest],
-                        SourceHealth = [journal.Health]
+                        SourceManifest = journal.Manifest,
+                        SourceHealth = journal.Health
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }

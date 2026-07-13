@@ -24,6 +24,7 @@ public sealed record EventSearchQuery(
     string? Platform,
     string? SourceId,
     string? EventCode,
+    string? PackageName,
     int Limit)
 {
     public static EventSearchQuery FromQuery(IQueryCollection query)
@@ -49,6 +50,7 @@ public sealed record EventSearchQuery(
             ReadString(query, "platform"),
             ReadString(query, "source_id"),
             ReadString(query, "event_code"),
+            ReadString(query, "package_name"),
             ReadInt(query, "limit") ?? 100);
     }
 

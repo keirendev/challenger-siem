@@ -87,8 +87,8 @@ public sealed class LinuxJournalTests
             .CollectOnceAsync(null, default);
         Assert.Equal("s=synthetic;i=1;b=fake", cursor);
         Assert.Equal(1, await queue.CountAsync(default));
-        Assert.Equal("1", runtime.Snapshot().Health.Details["malformed_records"]);
-        Assert.True(runtime.Snapshot().Health.GapDetected);
+        Assert.Equal("1", L1Health(runtime).Details["malformed_records"]);
+        Assert.True(L1Health(runtime).GapDetected);
         Assert.Equal(cursor, (await state.ReadJournalAsync(default)).CollectedCursor);
         Assert.False(new LinuxJournalNormalizer().TryNormalize(bad, options, DateTimeOffset.UtcNow, out _, out var code));
         Assert.Equal("journal_timestamp_malformed", code);
@@ -112,7 +112,7 @@ public sealed class LinuxJournalTests
             .CollectOnceAsync(null, default);
         Assert.Equal("s=synthetic;i=2;b=fake", cursor);
         Assert.Equal(2, await queue.CountAsync(default));
-        Assert.Equal("1", runtime.Snapshot().Health.Details["reordered_records"]);
+        Assert.Equal("1", L1Health(runtime).Details["reordered_records"]);
 
         var batch = await queue.DequeueBatchAsync(10, default);
         await runtime.RecordAcknowledgedAsync(batch.Select(item => item.Envelope).Reverse().ToArray(), default);
@@ -159,9 +159,10 @@ public sealed class LinuxJournalTests
         await runtime.InitializeAsync("test", "config", default);
         runtime.RecordReadResult(new(JournalReadStatus.InvalidCursor, Array.Empty<string>(), gap, "journal_cursor_invalid"));
         var snapshot = runtime.Snapshot();
-        Assert.True(snapshot.Health.GapDetected);
-        Assert.Equal(expected, snapshot.Health.Details["gap_state"]);
-        Assert.Equal(SourceHealthStatuses.Error, snapshot.Health.Status);
+        var health = L1Health(snapshot);
+        Assert.True(health.GapDetected);
+        Assert.Equal(expected, health.Details["gap_state"]);
+        Assert.Equal(SourceHealthStatuses.Error, health.Status);
     }
 
     [Fact]
@@ -172,14 +173,15 @@ public sealed class LinuxJournalTests
         var runtime = Runtime(options, new LinuxStateStore(temporary.State));
         await runtime.InitializeAsync("test", "config", default);
         runtime.RecordReadResult(new(JournalReadStatus.Success, Array.Empty<string>()));
-        Assert.Equal("empty", runtime.Snapshot().Health.Details["collector_state"]);
+        Assert.Equal("empty", L1Health(runtime).Details["collector_state"]);
         runtime.RecordReadResult(new(JournalReadStatus.PermissionDenied, Array.Empty<string>(), ErrorCode: "journal_permission_denied"));
-        Assert.Equal("denied", runtime.Snapshot().Health.Details["permission_state"]);
+        Assert.Equal("denied", L1Health(runtime).Details["permission_state"]);
+        Assert.Equal(SourceHealthStatuses.PermissionDenied, L1Health(runtime).Status);
 
         var reordered = new[] { FixtureRecords()[1], FixtureRecords()[0], FixtureRecords()[1], BinaryRecord(), "malformed" };
         var queue = CreateQueue(temporary.Queue);
         await Service(options, new FakeSource(new(JournalReadStatus.Success, reordered)), runtime, queue).CollectOnceAsync(null, default);
-        var health = runtime.Snapshot().Health;
+        var health = L1Health(runtime);
         Assert.Equal("1", health.Details["duplicate_records"]);
         Assert.Equal("1", health.Details["reordered_records"]);
         Assert.Equal("1", health.Details["malformed_records"]);
@@ -188,7 +190,7 @@ public sealed class LinuxJournalTests
 
         var pressureQueue = new CountQueue(options.Journal.QueuePauseDepth);
         await Service(options, new FakeSource(new(JournalReadStatus.Success, FixtureRecords())), runtime, pressureQueue).CollectOnceAsync(runtime.CollectedCursor, default);
-        Assert.Equal("active", runtime.Snapshot().Health.Details["throttle_state"]);
+        Assert.Equal("active", L1Health(runtime).Details["throttle_state"]);
         Assert.Equal(0, pressureQueue.EnqueueCalls);
     }
 
@@ -236,6 +238,8 @@ public sealed class LinuxJournalTests
         Assert.True(count / stopwatch.Elapsed.TotalSeconds >= 500, "Synthetic normalization throughput fell below 500 records/s.");
     }
 
+    private static SourceHealthReport L1Health(LinuxJournalRuntime runtime) => L1Health(runtime.Snapshot());
+    private static SourceHealthReport L1Health(JournalRuntimeSnapshot snapshot) => Assert.Single(snapshot.Health, source => source.SourceId == LinuxTelemetrySourceIds.JournalL1);
     private static LinuxJournalRuntime Runtime(LinuxAgentOptions options, LinuxStateStore state) => new(Options.Create(options), state, TimeProvider.System);
     private static LinuxJournalService Service(LinuxAgentOptions options, ILinuxJournalSource source, LinuxJournalRuntime runtime, IEventQueue queue) =>
         new(Options.Create(options), source, new LinuxJournalNormalizer(), runtime, queue, TimeProvider.System, NullLogger<LinuxJournalService>.Instance);

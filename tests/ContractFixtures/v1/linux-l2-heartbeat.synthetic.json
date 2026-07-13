@@ -1,0 +1,99 @@
+{
+  "agent_id": "linux-l2-synthetic-001",
+  "hostname": "SYNTHETIC-LINUX-01",
+  "agent_version": "1.1.0",
+  "os": "Synthetic Linux 1",
+  "platform": "linux",
+  "host_id": "synthetic-linux-host-001",
+  "last_event_time": "2026-07-13T12:00:00Z",
+  "queue_depth": 0,
+  "source_manifest": [
+    {
+      "source_id": "linux-login-session",
+      "platform": "linux",
+      "source_kind": "linux_journal",
+      "source_namespace": "systemd.journal",
+      "applicability": "applicable",
+      "checkpoint_kind": "cursor",
+      "display_name": "Linux login and session activity",
+      "coverage_level": "L2",
+      "required": true,
+      "requirement": "mandatory",
+      "applicable_roles": [],
+      "enabled_by_default": false,
+      "source_pack": "linux-l2-security",
+      "parser_id": "linux-login-session-v1",
+      "prerequisites": ["systemd_journal_readable", "pam_or_logind_journal_visibility"],
+      "event_families": ["login", "session"],
+      "validation_scenarios": ["login_success_failure", "session_open_close"],
+      "privacy": "high_sensitivity",
+      "installer_managed": false
+    },
+    {
+      "source_id": "linux-audit-framework",
+      "platform": "linux",
+      "source_kind": "linux_audit",
+      "source_namespace": "linux.audit",
+      "applicability": "unsupported",
+      "applicability_reason": "collector_not_included",
+      "checkpoint_kind": "sequence",
+      "display_name": "Linux Audit Framework",
+      "coverage_level": "L2",
+      "required": false,
+      "requirement": "optional",
+      "enabled_by_default": false,
+      "source_pack": "linux-l2-security",
+      "parser_id": "unsupported",
+      "prerequisites": ["linux_audit_collector"],
+      "event_families": ["audit"],
+      "validation_scenarios": ["unsupported_source_reporting"],
+      "privacy": "high_sensitivity",
+      "installer_managed": false
+    }
+  ],
+  "source_health": [
+    {
+      "source_id": "linux-login-session",
+      "platform": "linux",
+      "source_kind": "linux_journal",
+      "display_name": "Linux login and session activity",
+      "source_namespace": "systemd.journal",
+      "applicability": "applicable",
+      "coverage_level": "L2",
+      "status": "healthy",
+      "required": true,
+      "requirement": "mandatory",
+      "applicable_roles": [],
+      "enabled": true,
+      "last_event_time": "2026-07-13T12:00:00Z",
+      "collected_checkpoint": {"cursor":"s=synthetic-l2;i=1","recorded_at":"2026-07-13T12:00:01Z"},
+      "acknowledged_checkpoint": {"cursor":"s=synthetic-l2;i=1","recorded_at":"2026-07-13T12:00:02Z"},
+      "prerequisite_statuses": {
+        "systemd_journal_readable": "satisfied",
+        "pam_or_logind_journal_visibility": "satisfied"
+      },
+      "event_family_statuses": {
+        "login": "not_observed",
+        "session": "observed"
+      },
+      "details": {"configured_coverage_level":"L2"}
+    },
+    {
+      "source_id": "linux-audit-framework",
+      "platform": "linux",
+      "source_kind": "linux_audit",
+      "display_name": "Linux Audit Framework",
+      "source_namespace": "linux.audit",
+      "applicability": "unsupported",
+      "applicability_reason": "collector_not_included",
+      "coverage_level": "L2",
+      "status": "unsupported",
+      "required": false,
+      "requirement": "optional",
+      "enabled": false,
+      "prerequisite_statuses": {"linux_audit_collector":"unsupported"},
+      "event_family_statuses": {"audit":"unsupported"},
+      "details": {"configured_coverage_level":"L2"}
+    }
+  ]
+}

@@ -5,9 +5,8 @@
 Build a custom SIEM pipeline focused first on Windows endpoints.
 
 ```text
-Windows Endpoint
-  -> Custom Windows Agent
-  -> HTTPS Log Ingestion Server
+Windows Endpoint -> Custom Windows Agent --\
+Linux Endpoint   -> Custom Linux Agent -----> HTTPS Log Ingestion Server
   -> PostgreSQL Event Storage
   -> Search / Review API
   -> Web Review Console
@@ -15,8 +14,8 @@ Windows Endpoint
 
 ## MVP scope
 
-- Windows endpoints only.
-- Custom C#/.NET Windows service agent.
+- Windows-first endpoints plus the supported Linux L1/L2 service path.
+- Custom C#/.NET Windows and Linux service agents.
 - Custom ASP.NET Core ingestion, review API, and server-hosted web console.
 - PostgreSQL storage with structured columns plus JSONB raw event data.
 - No Docker and no proprietary SIEM/logging products.
@@ -88,11 +87,11 @@ Default optional L2/L3 source manifest channels:
 
 ## Linux host coverage
 
-The Linux agent implements passive L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records plus bounded host/security inventory. It directly uses systemd's machine-readable journal interface, normalizes/redacts within fixed limits, commits to Agent.Core before cursor state, and reports explicit source health. Audit, syslog-file, role, and advanced sources remain planned. The authoritative design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), which defines implemented/planned L1-L4 sources, SLOs, pressure behavior, and rollout gates, and the [Linux agent security design](linux-agent-security.md), which defines least privilege, privacy exclusions, and explicit approval for any host-policy change.
+The Linux agent implements passive L1 system-journal collection, an opt-in L2 logical security source pack, and bounded host/security inventory. One fixed systemd machine-readable reader/cursor carries L1 plus structured login/session, SSH, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper normalization. It normalizes/redacts within fixed limits, commits to Agent.Core before cursor state, and reports requirement/applicability/prerequisite/event-family health. Audit is explicitly unsupported by the current pack; syslog-file, role, eBPF, file-integrity, and other advanced collectors remain planned. L2 defaults off until the private seven-day canary passes. The authoritative design is split between the [Linux host coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md).
 
 ## Cross-platform contract boundary
 
-The additive v1 contract represents typed Linux journal, audit, inventory-diff, and agent-health records, source manifests, applicability, and collected/acknowledged checkpoints without Windows identifiers. PostgreSQL ingestion, deduplication, persistence, and portable search support Linux journal envelopes through the existing `/api/v1` path. The deployed Linux agent currently emits only `linux_journal`; server-generated Linux coverage overlays and other Linux event sources remain future work.
+The additive v1 contract represents typed Linux journal, audit, inventory-diff, and agent-health records without Windows identifiers. Portable manifest/health now also carry optional requirement/applicable-role and prerequisite/event-family state metadata plus explicit degraded/denied/unsupported states. PostgreSQL ingestion, deduplication, persistence, portable search, and Linux catalog coverage overlays continue through `/api/v1`. The deployed agent emits only `linux_journal` events; its audit manifest is intentionally unsupported and no audit event collector is enabled.
 
 ## Reliability decisions
 

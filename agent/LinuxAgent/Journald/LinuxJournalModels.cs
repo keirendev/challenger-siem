@@ -41,11 +41,12 @@ public sealed record NormalizedJournalRecord(
     string Cursor,
     string BootId,
     long RealtimeMicroseconds,
-    bool BinaryOrInvalidText);
+    bool BinaryOrInvalidText,
+    string EventFamily);
 
 public sealed record JournalRuntimeSnapshot(
-    SourceManifestEntry Manifest,
-    SourceHealthReport Health,
+    IReadOnlyList<SourceManifestEntry> Manifest,
+    IReadOnlyList<SourceHealthReport> Health,
     bool Throttled,
     string? CollectedCursor,
     string? AcknowledgedCursor);

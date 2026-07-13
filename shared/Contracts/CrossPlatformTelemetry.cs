@@ -55,6 +55,7 @@ public static class SourceApplicabilityStatuses
     public const string Applicable = "applicable";
     public const string NotApplicable = "not_applicable";
     public const string Unknown = "unknown";
+    public const string Unsupported = "unsupported";
 }
 
 public static class SourceCheckpointKinds

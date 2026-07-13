@@ -1,4 +1,5 @@
 using Challenger.Siem.Agent.Core.Transport;
+using Challenger.Siem.Contracts.V1;
 
 namespace Challenger.Siem.LinuxAgent.Config;
 
@@ -29,7 +30,12 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         Journal.PollIntervalSeconds is >= 1 and <= 300
         && Journal.MaxRecordsPerPoll is >= 1 and <= 5000
         && Journal.MaxInputRecordBytes is >= 4096 and <= 262144
-        && Journal.QueuePauseDepth is >= 100 and <= 1_000_000;
+        && Journal.QueuePauseDepth is >= 100 and <= 1_000_000
+        && Journal.TargetCoverageLevel is WindowsCoverageLevel.L1 or WindowsCoverageLevel.L2
+        && Journal.DeclaredRoles is { Length: <= 16 }
+        && Journal.DeclaredRoles.Distinct(StringComparer.Ordinal).Count() == Journal.DeclaredRoles.Length
+        && Journal.DeclaredRoles.All(role => role.Length is >= 1 and <= 64
+            && role.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'));
 }
 
 public sealed class InventoryOptions
@@ -42,6 +48,8 @@ public sealed class InventoryOptions
 public sealed class JournalOptions
 {
     public bool Enabled { get; set; } = true;
+    public WindowsCoverageLevel TargetCoverageLevel { get; set; } = WindowsCoverageLevel.L1;
+    public string[] DeclaredRoles { get; set; } = Array.Empty<string>();
     public int PollIntervalSeconds { get; set; } = 5;
     public int MaxRecordsPerPoll { get; set; } = 500;
     public int MaxInputRecordBytes { get; set; } = 131072;

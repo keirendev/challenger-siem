@@ -9,6 +9,8 @@
     "DrainBatchSize": 100,
     "Journal": {
       "Enabled": true,
+      "TargetCoverageLevel": "L1",
+      "DeclaredRoles": [],
       "PollIntervalSeconds": 5,
       "MaxRecordsPerPoll": 500,
       "MaxInputRecordBytes": 131072,

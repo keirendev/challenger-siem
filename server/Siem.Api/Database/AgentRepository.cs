@@ -10,14 +10,16 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, first_seen, last_seen, status, api_token_hash, host_timezone)
-            values (@agent_id, @hostname, @machine_guid, @os_version, @agent_version, now(), now(), 'active', @api_token_hash, @host_timezone)
+            insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, first_seen, last_seen, status, api_token_hash, host_timezone, platform, host_id)
+            values (@agent_id, @hostname, @machine_guid, @os_version, @agent_version, now(), now(), 'active', @api_token_hash, @host_timezone, @platform, @host_id)
             on conflict (agent_id) do update set
                 hostname = excluded.hostname,
                 machine_guid = excluded.machine_guid,
                 os_version = excluded.os_version,
                 agent_version = excluded.agent_version,
                 host_timezone = coalesce(excluded.host_timezone, agents.host_timezone),
+                platform = coalesce(excluded.platform, agents.platform),
+                host_id = coalesce(excluded.host_id, agents.host_id),
                 last_seen = now(),
                 status = 'active',
                 api_token_hash = excluded.api_token_hash,
@@ -30,6 +32,8 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("agent_version", request.AgentVersion);
         command.Parameters.AddWithValue("api_token_hash", apiTokenHash);
         Jsonb.Add(command, "host_timezone", request.HostTimezone);
+        command.Parameters.AddWithValue("platform", string.IsNullOrWhiteSpace(request.Platform) ? (object)DBNull.Value : request.Platform);
+        command.Parameters.AddWithValue("host_id", string.IsNullOrWhiteSpace(request.HostId) ? (object)DBNull.Value : request.HostId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

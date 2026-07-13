@@ -25,9 +25,58 @@ public static class SourceHealthStatuses
     public const string Missing = "missing";
     public const string Disabled = "disabled";
     public const string Stale = "stale";
+    public const string Degraded = "degraded";
+    public const string PermissionDenied = "permission_denied";
+    public const string Unsupported = "unsupported";
     public const string Error = "error";
     public const string NotApplicable = "not_applicable";
     public const string Excepted = "excepted";
+}
+
+public static class SourceRequirementKinds
+{
+    public const string Mandatory = "mandatory";
+    public const string Optional = "optional";
+    public const string RoleSpecific = "role_specific";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Mandatory,
+        Optional,
+        RoleSpecific
+    };
+}
+
+public static class SourceEvidenceStatuses
+{
+    public const string Satisfied = "satisfied";
+    public const string Observed = "observed";
+    public const string NotObserved = "not_observed";
+    public const string Missing = "missing";
+    public const string Disabled = "disabled";
+    public const string Stale = "stale";
+    public const string Degraded = "degraded";
+    public const string PermissionDenied = "permission_denied";
+    public const string Unsupported = "unsupported";
+    public const string NotApplicable = "not_applicable";
+    public const string Excepted = "excepted";
+    public const string Unknown = "unknown";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Satisfied,
+        Observed,
+        NotObserved,
+        Missing,
+        Disabled,
+        Stale,
+        Degraded,
+        PermissionDenied,
+        Unsupported,
+        NotApplicable,
+        Excepted,
+        Unknown
+    };
 }
 
 public static class AlertStatuses
@@ -96,6 +145,14 @@ public sealed record SourceManifestEntry
 
     [JsonPropertyName("required")]
     public bool Required { get; init; }
+
+    [JsonPropertyName("requirement")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Requirement { get; init; }
+
+    [JsonPropertyName("applicable_roles")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? ApplicableRoles { get; init; }
 
     [JsonPropertyName("enabled_by_default")]
     public bool EnabledByDefault { get; init; } = true;
@@ -171,6 +228,14 @@ public sealed record SourceHealthReport
     [JsonPropertyName("required")]
     public bool Required { get; init; }
 
+    [JsonPropertyName("requirement")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Requirement { get; init; }
+
+    [JsonPropertyName("applicable_roles")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? ApplicableRoles { get; init; }
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; init; } = true;
 
@@ -230,6 +295,14 @@ public sealed record SourceHealthReport
     [JsonPropertyName("source_version")]
     public string? SourceVersion { get; init; }
 
+    [JsonPropertyName("prerequisite_statuses")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? PrerequisiteStatuses { get; init; }
+
+    [JsonPropertyName("event_family_statuses")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? EventFamilyStatuses { get; init; }
+
     [JsonPropertyName("details")]
     public IReadOnlyDictionary<string, string> Details { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
@@ -286,6 +359,21 @@ public sealed record CoverageSummary
 
     [JsonPropertyName("error_sources")]
     public int ErrorSources { get; init; }
+
+    [JsonPropertyName("degraded_sources")]
+    public int DegradedSources { get; init; }
+
+    [JsonPropertyName("permission_denied_sources")]
+    public int PermissionDeniedSources { get; init; }
+
+    [JsonPropertyName("unsupported_sources")]
+    public int UnsupportedSources { get; init; }
+
+    [JsonPropertyName("excepted_sources")]
+    public int ExceptedSources { get; init; }
+
+    [JsonPropertyName("not_applicable_sources")]
+    public int NotApplicableSources { get; init; }
 
     [JsonPropertyName("queue_depth")]
     public int QueueDepth { get; init; }
@@ -344,6 +432,10 @@ public sealed record AgentTelemetryCoverage
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
     [JsonPropertyName("target_level")]
     public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
 
@@ -373,6 +465,21 @@ public sealed record AgentTelemetryCoverage
 
     [JsonPropertyName("error_sources")]
     public int ErrorSources { get; init; }
+
+    [JsonPropertyName("degraded_sources")]
+    public int DegradedSources { get; init; }
+
+    [JsonPropertyName("permission_denied_sources")]
+    public int PermissionDeniedSources { get; init; }
+
+    [JsonPropertyName("unsupported_sources")]
+    public int UnsupportedSources { get; init; }
+
+    [JsonPropertyName("excepted_sources")]
+    public int ExceptedSources { get; init; }
+
+    [JsonPropertyName("not_applicable_sources")]
+    public int NotApplicableSources { get; init; }
 
     [JsonPropertyName("new_alert_count")]
     public int NewAlertCount { get; init; }
@@ -406,6 +513,42 @@ public sealed record SourceTelemetryCoverage
 
     [JsonPropertyName("channel")]
     public string Channel { get; init; } = string.Empty;
+
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
+    [JsonPropertyName("source_kind")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceKind { get; init; }
+
+    [JsonPropertyName("source_namespace")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceNamespace { get; init; }
+
+    [JsonPropertyName("applicability")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Applicability { get; init; }
+
+    [JsonPropertyName("applicability_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ApplicabilityReason { get; init; }
+
+    [JsonPropertyName("requirement")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Requirement { get; init; }
+
+    [JsonPropertyName("applicable_roles")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? ApplicableRoles { get; init; }
+
+    [JsonPropertyName("prerequisite_statuses")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? PrerequisiteStatuses { get; init; }
+
+    [JsonPropertyName("event_family_statuses")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, string>? EventFamilyStatuses { get; init; }
 
     [JsonPropertyName("coverage_level")]
     public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;

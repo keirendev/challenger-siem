@@ -1,0 +1,689 @@
+[
+  {
+    "family": "session",
+    "expected_source": "linux-login-session",
+    "expected_category": "session",
+    "expected_action": "session_start",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=01;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000000",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "systemd-logind.service",
+      "SYSLOG_IDENTIFIER": "systemd-logind",
+      "PRIORITY": "6",
+      "PAM_SERVICE": "login",
+      "PAM_TYPE": "open_session",
+      "PAM_USER": "synthetic-user",
+      "USER": "synthetic-greeter",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic session opened."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=02;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000001",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "systemd-logind.service",
+      "SYSLOG_IDENTIFIER": "systemd-logind",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic seat metadata refreshed."
+    }
+  },
+  {
+    "family": "ssh_authentication",
+    "expected_source": "linux-ssh",
+    "expected_category": "authentication",
+    "expected_action": "authenticate",
+    "expected_outcome": "success",
+    "expected_severity": "audit_success",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=03;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000002",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "_SYSTEMD_UNIT": "sshd.service",
+      "SYSLOG_IDENTIFIER": "sshd",
+      "PRIORITY": "6",
+      "PAM_SERVICE": "sshd",
+      "PAM_TYPE": "authentication",
+      "PAM_USER": "synthetic-structured-user",
+      "REMOTE_ADDR": "192.0.2.10",
+      "REMOTE_PORT": "4242",
+      "RESULT": "success",
+      "MESSAGE": "Failed password for synthetic-message-user from 198.51.100.90 port 9999 ssh2"
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=04;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000003",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "_SYSTEMD_UNIT": "sshd.service",
+      "SYSLOG_IDENTIFIER": "sshd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic connection metadata refreshed."
+    }
+  },
+  {
+    "family": "sudo",
+    "expected_source": "linux-sudo-su",
+    "expected_category": "authorization",
+    "expected_action": "command_execute",
+    "expected_outcome": "success",
+    "expected_severity": "audit_success",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=05;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000004",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "sudo",
+      "PRIORITY": "5",
+      "ACTION": "execute",
+      "RESULT": "success",
+      "USER": "synthetic-user",
+      "PAM_USER": "root",
+      "_PID": "2105",
+      "_EXE": "/usr/bin/sudo",
+      "_CMDLINE": "/usr/bin/id --synthetic",
+      "MESSAGE": "Synthetic sudo command accepted."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=06;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000005",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "sudo",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic policy plugin initialized."
+    }
+  },
+  {
+    "family": "cron",
+    "expected_source": "linux-cron-timers",
+    "expected_category": "scheduler",
+    "expected_action": "job_execute",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=07;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000006",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "CRON",
+      "PRIORITY": "6",
+      "MESSAGE": "(synthetic-user) CMD (/usr/bin/synthetic-task --safe)"
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=08;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000007",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "CRON",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic queue wakeup."
+    }
+  },
+  {
+    "family": "package_install",
+    "expected_source": "linux-package-management",
+    "expected_category": "package",
+    "expected_action": "install",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=09;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000008",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "dpkg",
+      "PRIORITY": "6",
+      "MESSAGE": "install synthetic-package 1.0"
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=10;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000009",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "dpkg",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic database lock checked."
+    }
+  },
+  {
+    "family": "firewall_deny",
+    "expected_source": "linux-firewall",
+    "expected_category": "firewall",
+    "expected_action": "deny",
+    "expected_outcome": "failure",
+    "expected_severity": "warning",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=11;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000010",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "ufw",
+      "PRIORITY": "4",
+      "MESSAGE": "[UFW BLOCK] IN=synthetic0 OUT= SRC=192.0.2.20 DST=198.51.100.20 PROTO=TCP SPT=12345 DPT=22"
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=12;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000011",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "ufw",
+      "PRIORITY": "6",
+      "MESSAGE": "[UFW NOTICE] Synthetic metadata refreshed."
+    }
+  },
+  {
+    "family": "security_module",
+    "expected_source": "linux-kernel-security",
+    "expected_category": "kernel_security",
+    "expected_action": "security_denial",
+    "expected_outcome": "failure",
+    "expected_severity": "warning",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=13;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000012",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "4",
+      "ACTION": "security_denial",
+      "RESULT": "failure",
+      "MODULE": "synthetic_lsm",
+      "MESSAGE": "apparmor=\"DENIED\" operation=\"open\" profile=\"synthetic-profile\""
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=14;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000013",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic temperature remains normal."
+    }
+  },
+  {
+    "family": "service_start",
+    "expected_source": "linux-service-change",
+    "expected_category": "service",
+    "expected_action": "service_start",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=15;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000014",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE_ID": "39f53479d3a045ac8e11786248231fbf",
+      "RESULT": "success",
+      "MESSAGE": "Started synthetic.service."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=16;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000015",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic status report."
+    }
+  },
+  {
+    "family": "agent_tamper",
+    "expected_source": "linux-agent-log-tamper",
+    "expected_category": "tamper",
+    "expected_action": "agent_config_change",
+    "expected_outcome": "success",
+    "expected_severity": "warning",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=17;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000016",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "challenger-siem-agent.service",
+      "SYSLOG_IDENTIFIER": "challenger-siem-agent",
+      "PRIORITY": "4",
+      "ACTION": "agent_config_change",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic agent configuration changed."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=18;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000017",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "challenger-siem-agent.service",
+      "SYSLOG_IDENTIFIER": "challenger-siem-agent",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic heartbeat completed."
+    }
+  },
+  {
+    "family": "login",
+    "expected_source": "linux-login-session",
+    "expected_category": "authentication",
+    "expected_action": "authenticate",
+    "expected_outcome": "failure",
+    "expected_severity": "audit_failure",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=19;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000018",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "login",
+      "PRIORITY": "5",
+      "PAM_SERVICE": "login",
+      "PAM_TYPE": "authentication",
+      "PAM_USER": "synthetic-user",
+      "RESULT": "failure",
+      "MESSAGE": "Synthetic login authentication failed."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=20;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000019",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "login",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic login banner displayed."
+    }
+  },
+  {
+    "family": "su",
+    "expected_source": "linux-sudo-su",
+    "expected_category": "authorization",
+    "expected_action": "session_start",
+    "expected_outcome": "success",
+    "expected_severity": "audit_success",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=21;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000020",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "su",
+      "PRIORITY": "5",
+      "PAM_SERVICE": "su",
+      "PAM_TYPE": "open_session",
+      "USER": "synthetic-user",
+      "PAM_USER": "root",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic identity transition recorded."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=22;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000021",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "su",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic module initialized."
+    }
+  },
+  {
+    "family": "systemd_timer",
+    "expected_source": "linux-cron-timers",
+    "expected_category": "scheduler",
+    "expected_action": "timer_trigger",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=23;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000022",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic.timer",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE_ID": "39f53479d3a045ac8e11786248231fbf",
+      "RESULT": "success",
+      "MESSAGE": "Started synthetic.timer."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=24;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000023",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic.timer",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic timer metadata refreshed."
+    }
+  },
+  {
+    "family": "kernel_module",
+    "expected_source": "linux-kernel-security",
+    "expected_category": "kernel_security",
+    "expected_action": "module_load",
+    "expected_outcome": "success",
+    "expected_severity": "warning",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=25;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000024",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "5",
+      "ACTION": "module_load",
+      "RESULT": "success",
+      "MODULE": "synthetic_module",
+      "MESSAGE": "Synthetic kernel extension loaded."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=26;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000025",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic scheduler tick."
+    }
+  },
+  {
+    "family": "log_tamper",
+    "expected_source": "linux-agent-log-tamper",
+    "expected_category": "tamper",
+    "expected_action": "log_corruption",
+    "expected_outcome": "failure",
+    "expected_severity": "error",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=27;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000026",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "systemd-journald.service",
+      "SYSLOG_IDENTIFIER": "systemd-journald",
+      "PRIORITY": "3",
+      "ACTION": "log_corruption",
+      "RESULT": "failure",
+      "MESSAGE": "Synthetic journal integrity failure."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=28;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000027",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "systemd-journald.service",
+      "SYSLOG_IDENTIFIER": "systemd-journald",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic journal synchronization complete."
+    }
+  },
+  {
+    "family": "ssh_session",
+    "expected_source": "linux-ssh",
+    "expected_category": "session",
+    "expected_action": "session_start",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=29;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000028",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "_SYSTEMD_UNIT": "sshd.service",
+      "SYSLOG_IDENTIFIER": "sshd",
+      "PRIORITY": "6",
+      "PAM_SERVICE": "sshd",
+      "PAM_TYPE": "open_session",
+      "PAM_USER": "synthetic-user",
+      "USER": "synthetic-actor",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic SSH session state recorded."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=30;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000029",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "_SYSTEMD_UNIT": "sshd.service",
+      "SYSLOG_IDENTIFIER": "sshd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic SSH listener metadata refreshed."
+    }
+  },
+  {
+    "family": "package_update",
+    "expected_source": "linux-package-management",
+    "expected_category": "package",
+    "expected_action": "update",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=31;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000030",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "dnf",
+      "PRIORITY": "6",
+      "ACTION": "updated",
+      "RESULT": "success",
+      "PACKAGE_NAME": "synthetic-package",
+      "MESSAGE": "Synthetic structured package update."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=32;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000031",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "dnf",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic package metadata cache checked."
+    }
+  },
+  {
+    "family": "package_remove",
+    "expected_source": "linux-package-management",
+    "expected_category": "package",
+    "expected_action": "remove",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=33;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000032",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "rpm",
+      "PRIORITY": "6",
+      "ACTION": "remove",
+      "RESULT": "success",
+      "PACKAGE": "synthetic-package",
+      "MESSAGE": "Synthetic structured package removal."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=34;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000033",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "rpm",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic package database opened."
+    }
+  },
+  {
+    "family": "firewall_allow",
+    "expected_source": "linux-firewall",
+    "expected_category": "firewall",
+    "expected_action": "allow",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=35;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000034",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "SYSLOG_IDENTIFIER": "firewalld",
+      "PRIORITY": "6",
+      "ACTION": "allow",
+      "RESULT": "success",
+      "REMOTE_ADDR": "192.0.2.40",
+      "REMOTE_PORT": "443",
+      "DESTINATION_ADDR": "198.51.100.40",
+      "DESTINATION_PORT": "8443",
+      "PROTOCOL": "tcp",
+      "MESSAGE": "Synthetic structured firewall decision."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=36;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000035",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "SYSLOG_IDENTIFIER": "firewalld",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic firewall daemon status."
+    }
+  },
+  {
+    "family": "firewall_change",
+    "expected_source": "linux-firewall",
+    "expected_category": "firewall",
+    "expected_action": "policy_change",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=37;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000036",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "SYSLOG_IDENTIFIER": "nftables",
+      "PRIORITY": "6",
+      "ACTION": "policy_change",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic structured firewall policy change."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=38;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000037",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "SYSLOG_IDENTIFIER": "nftables",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic firewall table inventory."
+    }
+  },
+  {
+    "family": "kernel_security",
+    "expected_source": "linux-kernel-security",
+    "expected_category": "kernel_security",
+    "expected_action": "security_event",
+    "expected_outcome": "failure",
+    "expected_severity": "warning",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=39;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000038",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "4",
+      "ACTION": "security_event",
+      "RESULT": "failure",
+      "MESSAGE": "Synthetic structured kernel security event."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=40;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000039",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "kernel",
+      "SYSLOG_IDENTIFIER": "kernel",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic kernel clock update."
+    }
+  },
+  {
+    "family": "service_stop",
+    "expected_source": "linux-service-change",
+    "expected_category": "service",
+    "expected_action": "service_stop",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=41;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000040",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-stop.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "ACTION": "stop",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic structured service stop."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=42;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000041",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-stop.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic service status report."
+    }
+  },
+  {
+    "family": "service_reload",
+    "expected_source": "linux-service-change",
+    "expected_category": "service",
+    "expected_action": "service_reload",
+    "expected_outcome": "success",
+    "expected_severity": "information",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=43;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000042",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-reload.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "ACTION": "reload",
+      "RESULT": "success",
+      "MESSAGE": "Synthetic structured service reload."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=44;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000043",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-reload.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic service dependency check."
+    }
+  },
+  {
+    "family": "service_failure",
+    "expected_source": "linux-service-change",
+    "expected_category": "service",
+    "expected_action": "service_failure",
+    "expected_outcome": "failure",
+    "expected_severity": "error",
+    "positive": {
+      "__CURSOR": "s=synthetic-l2;i=45;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000044",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-failure.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "3",
+      "ACTION": "failed",
+      "RESULT": "failure",
+      "MESSAGE": "Synthetic structured service failure."
+    },
+    "negative": {
+      "__CURSOR": "s=synthetic-l2;i=46;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944100000045",
+      "_BOOT_ID": "00000000000000000000000000000002",
+      "_TRANSPORT": "journal",
+      "_SYSTEMD_UNIT": "synthetic-failure.service",
+      "SYSLOG_IDENTIFIER": "systemd",
+      "PRIORITY": "6",
+      "MESSAGE": "Synthetic service restart policy inspected."
+    }
+  }
+]
