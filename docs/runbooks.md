@@ -12,7 +12,6 @@ These runbooks reproduce the MVP without Docker and without committing secrets o
    cat > .local/dev.env <<'EOF'
    ConnectionStrings__SiemDatabase='Host=localhost;Port=5432;Database=challenger_siem;Username=siem;Password=<password>'
    Auth__EnrollmentToken='<long-random-enrollment-token>'
-   Auth__ReviewToken='<long-random-review-token>'
    EOF
    ```
 
@@ -47,7 +46,7 @@ Use `./scripts/platform.sh restart` after local configuration changes and `./scr
 ./scripts/run-server-4444.sh
 ```
 
-Open the API base URL in a browser, log in with `Auth__ReviewToken`, and use:
+Open the API base URL in a browser, log in with a synthetic operator username/password, and use:
 
 - `/` for dashboard metrics.
 - `/agents` for inventory and queue depth.
@@ -239,7 +238,7 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 ## Known MVP limitations
 
 - Detection/correlation rules and alert workflow are post-MVP.
-- Operator authentication is a review token and HTTP-only session cookie, not full RBAC/SSO.
+- Operator authentication is a operator API credential and HTTP-only session cookie, not full RBAC/SSO.
 - Pagination is bounded by `limit` rather than full cursor pagination.
 - The agent poison-event strategy quarantines repeated failures locally for operator review; centralized poison review can be added later.
 

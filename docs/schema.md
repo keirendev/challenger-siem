@@ -114,7 +114,7 @@ Source manifests and source-health arrays retain their existing limit of 100 ent
 
 ## Storage boundary
 
-Numbered migrations under `server/Siem.Api/Database/` apply in lexical order. `002_multiplatform_events.sql` upgrades the original Windows table in place: existing rows and `(agent_id, event_id)` deduplication are preserved, Windows identity columns become conditionally required, and portable platform/source/checkpoint/deduplication/data-handling fields are stored without fabricated Windows IDs. Reapplying all migrations is supported.
+Numbered migrations under `server/Siem.Api/Database/` apply in lexical order. `002_multiplatform_events.sql` upgrades the original Windows table in place: existing rows and `(agent_id, event_id)` deduplication are preserved, Windows identity columns become conditionally required, and portable platform/source/checkpoint/deduplication/data-handling fields are stored without fabricated Windows IDs. `003_portable_source_health.sql` makes legacy `channel` nullable for portable rows and additively stores platform/source identity, applicability, and collected/acknowledged checkpoints. `004_operator_rbac.sql` additively creates operator identity, session, and immutable security-audit tables. Reapplying all migrations is supported.
 
 Portable v1 events ingest, deduplicate, persist, and search through the same `/api/v1` paths as Windows events. Search accepts additive `source`, `platform`, `source_id`, and `event_code` filters. Authenticated `GET /api/v1/storage/accounting` reports table, index, total relation bytes, row count, and measurement time for later quota enforcement.
 
@@ -128,7 +128,7 @@ Stores registered Windows endpoints, hashed per-agent API tokens, lifecycle stat
 
 ### `events`
 
-Currently stores Windows event identity, normalized fields, `raw_json`, and optional event-specific `host_timezone` as JSONB.
+Stores conditional Windows or portable event identity, normalized fields, bounded portable checkpoint/deduplication/data-handling metadata, `raw_json`, and optional event-specific `host_timezone` as JSONB. The Linux L1 journal source uses `platform=linux`, `source=linux_journal`, stable `source_id`, opaque cursor checkpoint, and the v1 deterministic-ID recipe; no Windows identity columns are fabricated.
 
 Current deduplication key:
 
@@ -138,15 +138,21 @@ unique (agent_id, event_id)
 
 ### `agent_heartbeats` and `source_health`
 
-Store the current Windows heartbeat, source-manifest, and source-health persistence shape. Cross-platform checkpoint/source columns are intentionally deferred to the multi-platform migration.
+Store current heartbeat, source-manifest, and source-health data. Portable journal heartbeats carry source identity, applicability, collected/acknowledged cursor, latest event/lag, stable error/gap flags, config/version, and bounded details through the additive v1 shape while preserving existing Windows rows.
+
+### Operator identity, session, and audit tables
+
+Migration `004_operator_rbac.sql` additively creates `operators`, `operator_sessions`, and `security_audit_events`. Operators have a unique normalized username, one exact role, salted password hash, optional hashed API credential, enable/lockout state, and credential-change timestamps. Session rows store only a random handle hash plus absolute expiry/revocation state. Password or API-credential changes revoke active sessions.
+
+Security audit rows are append-only: a PostgreSQL trigger rejects updates and deletes. Audit details are JSONB limited by application policy to action/outcome and non-secret identifiers; credentials, cookies, authorization headers, raw telemetry, and protected event fields are excluded.
 
 ### Other tables
 
-The current schema also includes asset inventory, coverage exceptions, detection rules, alerts/evidence, investigation graphs, `soc_agent` records, and bounded ingestion errors. Their behavior is unchanged by this contract-only slice.
+The current schema also includes asset inventory, coverage exceptions, detection rules, alerts/evidence, investigation graphs, `soc_agent` records, and bounded ingestion errors.
 
 ## Core current indexes
 
-Current Windows event indexes cover agent, hostname, event time, Windows event ID, channel, provider, raw JSON, and selected normalized fields. Heartbeat, source-health, inventory, detection, alert, graph, `soc_agent`, and ingestion-error indexes remain as defined in `001_initial.sql`. Cross-platform source/event-code indexes are deferred with storage migration.
+Event indexes cover agent, hostname, event time, Windows identity, portable source/platform/source ID/event code, raw JSON, and selected normalized fields. Heartbeat, source-health, inventory, detection, alert, graph, `soc_agent`, and ingestion-error indexes remain migration-managed.
 
 ## Applying and validating PostgreSQL
 
@@ -157,4 +163,4 @@ With PostgreSQL client tools installed and a private ignored connection configur
 ./scripts/validate-schema.sh
 ```
 
-The apply script runs every numbered migration and fails on the first error. The validator checks portable columns and indexes. Validate upgrades only on operator-owned empty or synthetic databases; keep plans and database output under ignored `.local/`.
+The apply script runs every numbered migration and fails on the first error. The validator checks portable columns plus operator/session/audit tables, columns, and indexes. Validate upgrades only on operator-owned empty or synthetic databases; keep plans and database output under ignored `.local/`.

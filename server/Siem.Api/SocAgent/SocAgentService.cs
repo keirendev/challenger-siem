@@ -90,15 +90,17 @@ public sealed class SocAgentService(
     public async Task<SocAgentChatResponse> SendChatMessageAsync(
         Guid? sessionId,
         SocAgentChatRequest request,
+        string operatorRole,
         CancellationToken cancellationToken)
     {
-        var turn = await StartChatTurnAsync(sessionId, request, cancellationToken);
+        var turn = await StartChatTurnAsync(sessionId, request, operatorRole, cancellationToken);
         return await CompleteChatTurnAsync(turn, progress: null, cancellationToken);
     }
 
     public async Task<SocAgentChatTurn> StartChatTurnAsync(
         Guid? sessionId,
         SocAgentChatRequest request,
+        string operatorRole,
         CancellationToken cancellationToken)
     {
         var message = request.Message.Trim();
@@ -150,7 +152,8 @@ public sealed class SocAgentService(
                 ContextAgentId = effectiveContextAgentId,
                 ContextEventId = effectiveContextEventId
             },
-            status);
+            status,
+            operatorRole);
     }
 
     public async Task<SocAgentChatResponse> CompleteChatTurnAsync(
@@ -162,7 +165,7 @@ public sealed class SocAgentService(
         string? errorCode = null;
         try
         {
-            response = await AskAsync(turn.AskRequest, progress, cancellationToken);
+            response = await AskAsync(turn.AskRequest, turn.OperatorRole, progress, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -208,12 +211,12 @@ public sealed class SocAgentService(
         };
     }
 
-    public Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, CancellationToken cancellationToken)
+    public Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, string operatorRole, CancellationToken cancellationToken)
     {
-        return AskAsync(request, progress: null, cancellationToken);
+        return AskAsync(request, operatorRole, progress: null, cancellationToken);
     }
 
-    public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, ISocAgentProgressSink? progress, CancellationToken cancellationToken)
+    public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, string operatorRole, ISocAgentProgressSink? progress, CancellationToken cancellationToken)
     {
         var status = GetProviderStatus();
         if (progress is not null)
@@ -314,7 +317,7 @@ public sealed class SocAgentService(
             EventCode: null,
             Limit: Math.Clamp(options.MaxEvents, 1, 50));
         await StartToolAsync("event_search", "Loading recent normalized events for the current scope.");
-        var recentEvents = await events.SearchEventsAsync(eventQuery, cancellationToken);
+        var recentEvents = await events.SearchEventsForOperatorAsync(eventQuery, operatorRole, cancellationToken);
         await AddToolAsync(new SocAgentToolRunSummary { ToolName = "event_search", RowCount = recentEvents.Count, Summary = "Loaded recent normalized events for the current scope." });
         await AddCitationAsync(new SocAgentCitation { Kind = "event_search", Label = "Recent events", Url = string.IsNullOrWhiteSpace(request.ContextAgentId) ? "/events" : $"/events?agent_id={Uri.EscapeDataString(request.ContextAgentId)}&limit=25" });
         foreach (var evt in recentEvents.Take(3))
@@ -329,7 +332,10 @@ public sealed class SocAgentService(
 
         await StartToolAsync("alert_review", "Loading current alert review rows.");
         var alertRows = await alerts.SearchAlertsAsync(null, cancellationToken);
-        var selectedAlerts = alertRows.Take(Math.Clamp(options.MaxAlerts, 1, 50)).ToArray();
+        var selectedAlerts = alertRows
+            .Select(item => Challenger.Siem.Api.Auth.AlertFieldPolicy.Apply(item, operatorRole))
+            .Take(Math.Clamp(options.MaxAlerts, 1, 50))
+            .ToArray();
         await AddToolAsync(new SocAgentToolRunSummary { ToolName = "alert_review", RowCount = selectedAlerts.Length, Summary = "Loaded current alert review rows." });
         await AddCitationAsync(new SocAgentCitation { Kind = "alerts", Label = "Alerts", Url = "/alerts" });
 

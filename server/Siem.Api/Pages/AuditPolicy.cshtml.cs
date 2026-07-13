@@ -1,9 +1,11 @@
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Challenger.Siem.Api.Pages;
 
+[Authorize(Policy = "admin")]
 public sealed class AuditPolicyModel(AssetInventoryRepository inventory) : PageModel
 {
     public IReadOnlyList<AssetInventorySnapshot> Snapshots { get; private set; } = Array.Empty<AssetInventorySnapshot>();

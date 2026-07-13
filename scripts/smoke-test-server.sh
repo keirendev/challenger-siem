@@ -11,7 +11,7 @@ fi
 
 : "${ConnectionStrings__SiemDatabase:?ConnectionStrings__SiemDatabase is required}"
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
-: "${Auth__ReviewToken:?Auth__ReviewToken is required}"
+: "${SIEM_OPERATOR_API_TOKEN:?SIEM_OPERATOR_API_TOKEN is required}"
 
 BASE_URL="${SIEM_SMOKE_BASE_URL:-http://127.0.0.1:5080}"
 LOG_FILE=".local/smoke-api.log"
@@ -59,7 +59,7 @@ curl --silent --fail "$BASE_URL/api/v1/ingest/events" \
   > "$INGEST_RESPONSE"
 
 curl --silent --fail "$BASE_URL/api/v1/events?windows_event_id=4625" \
-  -H "Authorization: Bearer $Auth__ReviewToken" \
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" \
   > "$QUERY_RESPONSE"
 
 python - <<'PY'

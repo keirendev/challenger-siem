@@ -10,6 +10,7 @@ public sealed class SocAgentLiveRunCoordinator(
 {
     public async Task<SocAgentLiveRunStartResponse> StartRunAsync(
         SocAgentLiveRunStartRequest request,
+        string operatorRole,
         CancellationToken cancellationToken)
     {
         if (request.SessionId.HasValue && registry.TryGetActiveRunForSession(request.SessionId.Value, out _))
@@ -25,6 +26,7 @@ public sealed class SocAgentLiveRunCoordinator(
                 ContextAgentId = request.ContextAgentId,
                 ContextEventId = request.ContextEventId
             },
+            operatorRole,
             cancellationToken);
 
         var state = registry.CreateRun(turn);

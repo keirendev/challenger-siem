@@ -4,15 +4,11 @@ The MVP review console is hosted by the ASP.NET Core API process. It uses the sa
 
 For public-safe visual examples, see the [sanitized web-console demo](web-console-demo.md). The demo screenshots are generated from synthetic data only and must be refreshed whenever user-visible web behavior changes.
 
-## Authentication
+## Authentication and authorization
 
-Browse to the API base URL and sign in with the configured review token:
+Browse to the API base URL and sign in with a bootstrapped operator username/password. A successful login creates an HttpOnly, strict-SameSite, absolute-expiry cookie backed by a revocable database session. Logout revokes the server session before clearing the cookie. All forms use antiforgery validation.
 
-```bash
-export Auth__ReviewToken='<long-random-review-token>'
-```
-
-The submitted token is compared server-side, is not logged, and is not stored in browser local storage. A successful login creates an HTTP-only same-origin cookie for the operator session. Logout clears that cookie.
+Pages and actions enforce the exact role matrix from [auth.md](auth.md): viewers can inspect metadata, analysts can use investigations and `soc-agent`, detection engineers additionally manage detection workflows, and admins manage agents/operators and receive full sensitive fields. Non-admin event views omit raw payload and redact command, account, path, and network fields server-side.
 
 ## Visual system and operator workflow
 
@@ -35,7 +31,7 @@ Initial performance/accessibility budgets for local validation:
 
 ## Pages
 
-- `/login` - operator review-token login.
+- `/login` - operator username/password login.
 - `/` - dashboard with API/operator health metrics, active/recent/stale agent counts, retired agent count, historical registration count, recent ingestion volume, latest ingest time, and active agents reporting non-zero queue depth.
 - `/agents` - paged agent inventory with hostname, agent ID, OS, agent version, coverage level/status through L3 when Sysmon is healthy, source issue counts, first/last seen, latest queue depth, registration status, and stale/recent state. Supports hostname, agent ID, registration status, and health filters. Defaults to active registrations.
 - `/agents/detail?agent_id=<agent>&target_level=L3` - host coverage/source-health detail with a target-level selector, host timezone label when reported, one row per expected Windows source for the selected target, recent normalized event counts, source pack/version/config-hash context such as the Sysmon profile version, explicit completeness gaps, inventory/audit-policy snapshot status, and per-rule detection prerequisite status without implying a confirmed detection miss when evidence is absent.
@@ -117,7 +113,7 @@ Optional configuration values under `Review` tune dashboard and default search b
 }
 ```
 
-`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default while presenting ChatGPT subscription OAuth as the primary external setup path and API-key/delegated bearer modes as advanced alternatives. Assistant/`soc-agent` chat output is rendered as safe Markdown for headings, paragraphs, lists, emphasis, inline code, fenced code blocks, blockquotes, and sanitized links; operator-entered messages remain plain text, raw HTML is inert text, image/embed syntax is not activated, and unsafe URL schemes such as `javascript:`/`data:`/protocol-relative links are not linked. The normal chat path uses authenticated same-origin live endpoints and `text/event-stream` frames so review tokens, provider credentials, cookies, and bearer tokens are never placed in URLs or browser storage. Subscription OAuth can reuse Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` and call the ChatGPT Codex Responses backend for plan-allowed models such as `gpt-5.5`, or use a dedicated ignored/secret-managed credential file for the OpenAI API Chat Completions path. When interactive subscription OAuth connect is enabled, the page shows a compact server-side connect/reconnect action only when operator attention is needed; it starts an official authorization-code/PKCE flow and stores tokens only in the configured ignored/secret-managed auth file. When an external provider mode is connected, the compact title pill carries provider status while live pending text/tool cards communicate bounded/redacted provider progress; an inline notice is reserved for actionable setup, auth, budget, rate-limit, or provider-error states so the normal chat workspace is not dominated by duplicate provider status. The persistent right rail is reserved for live tool activity.
+`DefaultEventLimit` is capped to the same maximum of 500 used by the event review API. `/soc-agent` remains local by default while presenting ChatGPT subscription OAuth as the primary external setup path and API-key/delegated bearer modes as advanced alternatives. Assistant/`soc-agent` chat output is rendered as safe Markdown for headings, paragraphs, lists, emphasis, inline code, fenced code blocks, blockquotes, and sanitized links; operator-entered messages remain plain text, raw HTML is inert text, image/embed syntax is not activated, and unsafe URL schemes such as `javascript:`/`data:`/protocol-relative links are not linked. The normal chat path uses authenticated same-origin live endpoints and `text/event-stream` frames so operator API credentials, provider credentials, cookies, and bearer tokens are never placed in URLs or browser storage. Subscription OAuth can reuse Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` and call the ChatGPT Codex Responses backend for plan-allowed models such as `gpt-5.5`, or use a dedicated ignored/secret-managed credential file for the OpenAI API Chat Completions path. When interactive subscription OAuth connect is enabled, the page shows a compact server-side connect/reconnect action only when operator attention is needed; it starts an official authorization-code/PKCE flow and stores tokens only in the configured ignored/secret-managed auth file. When an external provider mode is connected, the compact title pill carries provider status while live pending text/tool cards communicate bounded/redacted provider progress; an inline notice is reserved for actionable setup, auth, budget, rate-limit, or provider-error states so the normal chat workspace is not dominated by duplicate provider status. The persistent right rail is reserved for live tool activity.
 
 ## Local smoke path
 
@@ -127,14 +123,14 @@ Automated smoke path without Docker:
 ./scripts/smoke-test-web.sh
 ```
 
-The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured review token, creates a synthetic `soc-agent` chat tied to that agent through the non-JavaScript fallback, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` HTML. For live-workspace issue validation, supplement this smoke script with Playwright or equivalent browser E2E covering no-reload send, streamed progress/tool cards, cancellation, refresh/reconnect recovery, provider status/error states, thread-aware scroll-to-latest behavior, initial page-load position with long Recent chats, confirmation-gated chat deletion, responsive layout, keyboard navigation, and logout. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent and its linked `soc-agent` chat history after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
+The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with the configured operator API credential, creates a synthetic `soc-agent` chat tied to that agent through the non-JavaScript fallback, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` HTML. For live-workspace issue validation, supplement this smoke script with Playwright or equivalent browser E2E covering no-reload send, streamed progress/tool cards, cancellation, refresh/reconnect recovery, provider status/error states, thread-aware scroll-to-latest behavior, initial page-load position with long Recent chats, confirmation-gated chat deletion, responsive layout, keyboard navigation, and logout. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent and its linked `soc-agent` chat history after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
 
 Manual path:
 
 1. Start the API with the required database and auth environment variables.
 2. Register an agent and ingest synthetic or approved lab events.
 3. Open the API base URL in a browser.
-4. Log in with `Auth__ReviewToken`.
+4. Log in with a synthetic operator username/password.
 5. Confirm the dashboard, agent inventory, event search, and event detail pages show the expected data.
 
 ## Screenshot and browser-validation maintenance

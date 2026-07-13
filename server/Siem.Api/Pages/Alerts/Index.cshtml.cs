@@ -1,3 +1,4 @@
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc;
@@ -29,7 +30,7 @@ public sealed class IndexModel(AlertRepository alerts) : PageModel
         {
             var loadedAlerts = await alerts.SearchAlertsAsync(Status, cancellationToken, PageSize + 1, (PageNumber - 1) * PageSize);
             HasNextPage = loadedAlerts.Count > PageSize;
-            Alerts = loadedAlerts.Take(PageSize).ToArray();
+            Alerts = loadedAlerts.Take(PageSize).Select(item => AlertFieldPolicy.Apply(item, OperatorAuthorization.Role(User)!)).ToArray();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

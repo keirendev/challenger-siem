@@ -15,8 +15,8 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Architecture](architecture.md) - pipeline, agent/server flow, reliability, and security decisions.
 - [Schema design](schema.md) - PostgreSQL tables, indexes, and schema application/validation.
 - [Windows host full-coverage SIEM specification](windows-host-full-coverage-spec.md) - target coverage model and implementation status.
-- [Linux host coverage specification](linux-host-coverage-spec.md) - planned L1-L4 sources, performance SLOs, benchmarks, and rollout gates.
-- [Linux agent security and privacy design](linux-agent-security.md) - planned threat model, least-privilege boundaries, exclusions, and change approval.
+- [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1 journal boundary, planned L2-L4 sources, performance SLOs, benchmarks, and rollout gates.
+- [Linux agent security and privacy design](linux-agent-security.md) - implemented journal/inventory controls, threat model, least-privilege boundaries, exclusions, and change approval.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
@@ -26,12 +26,12 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, telemetry coverage validation, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
 - [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
 - [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
-- [Authentication design](auth.md) - enrollment token, per-agent token, review token, and external `soc-agent` provider guardrails.
+- [Authentication design](auth.md) - enrollment token, per-agent token, operator API credential, and external `soc-agent` provider guardrails.
 - [HTTPS/TLS deployment path](tls.md) - local HTTP exception, production HTTPS options, and agent trust expectations.
 
 ## Linux endpoint agent
 
-- [Linux agent foundation](linux-agent.md) - configuration, systemd hardening, lifecycle workflows, and validation.
+- [Linux agent](linux-agent.md) - L1 journald collection, normalization, cursor/health semantics, configuration, systemd hardening, lifecycle workflows, and validation.
 
 ## Windows endpoint agent
 
@@ -61,7 +61,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 - Use only synthetic hostnames, users, IDs, IPs, event messages, prompts, graph nodes, and screenshots in tracked docs.
 - Keep raw API responses, cookies, browser traces, generated agent settings, queue/state databases, endpoint telemetry, event-log exports, and lab evidence under ignored `.local/` paths.
-- Never paste review tokens, enrollment tokens, per-agent API tokens, connection strings, private keys, cookies, real Windows usernames/hostnames, or collected client data into docs, examples, screenshots, issues, or pull requests.
+- Never paste operator API credentials, enrollment tokens, per-agent API tokens, connection strings, private keys, cookies, real Windows usernames/hostnames, or collected client data into docs, examples, screenshots, issues, or pull requests.
 - If a screenshot or example might contain private data, discard it locally and regenerate from synthetic fixtures before committing.
 
 ## Maintaining the wiki

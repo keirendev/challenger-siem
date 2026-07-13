@@ -21,7 +21,6 @@ Required components:
    ```bash
    ConnectionStrings__SiemDatabase='Host=127.0.0.1;Database=challenger_siem;Username=<db-user>;Password=<db-password>'
    Auth__EnrollmentToken='<long-random-enrollment-token>'
-   Auth__ReviewToken='<long-random-review-token>'
    ```
 
 4. Optional WinRM credentials in ignored local configuration when validating the authorized Windows lab VM.
@@ -31,6 +30,7 @@ Apply and validate the database schema:
 ```bash
 ./scripts/apply-schema.sh
 ./scripts/validate-schema.sh
+SIEM_OPERATOR_PASSWORD='<private-strong-password>' ./scripts/operator-account.sh bootstrap --username local-admin --role admin
 ```
 
 See [schema.md](schema.md) for table/index details.
@@ -51,7 +51,7 @@ Start the API and web console:
 ./scripts/platform.sh status
 ```
 
-The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with `Auth__ReviewToken`. The web console uses an HTTP-only same-origin session cookie after login; the review token is not stored in browser local storage.
+The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with an operator username/password. The web console uses an HTTP-only, strict-SameSite, database-revocable session cookie after login.
 
 ## Validate with synthetic data
 
@@ -115,7 +115,7 @@ Agent heartbeats can include source manifests and per-channel health. The server
 - [windows-agent-installer.md](windows-agent-installer.md) for plan/install/upgrade/repair/validate/uninstall and guarded prerequisite/Sysmon management.
 - [sysmon-l3-validation-runbook.md](sysmon-l3-validation-runbook.md) for safe Sysmon validation.
 
-The Linux agent now uploads bounded read-only host and security-posture inventory, but passive journal/audit event collection and Linux-specific source-health/coverage calculations remain planned. Inventory presence does not establish L1 or L2 event coverage. Review the [Linux coverage levels, implemented inventory boundary, SLOs, and soak/rollback gates](linux-host-coverage-spec.md) together with the [least-privilege, privacy, and explicit-change-approval requirements](linux-agent-security.md). Do not mutate a Linux host's audit, firewall, authentication, kernel, service, or security policy to improve inventory results.
+The Linux agent now passively collects the L1 system journal and uploads bounded read-only host/security-posture inventory. Its heartbeat reports the `linux-journal-l1` manifest, latest event/lag, collected and acknowledged cursors, and explicit permission/gap/error/throttle/config/version state. Inventory presence alone does not establish L1 health, and Linux audit/file collection plus server-generated Linux coverage overlays remain planned. Review the [Linux coverage levels, implemented boundaries, SLOs, and soak/rollback gates](linux-host-coverage-spec.md) together with the [least-privilege, privacy, and explicit-change-approval requirements](linux-agent-security.md). Do not mutate a Linux host's audit, firewall, authentication, kernel, service, journal-retention, or security policy to improve results.
 
 Keep Linux generated configuration and credentials under `/etc/challenger-siem-agent`, durable queue/state under `/var/lib/challenger-siem-agent`, and private diagnostics outside source checkouts. Keep journal/audit exports, host inventory exports, captures, database copies, logs, traces, screenshots, benchmark/soak results, and local review evidence out of git; developer-only evidence belongs under ignored `.local/`. Public demonstrations use only hand-authored `synthetic-` fixtures and must never be produced by sanitizing real host output.
 
@@ -123,7 +123,7 @@ Keep Linux generated configuration and credentials under `/etc/challenger-siem-a
 
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
 - Check local health: `curl http://127.0.0.1:<port>/health`.
-- Search events through `GET /api/v1/events` with the review token; see [api.md](api.md#search-events).
+- Search events through `GET /api/v1/events` with the operator API credential; see [api.md](api.md#search-events).
 - Retire stale lab registrations through the deliberate web/API workflow when preserving telemetry; use scoped synthetic cleanup for smoke/lab rows and `./scripts/reset-test-environment.sh` only for a full fresh start in a disposable local test environment.
 - Follow [release-readiness.md](release-readiness.md) before tagging or publishing a release.
 
@@ -133,8 +133,10 @@ See [troubleshooting.md](troubleshooting.md) for common database, auth, schema, 
 
 ## Linux endpoints
 
-The Linux service supports secure enrollment, heartbeat, durable Agent.Core queue delivery, and 16 bounded inventory categories covering host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture. See [Linux agent](linux-agent.md).
+The Linux service supports secure enrollment, heartbeat, passive cursor-based L1 journald collection, durable Agent.Core queue delivery, and 16 bounded inventory categories covering host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture. See [Linux agent](linux-agent.md).
 
 Inventory starts after a 30-second default delay and runs independently of heartbeat and queue delivery. The default interval is one hour with a five-minute enforced minimum. Each upload is capped at 20 snapshots, 200 items per snapshot, and a default 256 KiB serialized payload. Review `summary.state` for the exact `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, or `malformed` result and inspect truncation markers instead of treating missing items as healthy.
 
-Collection uses fixed read-only commands/files with individual timeouts, byte caps, cancellation, and allowlisted output fields. It neither broad-scans nor mutates the host, and it excludes secrets, raw command/file output, firewall rules, repository content, arbitrary paths, and unapproved SSH settings. Agent owner/mode and executable SHA-256 fingerprint observations are useful drift signals but are not trusted or tamper-proof attestation. Passive Linux event collection still does not claim L1 journal coverage; do not broaden source permissions or host policy to imply coverage.
+Collection uses fixed read-only commands/files with timeouts, byte caps, cancellation, and allowlisted output fields. The journal source uses fixed machine-readable `journalctl` invocation with no shell or configurable command/path, and pauses under queue pressure. It neither broad-scans nor mutates the host; secret-shaped assignments, binary/non-text values, and over-limit content are redacted or truncated before queue insertion with explicit markers. Agent owner/mode and executable SHA-256 fingerprint observations are useful drift signals but are not trusted or tamper-proof attestation.
+
+Treat `permission_denied`, `invalid_cursor`, `rotation`, `vacuum`, `malformed_record`, `reordered_input`, and active throttle states as coverage gaps. Compare collected and acknowledged cursors to distinguish local backlog from server-confirmed delivery. Do not grant root, change journal retention, or add privileged group membership merely to turn health green; any access expansion is an independent operator security decision. The synthetic benchmark is not a 24-hour soak. Complete the documented private host benchmark/canary gates before broad rollout.

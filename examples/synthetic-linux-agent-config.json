@@ -7,6 +7,13 @@
     "HeartbeatIntervalSeconds": 60,
     "InventoryIntervalSeconds": 3600,
     "DrainBatchSize": 100,
+    "Journal": {
+      "Enabled": true,
+      "PollIntervalSeconds": 5,
+      "MaxRecordsPerPoll": 500,
+      "MaxInputRecordBytes": 131072,
+      "QueuePauseDepth": 100000
+    },
     "Queue": {
       "Path": "/var/lib/challenger-siem-agent/queue.sqlite",
       "MaxSizeMb": 512,

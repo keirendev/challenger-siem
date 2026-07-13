@@ -11,7 +11,6 @@ fi
 
 : "${ConnectionStrings__SiemDatabase:?ConnectionStrings__SiemDatabase is required}"
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
-: "${Auth__ReviewToken:?Auth__ReviewToken is required}"
 
 export ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Development}"
 export ASPNETCORE_URLS="${ASPNETCORE_URLS:-http://0.0.0.0:4444}"

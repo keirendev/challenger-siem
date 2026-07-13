@@ -42,7 +42,7 @@ Search/review API
   -> return normalized event envelopes
 
 Web review console
-  -> validate review token on login
+  -> validate operator API credential on login
   -> issue HTTP-only operator session cookie
   -> query PostgreSQL-backed repositories
   -> render dashboard, agent inventory, event search, event detail, and about pages
@@ -86,13 +86,13 @@ Default optional L2/L3 source manifest channels:
 - `Microsoft-Windows-AppLocker/Packaged app-Execution`
 - `Microsoft-Windows-Sysmon/Operational`
 
-## Planned Linux host coverage
+## Linux host coverage
 
-Linux collection is not currently implemented or part of the Windows MVP architecture. The authoritative future design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), which defines L1-L4 sources, SLOs, pressure behavior, and rollout gates, and the [Linux agent security design](linux-agent-security.md), which defines least privilege, privacy exclusions, and explicit approval for any host-policy change.
+The Linux agent implements passive L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records plus bounded host/security inventory. It directly uses systemd's machine-readable journal interface, normalizes/redacts within fixed limits, commits to Agent.Core before cursor state, and reports explicit source health. Audit, syslog-file, role, and advanced sources remain planned. The authoritative design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), which defines implemented/planned L1-L4 sources, SLOs, pressure behavior, and rollout gates, and the [Linux agent security design](linux-agent-security.md), which defines least privilege, privacy exclusions, and explicit approval for any host-policy change.
 
 ## Cross-platform contract boundary
 
-The additive v1 contract can represent typed Linux journal, audit, inventory-diff, and agent-health records, source manifests, applicability, and collected/acknowledged checkpoints without Windows identifiers. That is a contract foundation, not a second active storage path: PostgreSQL, search, coverage overlays, and the deployed agent remain Windows-only until their dependency-ordered migration issues are complete. The server returns `cross_platform_storage_pending` rather than sending Linux-shaped data into Windows-only repositories.
+The additive v1 contract represents typed Linux journal, audit, inventory-diff, and agent-health records, source manifests, applicability, and collected/acknowledged checkpoints without Windows identifiers. PostgreSQL ingestion, deduplication, persistence, and portable search support Linux journal envelopes through the existing `/api/v1` path. The deployed Linux agent currently emits only `linux_journal`; server-generated Linux coverage overlays and other Linux event sources remain future work.
 
 ## Reliability decisions
 
@@ -109,8 +109,8 @@ The additive v1 contract can represent typed Linux journal, audit, inventory-dif
 - Registration uses an enrollment token.
 - Registration returns a per-agent API token.
 - Agent API tokens are stored hashed server-side.
-- Review/search API uses a separate review token for the MVP.
-- Web review login uses the same review token and stores only an HTTP-only session cookie in the browser.
+- Review/search API uses a separate operator API credential for the MVP.
+- Web review login uses the same operator API credential and stores only an HTTP-only session cookie in the browser.
 - Secrets must not be logged or committed.
 
 

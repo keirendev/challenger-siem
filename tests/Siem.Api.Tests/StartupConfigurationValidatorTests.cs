@@ -13,8 +13,7 @@ public sealed class StartupConfigurationValidatorTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Database=challenger_siem;Username=siem;Password=super-secret-password",
-                ["Auth:EnrollmentToken"] = "",
-                ["Auth:ReviewToken"] = null
+                ["Auth:EnrollmentToken"] = ""
             })
             .Build();
 
@@ -22,7 +21,7 @@ public sealed class StartupConfigurationValidatorTests
             () => StartupConfigurationValidator.ValidateRequiredConfiguration(configuration));
 
         Assert.Contains("Auth:EnrollmentToken", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Auth:ReviewToken", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReviewToken", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("super-secret-password", exception.Message, StringComparison.Ordinal);
     }
 
@@ -33,8 +32,7 @@ public sealed class StartupConfigurationValidatorTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Database=challenger_siem;Username=siem;Password=redacted",
-                ["Auth:EnrollmentToken"] = "enrollment-token",
-                ["Auth:ReviewToken"] = "review-token"
+                ["Auth:EnrollmentToken"] = "enrollment-token"
             })
             .Build();
 

@@ -2,6 +2,7 @@ using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
+using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetS
     .Validate(options => options.HeartbeatIntervalSeconds > 0 && options.DrainBatchSize is > 0 and <= 500,
         "Heartbeat interval or drain batch size is outside the supported range")
     .Validate(options => options.HasValidInventoryBounds(), "Inventory bounds are outside the supported range")
+    .Validate(options => options.HasValidJournalBounds(), "Journal bounds are outside the supported range")
     .ValidateOnStart();
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -45,6 +47,9 @@ builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 builder.Services.AddSingleton<LinuxEnrollmentService>();
+builder.Services.AddSingleton<LinuxJournalRuntime>();
+builder.Services.AddSingleton<LinuxJournalNormalizer>();
+builder.Services.AddSingleton<ILinuxJournalSource, LinuxJournalProcessSource>();
 builder.Services.AddSingleton<LinuxQueueDrainer>();
 builder.Services.AddSingleton<ILinuxInventorySource, LinuxInventorySource>();
 builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
@@ -57,6 +62,7 @@ builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
         options.MaxSerializedBytes);
 });
 builder.Services.AddHostedService<LinuxAgentWorker>();
+builder.Services.AddHostedService<LinuxJournalService>();
 builder.Services.AddHostedService<LinuxInventoryService>();
 builder.Services.AddSystemd();
 await builder.Build().RunAsync();

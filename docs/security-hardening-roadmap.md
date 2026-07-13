@@ -21,7 +21,7 @@ Future operator accounts should support these roles:
 - `detection_engineer`: detection draft/backtest/proposal management.
 - `admin`: provider configuration, token rotation, approvals, and sensitive mutations.
 
-Field-level policy should allow hiding or redacting raw payloads, script blocks, command lines, usernames, IP addresses, and file paths by role. MVP review-token auth maps to an implicit admin-like local operator only for development; production should not assume every authenticated user may mutate state.
+Field-level policy should allow hiding or redacting raw payloads, script blocks, command lines, usernames, IP addresses, and file paths by role. MVP operator-credential auth maps to an implicit admin-like local operator only for development; production should not assume every authenticated user may mutate state.
 
 ## mTLS readiness for agent transport
 

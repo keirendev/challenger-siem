@@ -7,7 +7,7 @@ This page is a public-safe visual guide to the web review console. Every screens
 Tracked screenshots must satisfy all of these rules:
 
 - Synthetic agent IDs, hostnames, users, graph titles, messages, and raw JSON only.
-- No review tokens, enrollment tokens, per-agent API tokens, connection strings, cookies, local browser profiles, shell history, private lab hostnames/users, real endpoint telemetry, event-log exports, or raw customer/client data.
+- No operator API credentials, enrollment tokens, per-agent API tokens, connection strings, cookies, local browser profiles, shell history, private lab hostnames/users, real endpoint telemetry, event-log exports, or raw customer/client data.
 - Browser page screenshots only; avoid browser chrome or OS UI that might reveal local account or path information.
 - Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, and logs stay under ignored `.local/` paths.
 
@@ -17,9 +17,9 @@ The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on 
 
 ### Login
 
-The login page is captured with an empty password field so no review token is visible.
+The login page is captured with empty username and password fields so no operator identity or credential is visible.
 
-![Operator login page with empty review token field](assets/web-console/login.png)
+![Operator login page with empty username and password fields](assets/web-console/login.png)
 
 ### Dashboard
 
@@ -95,7 +95,7 @@ Use this process whenever web UI changes make the screenshots stale:
    - Ingest a synthetic event with the returned per-agent API token.
    - Send a synthetic heartbeat/source-health payload.
    - Create a synthetic graph through the review API.
-5. Use Playwright or another headless browser to log in with `Auth__ReviewToken`, navigate the pages, and capture page screenshots. Keep raw traces/videos/temp captures under `.local/`.
+5. Use Playwright or another headless browser to log in with a synthetic operator username/password, navigate the pages, and capture page screenshots. Keep raw traces/videos/temp captures under `.local/`.
 6. Filter data-bearing pages by the synthetic agent ID or unique issue marker.
 7. Inspect every selected PNG before committing:
    - No token/cookie/connection string.

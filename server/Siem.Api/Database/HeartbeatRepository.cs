@@ -77,7 +77,14 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     agent_id,
                     source_id,
                     display_name,
+                    platform,
+                    source_kind,
                     channel,
+                    source_namespace,
+                    facility,
+                    unit,
+                    applicability,
+                    applicability_reason,
                     coverage_level,
                     status,
                     required_source,
@@ -96,6 +103,8 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     bookmark_gap_detected,
                     config_hash,
                     source_version,
+                    collected_checkpoint,
+                    acknowledged_checkpoint,
                     details,
                     host_timezone,
                     updated_at
@@ -104,7 +113,14 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @agent_id,
                     @source_id,
                     @display_name,
+                    @platform,
+                    @source_kind,
                     @channel,
+                    @source_namespace,
+                    @facility,
+                    @unit,
+                    @applicability,
+                    @applicability_reason,
                     @coverage_level,
                     @status,
                     @required_source,
@@ -123,13 +139,22 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @bookmark_gap_detected,
                     @config_hash,
                     @source_version,
+                    @collected_checkpoint,
+                    @acknowledged_checkpoint,
                     @details,
                     @host_timezone,
                     now()
                 )
                 on conflict (agent_id, source_id) do update set
                     display_name = excluded.display_name,
+                    platform = excluded.platform,
+                    source_kind = excluded.source_kind,
                     channel = excluded.channel,
+                    source_namespace = excluded.source_namespace,
+                    facility = excluded.facility,
+                    unit = excluded.unit,
+                    applicability = excluded.applicability,
+                    applicability_reason = excluded.applicability_reason,
                     coverage_level = excluded.coverage_level,
                     status = excluded.status,
                     required_source = excluded.required_source,
@@ -148,6 +173,8 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     bookmark_gap_detected = excluded.bookmark_gap_detected,
                     config_hash = excluded.config_hash,
                     source_version = excluded.source_version,
+                    collected_checkpoint = excluded.collected_checkpoint,
+                    acknowledged_checkpoint = excluded.acknowledged_checkpoint,
                     details = excluded.details,
                     host_timezone = excluded.host_timezone,
                     updated_at = now();
@@ -155,7 +182,14 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", request.AgentId);
             command.Parameters.AddWithValue("source_id", source.SourceId);
             command.Parameters.AddWithValue("display_name", source.DisplayName);
-            command.Parameters.AddWithValue("channel", source.Channel!);
+            command.Parameters.AddWithValue("platform", string.IsNullOrWhiteSpace(source.Platform) ? (object)DBNull.Value : source.Platform);
+            command.Parameters.AddWithValue("source_kind", string.IsNullOrWhiteSpace(source.SourceKind) ? (object)DBNull.Value : source.SourceKind);
+            command.Parameters.AddWithValue("channel", string.IsNullOrWhiteSpace(source.Channel) ? (object)DBNull.Value : source.Channel);
+            command.Parameters.AddWithValue("source_namespace", string.IsNullOrWhiteSpace(source.SourceNamespace) ? (object)DBNull.Value : source.SourceNamespace);
+            command.Parameters.AddWithValue("facility", string.IsNullOrWhiteSpace(source.Facility) ? (object)DBNull.Value : source.Facility);
+            command.Parameters.AddWithValue("unit", string.IsNullOrWhiteSpace(source.Unit) ? (object)DBNull.Value : source.Unit);
+            command.Parameters.AddWithValue("applicability", string.IsNullOrWhiteSpace(source.Applicability) ? (object)DBNull.Value : source.Applicability);
+            command.Parameters.AddWithValue("applicability_reason", string.IsNullOrWhiteSpace(source.ApplicabilityReason) ? (object)DBNull.Value : source.ApplicabilityReason);
             command.Parameters.AddWithValue("coverage_level", source.CoverageLevel.ToString());
             command.Parameters.AddWithValue("status", effectiveStatus);
             command.Parameters.AddWithValue("required_source", source.Required);
@@ -174,6 +208,8 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("bookmark_gap_detected", source.BookmarkGapDetected);
             command.Parameters.AddWithValue("config_hash", string.IsNullOrWhiteSpace(source.ConfigHash) ? (object)DBNull.Value : source.ConfigHash);
             command.Parameters.AddWithValue("source_version", string.IsNullOrWhiteSpace(source.SourceVersion) ? (object)DBNull.Value : source.SourceVersion);
+            AddJsonb(command, "collected_checkpoint", source.CollectedCheckpoint);
+            AddJsonb(command, "acknowledged_checkpoint", source.AcknowledgedCheckpoint);
             AddJsonb(command, "details", source.Details);
             Jsonb.Add(command, "host_timezone", source.HostTimezone ?? request.HostTimezone);
             await command.ExecuteNonQueryAsync(cancellationToken);

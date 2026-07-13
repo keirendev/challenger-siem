@@ -1,3 +1,4 @@
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc;
@@ -20,7 +21,8 @@ public sealed class DetailModel(AlertRepository alerts) : PageModel
 
         try
         {
-            Alert = await alerts.GetAlertAsync(alertId.Value, cancellationToken);
+            var loaded = await alerts.GetAlertAsync(alertId.Value, cancellationToken);
+            Alert = loaded is null ? null : AlertFieldPolicy.Apply(loaded, OperatorAuthorization.Role(User)!);
             if (Alert is null)
             {
                 ErrorMessage = "Alert was not found.";

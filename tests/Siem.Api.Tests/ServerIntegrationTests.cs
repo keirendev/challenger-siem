@@ -17,7 +17,26 @@ namespace Challenger.Siem.Api.Tests;
 public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 {
     private const string EnrollmentToken = "integration-enrollment-token";
-    private const string ReviewToken = "integration-review-token";
+    private const string OperatorApiToken = "integration-operator-credential";
+
+    [PostgresFact]
+    public async Task OperatorLockoutExpiryRevocationRecoveryRotationAndImmutableAuditUsePostgres()
+    {
+        var connectionString=database.RequireConnectionString(); await using var dataSource=NpgsqlDataSource.Create(connectionString);
+        var repository=new Challenger.Siem.Api.Database.OperatorRepository(dataSource,new Challenger.Siem.Api.Auth.OperatorPasswordHasher());
+        var username=$"synthetic-operator-{Guid.NewGuid():N}"; var initial="Synthetic-Initial1!"; var recovered="Synthetic-Recovered2!";
+        var op=await repository.CreateAsync(username,"Synthetic Operator",Challenger.Siem.Api.Auth.OperatorRoles.Analyst,initial,false,CancellationToken.None);
+        var login=await repository.AuthenticatePasswordAsync(username,initial,CancellationToken.None);Assert.Equal("success",login.Status);Assert.NotNull(await repository.ValidateSessionAsync(login.SessionToken!,CancellationToken.None));
+        await using(var expire=dataSource.CreateCommand("update operator_sessions set created_at=now()-interval '8 hours 1 second', expires_at=now()-interval '1 second' where session_id=@id")){expire.Parameters.AddWithValue("id",login.Session!.SessionId);await expire.ExecuteNonQueryAsync();}
+        Assert.Null(await repository.ValidateSessionAsync(login.SessionToken!,CancellationToken.None));
+        var active=await repository.AuthenticatePasswordAsync(username,initial,CancellationToken.None);await repository.ChangePasswordAsync(op.OperatorId,recovered,true,CancellationToken.None);Assert.Null(await repository.ValidateSessionAsync(active.SessionToken!,CancellationToken.None));
+        for(var i=0;i<Challenger.Siem.Api.Database.OperatorRepository.LockoutAttempts;i++)await repository.AuthenticatePasswordAsync(username,"Synthetic-Wrong9!",CancellationToken.None);
+        Assert.Equal("locked",(await repository.AuthenticatePasswordAsync(username,recovered,CancellationToken.None)).Status);
+        await repository.ChangePasswordAsync(op.OperatorId,recovered,true,CancellationToken.None);Assert.Equal("success",(await repository.AuthenticatePasswordAsync(username,recovered,CancellationToken.None)).Status);
+        var firstToken=await repository.RotateApiTokenAsync(op.OperatorId,CancellationToken.None);Assert.NotNull(await repository.AuthenticateApiTokenAsync(firstToken,CancellationToken.None));var secondToken=await repository.RotateApiTokenAsync(op.OperatorId,CancellationToken.None);Assert.Null(await repository.AuthenticateApiTokenAsync(firstToken,CancellationToken.None));Assert.NotNull(await repository.AuthenticateApiTokenAsync(secondToken,CancellationToken.None));
+        long auditId;await using(var insert=dataSource.CreateCommand("insert into security_audit_events(operator_id,actor_username,action,outcome) values(@id,@user,'synthetic.test','success') returning audit_id")){insert.Parameters.AddWithValue("id",op.OperatorId);insert.Parameters.AddWithValue("user",username);auditId=Convert.ToInt64(await insert.ExecuteScalarAsync());}
+        await using var mutate=dataSource.CreateCommand("delete from security_audit_events where audit_id=@id");mutate.Parameters.AddWithValue("id",auditId);var exception=await Assert.ThrowsAsync<PostgresException>(()=>mutate.ExecuteNonQueryAsync());Assert.Contains("append-only",exception.Message,StringComparison.OrdinalIgnoreCase);
+    }
 
     [PostgresFact]
     public async Task RegistrationIngestHeartbeatSearchAndIngestionErrorsUsePostgres()
@@ -79,7 +98,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 
         await PostJsonWithBearerAsync<JsonElement>(client, "/api/v1/agents/heartbeat", CreateHeartbeat(agentId, hostname, queueDepth: 7), secondToken);
 
-        var search = await GetJsonWithReviewTokenAsync<EventSearchResponse>(client,
+        var search = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client,
             $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&hostname={hostname}&channel=System&windows_event_id=6005&category=system&action=observed&from={Uri.EscapeDataString(now.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}&keyword=unique&limit=999");
         Assert.InRange(search.Events.Count, 1, 500);
         var stored = Assert.Single(search.Events, item => item.EventId == eventId);
@@ -89,13 +108,13 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Equal("Pacific Standard Time", stored.HostTimezone?.Id);
         Assert.Equal(-420, stored.HostTimezone?.UtcOffsetMinutes);
 
-        var sourceHealth = await GetJsonWithReviewTokenAsync<SourceHealthResponse>(client,
+        var sourceHealth = await GetJsonWithOperatorApiTokenAsync<SourceHealthResponse>(client,
             $"/api/v1/source-health?agent_id={Uri.EscapeDataString(agentId)}");
         Assert.Contains(sourceHealth.Summaries, summary => summary.AgentId == agentId && summary.HostTimezone?.Id == "Pacific Standard Time");
         Assert.Contains(sourceHealth.Sources, source => source.SourceId == "system" && source.HostTimezone?.UtcOffsetMinutes == -420);
         Assert.Contains(sourceHealth.Sources, source => source.SourceId == "security" && source.Status == SourceHealthStatuses.Missing);
 
-        var telemetryCoverage = await GetJsonWithReviewTokenAsync<TelemetryCoverageResponse>(client,
+        var telemetryCoverage = await GetJsonWithOperatorApiTokenAsync<TelemetryCoverageResponse>(client,
             $"/api/v1/telemetry-coverage?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2&lookback_hours=24");
         var agentCoverage = Assert.Single(telemetryCoverage.Agents);
         Assert.Equal(agentId, agentCoverage.AgentId);
@@ -107,7 +126,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(agentCoverage.Sources, source => source.SourceId == "system" && source.RecentEventCount == 1);
         Assert.Contains(agentCoverage.DetectionPrerequisites, rule => rule.RuleId == "auth.bruteforce.windows" && rule.Status == "missing_prerequisites");
 
-        var rules = await GetJsonWithReviewTokenAsync<JsonElement>(client, "/api/v1/detections/rules");
+        var rules = await GetJsonWithOperatorApiTokenAsync<JsonElement>(client, "/api/v1/detections/rules");
         Assert.True(rules.GetProperty("rules").GetArrayLength() >= 10);
 
         var invalidBatchId = Guid.NewGuid();
@@ -125,10 +144,10 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await AssertDatabaseStateAsync(dataSource, agentId, invalidBatchId);
     }
 
-    [Fact]
-    public async Task PlatformCapabilitiesEndpointRequiresReviewTokenAndReturnsSpecGapCatalog()
+    [PostgresFact]
+    public async Task PlatformCapabilitiesEndpointRequiresOperatorApiTokenAndReturnsSpecGapCatalog()
     {
-        using var factory = CreateFactory("Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=test");
+        using var factory = CreateFactory(database.RequireConnectionString());
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
         using (var unauth = await client.GetAsync("/api/v1/platform/capabilities"))
@@ -136,14 +155,14 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
         }
 
-        var response = await GetJsonWithReviewTokenAsync<PlatformCapabilitiesResponse>(client, "/api/v1/platform/capabilities");
+        var response = await GetJsonWithOperatorApiTokenAsync<PlatformCapabilitiesResponse>(client, "/api/v1/platform/capabilities");
         Assert.Equal(19, response.Capabilities.Count);
         Assert.Contains(response.Capabilities, item => item.CapabilityId == "SPEC-GAP-001");
         Assert.Contains(response.Capabilities, item => item.CapabilityId == "SPEC-GAP-019");
     }
 
     [PostgresFact]
-    public async Task InvestigationGraphApisPersistNodesEdgesProposalsAndEnforceReviewToken()
+    public async Task InvestigationGraphApisPersistNodesEdgesProposalsAndEnforceOperatorApiToken()
     {
         var connectionString = database.RequireConnectionString();
         using var factory = CreateFactory(connectionString);
@@ -154,7 +173,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
         }
 
-        var graph = await PostJsonWithReviewTokenAsync<InvestigationGraphSummary>(client, "/api/v1/graphs", new InvestigationGraphCreateRequest
+        var graph = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphSummary>(client, "/api/v1/graphs", new InvestigationGraphCreateRequest
         {
             Title = "Synthetic investigation graph",
             Description = "Synthetic graph for API tests",
@@ -163,7 +182,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.NotEqual(Guid.Empty, graph.GraphId);
         Assert.Equal(1, graph.Version);
 
-        var agentNode = await PostJsonWithReviewTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
+        var agentNode = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
         {
             NodeType = "agent",
             Label = "synthetic-agent-node",
@@ -172,14 +191,14 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             LinkUrl = "/agents?agent_id=graph-agent-001",
             Notes = "Synthetic node only."
         });
-        var noteNode = await PostJsonWithReviewTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
+        var noteNode = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphNode>(client, $"/api/v1/graphs/{graph.GraphId}/nodes", new InvestigationGraphNodeRequest
         {
             NodeType = "note",
             Label = "analyst note",
             Notes = "Synthetic relationship note."
         });
 
-        var edge = await PostJsonWithReviewTokenAsync<InvestigationGraphEdge>(client, $"/api/v1/graphs/{graph.GraphId}/edges", new InvestigationGraphEdgeRequest
+        var edge = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphEdge>(client, $"/api/v1/graphs/{graph.GraphId}/edges", new InvestigationGraphEdgeRequest
         {
             SourceNodeId = agentNode.NodeId,
             TargetNodeId = noteNode.NodeId,
@@ -188,23 +207,23 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         });
         Assert.Equal("annotates", edge.EdgeType);
 
-        var proposal = await PostJsonWithReviewTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals", new InvestigationGraphProposalRequest
+        var proposal = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals", new InvestigationGraphProposalRequest
         {
             Instruction = "Propose a synthetic note node."
         });
         Assert.Equal("pending", proposal.Status);
         Assert.Single(proposal.ProposedNodes);
 
-        var applied = await PostJsonWithReviewTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals/{proposal.ProposalId}/apply", new { });
+        var applied = await PostJsonWithOperatorApiTokenAsync<InvestigationGraphProposal>(client, $"/api/v1/graphs/{graph.GraphId}/proposals/{proposal.ProposalId}/apply", new { });
         Assert.Equal("applied", applied.Status);
 
-        var detail = await GetJsonWithReviewTokenAsync<InvestigationGraphDetail>(client, $"/api/v1/graphs/{graph.GraphId}");
+        var detail = await GetJsonWithOperatorApiTokenAsync<InvestigationGraphDetail>(client, $"/api/v1/graphs/{graph.GraphId}");
         Assert.Equal(graph.GraphId, detail.Graph.GraphId);
         Assert.True(detail.Nodes.Count >= 3);
         Assert.Contains(detail.Edges, item => item.EdgeId == edge.EdgeId);
         Assert.Contains(detail.Proposals, item => item.ProposalId == proposal.ProposalId && item.Status == "applied");
 
-        var updated = await PutJsonWithReviewTokenAsync<InvestigationGraphSummary>(client, $"/api/v1/graphs/{graph.GraphId}", new InvestigationGraphUpdateRequest
+        var updated = await PutJsonWithOperatorApiTokenAsync<InvestigationGraphSummary>(client, $"/api/v1/graphs/{graph.GraphId}", new InvestigationGraphUpdateRequest
         {
             Title = "Synthetic investigation graph updated",
             Description = "Updated synthetic graph",
@@ -222,24 +241,24 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         using var factory = CreateFactory(connectionString);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+        var status = await GetJsonWithOperatorApiTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
         Assert.Equal("local", status.Status);
         Assert.False(status.RequiresConnection);
 
-        var oneShot = await PostJsonWithReviewTokenAsync<SocAgentAskResponse>(client, "/api/v1/soc-agent/ask", new SocAgentAskRequest
+        var oneShot = await PostJsonWithOperatorApiTokenAsync<SocAgentAskResponse>(client, "/api/v1/soc-agent/ask", new SocAgentAskRequest
         {
             Question = "Summarize current SIEM posture."
         });
         Assert.Contains("soc-agent local SIEM assessment", oneShot.Answer, StringComparison.Ordinal);
         Assert.NotEmpty(oneShot.ToolRuns);
 
-        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        var session = await PostJsonWithOperatorApiTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
         {
             Title = "Synthetic investigation"
         });
         Assert.NotEqual(Guid.Empty, session.SessionId);
 
-        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        var chat = await PostJsonWithOperatorApiTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
         {
             Message = "List current coverage and alert priorities."
         });
@@ -249,7 +268,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.NotEmpty(chat.AssistantMessage.ToolRuns);
         Assert.Contains("Recommended next steps", chat.AssistantMessage.Content, StringComparison.Ordinal);
 
-        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        var detail = await GetJsonWithOperatorApiTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
         Assert.Equal(session.SessionId, detail.Session.SessionId);
         Assert.True(detail.Messages.Count >= 2);
         Assert.Contains(detail.Messages, message => message.Role == "operator");
@@ -257,7 +276,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
-    public async Task SocAgentSessionDeleteRequiresReviewTokenAndCascadesMessages()
+    public async Task SocAgentSessionDeleteRequiresOperatorApiTokenAndCascadesMessages()
     {
         var connectionString = database.RequireConnectionString();
         using var factory = CreateFactory(connectionString);
@@ -268,28 +287,28 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
         }
 
-        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        var session = await PostJsonWithOperatorApiTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
         {
             Title = "Synthetic session deletion"
         });
-        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        var chat = await PostJsonWithOperatorApiTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
         {
             Message = "Create synthetic messages for deletion."
         });
         Assert.Equal(session.SessionId, chat.Session.SessionId);
 
-        var deleted = await DeleteJsonWithReviewTokenAsync<SocAgentSessionDeleteResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        var deleted = await DeleteJsonWithOperatorApiTokenAsync<SocAgentSessionDeleteResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
         Assert.True(deleted.Deleted);
         Assert.Equal("deleted", deleted.Status);
         Assert.Equal(session.SessionId, deleted.SessionId);
         Assert.DoesNotContain("Create synthetic messages", deleted.Message, StringComparison.OrdinalIgnoreCase);
 
-        using (var missingDetail = await SendGetWithReviewTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
+        using (var missingDetail = await SendGetWithOperatorApiTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
         {
             Assert.Equal(HttpStatusCode.NotFound, missingDetail.StatusCode);
         }
 
-        using (var secondDelete = await SendDeleteWithReviewTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
+        using (var secondDelete = await SendDeleteWithOperatorApiTokenAsync(client, $"/api/v1/soc-agent/sessions/{session.SessionId}"))
         {
             Assert.Equal(HttpStatusCode.NotFound, secondDelete.StatusCode);
         }
@@ -336,7 +355,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             Message = "Start a synthetic active run before deletion."
         });
 
-        using (var blocked = await SendDeleteWithReviewTokenAsync(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}"))
+        using (var blocked = await SendDeleteWithOperatorApiTokenAsync(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}"))
         {
             Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
             var body = await blocked.Content.ReadAsStringAsync(CancellationToken.None);
@@ -381,7 +400,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.True(events.Where(item => item.GetProperty("type").GetString() != "resume_snapshot").Select(item => item.GetProperty("sequence").GetInt64()).SequenceEqual(
             events.Where(item => item.GetProperty("type").GetString() != "resume_snapshot").Select(item => item.GetProperty("sequence").GetInt64()).OrderBy(item => item)));
 
-        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
+        var detail = await GetJsonWithOperatorApiTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
         Assert.Equal(start.Session.SessionId, detail.Session.SessionId);
         Assert.Single(detail.Messages, message => message.Role == "operator");
         Assert.Single(detail.Messages, message => message.Role == "soc_agent");
@@ -427,7 +446,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_cancel_requested");
         Assert.Contains(events, item => item.GetProperty("type").GetString() == "run_complete" && item.GetProperty("data").GetProperty("status").GetString() == "cancelled");
 
-        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
+        var detail = await GetJsonWithOperatorApiTokenAsync<SocAgentSessionDetailResponse>(reviewClient, $"/api/v1/soc-agent/sessions/{start.Session.SessionId}");
         Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.ErrorCode == "cancelled");
     }
 
@@ -454,19 +473,19 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+        var status = await GetJsonWithOperatorApiTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
         Assert.Equal("connected", status.Status);
         Assert.False(status.RequiresConnection);
         Assert.True(status.DataMayLeaveLocalSiem);
 
-        var session = await PostJsonWithReviewTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
+        var session = await PostJsonWithOperatorApiTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
         {
             Title = "Synthetic external provider chat"
         });
         Assert.Equal("OpenAI", session.Provider);
         Assert.Equal("gpt-test", session.Model);
 
-        var chat = await PostJsonWithReviewTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
+        var chat = await PostJsonWithOperatorApiTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
         {
             Message = "Summarize current posture with the official provider. api_key=should-not-leave"
         });
@@ -481,15 +500,15 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("api_key=<redacted>", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fake-openai-api-key", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
 
-        var detail = await GetJsonWithReviewTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
+        var detail = await GetJsonWithOperatorApiTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
         Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.Provider == "OpenAI");
     }
 
-    [Fact]
+    [PostgresFact]
     public async Task SocAgentStatusReportsOfficialSetupWhenExternalProviderIsNotConfigured()
     {
         using var factory = CreateFactory(
-            "Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=test",
+            database.RequireConnectionString(),
             new Dictionary<string, string?>
             {
                 ["SocAgent:Provider"] = "OpenAI",
@@ -500,7 +519,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var status = await GetJsonWithReviewTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
+        var status = await GetJsonWithOperatorApiTokenAsync<SocAgentProviderStatusResponse>(client, "/api/v1/soc-agent/status");
 
         Assert.Equal("provider_not_configured", status.Status);
         Assert.True(status.RequiresConnection);
@@ -544,6 +563,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         IReadOnlyDictionary<string, string?>? overrides = null,
         Action<IServiceCollection>? configureServices = null)
     {
+        EnsureTestOperator(connectionString);
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -552,7 +572,6 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                 {
                     ["ConnectionStrings:SiemDatabase"] = connectionString,
                     ["Auth:EnrollmentToken"] = EnrollmentToken,
-                    ["Auth:ReviewToken"] = ReviewToken,
                     ["Ingestion:MaxEventsPerBatch"] = "500",
                     ["SocAgent:Provider"] = "Local",
                     ["SocAgent:ProviderDisplayName"] = "Local soc-agent",
@@ -579,6 +598,18 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         });
     }
 
+
+    private static void EnsureTestOperator(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString); connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "insert into operators(operator_id,username,normalized_username,display_name,role,password_hash,api_token_hash) values(@id,'synthetic-admin','SYNTHETIC-ADMIN','Synthetic Admin','admin',@password,@token) on conflict(normalized_username) do update set role='admin',password_hash=excluded.password_hash,api_token_hash=excluded.api_token_hash,enabled=true;";
+        command.Parameters.AddWithValue("id", Guid.NewGuid());
+        command.Parameters.AddWithValue("password", new Challenger.Siem.Api.Auth.OperatorPasswordHasher().Hash("Synthetic-Test1!"));
+        command.Parameters.AddWithValue("token", Challenger.Siem.Api.Auth.OperatorSecrets.Hash(OperatorApiToken));
+        command.ExecuteNonQuery();
+    }
+
     private static async Task<HttpClient> CreateAuthenticatedWebClientAsync(WebApplicationFactory<Program> factory)
     {
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -596,7 +627,8 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = WebUtility.HtmlDecode(tokenMatch.Groups[1].Value),
-            ["ReviewToken"] = ReviewToken,
+            ["Username"] = "synthetic-admin",
+            ["Password"] = "Synthetic-Test1!",
             ["ReturnUrl"] = "/"
         }), CancellationToken.None);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
@@ -643,30 +675,30 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         return await client.SendAsync(request, CancellationToken.None);
     }
 
-    private static async Task<T> GetJsonWithReviewTokenAsync<T>(HttpClient client, string path)
+    private static async Task<T> GetJsonWithOperatorApiTokenAsync<T>(HttpClient client, string path)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
         using var response = await client.SendAsync(request, CancellationToken.None);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
     }
 
-    private static async Task<HttpResponseMessage> SendGetWithReviewTokenAsync(HttpClient client, string path)
+    private static async Task<HttpResponseMessage> SendGetWithOperatorApiTokenAsync(HttpClient client, string path)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
         return await client.SendAsync(request, CancellationToken.None);
     }
 
-    private static async Task<T> PostJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
+    private static async Task<T> PostJsonWithOperatorApiTokenAsync<T>(HttpClient client, string path, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path)
         {
             Content = JsonContent.Create(body, options: JsonOptions.Default)
         };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
         using var response = await client.SendAsync(request, CancellationToken.None);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
@@ -681,28 +713,28 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
     }
 
-    private static async Task<T> DeleteJsonWithReviewTokenAsync<T>(HttpClient client, string path)
+    private static async Task<T> DeleteJsonWithOperatorApiTokenAsync<T>(HttpClient client, string path)
     {
-        using var response = await SendDeleteWithReviewTokenAsync(client, path);
+        using var response = await SendDeleteWithOperatorApiTokenAsync(client, path);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);
         return result ?? throw new InvalidOperationException($"Response from {path} was empty.");
     }
 
-    private static async Task<HttpResponseMessage> SendDeleteWithReviewTokenAsync(HttpClient client, string path)
+    private static async Task<HttpResponseMessage> SendDeleteWithOperatorApiTokenAsync(HttpClient client, string path)
     {
         var request = new HttpRequestMessage(HttpMethod.Delete, path);
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
         return await client.SendAsync(request, CancellationToken.None);
     }
 
-    private static async Task<T> PutJsonWithReviewTokenAsync<T>(HttpClient client, string path, object body)
+    private static async Task<T> PutJsonWithOperatorApiTokenAsync<T>(HttpClient client, string path, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, path)
         {
             Content = JsonContent.Create(body, options: JsonOptions.Default)
         };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReviewToken);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
         using var response = await client.SendAsync(request, CancellationToken.None);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions.Default, CancellationToken.None);

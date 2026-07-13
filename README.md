@@ -5,12 +5,12 @@ Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoin
 ## Current capabilities
 
 - Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
-- Linux endpoint service with enrollment, heartbeat, durable queue delivery, and bounded read-only host/security-posture inventory snapshots; passive Linux event collection remains planned.
+- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, and passive cursor-based L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records.
 - Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
 - Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`.
-- Review-token-protected web console for dashboard review, agent inventory, host coverage/source health with telemetry completeness and detection prerequisite status, event search/detail, alert skeletons, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
+- Role-protected web console for dashboard review, agent inventory, host coverage/source health with telemetry completeness and detection prerequisite status, event search/detail, alert skeletons, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
 - Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
 
 ## Architecture
@@ -30,10 +30,11 @@ This repository is public. Do not commit tokens, passwords, connection strings, 
 
 ## Quickstart without Docker
 
-Prerequisites: .NET SDK, PostgreSQL, Bash-compatible shell for helper scripts, and a private local environment file such as `.local/dev.env` containing `ConnectionStrings__SiemDatabase`, `Auth__EnrollmentToken`, and `Auth__ReviewToken`.
+Prerequisites: .NET SDK, PostgreSQL, Bash-compatible shell, and a private local environment file such as `.local/dev.env` containing `ConnectionStrings__SiemDatabase` and `Auth__EnrollmentToken`.
 
 ```bash
 ./scripts/apply-schema.sh
+SIEM_OPERATOR_PASSWORD='<private-strong-password>' ./scripts/operator-account.sh bootstrap --username local-admin --role admin
 
 dotnet build Challenger.Siem.sln
 dotnet test Challenger.Siem.sln
@@ -58,7 +59,7 @@ Run the API and web console locally with the lifecycle helper:
 ./scripts/platform.sh stop
 ```
 
-For a foreground run, use `ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile`. Open `http://127.0.0.1:5081/login` and sign in with the configured `Auth__ReviewToken`.
+For a foreground run, use `ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile`. Open `http://127.0.0.1:5081/login` and sign in with the bootstrapped operator username and password.
 
 ## Windows agent lab path
 

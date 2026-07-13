@@ -47,7 +47,7 @@ public sealed class CrossPlatformContractTests
     }
 
     [Fact]
-    public async Task LinuxRegistrationReturns422AtTheWindowsOnlyStorageBoundary()
+    public async Task LinuxRegistrationIsNotRejectedAsCrossPlatformStoragePending()
     {
         const string enrollmentToken = "synthetic-contract-enrollment-token";
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -58,7 +58,6 @@ public sealed class CrossPlatformContractTests
                 {
                     ["ConnectionStrings:SiemDatabase"] = "Host=127.0.0.1;Database=unused_contract_test;Username=unused_contract_test",
                     ["Auth:EnrollmentToken"] = enrollmentToken,
-                    ["Auth:ReviewToken"] = "synthetic-contract-review-token"
                 });
             });
         });
@@ -67,11 +66,15 @@ public sealed class CrossPlatformContractTests
 
         var registration = DeserializeFixture<AgentRegistrationRequest>("linux-registration.synthetic.json");
         using var response = await client.PostAsJsonAsync("/api/v1/agents/register", registration, JsonOptions);
-        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("cross_platform_storage_pending", problem.GetProperty("title").GetString());
-        Assert.Equal(422, problem.GetProperty("status").GetInt32());
+        // Multi-platform storage is active; the obsolete 422 storage-pending gate must not fire.
+        // Without a live database the handler may fail later, but never as cross_platform_storage_pending.
+        Assert.NotEqual(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        if (response.Content.Headers.ContentType?.MediaType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("cross_platform_storage_pending", body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

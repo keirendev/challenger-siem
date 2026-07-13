@@ -1,12 +1,12 @@
 # Linux host coverage specification
 
-Status: agent/service foundation and bounded host/security inventory snapshots implemented; passive Linux event collectors remain planned
+Status: agent/service foundation, bounded host/security inventory, and passive L1 system-journal collection implemented; audit/file/advanced collectors remain planned
 Specification version: 0.1
 Primary audience: SIEM engineers, Linux agent engineers, detection engineers, operators
 
 ## Purpose and current boundary
 
-This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented inventory from planned event coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service foundation provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, and bounded read-only host/security-posture inventory. Passive journal, audit, and other Linux event collection and Linux-specific source-health/coverage evaluation remain planned.
+This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented L1 journal/inventory capability from planned event coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, bounded read-only host/security-posture inventory, and one passive cursor-based L1 system-journal source. Audit, syslog-file, role, advanced collectors, and server-generated Linux coverage overlays remain planned.
 
 Like the [Windows full-coverage specification](windows-host-full-coverage-spec.md), this specification treats collection, reliability, source health, operational verification, and detection prerequisites as one coverage problem. It differs where Linux distributions, init systems, audit frameworks, and role logs are heterogeneous. A host can report only the level whose mandatory applicable sources are healthy; unavailable or operator-disabled sources must be shown as gaps or approved exceptions, never silently treated as covered.
 
@@ -40,7 +40,9 @@ These sources are mandatory when present on a supported host and must be consume
 | Service and scheduler state | L2 | systemd unit changes, cron/at configuration and execution metadata | Passive logs plus bounded metadata snapshots |
 | Host/security inventory | L2 | OS/kernel, packages, users/groups, services, listeners, mounts, firewall/SSH/MAC/Secure Boot state, and agent permission posture | Bounded current-state snapshots are implemented; inventory-diff events remain planned |
 
-The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/units/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file permission/fingerprint metadata. A non-systemd host reports service/unit/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy. Future passive event collectors must define supported distributions and exact paths/providers through tested source manifests rather than assuming every host uses systemd or a particular log layout.
+The implemented inventory catalog uses fixed providers and exact paths for host/kernel identity, users/groups, systemd services/units/timers, dpkg/rpm packages, apt/dnf available updates, interfaces/listeners, filesystem types, nftables/firewalld/UFW state, selected SSH settings, AppArmor/SELinux, Secure Boot, and agent file permission/fingerprint metadata. A non-systemd host reports service/unit/timer snapshots as `not_applicable`; the agent does not assume that a missing provider is healthy.
+
+The implemented `linux-journal-l1` source directly invokes the fixed systemd `journalctl` machine-readable JSON interface, with no shell or arbitrary command/path configuration. It allowlists journal identity/time/boot/transport/unit/identifier/facility/priority/message/process/user fields and classifies kernel, boot, service, authentication, and core-system families. It persists each normalized event to Agent.Core before its collected cursor, and persists accepted/duplicate acknowledgement before deletion. Rotation/vacuum/invalid cursor, access denial, empty source, malformed/binary data, reorder/duplicate, backlog and throttle are explicit source-health states. Future passive event collectors must use similarly tested fixed manifests rather than assuming every host uses a particular log layout.
 
 ### Optional advanced sources
 
@@ -59,6 +61,12 @@ Optional collectors must degrade independently. Failure or overload in one must 
 ### Unsupported or not applicable
 
 The target does not include packet payload capture, keystroke capture, unrestricted file-content collection, memory scraping, secret-store harvesting, browser/session-store collection, or general-purpose command execution. Windows Event Log, ETW, Sysmon, Defender, registry, and Windows role channels are not applicable to Linux. Unsupported kernels, distributions, absent facilities, and host-role mismatches must be reported as `unsupported` or `not_applicable`, distinct from `disabled`, `error`, and `stale`.
+
+## Implemented L1 journal boundary
+
+Journal polling defaults to 500 records every five seconds and accepts only bounded machine-readable records. Input is capped before parsing; allowlisted retained fields, messages, and raw JSON are capped and disclose redaction/truncation through v1 `data_handling`. Secret-shaped assignments and non-text values are removed before durable queue insertion. Deterministic IDs bind agent/source/cursor and are validated by the existing server contract.
+
+Health reports latest event/lag, durable collected cursor, accepted/duplicate acknowledged cursor, gap/error/permission/throttle state, empty/collector/config/version state, and bounded anomaly counters. Queue pressure pauses reads without dropping unacknowledged events. The collector does not alter journal retention, service settings, authentication, groups, ACLs, kernel state, or policy. Linux Audit Framework, syslog-file fallback, and role sources are not part of this source.
 
 ## Implemented inventory boundary
 
@@ -148,6 +156,8 @@ Benchmarks must separate idle baseline, representative steady state, burst, serv
 
 Only synthetic events and operator-owned test hosts may be used. Record benchmark tooling, host class, workload generator, configuration hash, sample interval, run duration, warm-up, percentiles, and pass/fail result under ignored local paths. Averages must cover the steady-state window; p95 uses the same fixed sampling interval. Bursts must demonstrate bounded recovery without silent loss. Failure of any SLO blocks rollout of the responsible level/collector until tuned or explicitly excepted.
 
+The repository includes a bounded 5,000-record synthetic normalization regression test. It requires at least 500 records/second, less than 250 MiB managed allocation, raw records below 4 KiB, and completion within ten seconds. These thresholds catch gross regressions and align memory/throughput with the L1 SLO, but they do not measure steady-state process CPU, RSS, disk-write rate, distribution compatibility, or soak duration. Those measurements remain rollout gates and must not be inferred from the unit benchmark.
+
 ## Staged rollout, soak, and rollback
 
 1. **Preflight:** produce a read-only plan listing detected platform, requested level, sources, paths, groups/capabilities, expected volume, limits, exclusions, and all proposed host changes. L1 must propose no security-policy mutation.
@@ -160,6 +170,6 @@ Immediate rollback criteria are: suspected credential/secret or excluded-data co
 
 ## Acceptance and implementation gates
 
-The bounded inventory slice has synthetic parser, state, cancellation, scheduling, item/payload-cap, large-list, privacy, and queue/passive non-interference coverage. Its release does not satisfy the remaining event-coverage gates. Passive Linux event collection is not ready until it has queue/checkpoint tests, rotation/reboot/gap tests, supported-platform packaging tests, benchmark evidence, soak results, and operator-visible source-health/coverage states. Any API/schema additions must preserve `/api/v1` and `contracts/v1/` or introduce an explicit new version.
+The bounded inventory slice has synthetic parser, state, cancellation, scheduling, item/payload-cap, large-list, privacy, and queue/passive non-interference coverage. The L1 journal slice has synthetic normalization, deterministic identity, queue/checkpoint ordering, restart, acknowledgement/outage/replay, rotation/vacuum/invalid-cursor gap, permission, malformed/binary, empty, duplicate/reorder, pressure, and high-volume benchmark coverage. It exposes operator-visible source health but does not satisfy supported-distribution host benchmarks or the private 24-hour canary soak; no such soak is claimed. L1 rollout remains gated on those host-specific checks. Any API/schema additions must preserve `/api/v1` and `contracts/v1/` or introduce an explicit new version.
 
 Security boundaries and mutation approval are authoritative in [linux-agent-security.md](linux-agent-security.md). Public examples and evidence must follow [the repository public-data rules](index.md#public-data-rules-for-docs-and-screenshots).

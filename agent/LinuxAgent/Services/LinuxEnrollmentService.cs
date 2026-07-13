@@ -30,7 +30,8 @@ public sealed class LinuxEnrollmentService(
                 Hostname = Environment.MachineName,
                 OsVersion = Environment.OSVersion.VersionString,
                 AgentVersion = version,
-                Platform = "linux"
+                Platform = "linux",
+                HostId = options.AgentId
             }, options.EnrollmentToken, cancellationToken);
             if (response.AgentId != options.AgentId) throw new InvalidOperationException("Registration response agent ID mismatch.");
             options.ApiToken = response.ApiToken;
@@ -56,6 +57,7 @@ public sealed class LinuxEnrollmentService(
                 options.InventoryIntervalSeconds,
                 options.DrainBatchSize,
                 options.Inventory,
+                options.Journal,
                 options.Queue,
                 options.State
             }

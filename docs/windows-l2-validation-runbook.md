@@ -18,7 +18,7 @@ Use only authorized lab hosts. Do not clear event logs, reboot, uninstall servic
 5. Copy `WindowsAgent.exe`, `agentsettings.json`, and optional `Sysmon/` profile to the VM temporary directory.
 6. Preview the installer with `install-windows-agent.ps1 -Mode plan -TargetLevel L2`; use `-ConfigurePrerequisites` only when the operator has approved audit/channel policy changes.
 7. Install or repair through `install-windows-agent.ps1 -Mode install` (or run the temporary process only for non-mutating smoke checks), then run long enough to emit at least one heartbeat and bounded System-channel events.
-8. Query `/api/v1/source-health?agent_id=<id>&target_level=L2`, `/api/v1/telemetry-coverage?agent_id=<id>&target_level=L2&lookback_hours=24`, and `/api/v1/events?agent_id=<id>&limit=10` with the review token.
+8. Query `/api/v1/source-health?agent_id=<id>&target_level=L2`, `/api/v1/telemetry-coverage?agent_id=<id>&target_level=L2&lookback_hours=24`, and `/api/v1/events?agent_id=<id>&limit=10` with the operator API credential.
 
 ## Evidence
 

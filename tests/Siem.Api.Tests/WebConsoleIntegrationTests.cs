@@ -14,7 +14,7 @@ namespace Challenger.Siem.Api.Tests;
 public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 {
     private const string EnrollmentToken = "web-integration-enrollment-token";
-    private const string ReviewToken = "web-integration-review-token";
+    private const string OperatorPassword = "Synthetic-Web-Admin1!";
 
     [PostgresFact]
     public async Task WebConsoleDisplaysSeededAgentHeartbeatAndEventData()
@@ -254,6 +254,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
     private static WebApplicationFactory<Program> CreateFactory(string connectionString)
     {
+        EnsureTestOperator(connectionString);
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -262,7 +263,6 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                 {
                     ["ConnectionStrings:SiemDatabase"] = connectionString,
                     ["Auth:EnrollmentToken"] = EnrollmentToken,
-                    ["Auth:ReviewToken"] = ReviewToken,
                     ["SocAgent:Provider"] = "Local",
                     ["SocAgent:ProviderDisplayName"] = "Local soc-agent",
                     ["SocAgent:AuthMode"] = "Local",
@@ -271,6 +271,14 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
                 });
             });
         });
+    }
+
+
+    private static void EnsureTestOperator(string connectionString)
+    {
+        using var connection=new NpgsqlConnection(connectionString); connection.Open(); using var command=connection.CreateCommand();
+        command.CommandText="insert into operators(operator_id,username,normalized_username,display_name,role,password_hash) values(@id,'synthetic-web-admin','SYNTHETIC-WEB-ADMIN','Synthetic Web Admin','admin',@hash) on conflict(normalized_username) do update set password_hash=excluded.password_hash,role='admin',enabled=true;";
+        command.Parameters.AddWithValue("id",Guid.NewGuid());command.Parameters.AddWithValue("hash",new Challenger.Siem.Api.Auth.OperatorPasswordHasher().Hash(OperatorPassword));command.ExecuteNonQuery();
     }
 
     private static async Task<string> RegisterAsync(HttpClient client, string agentId, string hostname)
@@ -357,7 +365,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = token,
-            ["ReviewToken"] = ReviewToken,
+            ["Username"] = "synthetic-web-admin",
+            ["Password"] = OperatorPassword,
             ["ReturnUrl"] = "/"
         }));
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
