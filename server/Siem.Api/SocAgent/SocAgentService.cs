@@ -308,6 +308,10 @@ public sealed class SocAgentService(
             ServiceName: null,
             FilePath: null,
             RegistryKey: null,
+            Source: null,
+            Platform: null,
+            SourceId: null,
+            EventCode: null,
             Limit: Math.Clamp(options.MaxEvents, 1, 50));
         await StartToolAsync("event_search", "Loading recent normalized events for the current scope.");
         var recentEvents = await events.SearchEventsAsync(eventQuery, cancellationToken);

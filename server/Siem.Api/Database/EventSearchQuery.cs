@@ -20,6 +20,10 @@ public sealed record EventSearchQuery(
     string? ServiceName,
     string? FilePath,
     string? RegistryKey,
+    string? Source,
+    string? Platform,
+    string? SourceId,
+    string? EventCode,
     int Limit)
 {
     public static EventSearchQuery FromQuery(IQueryCollection query)
@@ -41,6 +45,10 @@ public sealed record EventSearchQuery(
             ReadString(query, "service_name"),
             ReadString(query, "file_path"),
             ReadString(query, "registry_key"),
+            ReadString(query, "source"),
+            ReadString(query, "platform"),
+            ReadString(query, "source_id"),
+            ReadString(query, "event_code"),
             ReadInt(query, "limit") ?? 100);
     }
 

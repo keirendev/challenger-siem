@@ -114,9 +114,9 @@ Source manifests and source-health arrays retain their existing limit of 100 ent
 
 ## Storage boundary
 
-The active PostgreSQL schema in `server/Siem.Api/Database/001_initial.sql` still has Windows-only non-null/check constraints. The additive contracts deliberately do not alter that database; multi-platform table migration, persistence, and search are deferred to the next storage issue.
+Numbered migrations under `server/Siem.Api/Database/` apply in lexical order. `002_multiplatform_events.sql` upgrades the original Windows table in place: existing rows and `(agent_id, event_id)` deduplication are preserved, Windows identity columns become conditionally required, and portable platform/source/checkpoint/deduplication/data-handling fields are stored without fabricated Windows IDs. Reapplying all migrations is supported.
 
-Until that migration is applied, the current server validates additive Linux registration plus all portable heartbeat/event shapes, including Windows inventory-diff and agent-health records, but returns HTTP 422 with `cross_platform_storage_pending` before calling a Windows-Event-Log-only repository. This avoids claiming that Linux telemetry was persisted or searchable. Existing Windows v1 storage and search behavior is unchanged.
+Portable v1 events ingest, deduplicate, persist, and search through the same `/api/v1` paths as Windows events. Search accepts additive `source`, `platform`, `source_id`, and `event_code` filters. Authenticated `GET /api/v1/storage/accounting` reports table, index, total relation bytes, row count, and measurement time for later quota enforcement.
 
 ## Database tables
 
@@ -157,4 +157,4 @@ With PostgreSQL client tools installed and a private ignored connection configur
 ./scripts/validate-schema.sh
 ```
 
-These commands validate the current Windows persistence schema only; they do not indicate Linux persistence support.
+The apply script runs every numbered migration and fails on the first error. The validator checks portable columns and indexes. Validate upgrades only on operator-owned empty or synthetic databases; keep plans and database output under ignored `.local/`.

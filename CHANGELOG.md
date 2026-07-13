@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added numbered idempotent PostgreSQL migrations, multi-platform event persistence/search, portable-source indexes, and authenticated managed event-storage accounting while preserving Windows v1 rows and semantics.
+
 - Added backward-compatible v1 cross-platform telemetry contracts with Linux-native journal/audit sources and platform-neutral Windows-or-Linux inventory-diff/agent-health sources, including explicit source/checkpoint/deduplication/applicability/health metadata, bounded structured concepts and raw-data handling, old-valid Windows boundary regressions, synthetic schema/golden validation, and an honest storage-migration boundary while preserving the exact legacy Windows Event Log payload allowances and semantics.
 - Added host timezone metadata across registration, heartbeat, source-health, inventory, event ingest/search, storage, schemas, and web review displays so host-scoped timelines default to clearly labelled endpoint-local time while UTC remains canonical for filtering and correlation.
 - Added a full-capability Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded Windows prerequisite configuration, Microsoft-signed Sysmon management, a versioned Sysmon L3 profile, source-manifest prerequisite/event-family validation metadata, and Sysmon profile hash reporting in source health.

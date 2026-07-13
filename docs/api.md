@@ -361,3 +361,8 @@ Authorization: Bearer <review-token>
 ```
 
 The initial alert/detection APIs expose the storage and review skeleton plus built-in detection metadata. Mutating alert triage and rule activation remain future approved workflows.
+
+
+## Managed event storage accounting
+
+`GET /api/v1/storage/accounting` requires the review token and returns PostgreSQL byte accounting for the managed `events` table and indexes plus row count and measurement time. Event search also accepts additive `source`, `platform`, `source_id`, and `event_code` query parameters. Existing v1 Windows filters and response shapes remain compatible.

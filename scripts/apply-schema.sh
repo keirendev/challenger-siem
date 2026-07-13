@@ -45,5 +45,13 @@ psql_args_from_connection_string() {
 }
 
 psql_args_from_connection_string
-psql "${PSQL_ARGS[@]}" -v ON_ERROR_STOP=1 -f server/Siem.Api/Database/001_initial.sql >/dev/null
+mapfile -t migrations < <(find server/Siem.Api/Database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' | sort)
+if [[ ${#migrations[@]} -eq 0 ]]; then
+  echo "No numbered database migrations were found." >&2
+  exit 1
+fi
+for migration in "${migrations[@]}"; do
+  psql "${PSQL_ARGS[@]}" -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
+  printf 'Applied %s\n' "$(basename "$migration")"
+done
 printf 'Schema applied successfully.\n'
