@@ -244,7 +244,7 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 
 ## Linux agent lifecycle and L2 canary preparation
 
-Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy.
+Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) is a design decision record only; it does not add Linux audit, eBPF, or file-integrity lifecycle steps.
 
 The tracked synthetic validation path is:
 

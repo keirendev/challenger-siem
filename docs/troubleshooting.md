@@ -145,7 +145,7 @@ Treat unsupported architecture/init, missing locked service identity, non-0600 i
 - `disabled` on L2 rows is expected while `Agent:Journal:TargetCoverageLevel` is the default `L1`. Use `L2` only in an approved canary.
 - `degraded` with `applicability=unknown` means an optional producer or host role has not been established; absence of an event is not proof of applicability. Declare only verified bounded roles.
 - `permission_denied` means the fixed journal read failed. Do not retry as root, add groups/ACLs, or weaken service hardening merely to change status; access expansion is a separate security decision.
-- `unsupported` on `linux-audit-framework` is intentional in this release. No audit collector or audit-policy enablement exists.
+- `unsupported` on `linux-audit-framework` is intentional in this release. No audit collector or audit-policy enablement exists. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) keeps audit and eBPF deferred and does not enable file-integrity monitoring.
 - `not_applicable` requires a declared platform/role reason. `excepted` comes only from an active server-side coverage exception.
 - `stale` indicates age/discontinuity; inspect collected versus acknowledged cursors, gap state, queue pressure, and recent events by `source_id` without copying raw telemetry into a ticket.
 
