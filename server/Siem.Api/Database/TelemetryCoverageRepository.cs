@@ -256,7 +256,7 @@ public sealed class TelemetryCoverageRepository(
         {
             SourceId = source.SourceId,
             DisplayName = source.DisplayName,
-            Channel = source.Channel,
+            Channel = source.Channel ?? string.Empty,
             CoverageLevel = source.CoverageLevel,
             Required = source.Required,
             Enabled = source.Enabled,
@@ -269,7 +269,7 @@ public sealed class TelemetryCoverageRepository(
             Details = source.Details,
             RecentEventCount = recentCount,
             Reason = SourceReason(source, recentCount),
-            EventSearchUrl = $"/events?agent_id={Uri.EscapeDataString(agentId)}&channel={Uri.EscapeDataString(source.Channel)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
+            EventSearchUrl = $"/events?agent_id={Uri.EscapeDataString(agentId)}&channel={Uri.EscapeDataString(source.Channel ?? string.Empty)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
             SourceHealthUrl = $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}"
         };
     }

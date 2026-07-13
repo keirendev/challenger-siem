@@ -27,6 +27,7 @@ The project should remain open-source and custom-built.
 | xUnit.net | Unit test framework | Apache 2.0, open-source |
 | Microsoft.NET.Test.Sdk | .NET test runner integration | MIT, open-source |
 | Microsoft.AspNetCore.Mvc.Testing | ASP.NET Core web auth/session tests | MIT, open-source |
+| JsonSchema.Net | Deterministic draft 2020-12 contract-schema and golden-fixture validation in tests | MIT, open-source |
 
 ## Optional project tooling
 

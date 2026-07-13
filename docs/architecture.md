@@ -90,11 +90,17 @@ Default optional L2/L3 source manifest channels:
 
 Linux collection is not currently implemented or part of the Windows MVP architecture. The authoritative future design is split between the [Linux host coverage specification](linux-host-coverage-spec.md), which defines L1-L4 sources, SLOs, pressure behavior, and rollout gates, and the [Linux agent security design](linux-agent-security.md), which defines least privilege, privacy exclusions, and explicit approval for any host-policy change.
 
+## Cross-platform contract boundary
+
+The additive v1 contract can represent typed Linux journal, audit, inventory-diff, and agent-health records, source manifests, applicability, and collected/acknowledged checkpoints without Windows identifiers. That is a contract foundation, not a second active storage path: PostgreSQL, search, coverage overlays, and the deployed agent remain Windows-only until their dependency-ordered migration issues are complete. The server returns `cross_platform_storage_pending` rather than sending Linux-shaped data into Windows-only repositories.
+
 ## Reliability decisions
 
 - Server deduplication is based on `(agent_id, event_id)`.
-- Agent must maintain local channel position state.
-- Agent must maintain a durable local queue.
+- Existing Windows deterministic IDs retain their current inputs; new Linux contracts declare ordered `sha256_uuid` inputs explicitly.
+- Agents must maintain durable local source position state and a durable queue.
+- Events are queued before the collected checkpoint advances; queue deletion and acknowledged checkpoint advancement happen only after accepted/duplicate acknowledgement.
+- Collected and acknowledged cursor/sequence positions are reported independently so backlog/gaps remain visible.
 - Server ingest time is generated server-side and does not trust client-provided ingest timestamps.
 
 ## Security decisions

@@ -155,7 +155,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", request.AgentId);
             command.Parameters.AddWithValue("source_id", source.SourceId);
             command.Parameters.AddWithValue("display_name", source.DisplayName);
-            command.Parameters.AddWithValue("channel", source.Channel);
+            command.Parameters.AddWithValue("channel", source.Channel!);
             command.Parameters.AddWithValue("coverage_level", source.CoverageLevel.ToString());
             command.Parameters.AddWithValue("status", effectiveStatus);
             command.Parameters.AddWithValue("required_source", source.Required);

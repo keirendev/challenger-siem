@@ -1,0 +1,29 @@
+{
+  "agent_id": "win-synthetic-001",
+  "hostname": "WIN-SYNTHETIC",
+  "agent_version": "0.20.0",
+  "os": "Windows 11 Synthetic",
+  "last_event_time": "2026-07-11T10:00:00Z",
+  "queue_depth": 1,
+  "source_manifest": [
+    {
+      "source_id": "security",
+      "channel": "Security",
+      "display_name": "Windows Security",
+      "coverage_level": "L1",
+      "required": true
+    }
+  ],
+  "source_health": [
+    {
+      "source_id": "security",
+      "display_name": "Windows Security",
+      "channel": "Security",
+      "coverage_level": "L1",
+      "status": "healthy",
+      "required": true,
+      "enabled": true,
+      "newest_record_id": 4102
+    }
+  ]
+}

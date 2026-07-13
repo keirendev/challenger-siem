@@ -13,6 +13,14 @@ public sealed record AgentRegistrationRequest
     [JsonPropertyName("machine_guid")]
     public string? MachineGuid { get; init; }
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
+    [JsonPropertyName("host_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HostId { get; init; }
+
     [JsonPropertyName("os_version")]
     public string OsVersion { get; init; } = string.Empty;
 

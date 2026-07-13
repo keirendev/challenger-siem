@@ -16,6 +16,14 @@ public sealed record HeartbeatRequest
     [JsonPropertyName("os")]
     public string Os { get; init; } = string.Empty;
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
+    [JsonPropertyName("host_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HostId { get; init; }
+
     [JsonPropertyName("last_event_time")]
     public DateTimeOffset? LastEventTime { get; init; }
 

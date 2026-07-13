@@ -1,0 +1,174 @@
+{
+  "agent_id": "linux-synthetic-001",
+  "batch_id": "00000000-0000-4000-8000-000000000201",
+  "sent_at": "2026-07-11T11:00:05Z",
+  "events": [
+    {
+      "event_id": "f2f56cd6-0323-55e2-8786-b7e65a5b6eeb",
+      "agent_id": "linux-synthetic-001",
+      "hostname": "linux-synthetic",
+      "platform": "linux",
+      "source": "linux_journal",
+      "source_id": "journal-system-service",
+      "facility": "daemon",
+      "unit": "synthetic.service",
+      "checkpoint": {
+        "cursor": "s=synthetic;i=0001",
+        "event_time": "2026-07-11T11:00:00Z",
+        "recorded_at": "2026-07-11T11:00:01Z"
+      },
+      "deduplication": {
+        "algorithm": "sha256_uuid",
+        "inputs": ["agent_id", "source_id", "checkpoint.cursor"]
+      },
+      "event_time": "2026-07-11T11:00:00Z",
+      "severity": "information",
+      "message": "Synthetic service started.",
+      "normalized": {
+        "category": "service",
+        "action": "start",
+        "network": {
+          "source_ip": "192.0.2.20",
+          "source_port": 1234,
+          "destination_ip": "198.51.100.20",
+          "destination_port": 443,
+          "protocol": "tcp"
+        },
+        "entities": [],
+        "labels": {}
+      },
+      "raw": {"message":"Synthetic service started"},
+      "data_handling": {
+        "raw_size_bytes": 39,
+        "redaction_applied": false,
+        "redacted_fields": [],
+        "truncation_applied": false,
+        "truncated_fields": []
+      }
+    },
+    {
+      "event_id": "01c14b1a-68fb-543a-97b8-1252e083dc06",
+      "agent_id": "linux-synthetic-001",
+      "hostname": "linux-synthetic",
+      "platform": "linux",
+      "source": "linux_audit",
+      "source_id": "audit-exec",
+      "event_code": "SYSCALL",
+      "checkpoint": {
+        "sequence": 2001,
+        "event_time": "2026-07-11T11:00:01Z",
+        "recorded_at": "2026-07-11T11:00:02Z"
+      },
+      "deduplication": {
+        "algorithm": "sha256_uuid",
+        "inputs": ["agent_id", "source_id", "checkpoint.sequence", "event_code"]
+      },
+      "event_time": "2026-07-11T11:00:01Z",
+      "severity": "audit_success",
+      "message": "Synthetic process execution.",
+      "normalized": {
+        "category": "process",
+        "action": "execute",
+        "process": {
+          "pid": "2001",
+          "parent_pid": "1999",
+          "executable": "/usr/bin/synthetic-tool",
+          "command_line": "/usr/bin/synthetic-tool --safe"
+        },
+        "user": {
+          "name": "synthetic-user",
+          "id": "1001",
+          "realm": "local"
+        },
+        "entities": [],
+        "labels": {}
+      },
+      "raw": {"audit_type":"SYSCALL","result":"success"},
+      "data_handling": {
+        "raw_size_bytes": 43,
+        "redaction_applied": true,
+        "redacted_fields": ["raw.authorization_data"],
+        "truncation_applied": false,
+        "truncated_fields": []
+      }
+    },
+    {
+      "event_id": "1b51e5a7-079f-5b44-aaea-c65ba22ad0fe",
+      "agent_id": "linux-synthetic-001",
+      "hostname": "linux-synthetic",
+      "platform": "linux",
+      "source": "inventory_diff",
+      "source_id": "inventory-packages",
+      "event_code": "package_added",
+      "checkpoint": {
+        "sequence": 30,
+        "event_time": "2026-07-11T11:00:02Z",
+        "recorded_at": "2026-07-11T11:00:03Z"
+      },
+      "deduplication": {
+        "algorithm": "sha256_uuid",
+        "inputs": ["agent_id", "source_id", "checkpoint.sequence", "event_code"]
+      },
+      "event_time": "2026-07-11T11:00:02Z",
+      "severity": "information",
+      "message": "Synthetic package inventory changed.",
+      "normalized": {
+        "category": "inventory",
+        "action": "add",
+        "package_name": "synthetic-package",
+        "file": {
+          "path": "/opt/synthetic/package",
+          "operation": "create",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "entities": [],
+        "labels": {}
+      },
+      "raw": {"change":"package_added","package":"synthetic-package"},
+      "data_handling": {
+        "raw_size_bytes": 56,
+        "redaction_applied": false,
+        "redacted_fields": [],
+        "truncation_applied": true,
+        "truncated_fields": ["raw.package_details"],
+        "original_size_bytes": 256
+      }
+    },
+    {
+      "event_id": "6ee656fb-e6d4-52b2-b990-cd6587c70d0e",
+      "agent_id": "linux-synthetic-001",
+      "hostname": "linux-synthetic",
+      "platform": "linux",
+      "source": "agent_health",
+      "source_id": "agent-runtime-health",
+      "event_code": "health_snapshot",
+      "checkpoint": {
+        "sequence": 81,
+        "event_time": "2026-07-11T11:00:03Z",
+        "recorded_at": "2026-07-11T11:00:04Z"
+      },
+      "deduplication": {
+        "algorithm": "sha256_uuid",
+        "inputs": ["agent_id", "source_id", "checkpoint.sequence", "event_code"]
+      },
+      "event_time": "2026-07-11T11:00:03Z",
+      "severity": "information",
+      "message": "Synthetic agent health snapshot.",
+      "normalized": {
+        "category": "agent_health",
+        "action": "report",
+        "outcome": "healthy",
+        "entities": [],
+        "labels": {}
+      },
+      "raw": {"queue_depth":2,"status":"healthy"},
+      "data_handling": {
+        "raw_size_bytes": 36,
+        "redaction_applied": false,
+        "redacted_fields": [],
+        "truncation_applied": false,
+        "truncated_fields": []
+      }
+    }
+  ]
+}

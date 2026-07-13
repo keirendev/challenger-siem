@@ -1,0 +1,7 @@
+{
+  "agent_id": "win-synthetic-001",
+  "hostname": "WIN-SYNTHETIC",
+  "machine_guid": "00000000-0000-0000-0000-000000000101",
+  "os_version": "Windows 11 Synthetic",
+  "agent_version": "0.20.0"
+}

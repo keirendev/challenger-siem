@@ -1,0 +1,28 @@
+{
+  "summaries": [
+    {
+      "agent_id": "win-synthetic-001",
+      "hostname": "WIN-SYNTHETIC",
+      "target_level": "L2",
+      "current_level": "L1",
+      "overall_status": "healthy",
+      "missing_mandatory_sources": 0,
+      "stale_sources": 0,
+      "error_sources": 0,
+      "queue_depth": 1,
+      "last_heartbeat_time": "2026-07-11T10:00:00Z"
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "security",
+      "display_name": "Windows Security",
+      "channel": "Security",
+      "coverage_level": "L1",
+      "status": "healthy",
+      "required": true,
+      "enabled": true,
+      "newest_record_id": 4102
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "agent_id": "linux-synthetic-001",
+  "hostname": "linux-synthetic",
+  "platform": "linux",
+  "host_id": "00000000-0000-0000-0000-000000000201",
+  "os_version": "Synthetic Linux 1",
+  "agent_version": "0.21.0"
+}

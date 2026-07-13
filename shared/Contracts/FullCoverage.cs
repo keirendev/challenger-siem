@@ -52,8 +52,41 @@ public sealed record SourceManifestEntry
     [JsonPropertyName("source_id")]
     public string SourceId { get; init; } = string.Empty;
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
+    [JsonPropertyName("source_kind")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceKind { get; init; }
+
     [JsonPropertyName("channel")]
-    public string Channel { get; init; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Channel { get; init; }
+
+    [JsonPropertyName("source_namespace")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceNamespace { get; init; }
+
+    [JsonPropertyName("facility")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Facility { get; init; }
+
+    [JsonPropertyName("unit")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Unit { get; init; }
+
+    [JsonPropertyName("applicability")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Applicability { get; init; }
+
+    [JsonPropertyName("applicability_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ApplicabilityReason { get; init; }
+
+    [JsonPropertyName("checkpoint_kind")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CheckpointKind { get; init; }
 
     [JsonPropertyName("display_name")]
     public string DisplayName { get; init; } = string.Empty;
@@ -94,11 +127,40 @@ public sealed record SourceHealthReport
     [JsonPropertyName("source_id")]
     public string SourceId { get; init; } = string.Empty;
 
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
+
+    [JsonPropertyName("source_kind")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceKind { get; init; }
+
     [JsonPropertyName("display_name")]
     public string DisplayName { get; init; } = string.Empty;
 
     [JsonPropertyName("channel")]
-    public string Channel { get; init; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Channel { get; init; }
+
+    [JsonPropertyName("source_namespace")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceNamespace { get; init; }
+
+    [JsonPropertyName("facility")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Facility { get; init; }
+
+    [JsonPropertyName("unit")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Unit { get; init; }
+
+    [JsonPropertyName("applicability")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Applicability { get; init; }
+
+    [JsonPropertyName("applicability_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ApplicabilityReason { get; init; }
 
     [JsonPropertyName("coverage_level")]
     public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
@@ -119,13 +181,24 @@ public sealed record SourceHealthReport
     public HostTimezoneMetadata? HostTimezone { get; init; }
 
     [JsonPropertyName("last_record_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? LastRecordId { get; init; }
 
     [JsonPropertyName("oldest_record_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? OldestRecordId { get; init; }
 
     [JsonPropertyName("newest_record_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? NewestRecordId { get; init; }
+
+    [JsonPropertyName("collected_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? CollectedCheckpoint { get; init; }
+
+    [JsonPropertyName("acknowledged_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? AcknowledgedCheckpoint { get; init; }
 
     [JsonPropertyName("log_size_bytes")]
     public long? LogSizeBytes { get; init; }
@@ -176,9 +249,11 @@ public sealed record QueueSloMetrics
     public DateTimeOffset? LastSuccessfulSendTime { get; init; }
 
     [JsonPropertyName("max_size_mb")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int MaxSizeMb { get; init; }
 
     [JsonPropertyName("warning_size_percent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int WarningSizePercent { get; init; }
 }
 
@@ -189,6 +264,10 @@ public sealed record CoverageSummary
 
     [JsonPropertyName("hostname")]
     public string Hostname { get; init; } = string.Empty;
+
+    [JsonPropertyName("platform")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Platform { get; init; }
 
     [JsonPropertyName("target_level")]
     public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
@@ -555,6 +634,22 @@ public sealed record NormalizedEventFields
 
     [JsonPropertyName("package_name")]
     public string? PackageName { get; init; }
+
+    [JsonPropertyName("process")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProcessTelemetryConcept? Process { get; init; }
+
+    [JsonPropertyName("user")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public UserTelemetryConcept? User { get; init; }
+
+    [JsonPropertyName("network")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NetworkTelemetryConcept? Network { get; init; }
+
+    [JsonPropertyName("file")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FileTelemetryConcept? File { get; init; }
 
     [JsonPropertyName("entities")]
     public IReadOnlyList<EventEntity> Entities { get; init; } = Array.Empty<EventEntity>();
