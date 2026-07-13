@@ -4,7 +4,7 @@ using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Coverage;
 using Challenger.Siem.WindowsAgent.Inventory;
 using Challenger.Siem.WindowsAgent.Normalization;
-using Challenger.Siem.WindowsAgent.Security;
+using Challenger.Siem.Agent.Core.Security;
 using Xunit;
 
 namespace Challenger.Siem.WindowsAgent.Tests;
@@ -119,9 +119,9 @@ public sealed class FullCoverageAgentTests
         try
         {
             File.WriteAllText(tempPath, "{\"Agent\":{\"ApiToken\":\"one\",\"ServerBaseUrl\":\"https://siem.example\"}}");
-            var first = AgentConfigurationHasher.ComputeHash(new Challenger.Siem.WindowsAgent.Config.AgentConfigFile(tempPath));
+            var first = AgentConfigurationHasher.ComputeConfigurationHash(tempPath);
             File.WriteAllText(tempPath, "{\"Agent\":{\"ApiToken\":\"two\",\"ServerBaseUrl\":\"https://siem.example\"}}");
-            var second = AgentConfigurationHasher.ComputeHash(new Challenger.Siem.WindowsAgent.Config.AgentConfigFile(tempPath));
+            var second = AgentConfigurationHasher.ComputeConfigurationHash(tempPath);
             Assert.Equal(first, second);
         }
         finally

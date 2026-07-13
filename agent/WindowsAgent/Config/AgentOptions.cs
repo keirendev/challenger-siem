@@ -1,6 +1,8 @@
+using Challenger.Siem.Agent.Core.Transport;
+
 namespace Challenger.Siem.WindowsAgent.Config;
 
-public sealed class AgentOptions
+public sealed class AgentOptions : IAgentTransportConfiguration
 {
     public const string SectionName = "Agent";
 

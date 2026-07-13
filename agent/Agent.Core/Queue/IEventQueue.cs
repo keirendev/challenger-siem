@@ -1,6 +1,6 @@
 using Challenger.Siem.Contracts.V1;
 
-namespace Challenger.Siem.WindowsAgent.Queue;
+namespace Challenger.Siem.Agent.Core.Queue;
 
 public interface IEventQueue
 {

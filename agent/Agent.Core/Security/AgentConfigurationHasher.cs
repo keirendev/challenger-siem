@@ -1,9 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
-using Challenger.Siem.WindowsAgent.Config;
 
-namespace Challenger.Siem.WindowsAgent.Security;
+namespace Challenger.Siem.Agent.Core.Security;
 
 public static class AgentConfigurationHasher
 {
@@ -27,14 +26,14 @@ public static class AgentConfigurationHasher
         return Convert.ToHexString(digest).ToLowerInvariant();
     }
 
-    public static string ComputeHash(AgentConfigFile configFile)
+    public static string ComputeConfigurationHash(string path)
     {
-        if (!File.Exists(configFile.Path))
+        if (!File.Exists(path))
         {
             return string.Empty;
         }
 
-        var json = File.ReadAllText(configFile.Path, Encoding.UTF8);
+        var json = File.ReadAllText(path, Encoding.UTF8);
         JsonNode? node;
         try
         {

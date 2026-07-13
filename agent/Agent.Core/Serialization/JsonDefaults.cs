@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Challenger.Siem.WindowsAgent.Serialization;
+namespace Challenger.Siem.Agent.Core.Serialization;
 
 public static class JsonDefaults
 {

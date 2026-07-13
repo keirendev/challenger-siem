@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Challenger.Siem.WindowsAgent.Util;
+namespace Challenger.Siem.Agent.Core.Util;
 
 public static class DeterministicGuid
 {

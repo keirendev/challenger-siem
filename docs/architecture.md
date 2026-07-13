@@ -112,3 +112,8 @@ The additive v1 contract can represent typed Linux journal, audit, inventory-dif
 - Review/search API uses a separate review token for the MVP.
 - Web review login uses the same review token and stores only an HTTP-only session cookie in the browser.
 - Secrets must not be logged or committed.
+
+
+## Shared agent reliability core
+
+`agent/Agent.Core/` targets platform-neutral `net8.0` and owns the durable SQLite queue, deterministic identity, JSON serialization, secret-redacted configuration hashing, HTTP v1 transport, acknowledgement selection, and bounded retry schedule. `WindowsAgent` consumes that single implementation while retaining Event Log collection, DPAPI secret protection, Windows state paths, inventory, and service hosting. The core project has no Windows target framework or Event Log, registry, DPAPI, PowerShell, or Windows-service package dependency. Queue-before-checkpoint and accepted/duplicate-before-delete ordering remain unchanged.

@@ -1,17 +1,17 @@
 using System.Globalization;
 using System.Text.Json;
 using Challenger.Siem.Contracts.V1;
-using Challenger.Siem.WindowsAgent.Config;
-using Challenger.Siem.WindowsAgent.Serialization;
+using Challenger.Siem.Agent.Core.Serialization;
+using Challenger.Siem.Agent.Core.Reliability;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
-namespace Challenger.Siem.WindowsAgent.Queue;
+namespace Challenger.Siem.Agent.Core.Queue;
 
-public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<SqliteEventQueue> logger) : IEventQueue
+public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEventQueue> logger) : IEventQueue
 {
     private readonly SemaphoreSlim gate = new(1, 1);
-    private readonly AgentOptions options = options.Value;
+
     private bool initialized;
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
@@ -78,7 +78,7 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
                 var payloadJson = reader.GetString(1);
                 var sendAttempts = reader.GetInt32(2);
                 var lastAttemptAt = reader.IsDBNull(3) ? null : ParseTimestamp(reader.GetString(3));
-                if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.Queue.MaxBackoffSeconds, now))
+                if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.MaxBackoffSeconds, now))
                 {
                     continue;
                 }
@@ -272,8 +272,8 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
                     ? Math.Max(0, (long)Math.Floor((DateTimeOffset.UtcNow - oldestQueuedAt.Value).TotalSeconds))
                     : null,
                 LastSuccessfulSendTime = lastSuccessfulSendTime,
-                MaxSizeMb = options.Queue.MaxSizeMb,
-                WarningSizePercent = options.Queue.WarningSizePercent
+                MaxSizeMb = options.MaxSizeMb,
+                WarningSizePercent = options.WarningSizePercent
             };
         }
         finally
@@ -284,13 +284,7 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
 
     public static TimeSpan BackoffDelayForAttempts(int sendAttempts, int maxBackoffSeconds)
     {
-        if (sendAttempts <= 0)
-        {
-            return TimeSpan.Zero;
-        }
-
-        var seconds = Math.Min(maxBackoffSeconds, Math.Pow(2, Math.Min(sendAttempts, 10)));
-        return TimeSpan.FromSeconds(seconds);
+        return RetrySchedule.Exponential(sendAttempts, maxBackoffSeconds);
     }
 
     private async Task InitializeUnsafeAsync(CancellationToken cancellationToken)
@@ -300,7 +294,7 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
             return;
         }
 
-        var directory = Path.GetDirectoryName(options.Queue.Path);
+        var directory = Path.GetDirectoryName(options.Path);
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
@@ -359,7 +353,7 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
     {
         var builder = new SqliteConnectionStringBuilder
         {
-            DataSource = options.Queue.Path,
+            DataSource = options.Path,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared
         };
@@ -370,16 +364,16 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
 
     private void EnforceQueueSizeLimit()
     {
-        if (!File.Exists(options.Queue.Path))
+        if (!File.Exists(options.Path))
         {
             return;
         }
 
-        var maxBytes = options.Queue.MaxSizeMb * 1024L * 1024L;
-        var currentBytes = new FileInfo(options.Queue.Path).Length;
+        var maxBytes = options.MaxSizeMb * 1024L * 1024L;
+        var currentBytes = new FileInfo(options.Path).Length;
         if (currentBytes <= maxBytes)
         {
-            var warnAtBytes = maxBytes * Math.Clamp(options.Queue.WarningSizePercent, 1, 100) / 100;
+            var warnAtBytes = maxBytes * Math.Clamp(options.WarningSizePercent, 1, 100) / 100;
             if (currentBytes >= warnAtBytes)
             {
                 logger.LogWarning(
@@ -391,7 +385,7 @@ public sealed class SqliteEventQueue(IOptions<AgentOptions> options, ILogger<Sql
             return;
         }
 
-        throw new InvalidOperationException($"Agent queue has exceeded its configured size limit of {options.Queue.MaxSizeMb} MB.");
+        throw new InvalidOperationException($"Agent queue has exceeded its configured size limit of {options.MaxSizeMb} MB.");
     }
 
     private static bool IsReadyForAttempt(int sendAttempts, DateTimeOffset? lastAttemptAt, int maxBackoffSeconds, DateTimeOffset now)

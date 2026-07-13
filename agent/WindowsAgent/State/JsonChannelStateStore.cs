@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.WindowsAgent.Config;
-using Challenger.Siem.WindowsAgent.Serialization;
+using Challenger.Siem.Agent.Core.Serialization;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.WindowsAgent.State;

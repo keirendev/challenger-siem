@@ -4,7 +4,7 @@ using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.WindowsAgent.Config;
 using Challenger.Siem.WindowsAgent.Security;
 using Challenger.Siem.WindowsAgent.Time;
-using Challenger.Siem.WindowsAgent.Transport;
+using Challenger.Siem.Agent.Core.Transport;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.WindowsAgent.Services;
