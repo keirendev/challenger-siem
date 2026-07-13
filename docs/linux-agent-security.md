@@ -129,7 +129,7 @@ Changes to authentication, firewall, kernel, or mandatory access-control policy 
 - File readers must defend against symlink/hard-link replacement, device/FIFO/socket paths, path escape, permission changes, truncation, and rotation races. Only declared regular files or approved source APIs are read.
 - Local IPC must authenticate peers, use restrictive socket permissions, and frame/cap messages. Network listeners are not enabled by default.
 - Queue/state storage must be bounded and corruption-aware. Resource pressure follows the priority and explicit-gap behavior in the coverage specification; it must never trigger broader permissions or silent data capture.
-- Logs and health events contain error classes/codes and bounded metadata, not raw secret-bearing records, headers, credentials, or environment values.
+- Logs and health events contain error classes/codes and bounded metadata, not raw secret-bearing records, headers, credentials, connection details, process command output, or environment values. Observability values use null/unknown for unsupported metrics and explicit zero only when measured.
 
 ## Security verification gates
 

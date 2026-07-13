@@ -121,7 +121,7 @@ Publish privately and create a mode-0600 configuration from the synthetic exampl
 
 ## API, validation, and rollout gate
 
-Events continue through additive `source=linux_journal` portable-v1 envelopes and `/api/v1/ingest/events`; heartbeat uses additive manifest/health fields; inventory uses the existing generic endpoint. Server source-health and telemetry-coverage APIs overlay the Linux catalog, count recent portable events by `source_id`, and expose platform/requirement/applicability/evidence metadata. No `/api/v2` or incompatible Windows behavior is introduced.
+Events continue through additive `source=linux_journal` portable-v1 envelopes and `/api/v1/ingest/events`; heartbeat uses additive manifest/health fields; inventory uses the existing generic endpoint. Heartbeats also report bounded resource/queue observability where available: RSS/managed memory, nullable CPU, queue bytes/depth/oldest age, pressure state, send/backoff/recovery timestamps, poison counters, and explicit drop zero when no local shedding occurred. Per-source health reports observed time, rate, lag/silence, gap counts, permission-denied/recovery timestamps, and transition state without raw journal data. Server source-health and telemetry-coverage APIs overlay the Linux catalog, count recent portable events by `source_id`, and expose platform/requirement/applicability/evidence metadata. No `/api/v2` or incompatible Windows behavior is introduced.
 
 Run:
 

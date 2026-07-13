@@ -46,6 +46,8 @@
         "excepted_sources": { "type": "integer", "minimum": 0 },
         "not_applicable_sources": { "type": "integer", "minimum": 0 },
         "queue_depth": { "type": "integer", "minimum": 0 },
+        "queue_metrics": { "oneOf": [{ "$ref": "heartbeat.schema.json#/$defs/queue_metrics" }, { "type": "null" }] },
+        "resource_metrics": { "oneOf": [{ "$ref": "heartbeat.schema.json#/$defs/resource_metrics" }, { "type": "null" }] },
         "last_heartbeat_time": { "type": ["string", "null"], "format": "date-time" },
         "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" }
       },

@@ -108,7 +108,7 @@ The [sanitized web-console demo](web-console-demo.md) contains screenshot exampl
 
 ## Source health and coverage
 
-Agent heartbeats can include source manifests and per-channel health. The server stores source-health rows, overlays expected-but-unreported L2/L3 sources for agent-scoped review, and calculates coverage summaries used by the review API, dashboard, inventory, and host detail pages. Use `/api/v1/telemetry-coverage` or `/agents/detail?agent_id=<agent>` to validate recent normalized events, expected source rows, inventory/audit-policy snapshots, and detection prerequisites over a defined lookback. Start with:
+Agent heartbeats can include source manifests and per-channel health. The server stores source-health rows, overlays expected-but-unreported L2/L3 sources for agent-scoped review, and calculates coverage summaries used by the review API, dashboard, inventory, and host detail pages. Queue/resource/source observability is machine-readable in `/api/v1/source-health`, `/api/v1/telemetry-coverage`, and `/api/v1/storage/accounting`: review queue bytes/depth/oldest age, pressure and send/backoff/recovery state, poison/drop counters, source silence/gaps/permission loss, and storage 70/85/95% warnings. Treat `null` as unknown or unsupported and `0` as an observed zero. Use `/api/v1/telemetry-coverage` or `/agents/detail?agent_id=<agent>` to validate recent normalized events, expected source rows, inventory/audit-policy snapshots, and detection prerequisites over a defined lookback. Start with:
 
 - [windows-host-full-coverage-spec.md](windows-host-full-coverage-spec.md) for target levels and source requirements.
 - [windows-l2-validation-runbook.md](windows-l2-validation-runbook.md) for safe L2 validation.

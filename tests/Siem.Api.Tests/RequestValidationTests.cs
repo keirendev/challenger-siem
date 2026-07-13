@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Contracts.V1;
 using Xunit;
@@ -7,6 +8,20 @@ namespace Challenger.Siem.Api.Tests;
 
 public sealed class RequestValidationTests
 {
+    [Theory]
+    [InlineData(69, "normal")]
+    [InlineData(70, "warning_70")]
+    [InlineData(85, "warning_85")]
+    [InlineData(95, "critical_95")]
+    [InlineData(100, "over_capacity")]
+    public void StorageAccountingWarningStateUsesConfiguredCapacityThresholds(int usedPercent, string expected)
+    {
+        const long capacity = 100L * 1024 * 1024 * 1024;
+        var used = capacity * usedPercent / 100;
+
+        Assert.Equal(expected, EventRepository.CalculateStorageWarningState(used, capacity));
+    }
+
     [Fact]
     public void ValidateBatchAcceptsValidWindowsEventBatch()
     {
@@ -44,6 +59,87 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
+    public void ValidateHeartbeatAcceptsBoundedObservabilityAndPreservesUnknownVsZero()
+    {
+        var heartbeat = CreateLinuxHeartbeat() with
+        {
+            CpuPercent = null,
+            MemoryMb = null,
+            ResourceMetrics = new AgentResourceMetrics
+            {
+                ObservedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+                CpuPercent = null,
+                RssBytes = 0,
+                ManagedMemoryBytes = 0,
+                Status = "partial"
+            },
+            QueueMetrics = new QueueSloMetrics
+            {
+                QueueDepth = 0,
+                PoisonDepth = 0,
+                OldestQueuedAgeSeconds = null,
+                QueueSizeBytes = 0,
+                MaxSizeBytes = 1024,
+                UsedPercent = 0,
+                PressureState = QueuePressureStates.Normal,
+                SendState = QueueSendStates.Idle,
+                BackoffSeconds = null,
+                LastSuccessfulSendTime = null,
+                PoisonEventsTotal = 0,
+                DroppedEventsTotal = 0,
+                MaxSizeMb = 1,
+                WarningSizePercent = 70
+            }
+        };
+
+        var errors = RequestValidation.ValidateHeartbeat(heartbeat);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void ValidateHeartbeatRejectsUnboundedObservabilityValues()
+    {
+        var valid = CreateLinuxHeartbeat();
+        var invalid = valid with
+        {
+            ResourceMetrics = new AgentResourceMetrics
+            {
+                ObservedAt = DateTimeOffset.UtcNow,
+                CpuPercent = 101,
+                RssBytes = -1,
+                ManagedMemoryBytes = -1,
+                Status = "secret-dump"
+            },
+            QueueMetrics = valid.QueueMetrics! with
+            {
+                PressureState = "credentialed-host-path",
+                SendState = "raw-error-body",
+                UsedPercent = 1001,
+                BackoffSeconds = 86_401
+            },
+            SourceHealth = new[]
+            {
+                valid.SourceHealth[0] with
+                {
+                    EventRatePerMinute = 1_000_001,
+                    SilenceSeconds = -1,
+                    GapCount = -1,
+                    TransitionState = "full-log-body",
+                    DroppedEvents = -1,
+                    PoisonEvents = -1
+                }
+            }
+        };
+
+        var errors = RequestValidation.ValidateHeartbeat(invalid);
+
+        Assert.Contains("resource_metrics.cpu_percent", errors.Keys);
+        Assert.Contains("queue_metrics.pressure_state", errors.Keys);
+        Assert.Contains("source_health[0].transition_state", errors.Keys);
+    }
+
+    [Fact]
     public void ValidateRegistrationRequiresAgentIdentity()
     {
         var request = new AgentRegistrationRequest
@@ -58,6 +154,75 @@ public sealed class RequestValidationTests
         var errors = RequestValidation.ValidateRegistration(request);
 
         Assert.Contains(nameof(AgentRegistrationRequest.AgentId), errors.Keys);
+    }
+
+    private static HeartbeatRequest CreateLinuxHeartbeat()
+    {
+        var manifest = new SourceManifestEntry
+        {
+            SourceId = "linux-journal-l1",
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = EventSources.LinuxJournal,
+            SourceNamespace = "systemd",
+            Applicability = SourceApplicabilityStatuses.Applicable,
+            CheckpointKind = SourceCheckpointKinds.Cursor,
+            DisplayName = "Linux journal",
+            CoverageLevel = WindowsCoverageLevel.L1,
+            Required = true,
+            Requirement = SourceRequirementKinds.Mandatory,
+            Prerequisites = new[] { "systemd_journal_available" },
+            EventFamilies = new[] { "system" },
+            ValidationScenarios = new[] { "synthetic_journal" }
+        };
+        return new HeartbeatRequest
+        {
+            AgentId = "linux-synthetic-001",
+            Hostname = "linux-synthetic",
+            AgentVersion = "1.2.0",
+            Os = "Synthetic Linux",
+            Platform = TelemetryPlatforms.Linux,
+            HostId = "synthetic-host-id",
+            LastEventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+            QueueDepth = 0,
+            QueueMetrics = new QueueSloMetrics
+            {
+                QueueDepth = 0,
+                PoisonDepth = 0,
+                MaxSizeMb = 1,
+                WarningSizePercent = 70
+            },
+            SourceManifest = new[] { manifest },
+            SourceHealth = new[]
+            {
+                new SourceHealthReport
+                {
+                    SourceId = manifest.SourceId,
+                    Platform = manifest.Platform,
+                    SourceKind = manifest.SourceKind,
+                    SourceNamespace = manifest.SourceNamespace,
+                    Applicability = manifest.Applicability,
+                    DisplayName = manifest.DisplayName,
+                    CoverageLevel = manifest.CoverageLevel,
+                    Status = SourceHealthStatuses.Healthy,
+                    Required = manifest.Required,
+                    Requirement = manifest.Requirement,
+                    Enabled = true,
+                    LastEventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+                    ObservedAt = DateTimeOffset.Parse("2026-07-11T12:00:01Z"),
+                    CollectedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic;i=1" },
+                    AcknowledgedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic;i=1" },
+                    PrerequisiteStatuses = new Dictionary<string,string> { ["systemd_journal_available"] = SourceEvidenceStatuses.Satisfied },
+                    EventFamilyStatuses = new Dictionary<string,string> { ["system"] = SourceEvidenceStatuses.Observed },
+                    SilenceSeconds = 0,
+                    EventRatePerMinute = 0,
+                    GapCount = 0,
+                    TransitionState = HealthTransitionStates.Healthy,
+                    TransitionedAt = DateTimeOffset.Parse("2026-07-11T12:00:01Z"),
+                    DroppedEvents = 0,
+                    PoisonEvents = 0
+                }
+            }
+        };
     }
 
     private static IngestBatchRequest CreateValidBatch()

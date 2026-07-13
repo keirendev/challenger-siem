@@ -379,7 +379,8 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    return Results.Ok(await events.GetManagedStorageAccountingAsync(cancellationToken));
+    var capacityBytes = ParseLongOrDefault(configuration["Storage:ManagedCapacityBytes"], 100L * 1024 * 1024 * 1024);
+    return Results.Ok(await events.GetManagedStorageAccountingAsync(capacityBytes, cancellationToken));
 });
 
 app.MapGet("/api/v1/source-health", async Task<IResult> (
