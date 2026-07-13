@@ -21,6 +21,8 @@ This guide summarizes how to make safe, reviewable project changes. It complemen
 
    ```bash
    ./scripts/current-version.sh
+   ./scripts/validate-repository-safety.sh
+   ./tests/repository-safety/run.sh
    dotnet test Challenger.Siem.sln
    ./scripts/smoke-test-server.sh      # when API/storage/ingest behavior changes
    ./scripts/smoke-test-web.sh         # when web behavior or web docs/screenshots change
@@ -91,4 +93,8 @@ A good review checks:
 
 ## Public examples and fixtures
 
-Use minimal synthetic examples. Prefer fake hostnames such as `DEMO-WIN11`, fake agent IDs such as `demo-agent-001`, fake users such as `DEMO\\analyst`, fake graph titles, and non-sensitive messages. Never adapt raw lab telemetry or customer/client data into fixtures.
+Use minimal synthetic examples. Prefer fake hostnames such as `DEMO-WIN11` or `SYNTHETIC-LINUX-01`, fake agent IDs such as `demo-agent-001`, fake users such as `DEMO\\analyst` or `synthetic-user`, documentation-only IP addresses, fake graph titles, and non-sensitive messages. Never adapt, redact, or transform raw lab telemetry or customer/client data into fixtures.
+
+Tracked fixture files under a `fixtures/` directory must use a `synthetic-` filename prefix (apart from a fixture `README.md`). Their contents must be hand-authored, minimal, deterministic, clearly fake, and free of credentials, realistic secrets, raw journal/audit records, host inventory, and copied command output. Artifact-like files remain prohibited even when named synthetic: do not track captures, databases, logs, traces, journal/audit exports, screenshots, or benchmark output.
+
+Run `./scripts/validate-repository-safety.sh` before staging and again against the staged index before committing. It checks indexed path names only, reports prohibited names without reading contents or looking for secret values, and intentionally does not walk `.local/`. The focused synthetic harness is `./tests/repository-safety/run.sh`.

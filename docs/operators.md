@@ -117,6 +117,8 @@ Agent heartbeats can include source manifests and per-channel health. The server
 
 Linux collection is future work, not an available deployment path. Operators evaluating that design should review the [planned Linux coverage levels, SLOs, and soak/rollback gates](linux-host-coverage-spec.md) together with the [least-privilege, privacy, and explicit-change-approval requirements](linux-agent-security.md). Do not mutate a Linux host's audit, firewall, authentication, kernel, service, or security policy on the basis of these planning documents.
 
+Keep any future Linux generated configuration and credentials under a restrictive OS configuration location, durable queue/state outside source checkouts under `/var/lib`, transient state under `/run`, and bounded diagnostics under `/var/log` or the system journal. Keep journal/audit exports, captures, database copies, logs, traces, screenshots, benchmark/soak results, and local review evidence out of git; developer-only evidence belongs under ignored `.local/`. Public demonstrations use only hand-authored `synthetic-` fixtures and must never be produced by sanitizing real host output.
+
 ## Routine operations
 
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
