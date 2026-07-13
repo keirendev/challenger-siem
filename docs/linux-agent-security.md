@@ -153,7 +153,7 @@ Before any further Linux event or advanced collector release, review must includ
 - the private 24-hour L1 and seven-day L1+L2 soaks and all resource SLO measurements specified in the coverage document;
 - confirmation that install and collection did not mutate audit, firewall, authentication, kernel, service, or security policy outside an explicitly approved plan.
 
-Immediate rollback is mandatory for suspected secret/prohibited-content collection, unauthorized mutation, privilege expansion, package verification failure, host instability, queue corruption/silent loss, uncontrolled resource use, or an SLO breach not corrected by bounded throttling. Disable the offending collector or remove the agent according to the reviewed plan, verify host policy and permissions, revoke credentials when compromise is possible, and retain only sanitized diagnostics in approved ignored/runtime locations.
+Immediate rollback is mandatory for suspected secret/prohibited-content collection, unauthorized mutation, privilege expansion, package verification failure, host instability, queue corruption/silent loss, uncontrolled resource use, or an SLO breach not corrected by bounded throttling. Disable the offending collector or remove the agent according to the reviewed plan, verify host policy and permissions, revoke credentials when compromise is possible, and retain only sanitized diagnostics in approved ignored/runtime locations. The [Linux local-host validation runbook](linux-local-host-validation.md) provides the private evidence layout, aggregate result template, recovery drill gates, and blocked-status wording for live soaks.
 
 ## Public repository and evidence safety
 

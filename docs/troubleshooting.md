@@ -175,3 +175,9 @@ Treat unsupported architecture/init, missing locked service identity, non-0600 i
 - `stale` indicates age/discontinuity; inspect collected versus acknowledged cursors, gap state, queue pressure, and recent events by `source_id` without copying raw telemetry into a ticket.
 
 If an expected family remains `not_observed`, verify that its producer already journals the event and that the bounded structured fields/message pattern are supported. For outage/recovery or queue pressure, compare `queue_metrics.pressure_state`, `send_state`, `backoff_seconds`, `last_failed_send_time`, `last_recovery_time`, source `transition_state`, and collected versus acknowledged checkpoints. Treat `null` CPU/RSS/rate values as unsupported or unknown rather than zero; an explicit `0` means the agent measured no queued items, drops, poison records, or event rate. Do not fabricate a test from live logs; use the hand-authored synthetic fixture suite. Keep private rollout diagnostics and soak data under ignored `.local/` or approved runtime storage.
+
+## Linux local-host validation is blocked
+
+If a Linux rollout issue asks for L1/L2 soak evidence but no operator-authorized systemd target, time window, and exact allowed operations are documented, do not use SSH/WinRM, do not mutate a host, and do not invent evidence. Complete repository documentation/template work and publish the sanitized blocker from [Linux local-host validation](linux-local-host-validation.md#issue-status-blocker-for-this-repository-change).
+
+If a target is authorized later, keep raw plan output, generated configuration, source-health responses, event samples, logs, screenshots, resource measurements, and recovery drill notes under ignored private evidence. Public status should use only the aggregate template and should mark outage/restart/database/journal/permission/pressure drills as `blocked` when the corresponding operation was not explicitly approved.
