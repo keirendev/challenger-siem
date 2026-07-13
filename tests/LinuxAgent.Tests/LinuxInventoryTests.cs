@@ -56,8 +56,9 @@ public sealed class LinuxInventoryTests
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_units").Items, item => item.Name == "synthetic-failed.service" && item.Status == "failed");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_listeners").Items, item => item.Name == "tcp:8443");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_ssh").Items.Single().Metadata, pair => pair.Key == "passwordauthentication" && pair.Value == "no");
-        Assert.All(snapshots.Single(x => x.SnapshotType == "linux_agent_integrity").Items,
-            item => Assert.Matches("^[a-f0-9]{64}$", item.Metadata["sha256"]));
+        var integrity = snapshots.Single(x => x.SnapshotType == "linux_agent_integrity").Items;
+        Assert.False(integrity.Single(item => item.Name == "configuration").Metadata.ContainsKey("sha256"));
+        Assert.Matches("^[a-f0-9]{64}$", integrity.Single(item => item.Name == "executable").Metadata["sha256"]);
     }
 
     [Fact]
@@ -299,7 +300,7 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Selinux, InventorySourceResult.Success("Disabled\n"));
         source.Set(LinuxInventoryOperation.SecureBoot, InventorySourceResult.Success("SecureBoot enabled\n"));
         var syntheticHash = new string('a', 64);
-        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 1001, sha256: syntheticHash));
+        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 1001));
         source.Set(LinuxInventoryOperation.AgentExecutable, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, size: 4096, ownerId: 0, sha256: syntheticHash));
         return source;
     }

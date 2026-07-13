@@ -61,7 +61,7 @@ The collector catalog fixes every executable path candidate, argument list, exac
 
 Parsers serialize only bounded allowlisted fields. They exclude raw stdout/stderr, arbitrary file contents and paths, account descriptions/home directories/shells, group membership, IP addresses, process details, command lines, firewall rules, repository configuration/content, and unapproved SSH directives. Errors and logs contain stable types/codes rather than source output.
 
-Collection is strictly observational: it does not install tools, refresh package metadata, alter services, audit policy, firewall rules, SSH settings, kernel state, AppArmor/SELinux policy, Secure Boot, file ownership, or file modes. The `linux_agent_integrity` category reports observable ownership/mode plus bounded SHA-256 fingerprints for the two fixed agent files. These fingerprints support change review but are not trusted attestation and are not tamper-proof against a privileged or kernel-level adversary; heartbeat gaps, fingerprint changes, and permission drift remain review signals rather than proof of integrity.
+Collection is strictly observational: it does not install tools, refresh package metadata, alter services, audit policy, firewall rules, SSH settings, kernel state, AppArmor/SELinux policy, Secure Boot, file ownership, or file modes. The `linux_agent_integrity` category reports observable ownership/mode for both fixed agent files plus a bounded SHA-256 fingerprint of the non-secret executable. These fingerprints support change review but are not trusted attestation and are not tamper-proof against a privileged or kernel-level adversary; heartbeat gaps, fingerprint changes, and permission drift remain review signals rather than proof of integrity.
 
 ## Safe lifecycle
 

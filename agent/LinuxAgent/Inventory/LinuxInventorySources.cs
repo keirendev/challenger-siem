@@ -267,10 +267,12 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
             }
             UnixFileMode? mode = (UnixFileMode)(metadata.Value.Mode & 0x0fff);
             await using var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: true);
+            if (policy.Kind == InventorySourceKind.FileMetadata && policy.Operation == LinuxInventoryOperation.AgentConfig)
+                return InventorySourceResult.Success(mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId);
             if (metadata.Value.Size > policy.MaxOutputBytes)
                 return new(InventorySourceState.Malformed, "file_too_large", Truncated: true, FileMode: mode, FileSize: metadata.Value.Size);
             using var memory = policy.Kind == InventorySourceKind.File ? new MemoryStream(Math.Min(policy.MaxOutputBytes, 4096)) : null;
-            using var hasher = policy.Kind == InventorySourceKind.FileMetadata
+            using var hasher = policy.Operation == LinuxInventoryOperation.AgentExecutable
                 ? System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256)
                 : null;
             var buffer = new byte[4096];

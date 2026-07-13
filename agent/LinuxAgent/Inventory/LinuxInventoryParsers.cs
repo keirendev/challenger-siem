@@ -39,8 +39,8 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.AppArmor => new[] { Item("mandatory_access_control", "apparmor", source.ExitCode == 1 ? "disabled" : "enabled") },
             LinuxInventoryOperation.Selinux => ParseFixedState(source.Content, "mandatory_access_control", "selinux", new[] { "enforcing", "permissive", "disabled" }),
             LinuxInventoryOperation.SecureBoot => ParseSecureBoot(source.Content),
-            LinuxInventoryOperation.AgentConfig => ParseAgentFile("configuration", source, UnixFileMode.UserRead | UnixFileMode.UserWrite, ownerMustBeRoot: false),
-            LinuxInventoryOperation.AgentExecutable => ParseAgentFile("executable", source, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, ownerMustBeRoot: true),
+            LinuxInventoryOperation.AgentConfig => ParseAgentFile("configuration", source, UnixFileMode.UserRead | UnixFileMode.UserWrite, ownerMustBeRoot: false, requireFingerprint: false),
+            LinuxInventoryOperation.AgentExecutable => ParseAgentFile("executable", source, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, ownerMustBeRoot: true, requireFingerprint: true),
             _ => null
         };
         if (parsed is null)
@@ -275,20 +275,21 @@ public static class LinuxInventoryParsers
         return state is null ? null : new[] { Item("secure_boot", "uefi_secure_boot", state) };
     }
 
-    private static IReadOnlyList<InventoryItem>? ParseAgentFile(string name, InventorySourceResult source, UnixFileMode expected, bool ownerMustBeRoot)
+    private static IReadOnlyList<InventoryItem>? ParseAgentFile(string name, InventorySourceResult source, UnixFileMode expected, bool ownerMustBeRoot, bool requireFingerprint)
     {
         if (!source.FileMode.HasValue || !source.FileSize.HasValue || source.FileSize < 0 || !source.FileOwnerId.HasValue) return null;
         var actual = source.FileMode.Value;
         var expectedOwner = ownerMustBeRoot ? source.FileOwnerId == 0 : source.FileOwnerId != 0;
         var status = actual == expected && expectedOwner ? "expected_permissions" : "permission_drift";
-        if (source.Sha256 is null || source.Sha256.Length != 64 || !source.Sha256.All(char.IsAsciiHexDigit)) return null;
-        return new[] { Item("agent_integrity", name, status, new Dictionary<string, string>
+        if (requireFingerprint && (source.Sha256 is null || source.Sha256.Length != 64 || !source.Sha256.All(char.IsAsciiHexDigit))) return null;
+        var metadata = new Dictionary<string, string>
         {
             ["mode"] = Convert.ToString((int)actual, 8),
             ["owner_id"] = source.FileOwnerId.Value.ToString(CultureInfo.InvariantCulture),
-            ["regular_file"] = "true",
-            ["sha256"] = source.Sha256
-        }) };
+            ["regular_file"] = "true"
+        };
+        if (source.Sha256 is not null) metadata["sha256"] = source.Sha256;
+        return new[] { Item("agent_integrity", name, status, metadata) };
     }
 
     private static IReadOnlyList<InventoryItem>? ParseFixedState(string? content, string kind, string name, IReadOnlyList<string> accepted)

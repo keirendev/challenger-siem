@@ -66,7 +66,7 @@ The inventory service starts after a default 30-second delay and runs independen
 
 Each snapshot uses one exact state: `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, or `malformed`. Absence, denied access, unsupported applicability, malformed output, and timeouts are visible rather than inferred as healthy. These snapshots use the existing generic `/api/v1/agents/inventory` contract; they do not establish L1/L2 event coverage or change server coverage calculations.
 
-The collection is read-only and does not broadly scan the host. It does not mutate packages, services, audit, firewall, SSH, kernel, AppArmor/SELinux, Secure Boot, or agent permissions. Allowlisted parsers omit secrets and raw source output. Agent configuration/executable ownership, mode, regular-file status, and bounded SHA-256 fingerprints are observable change posture only, not trusted or tamper-proof attestation.
+The collection is read-only and does not broadly scan the host. It does not mutate packages, services, audit, firewall, SSH, kernel, AppArmor/SELinux, Secure Boot, or agent permissions. Allowlisted parsers omit secrets and raw source output. Agent configuration/executable ownership, mode, and regular-file status plus a bounded SHA-256 executable fingerprint are observable change posture only, not trusted or tamper-proof attestation.
 
 ## Role-specific source packs
 
