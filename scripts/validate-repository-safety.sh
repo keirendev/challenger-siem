@@ -19,12 +19,14 @@ for path in "${indexed_paths[@]}"; do
 
   prohibited=false
   case "/$lower/" in
-    */.local/*|*/.pi/*|*/dist/*|*/bin/*|*/obj/*|*/collections/*|*/collection/*|*/client-data/*|*/agent-data/*|*/collected-data/*|*/private-data/*|*/raw-data/*|*/telemetry/*|*/captures/*|*/exports/*|*/evidence/*|*/eventlogs/*|*/event-logs/*|*/events-raw/*|*/journal/*|*/journals/*|*/journal-exports/*|*/audit/*|*/audit-exports/*|*/syslog-exports/*|*/browser-artifacts/*|*/screenshots/*|*/benchmarks/*|*/benchmark-results/*|*/traces/*|*/linux-agent-runtime/*|*/linux-runtime/*|*/run/challenger-siem/*|*/var/lib/challenger-siem/*|*/var/log/challenger-siem/*)
+    */.local/*|*/.pi/*|*/dist/*|*/bin/*|*/obj/*|*/collections/*|*/collection/*|*/client-data/*|*/agent-data/*|*/collected-data/*|*/private-data/*|*/raw-data/*|*/telemetry/*|*/captures/*|*/exports/*|*/evidence/*|*/eventlogs/*|*/event-logs/*|*/events-raw/*|*/journal/*|*/journals/*|*/journal-exports/*|*/audit/*|*/audit-exports/*|*/syslog-exports/*|*/browser-artifacts/*|*/screenshots/*|*/benchmarks/*|*/benchmark-results/*|*/traces/*|*/linux-agent-runtime/*|*/linux-runtime/*|*/generated-linux-agent*/*|*/run/challenger-siem/*|*/var/lib/challenger-siem/*|*/var/log/challenger-siem/*)
       prohibited=true ;;
   esac
 
-  case "$lower" in
-    queue/*|state/*|logs/*) prohibited=true ;;
+  # These lowercase names are generated runtime locations. Preserve case here
+  # so source namespaces such as WindowsAgent/Queue and WindowsAgent/State stay valid.
+  case "/$normalized/" in
+    */queue/*|*/state/*|*/logs/*) prohibited=true ;;
   esac
 
   case "$base" in
