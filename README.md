@@ -41,6 +41,9 @@ dotnet test Challenger.Siem.sln
 
 ./scripts/smoke-test-server.sh
 ./scripts/smoke-test-web.sh
+# release candidates:
+./scripts/release-gates.sh install-browsers
+./scripts/release-gates.sh run
 ```
 
 For accumulated disposable test data, start with the dry-run scoped cleanup or fresh-start reset reports. Execute modes require explicit confirmation phrases and are only for operator-owned local test environments:
@@ -110,7 +113,7 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Web console product specification](docs/web.md) and [sanitized screenshot/wireframe demo](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)
 - [Runbooks](docs/runbooks.md) and [troubleshooting](docs/troubleshooting.md)
-- [Contributor guide](docs/contributors.md), [development](docs/development.md), and [versioning](docs/versioning.md)
+- [Contributor guide](docs/contributors.md), [development](docs/development.md), [release gates](docs/release-gates.md), and [versioning](docs/versioning.md)
 
 ## Versioning
 

@@ -489,6 +489,15 @@ Automated smoke path without Docker:
 ./scripts/smoke-test-web.sh
 ```
 
+Release-gating browser path against the real app and PostgreSQL:
+
+```bash
+./scripts/release-gates.sh install-browsers
+./scripts/release-gates.sh run
+```
+
+The release gate seeds only uniquely named synthetic operators/events/assets/source-health/alerts/cases/detections/dashboards, exercises Playwright browser workflows plus API/security/performance checks, and stores screenshots/traces/cookies/API responses/browser caches/reports under ignored `.local/release-gates/`. Cleanup of its owned database/role/artifacts requires `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES`.
+
 The script starts the API, seeds a synthetic agent/event through the v1 API, authenticates to the web console with synthetic operator credentials, creates a synthetic `soc-agent` chat tied to that agent through the non-JavaScript fallback, and verifies dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` HTML. Temporary HTML/cookies/responses stay under ignored `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` for opt-in cleanup of only that per-run `web-smoke-*` agent and its linked `soc-agent` chat history after successful validation, or run `./scripts/cleanup-synthetic-data.sh` separately in dry-run mode first.
 
 Manual path:
@@ -503,7 +512,7 @@ Manual path:
 
 When a change affects Razor Pages, web auth/session/CSRF/cookies, review-console routes or view models, web smoke scripts, `docs/web.md`, `docs/web-console-demo.md`, or user-visible browser behavior:
 
-- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright, pi_browser, or equivalent browser validation for visual/interactive changes.
+- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright, pi_browser, or equivalent browser validation for visual/interactive changes. For release readiness, use `./scripts/release-gates.sh run` so validation uses PostgreSQL-backed synthetic data rather than mocked page-only HTML.
 - For docs-only IA/specification updates, perform a design review against this document, [challenger-family-alignment.md](challenger-family-alignment.md), [auth.md](auth.md), [api.md](api.md), [schema.md](schema.md), current Razor Pages/API source, and synthetic representative data.
 - Update the [web-console demo](web-console-demo.md) text or screenshots if page layout, navigation, filters, wireframes, or visible data expectations change.
 - Regenerate screenshots only from synthetic data and inspect them for tokens, cookies, connection strings, real host/user identifiers, private lab telemetry, browser profile names, browser/OS chrome, local paths, window titles with private data, and raw API responses before staging.

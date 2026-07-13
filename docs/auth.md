@@ -60,7 +60,7 @@ Startup requires only `ConnectionStrings:SiemDatabase` and `Auth:EnrollmentToken
 
 The active web-console architecture remains server-rendered ASP.NET Core/Razor Pages as recorded in the [frontend architecture ADR](frontend-architecture-adr.md). Browser pages must not receive operator API credentials, enrollment tokens, per-agent tokens, provider credentials, raw auth files, connection strings, or cookie values in JavaScript-readable content. Protected review fields are filtered by server repositories before Razor rendering or API serialization; client-side hiding is not an authorization boundary.
 
-Do not add a separate frontend origin, client router, API-cookie bridge, external CDN, analytics script, font service, or JavaScript package pipeline without a new security review. Future Content Security Policy hardening should prefer same-origin static assets and requires inventorying existing inline script surfaces before a strict policy is enabled.
+Do not add a separate frontend origin, client router, API-cookie bridge, external CDN, analytics script, font service, or JavaScript package pipeline without a new security review. The release-gate Playwright suite in [release-gates.md](release-gates.md) validates CSP, cookie flags, cookie-only unsafe API rejection, unsafe external return URLs, protected-field redaction/omission, export safety, and no secret/token return in browser content against the real app. Future Content Security Policy hardening should prefer same-origin static assets and requires inventorying existing inline script surfaces before a strict policy is enabled.
 
 ## External `soc-agent` provider credentials
 

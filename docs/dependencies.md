@@ -28,6 +28,7 @@ The project should remain open-source and custom-built.
 | Microsoft.NET.Test.Sdk | .NET test runner integration | MIT, open-source |
 | Microsoft.AspNetCore.Mvc.Testing | ASP.NET Core web auth/session tests | MIT, open-source |
 | JsonSchema.Net | Deterministic draft 2020-12 contract-schema and golden-fixture validation in tests | MIT, open-source |
+| Microsoft.Playwright for .NET | Real-application browser release gates for Razor Pages, accessibility, security, and performance validation | Apache 2.0 Playwright project / Microsoft NuGet package; browser binaries are installed explicitly under ignored `.local/release-gates/ms-playwright/` and are not redistributed. |
 
 ## Optional project tooling
 
@@ -38,6 +39,8 @@ The project should remain open-source and custom-built.
 ## Frontend architecture decision
 
 The [frontend architecture ADR](frontend-architecture-adr.md) selects enhanced ASP.NET Core/Razor Pages as the only active web-console architecture for high-density search and timeline work. No TypeScript frontend, npm package manager, lockfile, bundler, client router, external component library, CDN, analytics script, font service, or generated static build output is approved by this spike.
+
+The release-gate browser suite uses Microsoft.Playwright from .NET tests only; it does not create a Node/TypeScript application toolchain. Install browser binaries with `./scripts/release-gates.sh install-browsers`, which places runtime artifacts under ignored `.local/release-gates/`. See [release-gates.md](release-gates.md) for license/supply-chain ownership, invocation, budgets, and cleanup.
 
 TypeScript ecosystem candidates such as TypeScript, Vite, React, Svelte, and table-virtualization/component packages were stopped at preflight because they did not demonstrate a material measurable benefit over the existing Razor path after accounting for auth/session/CSRF/CSP design, server-side protected-field authorization, build/release complexity, testing, and supply-chain ownership. Reconsidering a separate frontend requires a new ADR with passing gates, a dependency/license inventory, synthetic measurements, and complete removal of rejected prototype artifacts.
 

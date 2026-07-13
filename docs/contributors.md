@@ -28,7 +28,7 @@ This guide summarizes how to make safe, reviewable project changes. It complemen
    ./scripts/smoke-test-web.sh         # when web behavior or web docs/screenshots change
    ```
 
-6. For web-app changes, perform browser E2E with Playwright or an equivalent headless browser harness against the real app; curl/HTML smoke checks supplement but do not replace browser validation.
+6. For web-app changes, perform browser E2E with Playwright or an equivalent headless browser harness against the real app; curl/HTML smoke checks supplement but do not replace browser validation. For release candidates or broad auth/security/performance-sensitive changes, run `./scripts/release-gates.sh install-browsers` and `./scripts/release-gates.sh run` against disposable PostgreSQL synthetic data.
 7. For Windows agent changes, validate against the authorized lab path when safe and keep evidence bounded under ignored `.local/` paths.
 8. Check repository hygiene before staging:
 
@@ -66,7 +66,7 @@ Answer this checklist for every pull request and update docs in the same change 
 - Did Razor Pages, auth/session behavior, CSRF/cookies, navigation, view models, filters, routes, or user-visible browser behavior change?
 - Do [web.md](web.md) and [web-console-demo.md](web-console-demo.md) need updated text or screenshots?
 - Were screenshots regenerated only from synthetic data and inspected for tokens, cookies, real hostnames/users, connection strings, and raw private telemetry?
-- Were browser traces/videos/raw captures kept under ignored `.local/` paths?
+- Were browser traces/videos/raw captures kept under ignored `.local/` paths, preferably `.local/release-gates/` for release-gate output?
 
 ### Security and public-data safety
 
@@ -97,4 +97,4 @@ Use minimal synthetic examples. Prefer fake hostnames such as `DEMO-WIN11` or `S
 
 Tracked fixture files under a `fixtures/` directory must use a `synthetic-` filename prefix (apart from a fixture `README.md`). Their contents must be hand-authored, minimal, deterministic, clearly fake, and free of credentials, realistic secrets, raw journal/audit records, host inventory, and copied command output. Artifact-like files remain prohibited even when named synthetic: do not track captures, databases, logs, traces, journal/audit exports, screenshots, or benchmark output.
 
-Run `./scripts/validate-repository-safety.sh` before staging and again against the staged index before committing. It checks indexed path names only, reports prohibited names without reading contents or looking for secret values, and intentionally does not walk `.local/`. The focused synthetic harness is `./tests/repository-safety/run.sh`.
+Run `./scripts/validate-repository-safety.sh` before staging and again against the staged index before committing. It checks indexed path names only, reports prohibited names without reading contents or looking for secret values, and intentionally does not walk `.local/`. The focused synthetic harness is `./tests/repository-safety/run.sh`, including force-added canaries for release-gate artifacts such as traces, cookies, and JSONL reports.

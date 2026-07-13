@@ -101,7 +101,26 @@ Synthetic investigation graphs can also be selected explicitly when they are not
 
 The smoke scripts also support opt-in cleanup after a successful run with `SIEM_SMOKE_CLEANUP=1` or `SIEM_WEB_SMOKE_CLEANUP=1`. Web smoke creates a synthetic `soc-agent` chat tied to its per-run agent ID, so opt-in cleanup removes that chat history too. Cleanup output remains aggregate-only under `.local/`.
 
-## 5. Managed telemetry retention
+## 5. Release-gate browser/accessibility/security/performance validation
+
+Use the release gate for release candidates and web/auth/security/performance-sensitive changes. It creates a uniquely named disposable PostgreSQL database and role, seeds synthetic operators/data, runs the real app, executes Playwright browser/API gates, and stores all output under ignored `.local/release-gates/`.
+
+```bash
+./scripts/release-gates.sh install-browsers
+./scripts/release-gates.sh run
+```
+
+Required PostgreSQL admin values belong in ignored `.local/release-gates.env`; see [release-gates.md](release-gates.md). Cleanup is destructive and confirmation-gated:
+
+```bash
+./scripts/release-gates.sh cleanup \
+  --state .local/release-gates/<run-id>/state.env \
+  --confirm DELETE-RELEASE-GATE-RESOURCES
+```
+
+The cleanup command refuses non-release-gate database/role names and deletes only the owned `.local/release-gates/<run-id>/` artifacts. Do not use it for development databases, shared databases, client data, endpoint queues, Windows Event Logs, or host policy cleanup.
+
+## 6. Managed telemetry retention
 
 Use managed retention for day-two SIEM telemetry lifecycle, not for ad-hoc cleanup of operators, configuration, cases, or arbitrary data. Defaults are a 30-day target retention and a 100 GiB managed telemetry capacity ceiling.
 
@@ -141,7 +160,7 @@ When accounting reaches the configured ceiling, emergency cleanup is determinist
 
 Do not point retention at non-disposable test databases during validation unless that database is the intended SIEM target. Retention never deletes files, schemas, operators, sessions, security audit, agents, source-health current state, detections, alerts/evidence, graphs, `soc-agent` history, or arbitrary records.
 
-## 6. Fresh-start reset for a disposable local test environment
+## 7. Fresh-start reset for a disposable local test environment
 
 Use the full reset workflow only when you want a clean, empty Challenger SIEM test environment. Choose the least destructive path:
 
@@ -189,14 +208,14 @@ curl --silent --fail http://127.0.0.1:5081/health
 
 Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/config removal, service uninstall, event-log clearing, host reboot, firewall/auth changes, or remote deletion require separate explicit operator approval and a scoped runbook.
 
-## 7. Use investigation graphs and soc-agent chat safely
+## 8. Use investigation graphs and soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/graphs`, create a graph with synthetic or bounded operator-authored context, and add nodes/edges that reference SIEM pages instead of copying raw telemetry.
 3. On a graph detail page, use the `soc-agent` proposal form only for bounded suggested updates. Review the diff and check the approval box before applying; no graph mutation occurs from a proposal alone.
 4. Archive graphs when they should leave the active investigation list.
 
-## 8. Use soc-agent chat safely
+## 9. Use soc-agent chat safely
 
 1. Start the API and sign in to the review console.
 2. Open `/soc-agent` and confirm the provider status pill or any inline provider notice.
@@ -204,7 +223,7 @@ Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/confi
 4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is ChatGPT subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) using either Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` for the ChatGPT Codex Responses backend, or a dedicated `SocAgent__SubscriptionAuthFilePath` for the OpenAI API path; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes the returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
-## 9. Retire stale lab agents safely
+## 10. Retire stale lab agents safely
 
 Use the web console instead of destructive database deletes when old smoke-test or lab registrations inflate inventory counts:
 
@@ -216,7 +235,7 @@ Use the web console instead of destructive database deletes when old smoke-test 
 
 Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
 
-## 10. Prepare Windows agent package
+## 11. Prepare Windows agent package
 
 ```bash
 ./scripts/publish-windows-agent.sh
@@ -230,7 +249,7 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
 
 Copy only the generated executable, ignored generated `agentsettings.json`, and optional `Sysmon/` profile from `dist/windows-agent-copy/` to the lab VM. Do not print or commit the generated settings because it contains a per-agent token.
 
-## 11. Windows service install/start/stop
+## 12. Windows service install/start/stop
 
 Preview without changing the host:
 
@@ -262,7 +281,7 @@ Uninstall through the same workflow preserves data by default:
 
 Use `-RemoveData` only for disposable lab cleanup after explicit approval. Use `-ConfigurePrerequisites`, `-ConfigurePrivacySensitiveAuditPolicy`, and `-ManageSysmon` only after reviewing [the installer workflow](windows-agent-installer.md) and obtaining host-mutation approval.
 
-## 12. Windows lab E2E validation
+## 13. Windows lab E2E validation
 
 Authorized current lab VM: `192.168.122.240`.
 
