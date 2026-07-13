@@ -1,3 +1,5 @@
+using Challenger.Siem.Api.Configuration;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Review;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
@@ -6,12 +8,16 @@ namespace Challenger.Siem.Api.Pages;
 
 public sealed class IndexModel(
     ReviewRepository reviewRepository,
+    EventRepository eventRepository,
     IOptions<ReviewOptions> reviewOptions,
+    IOptions<ManagedRetentionOptions> retentionOptions,
     ILogger<IndexModel> logger) : PageModel
 {
     private readonly ReviewOptions options = reviewOptions.Value;
 
     public DashboardSummary Summary { get; private set; } = DashboardSummary.Empty;
+
+    public ManagedStorageAccounting? StorageAccounting { get; private set; }
 
     public string? ErrorMessage { get; private set; }
 
@@ -27,6 +33,10 @@ public sealed class IndexModel(
                 options.StaleAgentAfter,
                 options.RecentEventWindow,
                 cancellationToken);
+            StorageAccounting = await eventRepository.GetManagedStorageAccountingAsync(
+                retentionOptions.Value.ManagedCapacityBytes,
+                cancellationToken,
+                retentionOptions.Value.TargetRetentionDays);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

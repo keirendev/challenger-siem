@@ -62,6 +62,55 @@ else
         <article class="card"><span class="metric-value">@TimeDisplay.HostTimezoneShortLabel(Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone)</span><span class="metric-label">host timezone</span></article>
     </section>
 
+    <section class="card" aria-labelledby="health-state-title">
+        <div class="table-title flush-title">
+            <div>
+                <h2 id="health-state-title">Health state interpretation and guidance</h2>
+                <p class="muted">These states describe visibility evidence only. Guidance is non-mutating: no button here changes host audit, firewall, authentication, kernel, service, package, or security policy.</p>
+            </div>
+        </div>
+        <div class="state-grid">
+            @foreach (var state in new[] { "missing", "unsupported", "not_applicable", "excepted", "disabled", "permission_denied", "stale", "throttled", "gap", "error" })
+            {
+                var count = state switch
+                {
+                    "missing" => Model.Summary.MissingMandatorySources,
+                    "unsupported" => Model.Summary.UnsupportedSources,
+                    "not_applicable" => Model.Summary.NotApplicableSources,
+                    "excepted" => Model.Summary.ExceptedSources,
+                    "disabled" => Model.Sources.Count(source => source.Status == "disabled"),
+                    "permission_denied" => Model.Summary.PermissionDeniedSources,
+                    "stale" => Model.Summary.StaleSources,
+                    "throttled" => Model.Sources.Count(source => source.TransitionState == "degraded" || (source.Details.TryGetValue("throttle_state", out var throttleState) && throttleState == "throttled")),
+                    "gap" => Model.Sources.Count(source => source.GapCount.GetValueOrDefault() > 0 || source.DroppedEvents.GetValueOrDefault() > 0 || (source.Details.TryGetValue("gap_state", out var gapState) && !string.IsNullOrWhiteSpace(gapState))),
+                    "error" => Model.Summary.ErrorSources,
+                    _ => 0
+                };
+                <article class="state-chip">
+                    <span class="badge @(count == 0 ? "neutral" : state is "error" or "permission_denied" ? "danger" : "warning")">@state</span>
+                    <strong>@count</strong>
+                    <span class="muted">@(count == 0 ? "not observed in current evidence" : "review required")</span>
+                </article>
+            }
+        </div>
+    </section>
+
+    <section class="card" aria-labelledby="queue-resource-title">
+        <div class="table-title flush-title"><div><h2 id="queue-resource-title">Agent queue, resource, retention, and capacity metrics</h2><p class="muted">Unknown means the agent or storage API did not report the measurement; observed zero is shown as 0.</p></div></div>
+        <dl class="detail-grid">
+            <dt>Queue depth</dt><dd>@Model.Summary.QueueMetrics?.QueueDepth</dd>
+            <dt>Poison queue depth</dt><dd>@Model.Summary.QueueMetrics?.PoisonDepth</dd>
+            <dt>Queue oldest age</dt><dd>@(Model.Summary.QueueMetrics?.OldestQueuedAgeSeconds?.ToString() ?? "unknown") seconds</dd>
+            <dt>Queue pressure</dt><dd><span class="badge @(Model.Summary.QueueMetrics?.PressureState is "normal" ? "ok" : "warning")">@(Model.Summary.QueueMetrics?.PressureState ?? "unknown")</span></dd>
+            <dt>Queue capacity</dt><dd><span class="badge @DetailModel.CapacityState(Model.Summary.QueueMetrics?.UsedPercent)">@DetailModel.CapacityState(Model.Summary.QueueMetrics?.UsedPercent)</span> @(Model.Summary.QueueMetrics?.UsedPercent?.ToString("0.###") ?? "unknown")% — @DetailModel.CapacityGuidance(DetailModel.CapacityState(Model.Summary.QueueMetrics?.UsedPercent))</dd>
+            <dt>Last successful send</dt><dd>@TimeDisplay.FormatUtc(Model.Summary.QueueMetrics?.LastSuccessfulSendTime, "yyyy-MM-dd HH:mm:ss")</dd>
+            <dt>Agent CPU</dt><dd>@(Model.Summary.ResourceMetrics?.CpuPercent?.ToString("0.###") ?? "unknown")%</dd>
+            <dt>Agent RSS</dt><dd>@(Model.Summary.ResourceMetrics?.RssBytes?.ToString() ?? "unknown") bytes</dd>
+            <dt>Managed telemetry capacity</dt><dd><span class="badge @(Model.StorageAccounting?.WarningState ?? "unknown")">@(Model.StorageAccounting?.WarningState ?? "unknown")</span> @(Model.StorageAccounting?.UsedPercent.ToString("0.###") ?? "unknown")% used of @(Model.StorageAccounting?.CapacityBytes.ToString() ?? "unknown") bytes. Thresholds: 70% warning, 85% warning, 95% critical, 100% over capacity.</dd>
+            <dt>Retention lag</dt><dd>@(Model.StorageAccounting?.RetentionLagState ?? "unknown") @(Model.StorageAccounting?.RetentionLagSeconds?.ToString() ?? string.Empty)</dd>
+        </dl>
+    </section>
+
     @if (Model.Coverage?.Gaps.Count > 0)
     {
         <section class="card" aria-labelledby="coverage-gaps-title">
@@ -105,8 +154,9 @@ else
                             <th>Reported</th>
                             <th>Recent events</th>
                             <th>Last event</th>
+                            <th>Rate/lag/checkpoint</th>
                             <th>Config/source</th>
-                            <th>Reason</th>
+                            <th>Guidance</th>
                             <th>Review</th>
                         </tr>
                     </thead>
@@ -134,6 +184,17 @@ else
                                     <div class="muted">@TimeDisplay.HostTimezoneLabel(source.HostTimezone ?? Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone)</div>
                                 </td>
                                 <td>
+                                    <div>rate @(source.EventRatePerMinute?.ToString("0.###") ?? "unknown")/min</div>
+                                    <div>lag @(source.LagSeconds?.ToString() ?? "unknown")s</div>
+                                    <div>silence @(source.SilenceSeconds?.ToString() ?? "unknown")s</div>
+                                    <div class="muted mono">collected @(source.CollectedCheckpoint?.Cursor ?? source.CollectedCheckpoint?.Sequence?.ToString() ?? "unknown")</div>
+                                    <div class="muted mono">acked @(source.AcknowledgedCheckpoint?.Cursor ?? source.AcknowledgedCheckpoint?.Sequence?.ToString() ?? "unknown")</div>
+                                    @if (source.GapCount.GetValueOrDefault() > 0 || source.DroppedEvents.GetValueOrDefault() > 0)
+                                    {
+                                        <div><span class="badge warning">gap/drop @source.GapCount.GetValueOrDefault()/@source.DroppedEvents.GetValueOrDefault()</span></div>
+                                    }
+                                </td>
+                                <td>
                                     <span>@(string.IsNullOrWhiteSpace(source.SourceVersion) ? "—" : source.SourceVersion)</span>
                                     @if (!string.IsNullOrWhiteSpace(source.ConfigHash))
                                     {
@@ -144,8 +205,12 @@ else
                                     {
                                         <div class="muted">@sourcePack</div>
                                     }
+                                    @if (!string.IsNullOrWhiteSpace(source.TransitionState))
+                                    {
+                                        <div class="muted">transition @source.TransitionState</div>
+                                    }
                                 </td>
-                                <td>@source.Reason</td>
+                                <td><strong>@source.Reason</strong><div class="muted">@DetailModel.SourceStateGuidance(source)</div></td>
                                 <td><a href="@source.EventSearchUrl">events</a></td>
                             </tr>
                         }
@@ -160,8 +225,8 @@ else
         <section class="table-card" id="inventory" aria-labelledby="inventory-coverage-title">
             <div class="table-title">
                 <div>
-                    <h2 id="inventory-coverage-title">Inventory and audit-policy snapshots</h2>
-                    <p class="muted">Missing or stale snapshots are explicit completeness gaps for host context and audit-policy prerequisites.</p>
+                    <h2 id="inventory-coverage-title">Inventory and posture snapshots</h2>
+                    <p class="muted">Completeness states come from telemetry coverage. Latest-vs-previous changes are bounded and time-labelled; missing evidence never implies complete host posture.</p>
                 </div>
             </div>
             <div class="table-scroll">
@@ -183,7 +248,7 @@ else
                             <td>
                                 @if (snapshot.Url.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    <span class="muted">API</span>
+                                    <span class="muted">API (operator credential required)</span>
                                 }
                                 else
                                 {
@@ -195,6 +260,59 @@ else
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <section class="table-card" aria-labelledby="inventory-change-title">
+            <div class="table-title">
+                <div>
+                    <h2 id="inventory-change-title">Bounded inventory/posture changes</h2>
+                    <p class="muted">Change previews are capped at 20 snapshot types and 8 changes per type. Non-admin roles see item identities and metadata values redacted.</p>
+                </div>
+            </div>
+            @if (Model.InventorySnapshots.Count == 0)
+            {
+                <div class="empty"><strong>No inventory snapshots are stored for this host.</strong><p>This is an unknown posture state, not evidence that the host has no users, packages, services, listeners, or policy drift.</p></div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table>
+                        <caption>Latest and previous bounded inventory snapshots with role-redacted change summaries</caption>
+                        <thead><tr><th>Snapshot</th><th>Status</th><th>Current / previous</th><th>Items</th><th>Changes</th><th>Redaction</th></tr></thead>
+                        <tbody>
+                        @foreach (var snapshot in Model.InventorySnapshots)
+                        {
+                            <tr>
+                                <td>@snapshot.SnapshotType</td>
+                                <td><span class="badge @snapshot.Status">@snapshot.Status</span></td>
+                                <td>
+                                    <div>current @TimeDisplay.FormatHostTime(snapshot.CurrentCollectedAt, snapshot.HostTimezone ?? Model.Coverage.HostTimezone, "yyyy-MM-dd HH:mm")</div>
+                                    <div class="muted">previous @TimeDisplay.FormatHostTime(snapshot.PreviousCollectedAt, snapshot.HostTimezone ?? Model.Coverage.HostTimezone, "yyyy-MM-dd HH:mm")</div>
+                                </td>
+                                <td>@snapshot.CurrentItemCount current / @snapshot.PreviousItemCount previous</td>
+                                <td>
+                                    <div>@snapshot.AddedCount added / @snapshot.RemovedCount removed / @snapshot.ChangedCount changed</div>
+                                    @if (snapshot.Changes.Count == 0)
+                                    {
+                                        <div class="muted">No bounded item-level changes between the two latest snapshots.</div>
+                                    }
+                                    else
+                                    {
+                                        <ul class="compact-list">
+                                        @foreach (var change in snapshot.Changes)
+                                        {
+                                            <li><span class="badge neutral">@change.ChangeType</span> @change.Kind — @change.DisplayName <span class="muted">@change.Status; @change.MetadataSummary</span></li>
+                                        }
+                                        </ul>
+                                    }
+                                </td>
+                                <td>@snapshot.RedactionLabel</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
         </section>
 
         <section class="table-card" id="detections" aria-labelledby="detection-prereq-title">

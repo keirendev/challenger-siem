@@ -10,7 +10,7 @@
     <div>
         <p class="page-kicker">Operations overview</p>
         <h1>Overview</h1>
-        <p class="muted">Dashboard metrics for ingestion, endpoint health, queue pressure, and review-console status.</p>
+        <p class="muted">Dashboard metrics for ingestion, endpoint health, queue pressure, source gaps, and managed telemetry capacity.</p>
     </div>
     <div class="actions">
         <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale">Review stale agents</a>
@@ -55,6 +55,22 @@ else if (Model.Summary.ActiveAgents == 0 && Model.Summary.RecentEventCount == 0)
         <span class="metric-label">active agents with queued events</span>
     </article>
     <article class="card">
+        <span class="metric-value">@Model.Summary.AgentsWithPressure</span>
+        <span class="metric-label">active agents with pressure/throttle</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.AgentsWithSourceGaps</span>
+        <span class="metric-label">active agents with source gaps/drops</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.AgentsWithDegradedSources</span>
+        <span class="metric-label">active agents with degraded sources</span>
+    </article>
+    <article class="card">
+        <span class="metric-value">@Model.Summary.AgentsWithCapacityWarnings</span>
+        <span class="metric-label">active agents with queue capacity ≥70%</span>
+    </article>
+    <article class="card">
         <span class="metric-value">@Model.Summary.RecentEventCount</span>
         <span class="metric-label">events ingested in last @Model.RecentEventWindowHours h</span>
     </article>
@@ -69,6 +85,12 @@ else if (Model.Summary.ActiveAgents == 0 && Model.Summary.RecentEventCount == 0)
     <p>
         Active agents are marked stale when they have not been seen for @Model.StaleAgentMinutes minutes.
         Retired agents are disabled registrations hidden from default active views; their historical events and heartbeat data are preserved.
-        Non-zero queue depth is taken from the latest heartbeat observation for active agents.
+        Non-zero queue depth, pressure, gap, and capacity counts are taken from latest heartbeat/source-health observations for active agents.
+    </p>
+    <p>
+        Managed telemetry storage state is <strong>@(Model.StorageAccounting?.WarningState ?? "unknown")</strong>
+        at @(Model.StorageAccounting?.UsedPercent.ToString("0.###") ?? "unknown")% of configured capacity.
+        Capacity warnings are textual and non-color-only: 70% warning, 85% warning, 95% critical, and 100% over capacity.
+        Retention lag: @(Model.StorageAccounting?.RetentionLagState ?? "unknown").
     </p>
 </section>

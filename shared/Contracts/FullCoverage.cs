@@ -626,6 +626,18 @@ public sealed record AgentTelemetryCoverage
     [JsonPropertyName("not_applicable_sources")]
     public int NotApplicableSources { get; init; }
 
+    [JsonPropertyName("pressure_state")]
+    public string PressureState { get; init; } = QueuePressureStates.Unknown;
+
+    [JsonPropertyName("capacity_state")]
+    public string CapacityState { get; init; } = "unknown";
+
+    [JsonPropertyName("has_gap")]
+    public bool HasGap { get; init; }
+
+    [JsonPropertyName("is_throttled")]
+    public bool IsThrottled { get; init; }
+
     [JsonPropertyName("new_alert_count")]
     public int NewAlertCount { get; init; }
 
@@ -779,6 +791,15 @@ public sealed record SourceTelemetryCoverage
 
     [JsonPropertyName("recent_event_count")]
     public int RecentEventCount { get; init; }
+
+    [JsonPropertyName("has_checkpoint_gap")]
+    public bool HasCheckpointGap { get; init; }
+
+    [JsonPropertyName("is_throttled")]
+    public bool IsThrottled { get; init; }
+
+    [JsonPropertyName("state_guidance")]
+    public string StateGuidance { get; init; } = string.Empty;
 
     [JsonPropertyName("reason")]
     public string Reason { get; init; } = string.Empty;
