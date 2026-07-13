@@ -374,10 +374,34 @@ GET /soc-agent/live/sessions/<session-id>/active
 GET /api/v1/alerts
 GET /api/v1/alerts/<alert-id>
 GET /api/v1/detections/rules
+PUT /api/v1/detections/rules/<rule-id>/<version>/settings
 Authorization: Bearer <operator-api-credential>
 ```
 
-The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md). Mutating alert triage, rule activation, UI case workflows, and host remediation remain future approved workflows.
+The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. The rules response also includes `managed_rules`, which adds effective enablement, lifecycle state, synthetic validation status, tuning/suppression notes, prerequisite source counts, confidence impact, and settings version. Detection-engineer/admin settings mutation accepts only bounded metadata (`enabled`, lifecycle, validation status, notes, expected version, and `CONFIRM DETECTION SERVER CHANGE`); it rejects arbitrary code/expression/secret-shaped content, uses optimistic concurrency, records security audit/history, and never changes host collection policy. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md).
+
+## Dashboards
+
+```http
+GET /api/v1/dashboards/summary?time_range_hours=24
+GET /api/v1/dashboards/layouts
+POST /api/v1/dashboards/layouts
+PUT /api/v1/dashboards/layouts/<layout-id>
+Authorization: Bearer <operator-api-credential>
+```
+
+Dashboard summary returns bounded server-side aggregations over a clamped 1-168 hour range: hourly event buckets, top event sources/severities, alert statuses, source-health states, measured timestamp, latest-ingest timestamp, freshness state, and partial-data flag. Saved layouts store bounded widget metadata only, with owner, `private` or `shared` visibility, time range, refresh interval, and optimistic `version`. Layout mutations require analyst/investigation-capable role or higher; shared layouts require detection-engineer/admin.
+
+## Administration
+
+```http
+GET /api/v1/admin/overview
+PUT /api/v1/admin/settings
+PUT /api/v1/admin/sources
+Authorization: Bearer <operator-api-credential>
+```
+
+Administration APIs are admin-only. Overview returns non-secret operator/session metadata, source state/review notes, retention/capacity effective settings and impact text, and bounded append-only security audit history. Settings mutation is limited to allowlisted server-managed retention/capacity keys and requires `CONFIRM SERVER CONFIG CHANGE`, validation, optimistic concurrency, and audit. Source review-note mutation requires `CONFIRM SOURCE REVIEW CHANGE`, validation, optimistic concurrency, and audit; it does not enable/disable endpoint collection, L3 telemetry, or host policy.
 
 
 ## Managed telemetry storage accounting and retention

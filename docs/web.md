@@ -12,7 +12,7 @@ The selected frontend architecture is enhanced ASP.NET Core/Razor Pages in the e
 
 Implemented today in the ASP.NET Core API process:
 
-- `/login`, `/logout`, `/`, `/agents`, `/agents/detail`, `/events`, `/events/detail`, `/alerts`, `/alerts/detail`, `/graphs`, `/graphs/detail`, `/soc-agent`, `/audit-policy`, and `/about` Razor Pages.
+- `/login`, `/logout`, `/`, `/agents`, `/agents/detail`, `/events`, `/events/detail`, `/alerts`, `/alerts/detail`, `/detections`, `/dashboards`, `/administration`, `/graphs`, `/graphs/detail`, `/soc-agent`, `/audit-policy`, and `/about` Razor Pages.
 - Authenticated `/api/v1` review APIs for events, source health, telemetry coverage, inventory, alerts, detection-rule metadata, platform capabilities, investigation graphs, managed telemetry storage/retention, operators, and `soc-agent`.
 - Database-backed operator identities, revocable cookie sessions, operator API credentials, antiforgery-protected Razor forms, and role enforcement described in [auth.md](auth.md).
 - Role-aware server-side field policy for events and alerts: admin receives full event raw payload; non-admin roles receive omitted raw payload and redacted sensitive event/alert context.
@@ -21,7 +21,7 @@ Implemented today in the ASP.NET Core API process:
 
 Not implemented today and therefore specified as future approved work only:
 
-- Separate first-class `/search`, `/assets`, `/cases`, `/detections`, `/dashboards`, `/health`, and `/administration` route trees. The active shell already exposes the mature IA labels and maps implemented sections to existing Razor routes while showing honest disabled/planned affordances for unimplemented top-level workflows.
+- Separate first-class `/search`, `/assets`, `/cases`, and `/health` route trees. The active shell maps Search/Assets/Health to existing implemented routes and now implements first-class Detections, Dashboards, and Administration pages while keeping Cases as an honest planned affordance.
 - Alert triage mutations, case management, case closure, dashboard builder/editing, detection rule activation/editing/backtesting, response/remediation actions, export workflows, SSO/MFA/tenancy, and SOAR playbooks.
 - Autonomous `soc-agent` mutation. Current `soc-agent` tools are read-only; graph proposals require explicit operator approval before graph changes.
 
@@ -45,10 +45,10 @@ The mature console should use these top-level sections. Current implemented rout
 | Assets | Review hosts, agents, source coverage, inventory, and entity posture | `/agents`, `/agents/detail`, `/audit-policy` | Asset inventory, host coverage, source matrix, queue/pressure, inventory snapshots, role packs, audit-policy drift | Agent/source-health subset implemented |
 | Alerts | Review detection outputs and promote to cases | `/alerts`, `/alerts/detail` | Alert queue, grouping, suppression context, evidence timeline, owner/status transitions, related assets/entities/cases | Review skeleton implemented; triage future |
 | Cases | Manage investigations through audited closure | none | Case queue, assignments, notes, evidence links, tasks, severity/status, closure reason, audit trail | Future |
-| Detections | Review and engineer detection content | `/api/v1/detections/rules` only | Rule catalog, prerequisites, coverage, versions, test/backtest status, draft/proposal/activation workflows | Metadata API implemented; UI/mutations future |
-| Dashboards | Monitor saved operating views | dashboard cards on `/` | Saved SOC, coverage, ingestion, retention, and detection dashboards with chart accessibility and no raw telemetry widgets | Future beyond overview cards |
+| Detections | Review and engineer detection content | `/detections`, `/api/v1/detections/rules` | Rule catalog, prerequisites, coverage, versions, validation/test metadata, tuning/suppression notes, response guidance, and detection-engineer/admin metadata mutations | Implemented metadata management; arbitrary rule code/backtesting remains out of scope |
+| Dashboards | Monitor saved operating views | `/dashboards`, overview cards on `/` | Bounded server-side event/alert/source-health aggregations, freshness/partial state, accessible chart/table alternatives, saved owner/visibility/version layouts | Implemented bounded dashboards; raw telemetry widgets remain out of scope |
 | Health | Diagnose pipeline and platform health | `/agents/detail`, `/about`, storage APIs | Agent/source/queue/storage/capacity/API health, stale/degraded/partial data, retention status, schema/version status | Scattered current surfaces |
-| Administration | Manage operators, credentials, retention, agents, policies | local scripts plus admin APIs | Operator lifecycle, role assignment, agent retirement, storage retention, audit review, system settings | Admin APIs/scripts exist; broad UI future |
+| Administration | Manage operators, credentials, retention, agents, policies | `/administration`, local bootstrap/recovery scripts plus admin APIs | Operator/session metadata, source review notes, storage retention/capacity effective settings, audit review, safe allowlisted server settings | Implemented admin UI/API for safe server settings; host-policy mutation remains out of scope |
 
 Navigation order must prioritize active analyst flow: **Overview → Search → Assets → Alerts → Cases → Detections → Dashboards → Health → Administration**. Role-hidden sections must be omitted from primary nav and represented by an accessible forbidden page or notice when deep-linked.
 
@@ -63,6 +63,9 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | `/events` | authenticated | Search / event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
 | `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
+| `/detections` | authenticated view; detection-engineer/admin mutation | Detection catalog and rule metadata management | Shows stable rule versions, required sources/fields, coverage/confidence impact, synthetic tests, tuning/suppression notes, and response guidance; mutations are server-side metadata only with confirmation/concurrency/audit. |
+| `/dashboards` | authenticated view; analyst+ private save; detection-engineer/admin shared save | Bounded dashboards and saved layouts | Server-side aggregations with explicit range/freshness/partial state, non-color visualizations, table alternatives, owner/visibility/version layout semantics. |
+| `/administration` | admin | Operator/session/source/retention/capacity/audit administration | No secrets are returned; allowlisted settings require confirmation and audit; no host policy or L3 collection mutation. |
 | `/graphs` and `/graphs/detail` | analyst, detection-engineer, admin | Investigation graphs | Create/update nodes/edges, archive graphs, request/apply `soc-agent` proposals with explicit approval for proposal apply. |
 | `/soc-agent` | analyst, detection-engineer, admin | Live SIEM-aware chat workspace | Read-only tools; chat deletion requires confirmation and conflicts while a run is active. |
 | `/audit-policy` | admin | Audit-policy snapshot review | Admin-only because inventory API is currently operator-management scoped. |
@@ -84,11 +87,11 @@ This matrix summarizes implemented authorization and target UI visibility. The s
 | Alert metadata | yes | yes | yes | yes | Non-admin alert context redacted. |
 | Investigation graph mutations | no | yes | yes | yes | Current graph create/update/node/edge/archive/proposal apply. |
 | `soc-agent` chat/live workspace | no | yes | yes | yes | Same-origin live endpoints require analyst policy. |
-| Detection engineering mutations | no | no | yes | yes | Permission exists; mutable UI/workflow is future. |
+| Detection engineering mutations | no | no | yes | yes | Implemented for bounded server-side rule metadata only; no arbitrary code or host-policy mutation. |
 | Agent retirement / storage retention / inventory management APIs | no | no | no | yes | Current token-service mapping treats these as operator-management/admin. |
 | Operator account management | no | no | no | yes | Admin API plus local bootstrap/recovery scripts. |
 | Audit-policy page | no | no | no | yes | Current `/audit-policy`. |
-| Administration section | no | no | no | yes | Future UI; current admin APIs/scripts only. |
+| Administration section | no | no | no | yes | Implemented admin UI for non-secret metadata, source review notes, retention/capacity settings, and audit history. |
 
 Unauthorized and forbidden behavior:
 

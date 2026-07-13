@@ -176,6 +176,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
         }
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var disabledRules = await LoadDisabledDetectionRulesAsync(connection, cancellationToken);
         foreach (var group in accepted.GroupBy(envelope => envelope.AgentId, StringComparer.Ordinal))
         {
             var sourceHealth = await LoadDetectionSourceHealthAsync(connection, group.Key, cancellationToken);
@@ -183,7 +184,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
             {
                 foreach (var evaluation in engine.EvaluateLinux(envelope, sourceHealth))
                 {
-                    if (!evaluation.Matched || !evaluation.PrerequisitesMet)
+                    if (disabledRules.Contains((evaluation.Rule.RuleId, evaluation.Rule.Version)) || !evaluation.Matched || !evaluation.PrerequisitesMet)
                     {
                         continue;
                     }
@@ -198,6 +199,26 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 }
             }
         }
+    }
+
+    private static async Task<IReadOnlySet<(string RuleId, int Version)>> LoadDisabledDetectionRulesAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select rule_id, version
+            from detection_rule_management
+            where not enabled or lifecycle_state in ('disabled', 'deprecated');
+            """;
+        var results = new HashSet<(string, int)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add((reader.GetString(0), reader.GetInt32(1)));
+        }
+
+        return results;
     }
 
     private static async Task<IReadOnlyDictionary<string, SourceHealthReport>> LoadDetectionSourceHealthAsync(

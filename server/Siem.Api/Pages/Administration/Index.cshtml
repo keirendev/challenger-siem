@@ -1,0 +1,166 @@
+@page "/administration"
+@model Challenger.Siem.Api.Pages.Administration.IndexModel
+@{
+    ViewData["Title"] = "Administration";
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Administration", IsCurrent: true))' />
+
+<div class="page-header">
+    <div>
+        <p class="page-kicker">Admin controls</p>
+        <h1>Administration</h1>
+        <p class="muted">Role-restricted administration for operators, sessions, sources, retention/capacity effective settings, and audit history. Browser actions do not return secrets and do not change host collection policy.</p>
+    </div>
+    <div class="actions">
+        <a class="button secondary" asp-page="/About">Health</a>
+        <a class="button" asp-page="/Agents/Index">Assets</a>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Administration action failed", Model.ErrorMessage, "error", IsAlert: true)' />
+}
+@if (Model.SuccessMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Administration action complete", Model.SuccessMessage, "ok")' />
+}
+
+@if (Model.Overview is null)
+{
+    <div class="empty">Administration data is unavailable.</div>
+}
+else
+{
+    <section class="card">
+        <h2>Safety boundary</h2>
+        <p>Admin settings here affect server review and managed-retention behavior only. They cannot enable Linux L3 collection, alter endpoint audit/firewall/authentication/kernel/service policy, reveal passwords, or return API credentials after entry. Risky settings require exact confirmation phrases and audit events.</p>
+    </section>
+
+    <section class="table-card" aria-labelledby="settings-title">
+        <div class="table-title"><h2 id="settings-title">Effective retention and capacity settings</h2></div>
+        <div class="table-scroll">
+            <table>
+                <caption>Server-managed effective settings with impact preview.</caption>
+                <thead><tr><th scope="col">Setting</th><th scope="col">Override</th><th scope="col">Effective value</th><th scope="col">Version</th><th scope="col">Impact</th><th scope="col">Update</th></tr></thead>
+                <tbody>
+                @foreach (var setting in Model.Overview.Settings)
+                {
+                    <tr>
+                        <td class="mono">@setting.Key</td>
+                        <td>@(string.IsNullOrWhiteSpace(setting.Value) ? "configured default" : setting.Value)</td>
+                        <td>@setting.EffectiveValue</td>
+                        <td>@setting.Version</td>
+                        <td>@setting.Impact</td>
+                        <td>
+                            <form method="post" asp-page-handler="Setting" class="stacked-form">
+                                <input type="hidden" name="SettingKey" value="@setting.Key" />
+                                <input type="hidden" name="ExpectedVersion" value="@setting.Version" />
+                                <label for="value-@setting.Key">New value</label>
+                                <input id="value-@setting.Key" name="SettingValue" value="@setting.EffectiveValue" />
+                                <label for="confirm-@setting.Key">Type CONFIRM SERVER CONFIG CHANGE</label>
+                                <input id="confirm-@setting.Key" name="ConfirmImpact" autocomplete="off" />
+                                <button class="button secondary" type="submit">Validate and save</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="table-card" aria-labelledby="sources-title">
+        <div class="table-title"><h2 id="sources-title">Source review settings</h2></div>
+        <div class="table-scroll">
+            <table>
+                <caption>Source health impact and admin review notes; these notes do not enable or disable endpoint collection.</caption>
+                <thead><tr><th scope="col">Source</th><th scope="col">Status</th><th scope="col">Agents</th><th scope="col">Counts</th><th scope="col">Review note</th><th scope="col">Update</th></tr></thead>
+                <tbody>
+                @foreach (var source in Model.Overview.Sources)
+                {
+                    <tr>
+                        <td><span class="mono">@source.SourceId</span><br />@source.DisplayName</td>
+                        <td><span class="badge @BadgeClass(source.Status)">@source.Status</span></td>
+                        <td>@source.AgentCount</td>
+                        <td>healthy @source.Healthy; degraded @source.Degraded; missing @source.Missing</td>
+                        <td>@(string.IsNullOrWhiteSpace(source.ReviewNote) ? "none" : source.ReviewNote)</td>
+                        <td>
+                            <form method="post" asp-page-handler="Source" class="stacked-form">
+                                <input type="hidden" name="SourceId" value="@source.SourceId" />
+                                <input type="hidden" name="DisplayName" value="@source.DisplayName" />
+                                <input type="hidden" name="SourceExpectedVersion" value="@source.SettingsVersion" />
+                                <label for="note-@SafeId(source.SourceId)">Review note</label>
+                                <textarea id="note-@SafeId(source.SourceId)" name="ReviewNote" maxlength="1000" rows="2">@source.ReviewNote</textarea>
+                                <label for="source-confirm-@SafeId(source.SourceId)">Type CONFIRM SOURCE REVIEW CHANGE</label>
+                                <input id="source-confirm-@SafeId(source.SourceId)" name="SourceConfirmImpact" autocomplete="off" />
+                                <button type="submit" class="button secondary">Save source note</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="table-card" aria-labelledby="operators-title">
+        <div class="table-title"><h2 id="operators-title">Operators</h2><p class="muted">No passwords, API tokens, or session handles are displayed.</p></div>
+        <div class="table-scroll">
+            <table>
+                <caption>Operator account metadata without secrets.</caption>
+                <thead><tr><th scope="col">Username</th><th scope="col">Role</th><th scope="col">Enabled</th><th scope="col">Failed logins</th><th scope="col">Last login</th><th scope="col">Credentials changed</th></tr></thead>
+                <tbody>
+                @foreach (var op in Model.Overview.Operators)
+                {
+                    <tr><td>@op.Username</td><td><span class="badge role">@op.Role</span></td><td>@op.Enabled</td><td>@op.FailedLoginCount</td><td>@TimeDisplay.FormatUtc(op.LastLoginAt)</td><td>@TimeDisplay.FormatUtc(op.CredentialsChangedAt)</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="table-card" aria-labelledby="sessions-title">
+        <div class="table-title"><h2 id="sessions-title">Recent sessions</h2></div>
+        <div class="table-scroll">
+            <table>
+                <caption>Recent operator session metadata; token values are never shown.</caption>
+                <thead><tr><th scope="col">Session</th><th scope="col">Operator</th><th scope="col">Role</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Revoked</th></tr></thead>
+                <tbody>
+                @foreach (var session in Model.Overview.Sessions)
+                {
+                    <tr><td class="mono">@session.SessionId</td><td>@session.Username</td><td>@session.Role</td><td>@TimeDisplay.FormatUtc(session.CreatedAt)</td><td>@TimeDisplay.FormatUtc(session.ExpiresAt)</td><td>@(session.RevokedAt.HasValue ? TimeDisplay.FormatUtc(session.RevokedAt) : "active")</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="table-card" aria-labelledby="audit-title">
+        <div class="table-title"><h2 id="audit-title">Security audit history</h2></div>
+        <div class="table-scroll">
+            <table>
+                <caption>Append-only security audit events with bounded non-secret details.</caption>
+                <thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Target</th><th scope="col">Details</th></tr></thead>
+                <tbody>
+                @foreach (var entry in Model.Overview.AuditEvents)
+                {
+                    <tr><td>@TimeDisplay.FormatUtc(entry.OccurredAt)</td><td>@entry.ActorUsername</td><td class="mono">@entry.Action</td><td><span class="badge @BadgeClass(entry.Outcome)">@entry.Outcome</span></td><td>@entry.TargetType @entry.TargetId</td><td class="compact-cell">@entry.DetailsSummary</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@functions {
+    private static string SafeId(string value) => new string(value.Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray());
+    private static string BadgeClass(string value) => value switch
+    {
+        "healthy" or "success" => "ok",
+        "missing" or "error" or "failure" or "denied" => "danger",
+        "degraded" or "stale" or "permission_denied" => "warning",
+        _ => "neutral"
+    };
+}

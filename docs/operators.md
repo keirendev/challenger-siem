@@ -100,8 +100,11 @@ Common current operator path (aligned to the Overview/Search/Assets/Alerts/Cases
 3. Use **Assets** to filter by hostname/agent ID/status/health and open host coverage details. Admin-only stale-agent retirement remains confirmation-gated and preserves telemetry.
 4. Use **Alerts** to review the current alert foundation and empty-state handling until triage/case workflow mutations are implemented.
 5. Use the role-aware implemented workspace links for **Investigation graphs** and **soc-agent** when your role permits analyst workflows. `soc-agent` remains citation-oriented and cannot mutate detections, configuration, agents, stored data, or repository files.
-6. Treat **Cases**, **Detections**, **Dashboards**, and broad **Administration** entries as honest planned affordances when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
-7. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
+6. Use **Detections** to review stable rule versions, required sources/fields, coverage/confidence impact, synthetic validation metadata, tuning/suppression notes, and response guidance. Detection-engineer/admin operators can update bounded server-side rule metadata with confirmation, audit, and optimistic concurrency; the page cannot enable host collection or upload arbitrary detection code.
+7. Use **Dashboards** for bounded server-side aggregations with explicit time ranges, freshness/partial-data state, accessible chart/table alternatives, and saved owner/visibility/version layouts. Saved layouts store widget metadata only, not raw telemetry.
+8. Use **Administration** (admin only) for non-secret operator/session metadata, source review notes, retention/capacity effective settings, and audit history. Settings mutations are allowlisted server changes, require confirmations, and do not alter endpoint audit/firewall/authentication/kernel/service policy or L3 collection.
+9. Treat **Cases** as an honest planned affordance when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
+10. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
 

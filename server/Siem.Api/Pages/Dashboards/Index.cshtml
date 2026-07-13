@@ -1,0 +1,117 @@
+@page "/dashboards"
+@model Challenger.Siem.Api.Pages.Dashboards.IndexModel
+@{
+    ViewData["Title"] = "Dashboards";
+    var maxBucket = Model.Summary?.EventBuckets.Select(b => b.EventCount).DefaultIfEmpty(0).Max() ?? 0;
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Dashboards", IsCurrent: true))' />
+
+<div class="page-header">
+    <div>
+        <p class="page-kicker">Bounded monitoring views</p>
+        <h1>Dashboards</h1>
+        <p class="muted">Server-side aggregations with explicit time range, freshness, partial-data state, and accessible table alternatives. Saved layouts store metadata only, not raw telemetry.</p>
+    </div>
+    <div class="actions">
+        <a class="button secondary" asp-page="/Dashboards/Index" asp-route-time_range_hours="6">6 h</a>
+        <a class="button secondary" asp-page="/Dashboards/Index" asp-route-time_range_hours="24">24 h</a>
+        <a class="button" asp-page="/Dashboards/Index" asp-route-time_range_hours="168">7 d</a>
+    </div>
+</div>
+
+@if (Model.ErrorMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Dashboard unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
+}
+@if (Model.SuccessMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Dashboard saved", Model.SuccessMessage, "ok")' />
+}
+
+@if (Model.Summary is not null)
+{
+    <section class="card">
+        <h2>Range and freshness</h2>
+        <dl class="detail-grid">
+            <dt>Time range</dt><dd>@Model.Summary.TimeRangeHours h (@TimeDisplay.FormatUtc(Model.Summary.FromUtc) to @TimeDisplay.FormatUtc(Model.Summary.ToUtc))</dd>
+            <dt>Measured</dt><dd>@TimeDisplay.FormatUtc(Model.Summary.MeasuredAtUtc)</dd>
+            <dt>Latest ingest</dt><dd>@TimeDisplay.FormatUtc(Model.Summary.LatestIngestUtc)</dd>
+            <dt>Freshness state</dt><dd><span class="badge @(Model.Summary.FreshnessState == "fresh" ? "ok" : "warning")">@Model.Summary.FreshnessState</span></dd>
+            <dt>Partial data</dt><dd><span class="badge @(Model.Summary.PartialData ? "warning" : "ok")">@(Model.Summary.PartialData ? "partial" : "complete within bounded query")</span></dd>
+        </dl>
+    </section>
+
+    <section class="card" aria-labelledby="event-volume-title">
+        <h2 id="event-volume-title">Event volume by hour</h2>
+        <p class="muted">Bars use length plus text labels; the table below is the accessible equivalent.</p>
+        <div class="bar-list" role="list" aria-label="Event volume bars">
+        @foreach (var bucket in Model.Summary.EventBuckets)
+        {
+            <div class="bar-row" role="listitem">
+                <span class="bar-label">@TimeDisplay.FormatUtc(bucket.BucketUtc, "MM-dd HH:mm")</span>
+                <meter class="bar-meter" min="0" max="@(maxBucket <= 0 ? 1 : maxBucket)" value="@bucket.EventCount">@bucket.EventCount events</meter>
+                <span class="bar-value">@bucket.EventCount events</span>
+            </div>
+        }
+        </div>
+        <div class="table-scroll">
+            <table>
+                <caption>Event count per UTC hour for the selected range.</caption>
+                <thead><tr><th scope="col">UTC hour</th><th scope="col">Event count</th></tr></thead>
+                <tbody>
+                @foreach (var bucket in Model.Summary.EventBuckets)
+                {
+                    <tr><td>@TimeDisplay.FormatUtc(bucket.BucketUtc)</td><td>@bucket.EventCount</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="metrics" aria-label="Dashboard aggregate cards">
+        <article class="card"><h2>Sources</h2><partial name="_CountList" model="Model.Summary.EventSources" /></article>
+        <article class="card"><h2>Severities</h2><partial name="_CountList" model="Model.Summary.Severities" /></article>
+        <article class="card"><h2>Alert statuses</h2><partial name="_CountList" model="Model.Summary.AlertStatuses" /></article>
+        <article class="card"><h2>Source health</h2><partial name="_CountList" model="Model.Summary.SourceHealthStates" /></article>
+    </section>
+}
+
+<section class="table-card" aria-labelledby="saved-layouts-title">
+    <div class="table-title">
+        <div>
+            <h2 id="saved-layouts-title">Saved layouts</h2>
+            <p class="muted">Owner, visibility, time range, refresh interval, and version semantics. Layouts contain only bounded widget metadata.</p>
+        </div>
+    </div>
+    <div class="table-scroll">
+        <table>
+            <caption>Saved dashboard layout metadata.</caption>
+            <thead><tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Visibility</th><th scope="col">Range</th><th scope="col">Refresh</th><th scope="col">Version</th><th scope="col">Updated</th></tr></thead>
+            <tbody>
+            @foreach (var layout in Model.Layouts)
+            {
+                <tr><td>@layout.Name</td><td>@layout.OwnerUsername</td><td><span class="badge neutral">@layout.Visibility</span></td><td>@layout.TimeRangeHours h</td><td>@layout.RefreshMinutes min</td><td>@layout.Version</td><td>@TimeDisplay.FormatUtc(layout.UpdatedAt)</td></tr>
+            }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@if (Model.CanSave)
+{
+    <section class="card">
+        <h2>Save current layout metadata</h2>
+        <form method="post" asp-page-handler="Save" class="filters">
+            <div class="form-row"><label for="layout-name">Name</label><input id="layout-name" name="Name" maxlength="96" required /></div>
+            <div class="form-row"><label for="layout-visibility">Visibility</label><select id="layout-visibility" name="Visibility"><option value="private">private</option><option value="shared">shared</option></select></div>
+            <div class="form-row"><label for="layout-range">Time range hours</label><input id="layout-range" name="LayoutTimeRangeHours" type="number" min="1" max="168" value="@Model.TimeRangeHours" /></div>
+            <div class="form-row"><label for="layout-refresh">Refresh minutes</label><input id="layout-refresh" name="RefreshMinutes" type="number" min="1" max="1440" value="15" /></div>
+            <div class="form-row"><label for="layout-json">Optional layout JSON metadata</label><textarea id="layout-json" name="LayoutJson" maxlength="8000" rows="3">{"widgets":["event_volume","source_health"],"density":"comfortable"}</textarea></div>
+            <div class="form-row"><button type="submit" class="button">Save layout</button></div>
+        </form>
+    </section>
+}
+
+@functions {
+}

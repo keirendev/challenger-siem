@@ -56,6 +56,9 @@ public sealed class TokenService
         var permission = path.StartsWith("/api/v1/operators/me/", StringComparison.Ordinal) ? OperatorPermission.ReviewMetadata
             : path.StartsWith("/api/v1/soc-agent", StringComparison.Ordinal) ? OperatorPermission.UseSocAgent
             : path.StartsWith("/api/v1/graphs", StringComparison.Ordinal) ? OperatorPermission.ManageInvestigations
+            : path.StartsWith("/api/v1/detections/", StringComparison.Ordinal) && context.Request.Method != HttpMethods.Get ? OperatorPermission.ManageDetections
+            : path.StartsWith("/api/v1/dashboards/layouts", StringComparison.Ordinal) && context.Request.Method != HttpMethods.Get ? OperatorPermission.ManageInvestigations
+            : path.StartsWith("/api/v1/admin", StringComparison.Ordinal) ? OperatorPermission.ManageOperators
             : path.StartsWith("/api/v1/storage/", StringComparison.Ordinal) ? OperatorPermission.ManageAgents
             : path == "/api/v1/inventory" ? OperatorPermission.ManageAgents
             : context.Request.Method == HttpMethods.Get
