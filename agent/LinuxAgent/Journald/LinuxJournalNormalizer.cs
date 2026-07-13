@@ -49,7 +49,11 @@ public sealed partial class LinuxJournalNormalizer
                 return false;
             }
 
-            var eventTime = DateTimeOffset.FromUnixTimeMilliseconds(microseconds / 1000);
+            if (!TryEventTime(microseconds, out var eventTime))
+            {
+                errorCode = "journal_timestamp_malformed";
+                return false;
+            }
             var raw = new Dictionary<string, object?>(StringComparer.Ordinal);
             var redacted = new SortedSet<string>(StringComparer.Ordinal);
             var binaryOrInvalidText = false;
@@ -190,6 +194,27 @@ public sealed partial class LinuxJournalNormalizer
         value = 0;
         return TryText(root, "__REALTIME_TIMESTAMP", out var text, out _) &&
                long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value) && value >= 0;
+    }
+
+    private static bool TryEventTime(long microseconds, out DateTimeOffset eventTime)
+    {
+        eventTime = default;
+        var milliseconds = microseconds / 1000;
+        if (milliseconds < DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
+            || milliseconds > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds())
+        {
+            return false;
+        }
+
+        try
+        {
+            eventTime = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     private static bool TryText(JsonElement root, string name, out string? text, out bool binary)

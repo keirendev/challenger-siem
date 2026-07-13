@@ -104,6 +104,63 @@ public sealed class OperatorRepository(NpgsqlDataSource dataSource, OperatorPass
 
 public sealed class SecurityAuditRepository(NpgsqlDataSource dataSource)
 {
+    private const int MaxActorChars = 64;
+    private const int MaxTargetChars = 128;
+    private const int MaxRequestChars = 128;
+    private const int MaxDetailJsonChars = 4000;
+
     public async Task RecordAsync(Guid? operatorId,string? username,string action,string outcome,string? targetType,string? targetId,HttpContext? context,IReadOnlyDictionary<string,object?>? details,CancellationToken ct)
-    { await using var c=await dataSource.OpenConnectionAsync(ct);await using var q=c.CreateCommand();q.CommandText="insert into security_audit_events(operator_id,actor_username,action,outcome,target_type,target_id,request_id,remote_address_hash,details) values(@id,@user,@action,@outcome,@type,@target,@request,@remote,@details);";q.Parameters.AddWithValue("id",operatorId.HasValue?operatorId.Value:DBNull.Value);q.Parameters.AddWithValue("user",(object?)username??DBNull.Value);q.Parameters.AddWithValue("action",action[..Math.Min(action.Length,96)]);q.Parameters.AddWithValue("outcome",outcome);q.Parameters.AddWithValue("type",(object?)targetType??DBNull.Value);q.Parameters.AddWithValue("target",(object?)targetId??DBNull.Value);q.Parameters.AddWithValue("request",(object?)context?.TraceIdentifier??DBNull.Value);var remote=context?.Connection.RemoteIpAddress?.ToString();q.Parameters.AddWithValue("remote",remote is null?DBNull.Value:OperatorSecrets.Hash(remote));var p=q.Parameters.Add("details",NpgsqlDbType.Jsonb);p.Value=JsonSerializer.Serialize(details??new Dictionary<string,object?>());await q.ExecuteNonQueryAsync(ct);}
+    {
+        await using var c=await dataSource.OpenConnectionAsync(ct);
+        await using var q=c.CreateCommand();
+        q.CommandText="insert into security_audit_events(operator_id,actor_username,action,outcome,target_type,target_id,request_id,remote_address_hash,details) values(@id,@user,@action,@outcome,@type,@target,@request,@remote,@details);";
+        q.Parameters.AddWithValue("id",operatorId.HasValue?operatorId.Value:DBNull.Value);
+        q.Parameters.AddWithValue("user",(object?)BoundActorUsername(username)??DBNull.Value);
+        q.Parameters.AddWithValue("action",BoundText(action,96) ?? "unknown");
+        q.Parameters.AddWithValue("outcome",outcome);
+        q.Parameters.AddWithValue("type",(object?)BoundText(targetType,64)??DBNull.Value);
+        q.Parameters.AddWithValue("target",(object?)BoundText(targetId,MaxTargetChars)??DBNull.Value);
+        q.Parameters.AddWithValue("request",(object?)BoundText(context?.TraceIdentifier,MaxRequestChars)??DBNull.Value);
+        var remote=context?.Connection.RemoteIpAddress?.ToString();
+        q.Parameters.AddWithValue("remote",remote is null?DBNull.Value:OperatorSecrets.Hash(remote));
+        var detailJson = BoundDetailJson(details);
+        var p=q.Parameters.Add("details",NpgsqlDbType.Jsonb);
+        p.Value=detailJson;
+        await q.ExecuteNonQueryAsync(ct);
+    }
+
+    internal static string? BoundActorUsername(string? username)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return null;
+        var trimmed = username.Trim();
+        // Never persist raw invalid/oversized login identifiers or credential-shaped input.
+        if (trimmed.Length is < 3 or > MaxActorChars
+            || trimmed.Any(char.IsControl)
+            || trimmed.Contains(':', StringComparison.Ordinal)
+            || trimmed.Contains(' ', StringComparison.Ordinal)
+            || trimmed.Contains('\t', StringComparison.Ordinal))
+        {
+            return "invalid_identifier:" + OperatorSecrets.Hash(trimmed)[..16];
+        }
+
+        return trimmed;
+    }
+
+    private static string? BoundText(string? value, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxChars ? trimmed : trimmed[..maxChars];
+    }
+
+    private static string BoundDetailJson(IReadOnlyDictionary<string, object?>? details)
+    {
+        var json = JsonSerializer.Serialize(details ?? new Dictionary<string, object?>());
+        if (json.Length <= MaxDetailJsonChars) return json;
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["truncated"] = true,
+            ["original_length"] = json.Length
+        });
+    }
 }

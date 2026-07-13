@@ -87,9 +87,20 @@ builder.Services
         options.DefaultChallengeScheme = OperatorAuthentication.SmartScheme;
     })
     .AddPolicyScheme(OperatorAuthentication.SmartScheme, null, options => options.ForwardDefaultSelector = context =>
-        context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+    {
+        var pathValue = context.Request.Path.Value ?? string.Empty;
+        var isAgentTransport = pathValue.StartsWith("/api/v1/agents/", StringComparison.OrdinalIgnoreCase)
+            || pathValue.StartsWith("/api/v1/ingest/", StringComparison.OrdinalIgnoreCase);
+        // Agent transport uses AgentAuthenticator only; never invoke operator bearer handling on those routes.
+        if (isAgentTransport)
+        {
+            return CookieAuthenticationDefaults.AuthenticationScheme;
+        }
+
+        return context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? OperatorAuthentication.BearerScheme
-            : CookieAuthenticationDefaults.AuthenticationScheme)
+            : CookieAuthenticationDefaults.AuthenticationScheme;
+    })
     .AddScheme<AuthenticationSchemeOptions, OperatorBearerHandler>(OperatorAuthentication.BearerScheme, null)
     .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
     {
@@ -115,13 +126,25 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
-StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
-var commandExit = await OperatorAccountCommand.TryRunAsync(args, app.Services, CancellationToken.None);
-if (commandExit.HasValue)
+// Local operator bootstrap/recovery/token rotation only needs the database connection string.
+// Keep enrollment-token validation for normal web/API server startup.
+if (args.Length >= 2 && string.Equals(args[0], "operator", StringComparison.Ordinal))
 {
-    Environment.ExitCode = commandExit.Value;
-    return;
+    if (string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("SiemDatabase")))
+    {
+        throw new InvalidOperationException(
+            "Missing required Challenger SIEM configuration: ConnectionStrings:SiemDatabase. Set this value with an environment variable or ignored local settings file. Secret values are intentionally not shown.");
+    }
+
+    var commandExit = await OperatorAccountCommand.TryRunAsync(args, app.Services, CancellationToken.None);
+    if (commandExit.HasValue)
+    {
+        Environment.ExitCode = commandExit.Value;
+        return;
+    }
 }
+
+StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
 
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
@@ -230,13 +253,6 @@ app.MapPost("/api/v1/agents/register", async Task<IResult> (
         return Results.ValidationProblem(validationErrors);
     }
 
-    if (RequestValidation.RequiresCrossPlatformStorage(request))
-    {
-        return Results.Problem(
-            title: "cross_platform_storage_pending",
-            detail: "The additive v1 Linux registration contract is defined, but Linux persistence requires the planned multi-platform storage migration.",
-            statusCode: StatusCodes.Status422UnprocessableEntity);
-    }
 
     var apiToken = tokens.GenerateAgentToken();
     var apiTokenHash = tokens.HashToken(apiToken);
@@ -268,13 +284,6 @@ app.MapPost("/api/v1/agents/heartbeat", async Task<IResult> (
         return Results.ValidationProblem(validationErrors);
     }
 
-    if (RequestValidation.RequiresCrossPlatformStorage(request))
-    {
-        return Results.Problem(
-            title: "cross_platform_storage_pending",
-            detail: "The additive v1 Linux heartbeat contract is defined, but Linux source-health persistence requires the planned multi-platform storage migration.",
-            statusCode: StatusCodes.Status422UnprocessableEntity);
-    }
 
     await heartbeats.InsertHeartbeatAsync(request, cancellationToken);
     return Results.Ok(new { status = "accepted" });
@@ -678,7 +687,7 @@ app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
         });
     }
 
-    return Results.Ok(await socAgent.AskAsync(request, cancellationToken));
+    return Results.Ok(await socAgent.AskAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
 });
 
 app.MapGet("/api/v1/soc-agent/status", (HttpContext context, SocAgentService socAgent, TokenService tokens, IConfiguration configuration) =>
@@ -787,7 +796,7 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
 
     try
     {
-        return Results.Ok(await socAgent.SendChatMessageAsync(sessionId, request, cancellationToken));
+        return Results.Ok(await socAgent.SendChatMessageAsync(sessionId, request, OperatorAuthorization.Role(context.User)!, cancellationToken));
     }
     catch (KeyNotFoundException)
     {
@@ -796,6 +805,7 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
 });
 
 app.MapPost("/soc-agent/live/runs", async Task<IResult> (
+    HttpContext context,
     SocAgentLiveRunStartRequest request,
     SocAgentLiveRunCoordinator liveRuns,
     CancellationToken cancellationToken) =>
@@ -810,7 +820,7 @@ app.MapPost("/soc-agent/live/runs", async Task<IResult> (
 
     try
     {
-        return Results.Ok(await liveRuns.StartRunAsync(request, cancellationToken));
+        return Results.Ok(await liveRuns.StartRunAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
     }
     catch (KeyNotFoundException)
     {

@@ -47,7 +47,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         lock (sync)
         {
             checkpoint = checkpoint with { CollectedCursor = record.Cursor, CollectedEventTime = record.Envelope.EventTime };
-            latestEvent = record.Envelope.EventTime;
+            // Track newest observed event time independently so reordered tails do not erase lag/health context.
+            if (latestEvent is null || record.Envelope.EventTime > latestEvent)
+            {
+                latestEvent = record.Envelope.EventTime;
+            }
             status = SourceHealthStatuses.Healthy;
             errorCode = null;
             sourceState = "collecting";
@@ -57,17 +61,21 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 
     public async Task RecordAcknowledgedAsync(IReadOnlyCollection<EventEnvelope> events, CancellationToken cancellationToken)
     {
+        // Advance by acknowledgement/queue order, not event-time sort, so reordered journal tails
+        // still release durable queue rows and cannot regress the acknowledged cursor.
         var latest = events
             .Where(item => item.Source == EventSources.LinuxJournal && !string.IsNullOrEmpty(item.Checkpoint?.Cursor))
-            .OrderBy(item => item.EventTime)
             .LastOrDefault();
         if (latest?.Checkpoint?.Cursor is not { } cursor) return;
+        await state.WriteAcknowledgedJournalAsync(cursor, latest.EventTime, cancellationToken);
         lock (sync)
         {
-            if (checkpoint.AcknowledgedEventTime is { } acknowledgedAt && latest.EventTime < acknowledgedAt) return;
+            checkpoint = checkpoint with { AcknowledgedCursor = cursor, AcknowledgedEventTime = latest.EventTime };
+            if (latestEvent is null || latest.EventTime > latestEvent)
+            {
+                latestEvent = latest.EventTime;
+            }
         }
-        await state.WriteAcknowledgedJournalAsync(cursor, latest.EventTime, cancellationToken);
-        lock (sync) checkpoint = checkpoint with { AcknowledgedCursor = cursor, AcknowledgedEventTime = latest.EventTime };
     }
 
     public void RecordReadResult(JournalReadResult result)

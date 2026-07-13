@@ -27,7 +27,8 @@ public sealed class LoginModel(OperatorRepository operators, SecurityAuditReposi
         if (result.Session is null || result.SessionToken is null)
         {
             ErrorMessage = result.Status == "locked" ? "Account is temporarily locked. Try again later or use the documented local recovery procedure." : "Invalid username or password.";
-            await audit.RecordAsync(null, string.IsNullOrWhiteSpace(Username) ? null : Username.Trim(), "operator.login", "failure", "operator", null, HttpContext, new Dictionary<string,object?>{{"reason",result.Status}}, cancellationToken);
+            // Bound/hash invalid identifiers centrally; never store raw oversized or credential-shaped login input.
+            await audit.RecordAsync(null, Username, "operator.login", "failure", "operator", null, HttpContext, new Dictionary<string,object?>{{"reason",result.Status}}, cancellationToken);
             return Page();
         }
         var op=result.Session.Operator;

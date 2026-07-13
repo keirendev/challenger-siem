@@ -78,8 +78,10 @@ public sealed class LinuxJournalService(
             if (runtime.CollectedEventTime is { } collectedTime && record.Envelope.EventTime < collectedTime)
             {
                 runtime.RecordReordered();
-                continue;
             }
+
+            // Cursor advances after durable enqueue even when event time moves backward so reordered
+            // tails cannot stall collection or force endless replay of already-queued records.
             await runtime.RecordCollectedAsync(record, cancellationToken);
             cursor = record.Cursor;
         }

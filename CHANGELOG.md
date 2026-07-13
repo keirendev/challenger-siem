@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- **MAJOR 1.0.0:** Replaced shared production review-token operator authentication with database-backed operator identities. Existing review-token API clients and `Auth:ReviewToken` browser login configuration require operator bootstrap and new per-operator credentials. Endpoint-agent enrollment/ingest/heartbeat contracts remain compatible under `/api/v1`.
 - Added passive cursor-based Linux L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records with deterministic v1 IDs, bounded redaction/normalization, durable queue-before-checkpoint and acknowledgement-before-delete semantics, explicit source/gap/permission/pressure health, and synthetic restart/replay/failure/benchmark coverage.
 - Replaced the production operator review credential with PostgreSQL-backed operator identities, exact viewer/analyst/detection-engineer/admin RBAC, hardened revocable sessions, CSRF-safe mutations, lockout and credential lifecycle controls, role-aware sensitive-field redaction, a secure local bootstrap/recovery command, and append-only secret-safe security audit events while preserving endpoint-agent authentication and `/api/v1` agent contracts.
 

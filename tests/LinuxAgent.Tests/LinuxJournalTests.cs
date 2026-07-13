@@ -66,6 +66,60 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public async Task OutOfRangeTimestampIsMalformedAndDoesNotStallLaterValidRecords()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var queue = CreateQueue(temporary.Queue);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var bad = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = "s=synthetic;i=bad;b=fake",
+            ["__REALTIME_TIMESTAMP"] = "253402300800000000",
+            ["_BOOT_ID"] = "fakeboot",
+            ["_TRANSPORT"] = "journal",
+            ["MESSAGE"] = "bad-time"
+        });
+        var good = FixtureRecords()[0];
+        var cursor = await Service(options, new FakeSource(new(JournalReadStatus.Success, [bad, good])), runtime, queue)
+            .CollectOnceAsync(null, default);
+        Assert.Equal("s=synthetic;i=1;b=fake", cursor);
+        Assert.Equal(1, await queue.CountAsync(default));
+        Assert.Equal("1", runtime.Snapshot().Health.Details["malformed_records"]);
+        Assert.True(runtime.Snapshot().Health.GapDetected);
+        Assert.Equal(cursor, (await state.ReadJournalAsync(default)).CollectedCursor);
+        Assert.False(new LinuxJournalNormalizer().TryNormalize(bad, options, DateTimeOffset.UtcNow, out _, out var code));
+        Assert.Equal("journal_timestamp_malformed", code);
+    }
+
+    [Fact]
+    public async Task BackwardTimestampStillAdvancesCollectedCursorAndAcknowledgementOrder()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var queue = CreateQueue(temporary.Queue);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var records = new[]
+        {
+            Record("s=synthetic;i=1;b=fake", 1783944010000000, "later-first"),
+            Record("s=synthetic;i=2;b=fake", 1783944000000000, "earlier-second")
+        };
+        var cursor = await Service(options, new FakeSource(new(JournalReadStatus.Success, records)), runtime, queue)
+            .CollectOnceAsync(null, default);
+        Assert.Equal("s=synthetic;i=2;b=fake", cursor);
+        Assert.Equal(2, await queue.CountAsync(default));
+        Assert.Equal("1", runtime.Snapshot().Health.Details["reordered_records"]);
+
+        var batch = await queue.DequeueBatchAsync(10, default);
+        await runtime.RecordAcknowledgedAsync(batch.Select(item => item.Envelope).Reverse().ToArray(), default);
+        Assert.Equal("s=synthetic;i=1;b=fake", (await state.ReadJournalAsync(default)).AcknowledgedCursor);
+    }
+
+    [Fact]
     public async Task QueueCommitAlwaysPrecedesCollectedCheckpointAndRestartResumesCursor()
     {
         using var temporary = new TemporaryPaths();
