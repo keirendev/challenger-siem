@@ -14,16 +14,16 @@ public sealed class FrontendArchitectureSpikeTests
 
         Assert.Contains("OnGetAsync(CancellationToken cancellationToken)", indexModel, StringComparison.Ordinal);
         Assert.Contains("Limit = NormalizedLimit", indexModel, StringComparison.Ordinal);
-        Assert.Contains("(PageNumber - 1) * NormalizedLimit", indexModel, StringComparison.Ordinal);
-        Assert.Contains("SearchEventsForOperatorAsync(fetchQuery, OperatorAuthorization.Role(User)!", indexModel, StringComparison.Ordinal);
+        Assert.Contains("SearchEventsPageForOperatorAsync", indexModel, StringComparison.Ordinal);
+        Assert.Contains("PageInfo", indexModel, StringComparison.Ordinal);
 
-        Assert.Contains("Math.Clamp(query.Limit, 1, 500)", eventRepository, StringComparison.Ordinal);
+        Assert.Contains("Math.Clamp(query.Limit, 1, maxLimit)", eventRepository, StringComparison.Ordinal);
         Assert.Contains("limit @limit offset @offset", eventRepository, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive)", eventRepository, StringComparison.Ordinal);
         Assert.Contains("EventFieldPolicy.Apply(item, role)", eventRepository, StringComparison.Ordinal);
 
         Assert.Contains("EventSearchQuery.FromQuery(context.Request.Query)", program, StringComparison.Ordinal);
-        Assert.Contains("SearchEventsForOperatorAsync(query, OperatorAuthorization.Role(context.User)!", program, StringComparison.Ordinal);
+        Assert.Contains("SearchEventsPageForOperatorAsync(query, OperatorAuthorization.Role(context.User)!", program, StringComparison.Ordinal);
         Assert.Contains("csrf_safe_bearer_required", program, StringComparison.Ordinal);
     }
 
@@ -55,14 +55,16 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.Contains("aria-label=\"Event search filters\"", events, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Active event filters\"", events, StringComparison.Ordinal);
         Assert.Contains("OnPostGlobalSearchAsync", indexModel, StringComparison.Ordinal);
-        Assert.Contains("Search unavailable", events, StringComparison.Ordinal);
+        Assert.Contains("Search validation failed", events, StringComparison.Ordinal);
         Assert.Contains("class=\"empty\"", events, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Event result pages\"", events, StringComparison.Ordinal);
         Assert.Contains("table-scroll", events, StringComparison.Ordinal);
-        Assert.Contains("raw JSON available only on detail pages", events, StringComparison.Ordinal);
+        Assert.Contains("raw JSON only on role-filtered detail pages", events, StringComparison.Ordinal);
+        Assert.Contains("Timeline buckets", events, StringComparison.Ordinal);
+        Assert.Contains("Saved searches", events, StringComparison.Ordinal);
 
         Assert.Contains("Raw JSON", detail, StringComparison.Ordinal);
-        Assert.Contains("do not copy into public issues, docs, or logs", detail, StringComparison.Ordinal);
+        Assert.Contains("Keep it out of public issues, docs, screenshots, logs, and exports", detail, StringComparison.Ordinal);
 
         Assert.Contains("a:focus-visible", css, StringComparison.Ordinal);
         Assert.Contains("outline: 3px", css, StringComparison.Ordinal);

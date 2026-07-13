@@ -31,25 +31,25 @@ The overview dashboard summarizes active/recent/stale/retired agents, queue obse
 
 ### Assets
 
-The assets inventory screenshot is filtered to the synthetic demo agent so no unrelated hostnames appear. If captured with a non-admin role, the admin-only cleanup action should appear as an authorization notice rather than a form.
+The assets inventory screenshot is filtered to the synthetic demo agent so no unrelated hostnames appear. Current captures should include the platform, freshness, coverage, source-issue, pressure, gap, and queue-capacity filters. If captured with a non-admin role, the admin-only cleanup action should appear as an authorization notice rather than a form.
 
 ![Agent inventory filtered to a synthetic demo agent](assets/web-console/agents.png)
 
 ### Host coverage and source health
 
-The current screenshot uses the synthetic Windows matrix. The same page is now platform-aware and, for synthetic Linux agents, also shows requirement/applicability plus degraded, permission-denied, and unsupported source metrics without exposing telemetry.
+The current screenshot uses the synthetic Windows matrix. The same page is now platform-aware and, for synthetic Linux agents, also shows requirement/applicability; missing, unsupported, not-applicable, excepted, disabled, permission-denied, stale, throttled, gap, and error state guidance; queue/resource/source rate/lag/checkpoint and retention/capacity metrics; and bounded role-redacted inventory/posture changes without exposing telemetry.
 
 ![Host coverage detail for a synthetic demo agent](assets/web-console/agent-detail.png)
 
 ### Search
 
-Event search is filtered to the synthetic demo agent and unique marker. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
+Event search is filtered to the synthetic demo agent and unique marker. The current page also includes structured filters, active-scope labels, UTC timeline buckets, saved-search controls, column selection, cursor pagination, and admin-only export confirmation. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
 
 ![Event search results for a synthetic System event](assets/web-console/events.png)
 
 ### Event detail
 
-The detail page shows normalized fields, entities, message text, and raw JSON that were all generated from a synthetic payload.
+The detail page shows normalized fields, ingest/checkpoint metadata, entity pivots, message text, and role-controlled raw JSON that were all generated from a synthetic payload.
 
 ![Event detail page with synthetic normalized fields and raw JSON](assets/web-console/event-detail.png)
 

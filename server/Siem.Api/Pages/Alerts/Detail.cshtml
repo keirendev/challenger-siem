@@ -17,7 +17,9 @@
 }
 else if (Model.Alert is not null)
 {
-    <partial name="_Tabs" model='new TabsModel("Alert detail sections", new[] { new TabItem("Summary", "#summary", true), new TabItem("Entities", "#entities"), new TabItem("Evidence", "#evidence"), new TabItem("Case links", "#", IsDisabled: true, Description: "Case management is planned.") })' />
+    var canManageAlert = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ManageInvestigations);
+    @if (Model.Message is not null) { <partial name="_Notice" model='new NoticeModel("Alert workflow", Model.Message, "success")' /> }
+    <partial name="_Tabs" model='new TabsModel("Alert detail sections", new[] { new TabItem("Summary", "#summary", true), new TabItem("Triage", "#triage"), new TabItem("Entities", "#entities"), new TabItem("Evidence", "#evidence"), new TabItem("Cases", "#cases"), new TabItem("Timeline", "#timeline") })' />
     <section class="card" id="summary">
         <h2>@Model.Alert.Title</h2>
         <dl class="detail-grid">
@@ -25,10 +27,36 @@ else if (Model.Alert is not null)
             <dt>Severity</dt><dd>@Model.Alert.Severity</dd>
             <dt>Confidence</dt><dd>@Model.Alert.Confidence</dd>
             <dt>Status</dt><dd>@Model.Alert.Status</dd>
+            <dt>Owner</dt><dd>@(Model.Alert.Owner ?? "unassigned")</dd>
+            <dt>Version</dt><dd>@Model.Alert.Version</dd>
+            <dt>Disposition</dt><dd>@(Model.Alert.Disposition ?? "not set")</dd>
+            <dt>Suppression</dt><dd>@(Model.Alert.SuppressionReason ?? "not suppressed")</dd>
             <dt>Host</dt><dd>@(Model.Alert.Hostname ?? Model.Alert.AgentId ?? "—")</dd>
             <dt>Created</dt><dd>@TimeDisplay.FormatUtc(Model.Alert.CreatedAt)</dd>
         </dl>
         <p>@Model.Alert.Summary</p>
+    </section>
+
+    <section class="card" id="triage">
+        <h2>Analyst triage</h2>
+        @if (!canManageAlert)
+        {
+            <p class="muted">Your role can review alert metadata but cannot mutate alert lifecycle or cases.</p>
+        }
+        else
+        {
+        <div class="grid two-column">
+            <form method="post" asp-page-handler="Assign" class="card compact-card"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><label asp-for="Owner">Owner</label><input asp-for="Owner" maxlength="96" required /><button type="submit">Assign</button></form>
+            <form method="post" asp-page-handler="Acknowledge" class="card compact-card"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><p class="muted">Acknowledge preserves immutable rule version and evidence identity.</p><button type="submit">Acknowledge</button></form>
+            <form method="post" asp-page-handler="Status" class="card compact-card"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><label asp-for="Status">Status</label><select asp-for="Status"><option>triaged</option><option>investigating</option><option>escalated</option><option>contained</option><option>resolved</option></select><button type="submit">Update status</button></form>
+        </div>
+        <form method="post" asp-page-handler="Suppress" class="card warning-zone"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><h3>Suppress alert</h3><p class="muted">Suppression requires reason and confirmation. It is audited and does not delete evidence.</p><label asp-for="SuppressionReason">Reason</label><textarea asp-for="SuppressionReason" maxlength="1000" required></textarea><label asp-for="SuppressedUntil">Optional expiry UTC</label><input asp-for="SuppressedUntil" /><label class="checkbox"><input asp-for="ConfirmSuppress" /> I confirm this suppression.</label><button type="submit">Suppress</button></form>
+        <form method="post" asp-page-handler="Close" class="card warning-zone"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><h3>Close alert</h3><label asp-for="Disposition">Disposition</label><select asp-for="Disposition"><option value="">Select disposition</option><option>true_positive</option><option>false_positive</option><option>duplicate</option><option>benign</option><option>authorized_activity</option><option>retention_limited</option><option>unknown</option></select><label asp-for="ClosureSummary">Closure summary</label><textarea asp-for="ClosureSummary" maxlength="2000" required></textarea><label class="checkbox"><input asp-for="ConfirmClose" /> I confirm this audited closure.</label><button type="submit">Close alert</button></form>
+        @if (Model.Alert.Status == "closed" || Model.Alert.Status == "suppressed")
+        {
+            <form method="post" asp-page-handler="Reopen" class="actions"><input type="hidden" asp-for="AlertId" /><input type="hidden" asp-for="ExpectedVersion" /><button type="submit" class="button secondary">Reopen alert</button></form>
+        }
+        }
     </section>
 
     <section class="card" id="entities">
@@ -71,7 +99,7 @@ else if (Model.Alert is not null)
                             <td>@evidence.AgentId</td>
                             <td>@(evidence.Channel ?? "—")</td>
                             <td>@(evidence.WindowsEventId?.ToString() ?? "—")</td>
-                            <td>@evidence.Summary</td>
+                            <td>@evidence.Summary <div class="muted">@evidence.TelemetryRetentionState</div></td>
                             <td><a asp-page="/Events/Detail" asp-route-agent_id="@evidence.AgentId" asp-route-event_id="@evidence.EventId">Open event</a></td>
                         </tr>
                     }
@@ -79,5 +107,19 @@ else if (Model.Alert is not null)
             </table>
             </div>
         }
+    </section>
+
+    <section class="card" id="cases">
+        <h2>Case links</h2>
+        @if (canManageAlert)
+        {
+            <form method="post" asp-page-handler="CreateCase" class="card compact-card"><input type="hidden" asp-for="AlertId" /><label asp-for="CaseTitle">New case title</label><input asp-for="CaseTitle" maxlength="160" /><label asp-for="CasePriority">Priority</label><select asp-for="CasePriority"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select><button type="submit">Create linked case</button></form>
+        }
+        @if (Model.Alert.Cases.Count == 0) { <p class="muted">No cases linked.</p> } else { <ul>@foreach (var item in Model.Alert.Cases) { <li><a asp-page="/Cases/Detail" asp-route-case_id="@item.CaseId">@item.CaseKey · @item.Title</a> <span class="badge">@item.Status</span> <span class="muted">@item.Relationship</span></li> }</ul> }
+    </section>
+
+    <section class="card" id="timeline">
+        <h2>Activity timeline</h2>
+        @if (Model.Alert.Activity.Count == 0) { <p class="muted">No alert activity recorded.</p> } else { <ol class="timeline-list">@foreach (var activity in Model.Alert.Activity) { <li><strong>@TimeDisplay.FormatUtc(activity.OccurredAt)</strong> @activity.Action <span class="muted">@activity.Actor</span><p>@activity.Summary</p></li> }</ol> }
     </section>
 }

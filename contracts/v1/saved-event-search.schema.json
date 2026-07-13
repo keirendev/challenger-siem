@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/saved-event-search.schema.json",
+  "title": "Challenger SIEM Saved Event Search v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["saved_search_id", "name", "visibility", "version", "query", "columns", "created_at", "updated_at"],
+  "properties": {
+    "saved_search_id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "description": { "type": ["string", "null"], "maxLength": 500 },
+    "visibility": { "type": "string", "enum": ["private", "shared"] },
+    "version": { "type": "integer", "minimum": 1 },
+    "query": {
+      "type": "object",
+      "maxProperties": 40,
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    },
+    "columns": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "maxLength": 64 }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "created_by": { "type": ["string", "null"], "maxLength": 128 }
+  }
+}

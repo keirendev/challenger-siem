@@ -238,26 +238,46 @@ Authorization: Bearer <operator-api-credential>
 
 The database/search implementation returns persisted Windows and portable Linux events. Additive source, platform, source-ID, and event-code filters are available; facility, unit, and checkpoint remain event response fields rather than dedicated query filters.
 
-Supported current filters:
+Supported current filters are strictly bounded and validation failures return a field-level validation response instead of running a broad query:
 
-- `hostname`
-- `agent_id`
-- `channel`
-- `windows_event_id`
-- `from` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
-- `to` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
-- `keyword`
-- `category`
-- `action`
-- `user_name`
-- `process_image`
-- `source_ip`
-- `destination_ip`
-- `service_name`
-- `file_path`
-- `registry_key`
-- `package_name` (additive normalized package filter)
-- `limit` (maximum 500)
+- `from` / `to` UTC event-time range; offset-less browser `datetime-local` values are interpreted as UTC.
+- `hostname`, `agent_id`, `platform`, `source`, `source_id`, `channel`, `provider`, `facility`, and `unit`.
+- `windows_event_id`, additive native `event_code`, `severity`, normalized `category`, `action`, and `outcome`.
+- Protected sensitive filters for analyst+ roles: `keyword`, `user_name`, `process_image`, `process_command_line`, `source_ip`, `destination_ip`, `network_ip`, `source_port`, `destination_port`, `protocol`, `service_name`, `file_path`, `registry_key`, and `package_name`. Viewer requests may include them, but the server strips them before querying.
+- Detection/entity pivots: `detection_rule_id`, `entity_type`, and `entity_value`.
+- Pagination/display controls: `limit` (maximum 500), opaque `cursor`, `bucket_seconds` (60-86400), and comma-separated `columns`.
+
+Responses keep the original `events` array and add optional `page`, `active_filters`, `result_scope`, and `redaction` metadata. Pagination is newest-first by canonical UTC `event_time` plus storage row ID; clients should pass `page.next_cursor` back as `cursor` for the next page.
+
+Timeline aggregation:
+
+```http
+GET /api/v1/events/timeline?from=2026-07-14T00:00:00Z&to=2026-07-14T12:00:00Z&bucket_seconds=3600
+Authorization: Bearer <operator-api-credential>
+```
+
+Returns up to 500 UTC buckets grouped by source and severity. Host-local timezone labels are display metadata only; filtering and correlation remain UTC.
+
+Saved searches:
+
+```http
+GET /api/v1/events/saved-searches
+POST /api/v1/events/saved-searches
+PUT /api/v1/events/saved-searches/<saved-search-id>
+DELETE /api/v1/events/saved-searches/<saved-search-id>
+Authorization: Bearer <operator-api-credential>
+```
+
+Saved searches store owner, private/shared visibility, version, bounded query metadata, and column preferences. They never store result rows or raw event payloads. Create/update/delete operations are audited; shared saved searches require an analyst, detection-engineer, or admin operator.
+
+Admin export:
+
+```http
+POST /api/v1/events/export?confirm_export=EXPORT&from=2026-07-14T00:00:00Z&limit=500
+Authorization: Bearer <admin-operator-api-credential>
+```
+
+CSV export is bounded (maximum 5,000 rows), admin-only, confirmation-gated, audited, uses a safe `Content-Disposition` filename, applies the same role field policy before output, omits raw JSON, and prefixes formula/URL-like cell values to prevent spreadsheet injection.
 
 ## Source health
 
@@ -275,7 +295,7 @@ GET /api/v1/telemetry-coverage?agent_id=win11-test-001&target_level=L2&lookback_
 Authorization: Bearer <operator-api-credential>
 ```
 
-Returns a bounded operator validation summary for active Windows or Linux agents (or one `agent_id`) over a clamped 1-168 hour lookback. It includes platform-specific expected/reported source coverage, recent event counts by Windows channel or portable `source_id`, requirement/applicability/evidence metadata, explicit missing/stale/degraded/denied/unsupported reasons, source version/config hash, host timezone, platform-specific inventory state, alert/graph counts, and Windows detection prerequisites. Built-in detection rules remain Windows-focused, so Linux responses do not fabricate Windows prerequisite failures.
+Returns a bounded operator validation summary for active Windows or Linux agents (or one `agent_id`) over a clamped 1-168 hour lookback. It includes platform-specific expected/reported source coverage, recent event counts by Windows channel or portable `source_id`, requirement/applicability/evidence metadata, explicit missing/stale/degraded/denied/unsupported reasons, source rate/lag/checkpoint/gap/throttle guidance, source version/config hash, host timezone, platform-specific inventory state, alert/graph counts, and Windows detection prerequisites. Agent summaries additively expose pressure state, capacity state, source-gap presence, and throttle presence. Built-in detection rules remain Windows-focused, so Linux responses do not fabricate Windows prerequisite failures.
 
 ## Inventory
 
@@ -374,15 +394,76 @@ GET /soc-agent/live/sessions/<session-id>/active
 GET /api/v1/alerts
 GET /api/v1/alerts/<alert-id>
 GET /api/v1/detections/rules
+PUT /api/v1/detections/rules/<rule-id>/<version>/settings
 Authorization: Bearer <operator-api-credential>
 ```
 
-The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md). Mutating alert triage, rule activation, UI case workflows, and host remediation remain future approved workflows.
+The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. The rules response also includes `managed_rules`, which adds effective enablement, lifecycle state, synthetic validation status, tuning/suppression notes, prerequisite source counts, confidence impact, and settings version. Detection-engineer/admin settings mutation accepts only bounded metadata (`enabled`, lifecycle, validation status, notes, expected version, and `CONFIRM DETECTION SERVER CHANGE`); it rejects arbitrary code/expression/secret-shaped content, uses optimistic concurrency, records security audit/history, and never changes host collection policy. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md).
+
+Alert triage mutations are additive v1 analyst/detection-engineer/admin routes. Unsafe calls require an operator bearer credential rather than a browser cookie, use bounded request bodies, write append-only activity/security-audit entries, and use `expected_version` optimistic concurrency with `409` conflict on stale versions:
+
+```http
+POST /api/v1/alerts/<alert-id>/assign
+POST /api/v1/alerts/<alert-id>/acknowledge
+POST /api/v1/alerts/<alert-id>/status
+POST /api/v1/alerts/<alert-id>/suppress
+POST /api/v1/alerts/<alert-id>/close
+POST /api/v1/alerts/<alert-id>/reopen
+Authorization: Bearer <operator-api-credential>
+```
+
+Request fields are additive and action-specific: `expected_version`, `owner`, `status`, `disposition`, `reason`, `summary`, `suppressed_until`, and optional `idempotency_key`. Suppression requires a bounded reason and optional future expiry. Closure requires disposition and summary. Alert responses preserve existing v1 fields and add optional owner/version/lifecycle/disposition/suppression/case/activity metadata. Evidence rows report `telemetry_retention_state` as `telemetry_retained`, `telemetry_removed_by_retention`, or `underlying_telemetry_missing` so evidence identity remains explicit after retention or unexpected loss.
+
+## Cases
+
+```http
+GET /api/v1/cases?status=open&owner=analyst
+POST /api/v1/cases
+GET /api/v1/cases/<case-id>
+PUT /api/v1/cases/<case-id>
+POST /api/v1/cases/<case-id>/assign
+POST /api/v1/cases/<case-id>/status
+POST /api/v1/cases/<case-id>/notes
+POST /api/v1/cases/<case-id>/alerts
+POST /api/v1/cases/<case-id>/entities
+POST /api/v1/cases/<case-id>/graphs
+POST /api/v1/cases/<case-id>/evidence
+POST /api/v1/cases/<case-id>/close
+POST /api/v1/cases/<case-id>/reopen
+Authorization: Bearer <operator-api-credential>
+```
+
+Cases support title/description, owner, severity, priority, status, disposition, closure criteria/summary, coverage-gap acknowledgement, related alerts/entities/investigation graphs, immutable notes, explicit evidence links, and activity timeline. Create accepts optional `alert_ids`; relationship endpoints link additional alerts/entities/graphs/evidence. Mutations require analyst-level investigation permission, bounded inputs, optional idempotency keys, optimistic concurrency where lifecycle state changes an existing case, and security audit entries. Closing a case requires explicit confirmation, disposition, closure summary, and coverage-gap acknowledgement state; reopening moves the case back to `investigating`. Browser `/cases` Razor workflows use antiforgery-protected forms for the same lifecycle and confirmation semantics.
+
+## Dashboards
+
+```http
+GET /api/v1/dashboards/summary?time_range_hours=24
+GET /api/v1/dashboards/layouts
+POST /api/v1/dashboards/layouts
+PUT /api/v1/dashboards/layouts/<layout-id>
+Authorization: Bearer <operator-api-credential>
+```
+
+Dashboard summary returns bounded server-side aggregations over a clamped 1-168 hour range: hourly event buckets, top event sources/severities, alert statuses, source-health states, measured timestamp, latest-ingest timestamp, freshness state, and partial-data flag. Saved layouts store bounded widget metadata only, with owner, `private` or `shared` visibility, time range, refresh interval, and optimistic `version`. Layout mutations require analyst/investigation-capable role or higher; shared layouts require detection-engineer/admin.
+
+## Administration
+
+```http
+GET /api/v1/admin/overview
+PUT /api/v1/admin/settings
+PUT /api/v1/admin/sources
+Authorization: Bearer <operator-api-credential>
+```
+
+Administration APIs are admin-only. Overview returns non-secret operator/session metadata, source state/review notes, retention/capacity effective settings and impact text, and bounded append-only security audit history. Settings mutation is limited to allowlisted server-managed retention/capacity keys and requires `CONFIRM SERVER CONFIG CHANGE`, validation, optimistic concurrency, and audit. Source review-note mutation requires `CONFIRM SOURCE REVIEW CHANGE`, validation, optimistic concurrency, and audit; it does not enable/disable endpoint collection, L3 telemetry, or host policy.
+
+Host remediation and response actions remain future approved workflows.
 
 
 ## Managed telemetry storage accounting and retention
 
-`GET /api/v1/storage/accounting` requires an admin/operator-management API credential and returns exact live-row byte accounting for the managed telemetry retention scope plus managed index allocation, row count, measurement time, configured managed capacity (default 100 GiB), used percentage, threshold states at 70/85/95/100%, oldest/newest managed telemetry timestamps, retention lag, and per-table accounting. The managed retention scope is explicitly allowlisted to `events`, `agent_heartbeats`, `asset_inventory_snapshots`, and `ingestion_errors`; protected tables such as operators, sessions, security audit, agents, source-health current state, alerts, alert evidence, investigation graphs, `soc-agent`, detections, configuration, schemas, and arbitrary files are not retention-delete targets. The response never returns database connection details.
+`GET /api/v1/storage/accounting` requires an admin/operator-management API credential and returns exact live-row byte accounting for the managed telemetry retention scope plus managed index allocation, row count, measurement time, configured managed capacity (default 100 GiB), used percentage, threshold states at 70/85/95/100%, oldest/newest managed telemetry timestamps, retention lag, and per-table accounting. Web health/asset pages also display the same threshold vocabulary as text, not color alone: 70% warning, 85% warning, 95% critical, and 100% over capacity. The managed retention scope is explicitly allowlisted to `events`, `agent_heartbeats`, `asset_inventory_snapshots`, and `ingestion_errors`; protected tables such as operators, sessions, security audit, agents, source-health current state, alerts, alert evidence, investigation graphs, `soc-agent`, detections, configuration, schemas, and arbitrary files are not retention-delete targets. The response never returns database connection details.
 
 Retention status:
 

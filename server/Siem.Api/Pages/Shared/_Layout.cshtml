@@ -60,17 +60,14 @@
                 <a class="nav-item @(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index"><span aria-hidden="true">04</span> Alerts</a>
                 @if (canUseAnalystWorkspaces)
                 {
-                    <span class="nav-item disabled" aria-disabled="true" title="Case management is planned; current investigation graphs remain available below."><span aria-hidden="true">05</span> Cases <span class="nav-status">planned</span></span>
+                    <a class="nav-item @(IsActive("/Cases") ? "active" : null)" aria-current="@(IsActive("/Cases") ? "page" : null)" asp-page="/Cases/Index"><span aria-hidden="true">05</span> Cases</a>
                 }
-                @if (canManageDetections)
-                {
-                    <span class="nav-item disabled" aria-disabled="true" title="Detection catalog UI is planned; rule metadata remains available through /api/v1."><span aria-hidden="true">06</span> Detections <span class="nav-status">planned</span></span>
-                }
-                <span class="nav-item disabled" aria-disabled="true" title="Saved dashboards are planned; overview cards remain the implemented monitoring surface."><span aria-hidden="true">07</span> Dashboards <span class="nav-status">planned</span></span>
+                <a class="nav-item @(IsActive("/Detections") ? "active" : null)" aria-current="@(IsActive("/Detections") ? "page" : null)" asp-page="/Detections/Index"><span aria-hidden="true">06</span> Detections</a>
+                <a class="nav-item @(IsActive("/Dashboards") ? "active" : null)" aria-current="@(IsActive("/Dashboards") ? "page" : null)" asp-page="/Dashboards/Index"><span aria-hidden="true">07</span> Dashboards</a>
                 <a class="nav-item @(IsActive("/About") ? "active" : null)" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About"><span aria-hidden="true">08</span> Health</a>
                 @if (canManageOperators)
                 {
-                    <span class="nav-item disabled" aria-disabled="true" title="Operator and retention administration are API/script workflows today."><span aria-hidden="true">09</span> Administration <span class="nav-status">planned</span></span>
+                    <a class="nav-item @(IsActive("/Administration") ? "active" : null)" aria-current="@(IsActive("/Administration") ? "page" : null)" asp-page="/Administration/Index"><span aria-hidden="true">09</span> Administration</a>
                 }
             </nav>
             <nav class="secondary-nav" aria-label="Implemented role-aware workspaces">

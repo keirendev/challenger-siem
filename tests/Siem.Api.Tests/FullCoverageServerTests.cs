@@ -277,6 +277,50 @@ public sealed class FullCoverageServerTests
         Assert.Equal(4, coverage.DroppedEvents);
         Assert.Equal(1, coverage.PoisonEvents);
         Assert.Equal(7, coverage.RecentEventCount);
+        Assert.True(coverage.HasCheckpointGap);
+        Assert.Contains("partial", coverage.StateGuidance, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TelemetryCoverageContractsExposePressureGapCapacityAndGuidanceAdditively()
+    {
+        var source = new SourceTelemetryCoverage
+        {
+            SourceId = LinuxTelemetrySourceIds.JournalL1,
+            DisplayName = "Synthetic Linux journal",
+            Platform = TelemetryPlatforms.Linux,
+            CoverageLevel = WindowsCoverageLevel.L1,
+            Required = true,
+            Enabled = true,
+            Reported = true,
+            Status = SourceHealthStatuses.Degraded,
+            RecentEventCount = 0,
+            HasCheckpointGap = true,
+            IsThrottled = true,
+            StateGuidance = "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
+            Reason = "synthetic degraded state",
+            EventSearchUrl = "/events?source_id=linux-journal-l1",
+            SourceHealthUrl = "/agents/detail"
+        };
+        var agent = new AgentTelemetryCoverage
+        {
+            AgentId = "synthetic-agent",
+            Hostname = "SYNTHETIC-LINUX-01",
+            AgentStatus = "active",
+            Platform = TelemetryPlatforms.Linux,
+            PressureState = QueuePressureStates.Throttled,
+            CapacityState = "critical_95",
+            HasGap = true,
+            IsThrottled = true,
+            Sources = [source]
+        };
+
+        var json = JsonSerializer.Serialize(agent, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Contains("pressure_state", json, StringComparison.Ordinal);
+        Assert.Contains("capacity_state", json, StringComparison.Ordinal);
+        Assert.Contains("has_gap", json, StringComparison.Ordinal);
+        Assert.Contains("state_guidance", json, StringComparison.Ordinal);
     }
 
     [Fact]

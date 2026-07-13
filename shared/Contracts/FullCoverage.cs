@@ -82,7 +82,12 @@ public static class SourceEvidenceStatuses
 public static class AlertStatuses
 {
     public const string New = "new";
+    public const string Acknowledged = "acknowledged";
     public const string Triaged = "triaged";
+    public const string Investigating = "investigating";
+    public const string Escalated = "escalated";
+    public const string Contained = "contained";
+    public const string Resolved = "resolved";
     public const string Closed = "closed";
     public const string Suppressed = "suppressed";
 }
@@ -626,6 +631,18 @@ public sealed record AgentTelemetryCoverage
     [JsonPropertyName("not_applicable_sources")]
     public int NotApplicableSources { get; init; }
 
+    [JsonPropertyName("pressure_state")]
+    public string PressureState { get; init; } = QueuePressureStates.Unknown;
+
+    [JsonPropertyName("capacity_state")]
+    public string CapacityState { get; init; } = "unknown";
+
+    [JsonPropertyName("has_gap")]
+    public bool HasGap { get; init; }
+
+    [JsonPropertyName("is_throttled")]
+    public bool IsThrottled { get; init; }
+
     [JsonPropertyName("new_alert_count")]
     public int NewAlertCount { get; init; }
 
@@ -779,6 +796,15 @@ public sealed record SourceTelemetryCoverage
 
     [JsonPropertyName("recent_event_count")]
     public int RecentEventCount { get; init; }
+
+    [JsonPropertyName("has_checkpoint_gap")]
+    public bool HasCheckpointGap { get; init; }
+
+    [JsonPropertyName("is_throttled")]
+    public bool IsThrottled { get; init; }
+
+    [JsonPropertyName("state_guidance")]
+    public string StateGuidance { get; init; } = string.Empty;
 
     [JsonPropertyName("reason")]
     public string Reason { get; init; } = string.Empty;
@@ -1138,6 +1164,45 @@ public sealed record AlertRecord
     [JsonPropertyName("status")]
     public string Status { get; init; } = AlertStatuses.New;
 
+    [JsonPropertyName("owner")]
+    public string? Owner { get; init; }
+
+    [JsonPropertyName("version")]
+    public int Version { get; init; } = 1;
+
+    [JsonPropertyName("updated_at")]
+    public DateTimeOffset? UpdatedAt { get; init; }
+
+    [JsonPropertyName("acknowledged_at")]
+    public DateTimeOffset? AcknowledgedAt { get; init; }
+
+    [JsonPropertyName("triaged_at")]
+    public DateTimeOffset? TriagedAt { get; init; }
+
+    [JsonPropertyName("suppressed_at")]
+    public DateTimeOffset? SuppressedAt { get; init; }
+
+    [JsonPropertyName("suppressed_until")]
+    public DateTimeOffset? SuppressedUntil { get; init; }
+
+    [JsonPropertyName("suppression_reason")]
+    public string? SuppressionReason { get; init; }
+
+    [JsonPropertyName("disposition")]
+    public string? Disposition { get; init; }
+
+    [JsonPropertyName("closed_at")]
+    public DateTimeOffset? ClosedAt { get; init; }
+
+    [JsonPropertyName("closure_summary")]
+    public string? ClosureSummary { get; init; }
+
+    [JsonPropertyName("reopened_at")]
+    public DateTimeOffset? ReopenedAt { get; init; }
+
+    [JsonPropertyName("last_activity_at")]
+    public DateTimeOffset? LastActivityAt { get; init; }
+
     [JsonPropertyName("agent_id")]
     public string? AgentId { get; init; }
 
@@ -1155,6 +1220,12 @@ public sealed record AlertRecord
 
     [JsonPropertyName("evidence")]
     public IReadOnlyList<AlertEvidenceRecord> Evidence { get; init; } = Array.Empty<AlertEvidenceRecord>();
+
+    [JsonPropertyName("cases")]
+    public IReadOnlyList<AlertCaseLinkRecord> Cases { get; init; } = Array.Empty<AlertCaseLinkRecord>();
+
+    [JsonPropertyName("activity")]
+    public IReadOnlyList<AlertActivityRecord> Activity { get; init; } = Array.Empty<AlertActivityRecord>();
 }
 
 public sealed record AlertEvidenceRecord

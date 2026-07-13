@@ -11,105 +11,189 @@ namespace Challenger.Siem.Api.Pages.Events;
 
 public sealed class IndexModel(
     EventRepository eventRepository,
+    SecurityAuditRepository auditRepository,
     IOptions<ReviewOptions> reviewOptions,
     ILogger<IndexModel> logger) : PageModel
 {
-    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
+    public EventSearchQuery Query { get; private set; } = EventSearchQuery.Empty;
 
-    [Microsoft.AspNetCore.Mvc.BindProperty(SupportsGet = true, Name = "page")]
+    [BindProperty(SupportsGet = true, Name = "page")]
     public int PageNumber { get; set; } = 1;
 
+    [BindProperty(SupportsGet = true, Name = "saved_search_id")]
+    public Guid? SavedSearchId { get; set; }
+
     public IReadOnlyList<EventEnvelope> Events { get; private set; } = Array.Empty<EventEnvelope>();
+    public IReadOnlyList<EventTimelineBucket> TimelineBuckets { get; private set; } = Array.Empty<EventTimelineBucket>();
+    public IReadOnlyList<SavedEventSearchRecord> SavedSearches { get; private set; } = Array.Empty<SavedEventSearchRecord>();
+    public EventSearchPageInfo? PageInfo { get; private set; }
 
     public bool HasPreviousPage => PageNumber > 1;
-
-    public bool HasNextPage { get; private set; }
-
+    public bool HasNextPage => PageInfo?.HasNext == true;
     public int FirstResultNumber => Events.Count == 0 ? 0 : ((PageNumber - 1) * NormalizedLimit) + 1;
-
     public int LastResultNumber => ((PageNumber - 1) * NormalizedLimit) + Events.Count;
-
-    public int NormalizedLimit => Math.Clamp(Query.Limit, 1, 500);
-
+    public int NormalizedLimit => Math.Clamp(Query.Limit, 1, EventSearchQuery.MaxLimit);
+    public string ResultScope { get; private set; } = "No search run yet.";
+    public string RedactionNotice { get; private set; } = "server_role_policy_applied";
     public string? ErrorMessage { get; private set; }
-
-    public string? GlobalSearchMessage { get; private set; }
+    public string? StatusMessage { get; private set; }
+    public bool CanExport => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ManageOperators);
+    public bool CanShareSavedSearch => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ReviewSensitive);
 
     [BindProperty]
     public string? GlobalSearch { get; set; }
+
+    [BindProperty]
+    public string? SavedSearchName { get; set; }
+
+    [BindProperty]
+    public string? SavedSearchDescription { get; set; }
+
+    [BindProperty]
+    public string SavedSearchVisibility { get; set; } = SavedEventSearchVisibility.Private;
+
+    [BindProperty]
+    public string? ConfirmExport { get; set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         PageNumber = Math.Max(1, PageNumber);
         Query = EventSearchQuery.FromQuery(Request.Query);
-        if (!Request.Query.ContainsKey("limit"))
-        {
-            Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
-        }
-
+        if (!Request.Query.ContainsKey("limit")) Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
+        await LoadSavedSearchesAsync(cancellationToken);
+        await ApplySavedSearchIfRequestedAsync(cancellationToken);
         await LoadEventsAsync(cancellationToken);
     }
 
     public async Task<IActionResult> OnPostGlobalSearchAsync(CancellationToken cancellationToken)
     {
         PageNumber = 1;
-        Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
         var searchText = string.IsNullOrWhiteSpace(GlobalSearch) ? null : GlobalSearch.Trim();
-        if (searchText?.Length > 160)
-        {
-            searchText = searchText[..160];
-            GlobalSearchMessage = "Global search input was shortened to the 160-character event-search limit. The submitted term is not repeated in page links.";
-        }
-        else
-        {
-            GlobalSearchMessage = "Global search is currently scoped to bounded event metadata for every role, with sensitive keyword matching only for authorized analysts. Unified event, alert, case, and entity search is planned. The submitted term is not repeated in page links.";
-        }
-
+        if (searchText?.Length > 160) searchText = searchText[..160];
+        Query = EventSearchQuery.Empty with { Keyword = searchText, Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
         if (searchText is null)
         {
-            GlobalSearchMessage = "Enter a host, agent, event code, source, or authorized keyword to search the current bounded event index.";
-            Events = Array.Empty<EventEnvelope>();
-            HasNextPage = false;
+            StatusMessage = "Enter a host, agent, event code, source, or authorized keyword to search the bounded event index.";
+            await LoadSavedSearchesAsync(cancellationToken);
             return Page();
         }
 
-        await LoadGlobalEventsAsync(searchText, cancellationToken);
+        StatusMessage = "Global search is scoped to bounded event metadata and authorized keyword matching; sensitive terms are not repeated in page links.";
+        await LoadSavedSearchesAsync(cancellationToken);
+        await LoadEventsAsync(cancellationToken);
         return Page();
     }
 
-    private async Task LoadGlobalEventsAsync(string searchText, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnPostSaveSearchAsync(CancellationToken cancellationToken)
     {
-        Query = Query with { Limit = NormalizedLimit };
-        var fetchLimit = Math.Min(NormalizedLimit + 1, 500);
-
+        Query = EventSearchQuery.FromQuery(Request.Query);
+        if (!Request.Query.ContainsKey("limit")) Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
+        var operatorId = OperatorAuthentication.OperatorId(User);
+        if (!operatorId.HasValue) return Unauthorized();
         try
         {
-            var loadedEvents = await eventRepository.SearchGlobalEventsForOperatorAsync(searchText, fetchLimit, OperatorAuthorization.Role(User)!, cancellationToken);
-            HasNextPage = loadedEvents.Count > NormalizedLimit;
-            Events = loadedEvents.Take(NormalizedLimit).ToArray();
-            if (Events.Count == 0)
+            var saved = await eventRepository.SaveSearchAsync(new SavedEventSearchRequest
             {
-                GlobalSearchMessage = string.Concat(GlobalSearchMessage, " No matching permitted event metadata was found for the current role.");
-            }
+                Name = SavedSearchName ?? string.Empty,
+                Description = SavedSearchDescription,
+                Visibility = SavedSearchVisibility,
+                Query = Query.ToSavedQueryDictionary(),
+                Columns = Query.Columns
+            }, operatorId.Value, User.Identity?.Name ?? "operator", CanShareSavedSearch, cancellationToken);
+            await auditRepository.RecordAsync(operatorId, User.Identity?.Name, "event_search.saved.create", "success", "saved_event_search", saved.SavedSearchId.ToString(), HttpContext, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
+            StatusMessage = $"Saved search '{saved.Name}' created at version {saved.Version}.";
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is ArgumentException or UnauthorizedAccessException or InvalidOperationException)
         {
-            logger.LogWarning(ex, "Global event search could not be loaded.");
-            ErrorMessage = "Global event search is currently unavailable.";
+            ErrorMessage = ex.Message;
         }
+        await LoadSavedSearchesAsync(cancellationToken);
+        await LoadEventsAsync(cancellationToken);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostDeleteSavedSearchAsync(Guid savedSearchId, CancellationToken cancellationToken)
+    {
+        var operatorId = OperatorAuthentication.OperatorId(User);
+        if (!operatorId.HasValue) return Unauthorized();
+        var deleted = await eventRepository.DeleteSavedSearchAsync(savedSearchId, operatorId.Value, cancellationToken);
+        await auditRepository.RecordAsync(operatorId, User.Identity?.Name, "event_search.saved.delete", deleted ? "success" : "denied", "saved_event_search", savedSearchId.ToString(), HttpContext, null, cancellationToken);
+        StatusMessage = deleted ? "Saved search deleted." : "Saved search was not found or is not owned by this operator.";
+        Query = EventSearchQuery.FromQuery(Request.Query);
+        await LoadSavedSearchesAsync(cancellationToken);
+        await LoadEventsAsync(cancellationToken);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostExportAsync(CancellationToken cancellationToken)
+    {
+        if (!CanExport) return Forbid();
+        if (!string.Equals(ConfirmExport, "EXPORT", StringComparison.Ordinal))
+        {
+            ErrorMessage = "Type EXPORT to confirm this bounded audited event export.";
+            Query = EventSearchQuery.FromQuery(Request.Query);
+            await LoadSavedSearchesAsync(cancellationToken);
+            await LoadEventsAsync(cancellationToken);
+            return Page();
+        }
+
+        Query = EventSearchQuery.FromQuery(Request.Query);
+        if (Query.ValidationErrors.Count > 0)
+        {
+            ErrorMessage = "Fix search validation errors before exporting.";
+            await LoadSavedSearchesAsync(cancellationToken);
+            await LoadEventsAsync(cancellationToken);
+            return Page();
+        }
+
+        var role = OperatorAuthorization.Role(User)!;
+        var export = await eventRepository.ExportCsvForOperatorAsync(Query, role, cancellationToken);
+        await auditRepository.RecordAsync(OperatorAuthentication.OperatorId(User), User.Identity?.Name, "event_search.export", "success", "events", null, HttpContext, new Dictionary<string, object?> { ["rows"] = export.Rows, ["limit"] = export.BoundedLimit, ["format"] = "csv" }, cancellationToken);
+        return File(export.Content, "text/csv; charset=utf-8", export.FileName);
+    }
+
+    private async Task ApplySavedSearchIfRequestedAsync(CancellationToken cancellationToken)
+    {
+        if (!SavedSearchId.HasValue) return;
+        var operatorId = OperatorAuthentication.OperatorId(User);
+        if (!operatorId.HasValue) return;
+        var saved = await eventRepository.GetSavedSearchAsync(SavedSearchId.Value, operatorId.Value, canUseShared: true, cancellationToken);
+        if (saved is null)
+        {
+            ErrorMessage = "Saved search was not found or is not visible to this operator.";
+            return;
+        }
+        Query = EventSearchQuery.FromSavedQuery(saved.Query);
+        StatusMessage = $"Loaded saved search '{saved.Name}' version {saved.Version}.";
+    }
+
+    private async Task LoadSavedSearchesAsync(CancellationToken cancellationToken)
+    {
+        var operatorId = OperatorAuthentication.OperatorId(User);
+        SavedSearches = operatorId.HasValue ? await eventRepository.ListSavedSearchesAsync(operatorId.Value, cancellationToken) : Array.Empty<SavedEventSearchRecord>();
     }
 
     private async Task LoadEventsAsync(CancellationToken cancellationToken)
     {
         Query = Query with { Limit = NormalizedLimit };
-        var fetchLimit = Math.Min(NormalizedLimit + 1, 500);
-        var fetchQuery = Query with { Limit = fetchLimit };
+        if (Query.ValidationErrors.Count > 0)
+        {
+            Events = Array.Empty<EventEnvelope>();
+            TimelineBuckets = Array.Empty<EventTimelineBucket>();
+            ResultScope = "Search validation failed; no query was executed.";
+            return;
+        }
 
         try
         {
-            var loadedEvents = await eventRepository.SearchEventsForOperatorAsync(fetchQuery, OperatorAuthorization.Role(User)!, cancellationToken, (PageNumber - 1) * NormalizedLimit);
-            HasNextPage = loadedEvents.Count > NormalizedLimit;
-            Events = loadedEvents.Take(NormalizedLimit).ToArray();
+            var pageQuery = PageNumber > 1 ? Query with { Cursor = null } : Query;
+            var loaded = await eventRepository.SearchEventsPageForOperatorAsync(pageQuery, OperatorAuthorization.Role(User)!, cancellationToken);
+            PageInfo = loaded.Page;
+            Events = loaded.Events;
+            ResultScope = loaded.ResultScope;
+            RedactionNotice = loaded.RedactionNotice;
+            var timeline = await eventRepository.GetTimelineAsync(Query, OperatorAuthorization.Role(User)!, cancellationToken);
+            TimelineBuckets = timeline.Buckets;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -118,50 +202,22 @@ public sealed class IndexModel(
         }
     }
 
-    public string FormatDateTimeInput(DateTimeOffset? value)
-    {
-        return TimeDisplay.FormatUtcInput(value);
-    }
+    public string FormatDateTimeInput(DateTimeOffset? value) => TimeDisplay.FormatUtcInput(value);
 
-    public IReadOnlyList<string> ActiveFilters()
-    {
-        var filters = new List<string>();
-        AddFilter(filters, "Host", Query.Hostname);
-        AddFilter(filters, "Agent", Query.AgentId);
-        AddFilter(filters, "Source kind", Query.Source);
-        AddFilter(filters, "Platform", Query.Platform);
-        AddFilter(filters, "Source ID", Query.SourceId);
-        AddFilter(filters, "Event code", Query.EventCode);
-        AddFilter(filters, "Package", Query.PackageName);
-        AddFilter(filters, "Channel", Query.Channel);
-        AddFilter(filters, "Event ID", Query.WindowsEventId?.ToString(CultureInfo.InvariantCulture));
-        AddFilter(filters, "Keyword", Query.Keyword);
-        AddFilter(filters, "Category", Query.Category);
-        AddFilter(filters, "Action", Query.Action);
-        AddFilter(filters, "User", Query.UserName);
-        AddFilter(filters, "Process", Query.ProcessImage);
-        AddFilter(filters, "Destination", Query.DestinationIp);
-        if (Query.From.HasValue) AddFilter(filters, "From UTC", TimeDisplay.FormatUtc(Query.From, "yyyy-MM-dd HH:mm"));
-        if (Query.To.HasValue) AddFilter(filters, "To UTC", TimeDisplay.FormatUtc(Query.To, "yyyy-MM-dd HH:mm"));
-        return filters;
-    }
+    public IReadOnlyList<EventSearchFilterSummary> ActiveFilters() => Query.ActiveFilterSummaries();
 
     public string Preview(string message)
     {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return "—";
-        }
-
+        if (string.IsNullOrWhiteSpace(message)) return "—";
         var singleLine = message.ReplaceLineEndings(" ").Trim();
         return singleLine.Length <= 140 ? singleLine : string.Concat(singleLine.AsSpan(0, 140), "…");
     }
 
-    private static void AddFilter(List<string> filters, string label, string? value)
+    public string BuildCurrentQueryString(string? cursor = null, int? page = null)
     {
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            filters.Add($"{label}: {value.Trim()}");
-        }
+        var query = Query.ToSavedQueryDictionary().ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(cursor)) query["cursor"] = cursor;
+        if (page.HasValue) query["page"] = page.Value.ToString(CultureInfo.InvariantCulture);
+        return string.Join('&', query.Select(item => $"{Uri.EscapeDataString(item.Key)}={Uri.EscapeDataString(item.Value)}"));
     }
 }

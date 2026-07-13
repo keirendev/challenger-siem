@@ -93,8 +93,11 @@ public static class AlertFieldPolicy
     public static AlertRecord Apply(AlertRecord source, string role) => role == OperatorRoles.Admin ? source : source with
     {
         Summary = "[redacted: sensitive alert context]",
+        SuppressionReason = source.SuppressionReason is null ? null : "[redacted: sensitive suppression context]",
+        ClosureSummary = source.ClosureSummary is null ? null : "[redacted: sensitive closure context]",
         AffectedEntities = Array.Empty<EventEntity>(),
-        Evidence = source.Evidence.Select(item => item with { Summary = "[redacted: sensitive evidence context]" }).ToArray()
+        Evidence = source.Evidence.Select(item => item with { Summary = "[redacted: sensitive evidence context]" }).ToArray(),
+        Activity = source.Activity.Select(item => item with { Summary = "[redacted: sensitive activity context]" }).ToArray()
     };
 }
 

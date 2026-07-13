@@ -3,6 +3,7 @@
 @{
     ViewData["Title"] = "Event search";
     var activeFilters = Model.ActiveFilters();
+    var selectedColumns = Model.Query.Columns.Count == 0 ? new HashSet<string>(new[] { "event_time", "host", "source", "code", "severity", "category", "action", "message", "pivots" }, StringComparer.Ordinal) : new HashSet<string>(Model.Query.Columns, StringComparer.Ordinal);
 }
 
 <partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Search", IsCurrent: true))' />
@@ -11,179 +12,189 @@
     <div>
         <p class="page-kicker">Triage workspace</p>
         <h1>Event search</h1>
-        <p class="muted">Search normalized Windows and portable Linux envelopes with visible filters, bounded pages, and fast pivots to event detail.</p>
+        <p class="muted">Bounded structured search with cursor pagination, UTC timeline buckets, saved searches, and role-controlled raw/export behavior.</p>
     </div>
 </div>
 
 @if (Model.ErrorMessage is not null)
 {
-    <partial name="_Notice" model='new NoticeModel("Search unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
+    <partial name="_Notice" model='new NoticeModel("Search notice", Model.ErrorMessage, "error", IsAlert: true)' />
 }
-@if (Model.GlobalSearchMessage is not null)
+@if (Model.StatusMessage is not null)
 {
-    <partial name="_Notice" model='new NoticeModel("Global search scope", Model.GlobalSearchMessage, "partial")' />
+    <partial name="_Notice" model='new NoticeModel("Search status", Model.StatusMessage, "partial")' />
 }
-<partial name="_Notice" model='new NoticeModel("Role-aware results", "Protected fields and sensitive filters are enforced server-side. Non-admin results may show redacted, omitted, or restricted values instead of raw telemetry.", "partial")' />
+@if (Model.Query.ValidationErrors.Count > 0)
+{
+    <section class="notice error" role="alert" aria-labelledby="validation-title">
+        <h2 id="validation-title">Search validation failed</h2>
+        <ul>
+            @foreach (var error in Model.Query.ValidationErrors)
+            {
+                <li><strong>@error.Field</strong>: @error.Message</li>
+            }
+        </ul>
+    </section>
+}
+<partial name="_Notice" model='new NoticeModel("Role-aware results", $"{Model.RedactionNotice}. Protected filters and raw payloads are enforced server-side; exports require admin confirmation and audit.", "partial")' />
 
 <form method="get" class="card filters filter-panel" aria-label="Event search filters">
-    <div class="form-row">
-        <label for="from">From (UTC)</label>
-        <input id="from" name="from" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.From)" />
-    </div>
-    <div class="form-row">
-        <label for="to">To (UTC)</label>
-        <input id="to" name="to" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.To)" />
-    </div>
-    <div class="form-row">
-        <label for="hostname">Hostname</label>
-        <input id="hostname" name="hostname" value="@Model.Query.Hostname" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="agent_id">Agent ID</label>
-        <input id="agent_id" name="agent_id" value="@Model.Query.AgentId" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="source">Source kind</label>
-        <input id="source" name="source" value="@Model.Query.Source" autocomplete="off" placeholder="linux_journal" />
-    </div>
-    <div class="form-row">
-        <label for="platform">Platform</label>
-        <input id="platform" name="platform" value="@Model.Query.Platform" autocomplete="off" placeholder="windows or linux" />
-    </div>
-    <div class="form-row">
-        <label for="source_id">Source ID</label>
-        <input id="source_id" name="source_id" value="@Model.Query.SourceId" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="event_code">Event code</label>
-        <input id="event_code" name="event_code" value="@Model.Query.EventCode" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="package_name">Package</label>
-        <input id="package_name" name="package_name" value="@Model.Query.PackageName" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="channel">Windows channel</label>
-        <input id="channel" name="channel" value="@Model.Query.Channel" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="windows_event_id">Windows Event ID</label>
-        <input id="windows_event_id" name="windows_event_id" type="number" min="0" max="65535" value="@Model.Query.WindowsEventId" />
-    </div>
-    <div class="form-row">
-        <label for="keyword">Keyword</label>
-        <input id="keyword" name="keyword" value="@Model.Query.Keyword" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="category">Category</label>
-        <input id="category" name="category" value="@Model.Query.Category" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="action">Action</label>
-        <input id="action" name="action" value="@Model.Query.Action" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="user_name">User</label>
-        <input id="user_name" name="user_name" value="@Model.Query.UserName" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="process_image">Process image</label>
-        <input id="process_image" name="process_image" value="@Model.Query.ProcessImage" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="destination_ip">Destination IP</label>
-        <input id="destination_ip" name="destination_ip" value="@Model.Query.DestinationIp" autocomplete="off" />
-    </div>
-    <div class="form-row">
-        <label for="limit">Limit</label>
-        <input id="limit" name="limit" type="number" min="1" max="500" value="@Model.NormalizedLimit" />
-    </div>
+    <div class="form-row"><label for="from">From (UTC)</label><input id="from" name="from" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.From)" /></div>
+    <div class="form-row"><label for="to">To (UTC)</label><input id="to" name="to" type="datetime-local" value="@Model.FormatDateTimeInput(Model.Query.To)" /></div>
+    <div class="form-row"><label for="hostname">Hostname</label><input id="hostname" name="hostname" value="@Model.Query.Hostname" autocomplete="off" /></div>
+    <div class="form-row"><label for="agent_id">Agent ID</label><input id="agent_id" name="agent_id" value="@Model.Query.AgentId" autocomplete="off" /></div>
+    <div class="form-row"><label for="platform">Platform</label><input id="platform" name="platform" value="@Model.Query.Platform" autocomplete="off" placeholder="windows or linux" /></div>
+    <div class="form-row"><label for="source">Source kind</label><input id="source" name="source" value="@Model.Query.Source" autocomplete="off" placeholder="linux_journal" /></div>
+    <div class="form-row"><label for="source_id">Source ID</label><input id="source_id" name="source_id" value="@Model.Query.SourceId" autocomplete="off" /></div>
+    <div class="form-row"><label for="provider">Provider</label><input id="provider" name="provider" value="@Model.Query.Provider" autocomplete="off" /></div>
+    <div class="form-row"><label for="facility">Facility</label><input id="facility" name="facility" value="@Model.Query.Facility" autocomplete="off" /></div>
+    <div class="form-row"><label for="unit">Unit</label><input id="unit" name="unit" value="@Model.Query.Unit" autocomplete="off" /></div>
+    <div class="form-row"><label for="channel">Windows channel</label><input id="channel" name="channel" value="@Model.Query.Channel" autocomplete="off" /></div>
+    <div class="form-row"><label for="windows_event_id">Windows Event ID</label><input id="windows_event_id" name="windows_event_id" type="number" min="0" max="65535" value="@Model.Query.WindowsEventId" /></div>
+    <div class="form-row"><label for="event_code">Native event code</label><input id="event_code" name="event_code" value="@Model.Query.EventCode" autocomplete="off" /></div>
+    <div class="form-row"><label for="severity">Severity</label><input id="severity" name="severity" value="@Model.Query.Severity" autocomplete="off" /></div>
+    <div class="form-row"><label for="outcome">Outcome</label><input id="outcome" name="outcome" value="@Model.Query.Outcome" autocomplete="off" /></div>
+    <div class="form-row"><label for="category">Category</label><input id="category" name="category" value="@Model.Query.Category" autocomplete="off" /></div>
+    <div class="form-row"><label for="action">Action</label><input id="action" name="action" value="@Model.Query.Action" autocomplete="off" /></div>
+    <div class="form-row"><label for="keyword">Keyword (protected)</label><input id="keyword" name="keyword" value="@Model.Query.Keyword" autocomplete="off" /></div>
+    <div class="form-row"><label for="user_name">User (protected)</label><input id="user_name" name="user_name" value="@Model.Query.UserName" autocomplete="off" /></div>
+    <div class="form-row"><label for="process_image">Process image (protected)</label><input id="process_image" name="process_image" value="@Model.Query.ProcessImage" autocomplete="off" /></div>
+    <div class="form-row"><label for="process_command_line">Process command (protected)</label><input id="process_command_line" name="process_command_line" value="@Model.Query.ProcessCommandLine" autocomplete="off" /></div>
+    <div class="form-row"><label for="service_name">Service (protected)</label><input id="service_name" name="service_name" value="@Model.Query.ServiceName" autocomplete="off" /></div>
+    <div class="form-row"><label for="file_path">File path (protected)</label><input id="file_path" name="file_path" value="@Model.Query.FilePath" autocomplete="off" /></div>
+    <div class="form-row"><label for="registry_key">Registry key (protected)</label><input id="registry_key" name="registry_key" value="@Model.Query.RegistryKey" autocomplete="off" /></div>
+    <div class="form-row"><label for="package_name">Package (protected)</label><input id="package_name" name="package_name" value="@Model.Query.PackageName" autocomplete="off" /></div>
+    <div class="form-row"><label for="source_ip">Source IP (protected)</label><input id="source_ip" name="source_ip" value="@Model.Query.SourceIp" autocomplete="off" /></div>
+    <div class="form-row"><label for="destination_ip">Destination IP (protected)</label><input id="destination_ip" name="destination_ip" value="@Model.Query.DestinationIp" autocomplete="off" /></div>
+    <div class="form-row"><label for="network_ip">Either network IP (protected)</label><input id="network_ip" name="network_ip" value="@Model.Query.NetworkIp" autocomplete="off" /></div>
+    <div class="form-row"><label for="detection_rule_id">Detection rule</label><input id="detection_rule_id" name="detection_rule_id" value="@Model.Query.DetectionRuleId" autocomplete="off" /></div>
+    <div class="form-row"><label for="entity_type">Entity type</label><input id="entity_type" name="entity_type" value="@Model.Query.EntityType" autocomplete="off" placeholder="user, process, ip" /></div>
+    <div class="form-row"><label for="entity_value">Entity value (protected)</label><input id="entity_value" name="entity_value" value="@Model.Query.EntityValue" autocomplete="off" /></div>
+    <div class="form-row"><label for="bucket_seconds">Timeline bucket seconds</label><input id="bucket_seconds" name="bucket_seconds" type="number" min="60" max="86400" value="@Model.Query.BucketSeconds" /></div>
+    <div class="form-row"><label for="limit">Limit</label><input id="limit" name="limit" type="number" min="1" max="500" value="@Model.NormalizedLimit" /></div>
+    <fieldset class="form-row">
+        <legend>Columns</legend>
+        <label><input type="checkbox" name="columns" value="event_time" checked="@(selectedColumns.Contains("event_time") ? "checked" : null)" /> Time</label>
+        <label><input type="checkbox" name="columns" value="host" checked="@(selectedColumns.Contains("host") ? "checked" : null)" /> Host</label>
+        <label><input type="checkbox" name="columns" value="source" checked="@(selectedColumns.Contains("source") ? "checked" : null)" /> Source</label>
+        <label><input type="checkbox" name="columns" value="code" checked="@(selectedColumns.Contains("code") ? "checked" : null)" /> Code</label>
+        <label><input type="checkbox" name="columns" value="severity" checked="@(selectedColumns.Contains("severity") ? "checked" : null)" /> Severity</label>
+        <label><input type="checkbox" name="columns" value="message" checked="@(selectedColumns.Contains("message") ? "checked" : null)" /> Message</label>
+    </fieldset>
     <div class="actions">
         <button type="submit">Search events</button>
         <a class="button secondary" asp-page="/Events/Index">Clear</a>
-        <span class="muted">Range filters are interpreted as UTC; event rows show host time when reported.</span>
+        <span class="muted">Filters are UTC and server validated. Host-local display is labelled per row.</span>
     </div>
 </form>
 
+<section class="card" aria-labelledby="timeline-title">
+    <h2 id="timeline-title">Timeline buckets</h2>
+    <p class="muted">Canonical UTC buckets preserve correlation; host-local labels are metadata only.</p>
+    @if (Model.TimelineBuckets.Count == 0)
+    {
+        <p class="muted">No timeline buckets for the current scope.</p>
+    }
+    else
+    {
+        <div class="table-scroll"><table><caption>UTC timeline bucket aggregation</caption><thead><tr><th>UTC bucket</th><th>Source</th><th>Severity</th><th>Count</th><th>Host-local metadata</th></tr></thead><tbody>
+        @foreach (var bucket in Model.TimelineBuckets.Take(24))
+        {
+            <tr><td>@TimeDisplay.FormatUtc(bucket.StartUtc) - @TimeDisplay.FormatUtc(bucket.EndUtc, "HH:mm:ss")</td><td>@(bucket.Source ?? "all")</td><td>@(bucket.Severity ?? "all")</td><td>@bucket.Count</td><td>@(bucket.HostTimezoneLabels.Count == 0 ? "UTC/unknown timezone" : string.Join(", ", bucket.HostTimezoneLabels))</td></tr>
+        }
+        </tbody></table></div>
+    }
+</section>
+
+<section class="card" aria-labelledby="saved-searches-title">
+    <h2 id="saved-searches-title">Saved searches</h2>
+    <p class="muted">Saved searches store bounded filter metadata, owner, visibility, and version. They never store result payloads or raw telemetry.</p>
+    <form method="post" asp-page-handler="SaveSearch" class="filters" aria-label="Save current event search">
+        <div class="form-row"><label for="SavedSearchName">Name</label><input id="SavedSearchName" asp-for="SavedSearchName" maxlength="80" /></div>
+        <div class="form-row"><label for="SavedSearchVisibility">Visibility</label><select id="SavedSearchVisibility" asp-for="SavedSearchVisibility"><option value="private">Private</option><option value="shared" disabled="@(!Model.CanShareSavedSearch)">Shared analyst+</option></select></div>
+        <div class="form-row"><label for="SavedSearchDescription">Description</label><input id="SavedSearchDescription" asp-for="SavedSearchDescription" maxlength="500" /></div>
+        <div class="actions"><button type="submit">Save current filters</button></div>
+    </form>
+    @if (Model.SavedSearches.Count > 0)
+    {
+        <ul class="entity-list">
+            @foreach (var saved in Model.SavedSearches)
+            {
+                <li><strong>@saved.Name</strong> <span class="badge">@saved.Visibility v@saved.Version</span> <a asp-page="/Events/Index" asp-route-saved_search_id="@saved.SavedSearchId">Load</a> <form method="post" asp-page-handler="DeleteSavedSearch" asp-route-savedSearchId="@saved.SavedSearchId" class="inline-form"><button type="submit" class="secondary">Delete owned</button></form><div class="muted">Updated @TimeDisplay.FormatUtc(saved.UpdatedAt) by @(saved.CreatedBy ?? "operator")</div></li>
+            }
+        </ul>
+    }
+</section>
+
+@if (Model.CanExport)
+{
+    <section class="card" aria-labelledby="export-title">
+        <h2 id="export-title">Admin export</h2>
+        <p class="muted">CSV export is bounded, confirmation-gated, audited, and sanitized against spreadsheet formula/URL injection. Protected fields remain role-filtered.</p>
+        <form method="post" asp-page-handler="Export" class="filters" aria-label="Confirm event export">
+            <div class="form-row"><label for="ConfirmExport">Type EXPORT to confirm</label><input id="ConfirmExport" asp-for="ConfirmExport" autocomplete="off" /></div>
+            <div class="actions"><button type="submit">Export current scope</button></div>
+        </form>
+    </section>
+}
+
 <section class="table-card" aria-labelledby="event-results-title">
     <div class="table-title">
-        <div>
-            <h2 id="event-results-title">Event results</h2>
-            <p class="muted">Showing @Model.FirstResultNumber-@Model.LastResultNumber on page @Model.PageNumber with a @Model.NormalizedLimit-event limit.</p>
-        </div>
+        <div><h2 id="event-results-title">Event results</h2><p class="muted">@Model.ResultScope Showing @Model.FirstResultNumber-@Model.LastResultNumber.</p></div>
         <span class="badge @(Model.Events.Count == 0 ? "warning" : "ok")">@Model.Events.Count rendered</span>
     </div>
     <div class="query-summary" aria-label="Active event filters">
         @if (activeFilters.Count == 0)
-        {
-            <span class="muted">No filters active. Results are newest first and capped by the visible limit.</span>
-        }
+        { <span class="muted">No filters active. Results are newest first and capped by the visible limit.</span> }
         else
         {
             <div class="query-pills">
-                @foreach (var filter in activeFilters)
-                {
-                    <span class="pill">@filter</span>
-                }
+                @foreach (var filter in activeFilters) { <span class="pill">@filter.Name: @(filter.Protected ? "protected value" : filter.Value)</span> }
             </div>
         }
     </div>
     @if (Model.Events.Count == 0)
-    {
-        <div class="empty"><strong>No events match the current filters.</strong><p>Check the UTC range, active filters, role redaction caveats, and source-health coverage before treating this as no activity.</p></div>
-    }
+    { <div class="empty"><strong>No events match the current filters.</strong><p>Check the UTC range, active filters, role redaction caveats, and source-health coverage before treating this as no activity.</p></div> }
     else
     {
-        <div class="table-scroll">
-            <table>
-                <caption>Bounded event search results with host time, UTC time, severity, status text, and detail pivots</caption>
-                <thead>
-                    <tr>
-                        <th>Event time</th>
-                        <th>Host / Agent</th>
-                        <th>Source</th>
-                        <th>Event ID</th>
-                        <th>Category</th>
-                        <th>Action</th>
-                        <th>Severity</th>
-                        <th>Message</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var item in Model.Events)
-                    {
-                        <tr>
-                            <td>
-                                @TimeDisplay.FormatHostTime(item.EventTime, item.HostTimezone)
-                                <div class="muted">@TimeDisplay.HostTimezoneLabel(item.HostTimezone)</div>
-                                <div class="muted">event UTC @TimeDisplay.FormatUtc(item.EventTime)</div>
-                                <div class="muted">ingested @TimeDisplay.FormatUtc(item.IngestTime, "HH:mm:ss")</div>
-                            </td>
-                            <td><strong>@item.Hostname</strong><div class="muted mono">@item.AgentId</div></td>
-                            <td>
-                                @(item.SourceId ?? item.Channel ?? item.Source)
-                                <div class="muted">@(item.Unit ?? item.Provider ?? item.Platform)</div>
-                            </td>
-                            <td>@(item.EventCode ?? item.WindowsEventId?.ToString() ?? "—")</td>
-                            <td>@(item.Normalized?.Category ?? "—")</td>
-                            <td>@(item.Normalized?.Action ?? "—")</td>
-                            <td><span class="badge">@item.Severity</span></td>
-                            <td class="compact-cell">@Model.Preview(item.Message)</td>
-                            <td>
-                                <a asp-page="/Events/Detail" asp-route-agent_id="@item.AgentId" asp-route-event_id="@item.EventId">Open</a>
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+        <div class="table-scroll"><table><caption>Bounded event search results with host time, UTC time, severity, status text, and detail pivots</caption><thead><tr>
+            @if (selectedColumns.Contains("event_time")) { <th>Event time</th> }
+            @if (selectedColumns.Contains("host")) { <th>Host / Agent</th> }
+            @if (selectedColumns.Contains("source")) { <th>Source</th> }
+            @if (selectedColumns.Contains("code")) { <th>Code</th> }
+            @if (selectedColumns.Contains("category")) { <th>Category</th> }
+            @if (selectedColumns.Contains("action")) { <th>Action</th> }
+            @if (selectedColumns.Contains("severity")) { <th>Severity</th> }
+            @if (selectedColumns.Contains("message")) { <th>Message</th> }
+            <th>Pivots</th></tr></thead><tbody>
+            @foreach (var item in Model.Events)
+            {
+                <tr>
+                    @if (selectedColumns.Contains("event_time")) { <td>@TimeDisplay.FormatHostTime(item.EventTime, item.HostTimezone)<div class="muted">@TimeDisplay.HostTimezoneLabel(item.HostTimezone)</div><div class="muted">UTC @TimeDisplay.FormatUtc(item.EventTime)</div><div class="muted">ingested @TimeDisplay.FormatUtc(item.IngestTime, "HH:mm:ss")</div></td> }
+                    @if (selectedColumns.Contains("host")) { <td><strong>@item.Hostname</strong><div class="muted mono">@item.AgentId</div></td> }
+                    @if (selectedColumns.Contains("source")) { <td>@(item.SourceId ?? item.Channel ?? item.Source)<div class="muted">@(item.Unit ?? item.Provider ?? item.Platform)</div></td> }
+                    @if (selectedColumns.Contains("code")) { <td>@(item.EventCode ?? item.WindowsEventId?.ToString() ?? "—")</td> }
+                    @if (selectedColumns.Contains("category")) { <td>@(item.Normalized?.Category ?? "—")</td> }
+                    @if (selectedColumns.Contains("action")) { <td>@(item.Normalized?.Action ?? "—")</td> }
+                    @if (selectedColumns.Contains("severity")) { <td><span class="badge">@item.Severity</span></td> }
+                    @if (selectedColumns.Contains("message")) { <td class="compact-cell">@Model.Preview(item.Message)</td> }
+                    <td><a asp-page="/Events/Detail" asp-route-agent_id="@item.AgentId" asp-route-event_id="@item.EventId">Open</a> <a asp-page="/Agents/Detail" asp-route-agent_id="@item.AgentId">Asset</a></td>
+                </tr>
+            }
+            </tbody></table></div>
     }
     <nav class="pagination" aria-label="Event result pages">
-        <span class="muted">Page @Model.PageNumber · newest events first · raw JSON available only on detail pages.</span>
+        <span class="muted">Cursor pagination · newest events first · raw JSON only on role-filtered detail pages.</span>
         <div class="actions">
-            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-source="@Model.Query.Source" asp-route-platform="@Model.Query.Platform" asp-route-source_id="@Model.Query.SourceId" asp-route-event_code="@Model.Query.EventCode" asp-route-package_name="@Model.Query.PackageName" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
-            <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-source="@Model.Query.Source" asp-route-platform="@Model.Query.Platform" asp-route-source_id="@Model.Query.SourceId" asp-route-event_code="@Model.Query.EventCode" asp-route-package_name="@Model.Query.PackageName" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber + 1)">Next</a>
+            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Events/Index">Restart</a>
+            @if (Model.PageInfo?.NextCursor is { } nextCursor)
+            {
+                <a class="button secondary" href="/events?@Model.BuildCurrentQueryString(nextCursor)">Next cursor</a>
+            }
+            else
+            {
+                <a class="button secondary disabled" aria-disabled="true">Next cursor</a>
+            }
         </div>
     </nav>
 </section>

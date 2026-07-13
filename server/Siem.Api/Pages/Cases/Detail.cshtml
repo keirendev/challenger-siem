@@ -1,0 +1,85 @@
+@page "/cases/detail"
+@model Challenger.Siem.Api.Pages.Cases.DetailModel
+@{
+    ViewData["Title"] = Model.Case?.CaseKey ?? "Case detail";
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Cases", Page: "/Cases/Index"), new BreadcrumbItem(Model.Case?.CaseKey ?? "Case detail", IsCurrent: true))' />
+
+@if (Model.Case is not null)
+{
+<div class="page-header">
+    <div><p class="page-kicker">Investigation case</p><h1>@Model.Case.CaseKey · @Model.Case.Title</h1><p class="muted">Version @Model.Case.Version · created @TimeDisplay.FormatUtc(Model.Case.CreatedAt) · last activity @TimeDisplay.FormatUtc(Model.Case.LastActivityAt)</p></div>
+    <a class="button secondary" asp-page="/Cases/Index">Back to cases</a>
+</div>
+
+@if (Model.Message is not null) { <partial name="_Notice" model='new NoticeModel("Case action", Model.Message, "success")' /> }
+@if (Model.ErrorMessage is not null) { <partial name="_Notice" model='new NoticeModel("Case action failed", Model.ErrorMessage, "error", IsAlert: true)' /> }
+
+<partial name="_Tabs" model='new TabsModel("Case sections", new[] { new TabItem("Summary", "#summary", true), new TabItem("Relationships", "#relationships"), new TabItem("Evidence", "#evidence"), new TabItem("Notes", "#notes"), new TabItem("Timeline", "#timeline") })' />
+
+<section class="card" id="summary">
+    <h2>Summary</h2>
+    <dl class="detail-grid">
+        <dt>Status</dt><dd><span class="badge">@Model.Case.Status</span></dd>
+        <dt>Owner</dt><dd>@(Model.Case.Owner ?? "unassigned")</dd>
+        <dt>Severity</dt><dd>@Model.Case.Severity</dd>
+        <dt>Priority</dt><dd>@Model.Case.Priority</dd>
+        <dt>Disposition</dt><dd>@(Model.Case.Disposition ?? "not set")</dd>
+        <dt>Closure</dt><dd>@(Model.Case.ClosureSummary ?? "not closed")</dd>
+        <dt>Coverage gaps acknowledged</dt><dd>@(Model.Case.CoverageGapAcknowledged ? "yes" : "no")</dd>
+    </dl>
+    <p>@(Model.Case.Description ?? "No description supplied.")</p>
+    <div class="grid two-column">
+        <form method="post" asp-page-handler="Assign" class="card compact-card"><input type="hidden" asp-for="ExpectedVersion" /><label asp-for="Owner">Assign owner</label><input asp-for="Owner" maxlength="96" required /><button type="submit">Assign</button></form>
+        <form method="post" asp-page-handler="Status" class="card compact-card"><input type="hidden" asp-for="ExpectedVersion" /><label asp-for="Status">Lifecycle status</label><select asp-for="Status"><option>draft</option><option>open</option><option>investigating</option><option>pending_external</option><option>contained</option><option>resolved</option></select><button type="submit">Update status</button></form>
+    </div>
+    <form method="post" asp-page-handler="Close" class="card warning-zone">
+        <input type="hidden" asp-for="ExpectedVersion" />
+        <h3>Close case</h3>
+        <p class="muted">Closure requires disposition, summary, and explicit confirmation. Evidence remains linked even when underlying telemetry is retained, removed by retention, or missing.</p>
+        <label asp-for="Disposition">Disposition</label><select asp-for="Disposition"><option value="">Select disposition</option><option>true_positive</option><option>false_positive</option><option>duplicate</option><option>benign</option><option>authorized_activity</option><option>retention_limited</option><option>unknown</option></select>
+        <label asp-for="ClosureSummary">Closure summary</label><textarea asp-for="ClosureSummary" maxlength="4000" required></textarea>
+        <label asp-for="ClosureCriteria">Closure criteria</label><textarea asp-for="ClosureCriteria" maxlength="4000"></textarea>
+        <label class="checkbox"><input asp-for="CoverageGapAcknowledged" /> Coverage gaps/retention limits have been reviewed.</label>
+        <label class="checkbox"><input asp-for="ConfirmClose" /> I confirm this audited closure.</label>
+        <button type="submit">Close case</button>
+    </form>
+    @if (Model.Case.Status == "closed")
+    {
+        <form method="post" asp-page-handler="Reopen" class="actions"><input type="hidden" asp-for="ExpectedVersion" /><button type="submit" class="button secondary">Reopen case</button></form>
+    }
+</section>
+
+<section class="card" id="relationships">
+    <h2>Related alerts, entities, and graphs</h2>
+    <div class="grid two-column">
+        <form method="post" asp-page-handler="LinkAlert" class="card compact-card"><label asp-for="AlertId">Alert ID</label><input asp-for="AlertId" required /><label asp-for="AlertRelationship">Relationship</label><select asp-for="AlertRelationship"><option>related</option><option>primary</option><option>duplicate_of</option><option>derived_from</option></select><button type="submit">Link alert</button></form>
+        <form method="post" asp-page-handler="LinkEntity" class="card compact-card"><label asp-for="EntityType">Entity type</label><input asp-for="EntityType" maxlength="64" required /><label asp-for="EntityValue">Entity value</label><input asp-for="EntityValue" maxlength="512" required /><label asp-for="EntityRelationship">Relationship</label><input asp-for="EntityRelationship" maxlength="64" /><button type="submit">Link entity</button></form>
+        <form method="post" asp-page-handler="LinkGraph" class="card compact-card"><label asp-for="GraphId">Graph ID</label><input asp-for="GraphId" required /><label asp-for="GraphRelationship">Relationship</label><input asp-for="GraphRelationship" maxlength="64" /><button type="submit">Link graph</button></form>
+    </div>
+    <h3>Alerts</h3>
+    @if (Model.Case.Alerts.Count == 0) { <p class="muted">No alerts linked.</p> } else { <ul>@foreach (var item in Model.Case.Alerts) { <li><a asp-page="/Alerts/Detail" asp-route-alert_id="@item.AlertId">@item.Title</a> <span class="badge">@item.Status</span> <span class="muted">@item.Relationship</span></li> }</ul> }
+    <h3>Entities</h3>
+    @if (Model.Case.Entities.Count == 0) { <p class="muted">No entities linked.</p> } else { <ul>@foreach (var item in Model.Case.Entities) { <li><strong>@item.EntityType</strong> @item.EntityValue <span class="muted">@item.Relationship</span></li> }</ul> }
+    <h3>Graphs</h3>
+    @if (Model.Case.Graphs.Count == 0) { <p class="muted">No investigation graphs linked.</p> } else { <ul>@foreach (var item in Model.Case.Graphs) { <li><a asp-page="/Graphs/Detail" asp-route-graph_id="@item.GraphId">@item.Title</a> <span class="muted">@item.Relationship</span></li> }</ul> }
+</section>
+
+<section class="table-card" id="evidence">
+    <div class="table-title"><h2>Evidence</h2></div>
+    <form method="post" asp-page-handler="LinkEvidence" class="card compact-card"><label asp-for="EvidenceAgentId">Agent ID</label><input asp-for="EvidenceAgentId" maxlength="128" required /><label asp-for="EvidenceEventId">Event ID</label><input asp-for="EvidenceEventId" required /><label asp-for="EvidenceAlertId">Optional alert ID</label><input asp-for="EvidenceAlertId" /><label asp-for="EvidenceSummary">Summary</label><input asp-for="EvidenceSummary" maxlength="1000" /><button type="submit">Link evidence</button></form>
+    @if (Model.Case.Evidence.Count == 0) { <div class="empty">No evidence linked.</div> } else { <div class="table-scroll"><table><caption>Case evidence with explicit telemetry retention state</caption><thead><tr><th>Time</th><th>Agent</th><th>Event</th><th>Summary</th><th>Telemetry state</th><th></th></tr></thead><tbody>@foreach (var evidence in Model.Case.Evidence) { <tr><td>@TimeDisplay.FormatHostTime(evidence.EventTime, evidence.HostTimezone)</td><td>@evidence.AgentId</td><td>@evidence.EventId</td><td>@evidence.Summary</td><td><span class="badge">@evidence.TelemetryRetentionState</span></td><td><a asp-page="/Events/Detail" asp-route-agent_id="@evidence.AgentId" asp-route-event_id="@evidence.EventId">Open event</a></td></tr> }</tbody></table></div> }
+</section>
+
+<section class="card" id="notes">
+    <h2>Notes</h2>
+    <form method="post" asp-page-handler="Note"><label asp-for="NoteBody">Add note</label><textarea asp-for="NoteBody" maxlength="4000" required></textarea><button type="submit">Add note</button></form>
+    @if (Model.Case.Notes.Count == 0) { <p class="muted">No notes yet.</p> } else { <ol class="timeline-list">@foreach (var note in Model.Case.Notes) { <li><strong>@TimeDisplay.FormatUtc(note.CreatedAt)</strong> <span class="muted">@note.CreatedBy</span><p>@note.Body</p></li> }</ol> }
+</section>
+
+<section class="card" id="timeline">
+    <h2>Activity timeline</h2>
+    @if (Model.Case.Activity.Count == 0) { <p class="muted">No activity recorded.</p> } else { <ol class="timeline-list">@foreach (var activity in Model.Case.Activity) { <li><strong>@TimeDisplay.FormatUtc(activity.OccurredAt)</strong> @activity.Action <span class="muted">@activity.Actor</span><p>@activity.Summary</p></li> }</ol> }
+</section>
+}

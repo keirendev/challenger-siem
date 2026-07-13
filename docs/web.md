@@ -12,7 +12,7 @@ The selected frontend architecture is enhanced ASP.NET Core/Razor Pages in the e
 
 Implemented today in the ASP.NET Core API process:
 
-- `/login`, `/logout`, `/`, `/agents`, `/agents/detail`, `/events`, `/events/detail`, `/alerts`, `/alerts/detail`, `/graphs`, `/graphs/detail`, `/soc-agent`, `/audit-policy`, and `/about` Razor Pages.
+- `/login`, `/logout`, `/`, `/agents`, `/agents/detail`, `/events`, `/events/detail`, `/alerts`, `/alerts/detail`, `/detections`, `/dashboards`, `/administration`, `/graphs`, `/graphs/detail`, `/soc-agent`, `/audit-policy`, and `/about` Razor Pages.
 - Authenticated `/api/v1` review APIs for events, source health, telemetry coverage, inventory, alerts, detection-rule metadata, platform capabilities, investigation graphs, managed telemetry storage/retention, operators, and `soc-agent`.
 - Database-backed operator identities, revocable cookie sessions, operator API credentials, antiforgery-protected Razor forms, and role enforcement described in [auth.md](auth.md).
 - Role-aware server-side field policy for events and alerts: admin receives full event raw payload; non-admin roles receive omitted raw payload and redacted sensitive event/alert context.
@@ -21,8 +21,8 @@ Implemented today in the ASP.NET Core API process:
 
 Not implemented today and therefore specified as future approved work only:
 
-- Separate first-class `/search`, `/assets`, `/cases`, `/detections`, `/dashboards`, `/health`, and `/administration` route trees. The active shell already exposes the mature IA labels and maps implemented sections to existing Razor routes while showing honest disabled/planned affordances for unimplemented top-level workflows.
-- Alert triage mutations, case management, case closure, dashboard builder/editing, detection rule activation/editing/backtesting, response/remediation actions, export workflows, SSO/MFA/tenancy, and SOAR playbooks.
+- Separate first-class `/search`, `/assets`, and `/health` route trees. The active shell maps Search/Assets/Health to existing implemented routes and now implements first-class Cases, Detections, Dashboards, and Administration pages.
+- Advanced dashboard builder widgets beyond bounded saved layouts, arbitrary detection logic editing/backtesting/activation, response/remediation actions, SSO/MFA/tenancy, and SOAR playbooks.
 - Autonomous `soc-agent` mutation. Current `soc-agent` tools are read-only; graph proposals require explicit operator approval before graph changes.
 
 ## Product goals and IA principles
@@ -44,11 +44,11 @@ The mature console should use these top-level sections. Current implemented rout
 | Search | Find and pivot across events, alerts, entities, and evidence | `/events`, `/events/detail` | Unified event/entity/timeline search with saved filters, field dictionary, retention labels, redaction notices, and query-cost feedback | Event search implemented; unified search future |
 | Assets | Review hosts, agents, source coverage, inventory, and entity posture | `/agents`, `/agents/detail`, `/audit-policy` | Asset inventory, host coverage, source matrix, queue/pressure, inventory snapshots, role packs, audit-policy drift | Agent/source-health subset implemented |
 | Alerts | Review detection outputs and promote to cases | `/alerts`, `/alerts/detail` | Alert queue, grouping, suppression context, evidence timeline, owner/status transitions, related assets/entities/cases | Review skeleton implemented; triage future |
-| Cases | Manage investigations through audited closure | none | Case queue, assignments, notes, evidence links, tasks, severity/status, closure reason, audit trail | Future |
-| Detections | Review and engineer detection content | `/api/v1/detections/rules` only | Rule catalog, prerequisites, coverage, versions, test/backtest status, draft/proposal/activation workflows | Metadata API implemented; UI/mutations future |
-| Dashboards | Monitor saved operating views | dashboard cards on `/` | Saved SOC, coverage, ingestion, retention, and detection dashboards with chart accessibility and no raw telemetry widgets | Future beyond overview cards |
+| Cases | Manage investigations through audited closure | `/cases`, `/cases/detail` | Case queue, assignments, notes, evidence links, related alerts/entities/graphs, severity/status, closure reason, audit trail | Implemented case lifecycle foundation |
+| Detections | Review and engineer detection content | `/detections`, `/api/v1/detections/rules` | Rule catalog, prerequisites, coverage, versions, validation/test metadata, tuning/suppression notes, response guidance, and detection-engineer/admin metadata mutations | Implemented metadata management; arbitrary rule code/backtesting remains out of scope |
+| Dashboards | Monitor saved operating views | `/dashboards`, overview cards on `/` | Bounded server-side event/alert/source-health aggregations, freshness/partial state, accessible chart/table alternatives, saved owner/visibility/version layouts | Implemented bounded dashboards; raw telemetry widgets remain out of scope |
 | Health | Diagnose pipeline and platform health | `/agents/detail`, `/about`, storage APIs | Agent/source/queue/storage/capacity/API health, stale/degraded/partial data, retention status, schema/version status | Scattered current surfaces |
-| Administration | Manage operators, credentials, retention, agents, policies | local scripts plus admin APIs | Operator lifecycle, role assignment, agent retirement, storage retention, audit review, system settings | Admin APIs/scripts exist; broad UI future |
+| Administration | Manage operators, credentials, retention, agents, policies | `/administration`, local bootstrap/recovery scripts plus admin APIs | Operator/session metadata, source review notes, storage retention/capacity effective settings, audit review, safe allowlisted server settings | Implemented admin UI/API for safe server settings; host-policy mutation remains out of scope |
 
 Navigation order must prioritize active analyst flow: **Overview → Search → Assets → Alerts → Cases → Detections → Dashboards → Health → Administration**. Role-hidden sections must be omitted from primary nav and represented by an accessible forbidden page or notice when deep-linked.
 
@@ -58,11 +58,14 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | --- | --- | --- | --- |
 | `/login` | anonymous | Operator username/password sign-in | Empty fields in public screenshots only. |
 | `/` | authenticated | Overview dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations, lifecycle-state guidance. |
-| `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
-| `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, tabs, inventory/audit snapshots, and detection prerequisites. |
-| `/events` | authenticated | Search / event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
+| `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Filters include platform, registration status/freshness, coverage level, source issue, queue pressure/throttle, gap/drop, and queue-capacity state. Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
+| `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, queue/resource/source rate/lag/checkpoint/retention/capacity metrics, explicit missing/unsupported/not-applicable/excepted/disabled/permission-denied/stale/throttled/gap/error states, bounded role-redacted inventory/posture changes, and guidance-only remediation. |
+| `/events` | authenticated | Search / event search | Bounded structured filters, cursor pagination, configurable columns, UTC timeline buckets, saved searches, entity/detail pivots, and admin-only confirmation-gated CSV export. Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
-| `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
+| `/alerts` and `/alerts/detail` | authenticated view; analyst+ mutation | Alert review and triage | Non-admin alert summaries/evidence are redacted. Analyst+ can assign, acknowledge, set lifecycle status, suppress, close/reopen, and create linked cases with antiforgery forms. |
+| `/detections` | authenticated view; detection-engineer/admin mutation | Detection catalog and rule metadata management | Shows stable rule versions, required sources/fields, coverage/confidence impact, synthetic tests, tuning/suppression notes, and response guidance; mutations are server-side metadata only with confirmation/concurrency/audit. |
+| `/dashboards` | authenticated view; analyst+ private save; detection-engineer/admin shared save | Bounded dashboards and saved layouts | Server-side aggregations with explicit range/freshness/partial state, non-color visualizations, table alternatives, owner/visibility/version layout semantics. |
+| `/administration` | admin | Operator/session/source/retention/capacity/audit administration | No secrets are returned; allowlisted settings require confirmation and audit; no host policy or L3 collection mutation. |
 | `/graphs` and `/graphs/detail` | analyst, detection-engineer, admin | Investigation graphs | Create/update nodes/edges, archive graphs, request/apply `soc-agent` proposals with explicit approval for proposal apply. |
 | `/soc-agent` | analyst, detection-engineer, admin | Live SIEM-aware chat workspace | Read-only tools; chat deletion requires confirmation and conflicts while a run is active. |
 | `/audit-policy` | admin | Audit-policy snapshot review | Admin-only because inventory API is currently operator-management scoped. |
@@ -82,13 +85,14 @@ This matrix summarizes implemented authorization and target UI visibility. The s
 | Sensitive event search filters | no | yes | yes | yes | Analysts/detection engineers can search by sensitive fields; non-admin returned values are redacted. |
 | Full raw payload and unredacted protected event fields | no | no | no | yes | Admin only. |
 | Alert metadata | yes | yes | yes | yes | Non-admin alert context redacted. |
+| Alert triage and case lifecycle mutations | no | yes | yes | yes | Assign/acknowledge/status/suppress/close/reopen alerts and create/update/close/reopen cases. |
 | Investigation graph mutations | no | yes | yes | yes | Current graph create/update/node/edge/archive/proposal apply. |
 | `soc-agent` chat/live workspace | no | yes | yes | yes | Same-origin live endpoints require analyst policy. |
-| Detection engineering mutations | no | no | yes | yes | Permission exists; mutable UI/workflow is future. |
+| Detection engineering mutations | no | no | yes | yes | Implemented for bounded server-side rule metadata only; no arbitrary code or host-policy mutation. |
 | Agent retirement / storage retention / inventory management APIs | no | no | no | yes | Current token-service mapping treats these as operator-management/admin. |
 | Operator account management | no | no | no | yes | Admin API plus local bootstrap/recovery scripts. |
 | Audit-policy page | no | no | no | yes | Current `/audit-policy`. |
-| Administration section | no | no | no | yes | Future UI; current admin APIs/scripts only. |
+| Administration section | no | no | no | yes | Implemented admin UI for non-secret metadata, source review notes, retention/capacity settings, and audit history. |
 
 Unauthorized and forbidden behavior:
 
@@ -153,11 +157,11 @@ Use `critical`, `high`, `medium`, `low`, and `informational` for alert/case seve
 
 ### Alert lifecycle (target)
 
-`new → acknowledged → investigating → escalated → contained → resolved → closed` with optional `suppressed`, `false_positive`, `duplicate`, and `retention_limited` annotations. Current alert pages are read-only; these transitions are future.
+`new → acknowledged → investigating → escalated → contained → resolved → closed` with optional `suppressed`, `false_positive`, `duplicate`, and `retention_limited` annotations. The Razor and `/api/v1` workflows implement assign, acknowledge, status updates, suppression with reason/expiry, close with disposition/summary, and reopen with optimistic concurrency and audit.
 
 ### Case lifecycle (target)
 
-`draft → open → investigating → pending_external → contained → resolved → closed` with `reopened` possible from `closed`. Closure requires owner, disposition, summary, linked evidence, coverage-gap acknowledgement when present, and audit entry. Cases are not implemented today.
+`draft → open → investigating → pending_external → contained → resolved → closed` with `reopened` possible from `closed`. Closure requires disposition, summary, coverage-gap acknowledgement state, confirmation, and audit entry. The implemented foundation supports owners, severity/priority, notes, evidence links, related alerts/entities/graphs, timeline/activity, close, and reopen.
 
 ### Detection lifecycle (target)
 
@@ -187,26 +191,27 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 
 ### 2. Search-first investigation (current plus target)
 
-- Start at Search (`/events` today) with UTC time range, host/agent, source, event code, keyword, and normalized filters.
+- Start at Search (`/events` today) with UTC time range, host/agent/platform/source, provider/facility/unit, event code, severity/outcome, detection/entity, keyword, network, file, service, process, user, and normalized filters.
 - Loading state: skeleton filter panel and result table; keep submitted filter summary visible.
 - Empty state: show active filters, time range, role redaction caveats, coverage/source-health links, and clear-filter action.
 - Partial state: show when a role strips sensitive filters, raw fields are omitted, retention removed evidence, or a source is stale/degraded.
 - Pivot targets: event detail, asset detail, alert detail, graph add-node, future entity timeline, future case evidence.
 - Error state: safe message with retry and schema/health hint; no SQL/connection details.
-- Success state: bounded results, total/visible count when known, query limit, pagination, UTC and host-local time labels.
+- Success state: bounded results, visible count, query limit, cursor pagination, active filter/result-scope display, configurable columns, UTC timeline buckets, saved-search state, and explicit host-local time labels.
 
 ### 3. Asset/coverage investigation (current plus target)
 
-- Start at Assets (`/agents` today), filter by hostname/agent ID/status/health, and open host detail.
-- Review platform, timezone, coverage target, source matrix, prerequisite status, queue/resource metrics, inventory state, detection prerequisites, and recent counts.
-- Stale/degraded/denied/unsupported states must show reason, last observed time, affected source, whether mandatory/optional/role-specific, and recommended non-mutating next step.
+- Start at Assets (`/agents` today), filter by hostname/agent ID, platform, registration status, freshness, coverage level, degraded source, queue pressure/throttle, gap/drop, and capacity state, then open host detail.
+- Review platform, timezone, coverage target, source matrix, prerequisite status, queue/resource/source rate/lag/checkpoint metrics, retention/capacity state, inventory posture changes, detection prerequisites, and recent counts.
+- Missing, unsupported, not applicable, excepted, disabled, permission denied, stale, throttled, gap, and error states must show reason, last observed time when known, affected source, whether mandatory/optional/role-specific, and recommended non-mutating next step.
 - Recovery path: compare collected vs acknowledged checkpoints; verify queue drain; check source-health transitions; do not mutate audit/firewall/auth/kernel/service policy from UI unless a future approved runbook exists.
-- Admin stale-agent retirement is non-destructive, confirmation-gated, success/error noticed, and preserves telemetry.
+- Inventory and posture snapshots must be bounded, time-labelled, role-redacted for non-admins, and displayed as partial evidence rather than complete host truth.
+- Admin stale-agent retirement is non-destructive, confirmation-gated, success/error noticed, and preserves telemetry. No asset or detail UI action mutates host policy.
 
 ### 4. Alert-to-case workflow (target)
 
 - Alert detail shows rule version, severity, confidence, prerequisites, evidence, related entities, source-health gaps, and retention state.
-- Analyst actions: acknowledge, assign owner, change status, link/create case, suppress with reason, mark duplicate/false-positive, add note.
+- Analyst actions: acknowledge, assign owner, change status, link/create case, suppress with reason, mark duplicate/false-positive via disposition, and add case notes.
 - Detection-engineer actions: propose rule tuning or detection change; cannot bypass evidence/audit.
 - Admin actions: same plus policy/system management where implemented.
 - Conflict state: stale alert/case version requires reload and displays both attempted and current status.
@@ -256,7 +261,7 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 
 - Filters use labels, help text, validation messages, and clear/apply actions.
 - Time filters are UTC unless explicitly labelled host-local; host-local displays must include timezone/offset.
-- Saved searches and dashboards must store only bounded filter metadata, not raw result payloads.
+- Saved searches and dashboards must store only bounded filter metadata, owner/visibility/version/audit metadata, and display preferences, not raw result payloads.
 - Keyword searches over raw/normalized text must show role and performance limits.
 
 ### Breadcrumbs and pivots

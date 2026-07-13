@@ -256,6 +256,34 @@ a:hover {
     gap: 0.35rem;
 }
 
+.form-row legend {
+    color: #d9e4f6;
+    font-weight: 800;
+}
+
+.form-row label:has(input[type="checkbox"]) {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--muted);
+}
+
+.inline-form {
+    display: inline-flex;
+    margin-left: 0.5rem;
+}
+
+.entity-list {
+    display: grid;
+    gap: 0.75rem;
+    padding-left: 1.2rem;
+}
+
+.notice.error {
+    border-color: rgb(251 113 133 / 0.55);
+    background: rgb(127 29 29 / 0.25);
+}
+
 label {
     color: #d9e4f6;
     font-weight: 760;
@@ -496,6 +524,37 @@ tr:last-child td {
 .detail-grid dd {
     margin: 0;
     overflow-wrap: anywhere;
+}
+
+.flush-title {
+    margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-5)) var(--space-4);
+}
+
+.state-grid {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.state-chip {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgb(8 20 38 / 0.55);
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+}
+
+.state-chip strong {
+    font-size: 1.45rem;
+}
+
+.compact-list {
+    display: grid;
+    gap: var(--space-2);
+    list-style: none;
+    margin: var(--space-2) 0 0;
+    padding: 0;
 }
 
 pre,
@@ -1555,7 +1614,9 @@ button.small {
 .badge.stale,
 .badge.missing,
 .badge.disabled,
-.badge.unknown {
+.badge.unknown,
+.badge.warning_70,
+.badge.warning_85 {
     border-color: rgb(251 191 36 / 0.38);
     background: rgb(120 53 15 / 0.36);
     color: #fde68a;
@@ -1565,7 +1626,9 @@ button.small {
 .badge.offline,
 .badge.permission_denied,
 .badge.critical,
-.badge.high {
+.badge.high,
+.badge.critical_95,
+.badge.over_capacity {
     border-color: rgb(251 113 133 / 0.42);
     background: rgb(127 29 29 / 0.42);
     color: #fda4af;
@@ -1573,6 +1636,9 @@ button.small {
 
 .badge.healthy,
 .badge.success,
+.badge.normal,
+.badge.not_applicable,
+.badge.excepted,
 .badge.low,
 .badge.informational {
     border-color: rgb(52 211 153 / 0.34);
@@ -1684,4 +1750,115 @@ button.small {
     .global-search input {
         flex: 1 1 auto;
     }
+}
+
+.two-column {
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.compact-card {
+    gap: var(--space-3);
+    margin: 0;
+}
+
+.warning-zone {
+    border-color: color-mix(in srgb, var(--warning) 55%, var(--line));
+    background: linear-gradient(180deg, rgb(251 191 36 / 0.08), rgb(17 28 45 / 0.94));
+}
+
+.timeline-list {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.timeline-list li {
+    padding: var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--panel-muted);
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 700;
+}
+
+.stacked-form {
+    display: grid;
+    gap: var(--space-2);
+    min-width: min(24rem, 100%);
+}
+
+.stacked-form label {
+    font-size: 0.9rem;
+}
+
+.compact-list,
+.count-list {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+}
+
+.count-list {
+    list-style: none;
+    padding-left: 0;
+}
+
+.count-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    border-bottom: 1px solid rgb(38 54 77 / 0.72);
+    padding: 0.35rem 0;
+}
+
+.bar-list {
+    display: grid;
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+}
+
+.bar-row {
+    display: grid;
+    grid-template-columns: minmax(7rem, 10rem) 1fr minmax(5rem, auto);
+    gap: var(--space-3);
+    align-items: center;
+}
+
+.bar-track {
+    min-height: 1rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--panel-muted);
+    overflow: hidden;
+}
+
+.bar-fill {
+    display: block;
+    min-height: 1rem;
+    border-radius: inherit;
+    background: repeating-linear-gradient(45deg, var(--brand), var(--brand) 0.5rem, var(--brand-strong) 0.5rem, var(--brand-strong) 1rem);
+}
+
+.bar-label,
+.bar-value {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+    .bar-row {
+        grid-template-columns: 1fr;
+        gap: var(--space-1);
+    }
+}
+
+.bar-meter {
+    width: 100%;
+    min-height: 1rem;
+    accent-color: var(--brand);
 }

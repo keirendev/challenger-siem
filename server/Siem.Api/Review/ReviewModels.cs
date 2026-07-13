@@ -9,17 +9,27 @@ public sealed record DashboardSummary(
     long RetiredAgents,
     long HistoricalAgents,
     long AgentsWithQueuedEvents,
+    long AgentsWithPressure,
+    long AgentsWithSourceGaps,
+    long AgentsWithDegradedSources,
+    long AgentsWithCapacityWarnings,
     long RecentEventCount,
     DateTimeOffset? LatestIngestTime)
 {
-    public static DashboardSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, null);
+    public static DashboardSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null);
 }
 
 public sealed record AgentInventoryQuery(
     string? Hostname,
     string? AgentId,
     string? Health,
-    string? Status);
+    string? Status,
+    string? Platform,
+    WindowsCoverageLevel? CoverageLevel,
+    string? SourceIssue,
+    string? Pressure,
+    string? Gap,
+    string? Capacity);
 
 public sealed record AgentInventoryItem(
     string AgentId,
@@ -32,13 +42,23 @@ public sealed record AgentInventoryItem(
     string Status,
     DateTimeOffset? LatestHeartbeatTime,
     int? LatestQueueDepth,
+    decimal? QueueUsedPercent,
+    string QueuePressureState,
     DateTimeOffset? LastEventTime,
     bool IsStale,
+    string Platform,
     WindowsCoverageLevel CurrentCoverageLevel,
     string CoverageStatus,
     int MissingMandatorySources,
     int StaleSources,
     int ErrorSources,
+    int DegradedSources,
+    int PermissionDeniedSources,
+    int UnsupportedSources,
+    int GapSources,
+    bool HasPressure,
+    bool IsThrottled,
+    string CapacityState,
     HostTimezoneMetadata? HostTimezone);
 
 public sealed record StaleAgentCleanupPreview(

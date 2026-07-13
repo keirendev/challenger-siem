@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v1/event-timeline.schema.json",
+  "title": "Challenger SIEM Event Timeline Response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["buckets", "bucket_seconds", "utc_correlation", "host_local_display"],
+  "properties": {
+    "buckets": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start_utc", "end_utc", "count", "host_timezone_labels"],
+        "properties": {
+          "start_utc": { "type": "string", "format": "date-time" },
+          "end_utc": { "type": "string", "format": "date-time" },
+          "count": { "type": "integer", "minimum": 0 },
+          "severity": { "type": "string", "maxLength": 32 },
+          "source": { "type": "string", "maxLength": 64 },
+          "host_timezone_labels": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "maxLength": 128 }
+          }
+        }
+      }
+    },
+    "bucket_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "utc_correlation": { "type": "string", "const": "event_time_utc" },
+    "host_local_display": { "type": "string", "maxLength": 200 }
+  }
+}

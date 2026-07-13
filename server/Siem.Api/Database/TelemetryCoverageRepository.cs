@@ -90,6 +90,8 @@ public sealed class TelemetryCoverageRepository(
                 .GroupBy(source => source.Status, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
             var gaps = BuildGaps(summary, recentEventCount, expectedSourceCount, reportedSourceCount, inventory, detectionPrerequisites);
+            var pressureState = AgentPressureState(summary.QueueMetrics, sourceCoverage);
+            var capacityState = CapacityState(summary.QueueMetrics?.UsedPercent);
 
             results.Add(new AgentTelemetryCoverage
             {
@@ -116,6 +118,10 @@ public sealed class TelemetryCoverageRepository(
                 UnsupportedSources = summary.UnsupportedSources,
                 ExceptedSources = summary.ExceptedSources,
                 NotApplicableSources = summary.NotApplicableSources,
+                PressureState = pressureState,
+                CapacityState = capacityState,
+                HasGap = sourceCoverage.Any(HasSourceGap),
+                IsThrottled = sourceCoverage.Any(IsSourceThrottled) || string.Equals(pressureState, QueuePressureStates.Throttled, StringComparison.OrdinalIgnoreCase),
                 NewAlertCount = newAlertCount,
                 AlertStatusCounts = alertStatusCounts,
                 ActiveGraphCount = activeGraphCount,
@@ -341,6 +347,9 @@ public sealed class TelemetryCoverageRepository(
             ConfigHash = source.ConfigHash,
             Details = source.Details,
             RecentEventCount = recentCount,
+            HasCheckpointGap = HasSourceGap(source),
+            IsThrottled = IsSourceThrottled(source),
+            StateGuidance = SourceStateGuidance(source, recentCount),
             Reason = SourceReason(source, recentCount),
             EventSearchUrl = source.SourceId is { Length: > 0 } && source.SourceKind is not null
                 ? $"/events?agent_id={Uri.EscapeDataString(agentId)}&source_id={Uri.EscapeDataString(source.SourceId)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}"
@@ -508,6 +517,58 @@ public sealed class TelemetryCoverageRepository(
     private static bool IsReportedByAgent(SourceHealthReport source) =>
         !source.Details.TryGetValue("reported_by_agent", out var reported)
         || string.Equals(reported, "true", StringComparison.OrdinalIgnoreCase);
+
+    private static string AgentPressureState(QueueSloMetrics? queue, IReadOnlyList<SourceTelemetryCoverage> sources)
+    {
+        if (sources.Any(IsSourceThrottled))
+        {
+            return QueuePressureStates.Throttled;
+        }
+
+        return string.IsNullOrWhiteSpace(queue?.PressureState) ? QueuePressureStates.Unknown : queue.PressureState!;
+    }
+
+    private static string CapacityState(decimal? usedPercent) => usedPercent switch
+    {
+        null => "unknown",
+        >= 100 => "over_capacity",
+        >= 95 => "critical_95",
+        >= 85 => "warning_85",
+        >= 70 => "warning_70",
+        _ => "normal"
+    };
+
+    private static bool HasSourceGap(SourceTelemetryCoverage source) => source.GapCount.GetValueOrDefault() > 0
+        || source.DroppedEvents.GetValueOrDefault() > 0
+        || source.Details.ContainsKey("gap_state");
+
+    private static bool HasSourceGap(SourceHealthReport source) => source.GapDetected
+        || source.BookmarkGapDetected
+        || source.GapCount.GetValueOrDefault() > 0
+        || source.DroppedEvents.GetValueOrDefault() > 0
+        || source.Details.ContainsKey("gap_state");
+
+    private static bool IsSourceThrottled(SourceTelemetryCoverage source) => string.Equals(source.TransitionState, HealthTransitionStates.Degraded, StringComparison.OrdinalIgnoreCase)
+        || (source.Details.TryGetValue("throttle_state", out var throttleState) && string.Equals(throttleState, "throttled", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsSourceThrottled(SourceHealthReport source) => string.Equals(source.TransitionState, HealthTransitionStates.Degraded, StringComparison.OrdinalIgnoreCase)
+        || (source.Details.TryGetValue("throttle_state", out var throttleState) && string.Equals(throttleState, "throttled", StringComparison.OrdinalIgnoreCase));
+
+    private static string SourceStateGuidance(SourceHealthReport source, int recentCount) => source.Status switch
+    {
+        SourceHealthStatuses.Missing => "Expected telemetry is absent; do not infer completeness without source evidence.",
+        SourceHealthStatuses.Unsupported => "Source is unsupported by the current collector set and remains a documented visibility limit.",
+        SourceHealthStatuses.NotApplicable => "Source is explicitly not applicable for the platform or declared host role.",
+        SourceHealthStatuses.Excepted => "Coverage exception is active; review exception scope and expiry.",
+        SourceHealthStatuses.Disabled => "Source is disabled; remediation requires an approved host/configuration runbook outside this UI.",
+        SourceHealthStatuses.PermissionDenied => "Collector access was denied; review least-privilege prerequisites without automatic host mutation.",
+        SourceHealthStatuses.Stale => "Source evidence is stale; compare heartbeat, queue, and source timestamps.",
+        SourceHealthStatuses.Degraded when IsSourceThrottled(source) => "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
+        SourceHealthStatuses.Degraded => "Source is degraded or applicability is uncertain; treat telemetry as partial.",
+        SourceHealthStatuses.Error => "Collector error, gap, or clear condition requires safe diagnostics; do not clear logs from the console.",
+        _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
+        _ => "Recent source evidence is present."
+    };
 
     private static string SourceReason(SourceHealthReport source, int recentCount)
     {
