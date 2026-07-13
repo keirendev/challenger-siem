@@ -4,6 +4,8 @@
     ViewData["Title"] = "Host coverage";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Assets", Page: "/Agents/Index"), new BreadcrumbItem("Host coverage", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Source health</p>
@@ -33,15 +35,16 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Coverage unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 else if (Model.Summary is null)
 {
-    <section class="card"><p>No source-health data is available for @Model.AgentId.</p></section>
+    <partial name="_Notice" model='new NoticeModel("No source health", $"No source-health data is available for {Model.AgentId}. This is an unknown telemetry state, not proof of health.", "empty")' />
 }
 else
 {
-    <section class="metrics" aria-label="Coverage metrics">
+    <partial name="_Tabs" model='new TabsModel("Asset coverage sections", new[] { new TabItem("Summary", "#summary", true), new TabItem("Sources", "#sources"), new TabItem("Inventory", "#inventory"), new TabItem("Detections", "#detections"), new TabItem("Timeline", "#", IsDisabled: true, Description: "Timeline is planned.") })' />
+    <section class="metrics" id="summary" aria-label="Coverage metrics">
         <article class="card"><span class="metric-value">@Model.Summary.CurrentLevel</span><span class="metric-label">current coverage</span></article>
         <article class="card"><span class="metric-value">@Model.TargetLevel</span><span class="metric-label">target coverage</span></article>
         <article class="card"><span class="metric-value">@Model.Summary.OverallStatus</span><span class="metric-label">coverage status</span></article>
@@ -77,7 +80,7 @@ else
         </section>
     }
 
-    <section class="table-card">
+    <section class="table-card" id="sources">
         <div class="table-title">
             <div>
                 <h2>Expected source matrix</h2>
@@ -92,6 +95,7 @@ else
         {
             <div class="table-scroll">
                 <table>
+                    <caption>Expected source matrix with explicit status, requirement, applicability, recency, and review pivots</caption>
                     <thead>
                         <tr>
                             <th>Source</th>
@@ -153,7 +157,7 @@ else
 
     @if (Model.Coverage is not null)
     {
-        <section class="table-card" aria-labelledby="inventory-coverage-title">
+        <section class="table-card" id="inventory" aria-labelledby="inventory-coverage-title">
             <div class="table-title">
                 <div>
                     <h2 id="inventory-coverage-title">Inventory and audit-policy snapshots</h2>
@@ -162,6 +166,7 @@ else
             </div>
             <div class="table-scroll">
                 <table>
+                    <caption>Inventory and audit-policy snapshot completeness states</caption>
                     <thead><tr><th>Snapshot</th><th>Status</th><th>Latest</th><th>Items</th><th>Reason</th><th>Review</th></tr></thead>
                     <tbody>
                     @foreach (var snapshot in Model.Coverage.Inventory)
@@ -192,7 +197,7 @@ else
             </div>
         </section>
 
-        <section class="table-card" aria-labelledby="detection-prereq-title">
+        <section class="table-card" id="detections" aria-labelledby="detection-prereq-title">
             <div class="table-title">
                 <div>
                     <h2 id="detection-prereq-title">Detection prerequisite status</h2>
@@ -201,6 +206,7 @@ else
             </div>
             <div class="table-scroll">
                 <table>
+                    <caption>Detection prerequisite coverage for implemented built-in rules</caption>
                     <thead><tr><th>Rule</th><th>Status</th><th>Required sources</th><th>Recent source events</th><th>Missing/stale</th><th>Reason</th></tr></thead>
                     <tbody>
                     @foreach (var rule in Model.Coverage.DetectionPrerequisites)

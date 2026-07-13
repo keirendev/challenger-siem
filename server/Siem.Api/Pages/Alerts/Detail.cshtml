@@ -4,6 +4,8 @@
     ViewData["Title"] = "Alert detail";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Alerts", Page: "/Alerts/Index"), new BreadcrumbItem("Alert detail", IsCurrent: true))' />
+
 <div class="page-header">
     <div><p class="page-kicker">Detection drill-down</p><h1>Alert detail</h1><p class="muted">Detection metadata, affected entities, and linked evidence.</p></div>
     <a class="button secondary" asp-page="/Alerts/Index">Back to alerts</a>
@@ -11,11 +13,12 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Alert unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 else if (Model.Alert is not null)
 {
-    <section class="card">
+    <partial name="_Tabs" model='new TabsModel("Alert detail sections", new[] { new TabItem("Summary", "#summary", true), new TabItem("Entities", "#entities"), new TabItem("Evidence", "#evidence"), new TabItem("Case links", "#", IsDisabled: true, Description: "Case management is planned.") })' />
+    <section class="card" id="summary">
         <h2>@Model.Alert.Title</h2>
         <dl class="detail-grid">
             <dt>Rule</dt><dd>@Model.Alert.RuleId v@Model.Alert.RuleVersion</dd>
@@ -28,7 +31,7 @@ else if (Model.Alert is not null)
         <p>@Model.Alert.Summary</p>
     </section>
 
-    <section class="card">
+    <section class="card" id="entities">
         <h2>Affected entities</h2>
         @if (Model.Alert.AffectedEntities.Count == 0)
         {
@@ -45,7 +48,7 @@ else if (Model.Alert is not null)
         }
     </section>
 
-    <section class="table-card">
+    <section class="table-card" id="evidence">
         <div class="table-title"><h2>Evidence</h2></div>
         @if (Model.Alert.Evidence.Count == 0)
         {
@@ -55,6 +58,7 @@ else if (Model.Alert is not null)
         {
             <div class="table-scroll">
             <table>
+                <caption>Alert evidence with event time, agent, source channel, event ID, redaction-aware summary, and event pivot</caption>
                 <thead><tr><th>Event time</th><th>Agent</th><th>Channel</th><th>Event ID</th><th>Summary</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var evidence in Model.Alert.Evidence)

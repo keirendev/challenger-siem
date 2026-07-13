@@ -4,23 +4,26 @@
     ViewData["Title"] = "Audit policy drift";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Assets", Page: "/Agents/Index"), new BreadcrumbItem("Audit policy", IsCurrent: true))' />
+
 <div class="page-header">
     <div><p class="page-kicker">Configuration posture</p><h1>Audit policy drift</h1><p class="muted">Review audit-policy baseline snapshots and drift indicators.</p></div>
 </div>
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Audit-policy unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 
 <section class="table-card">
 @if (Model.Snapshots.Count == 0)
 {
-    <div class="empty">No audit-policy snapshots have been reported yet.</div>
+    <div class="empty"><strong>No audit-policy snapshots have been reported yet.</strong><p>This is an empty host-context state, not proof of compliant audit policy.</p></div>
 }
 else
 {
     <table>
+        <caption>Audit-policy inventory snapshots with host time, agent, host, summary, and item count</caption>
         <thead><tr><th>Collected</th><th>Agent</th><th>Host</th><th>Summary</th><th>Items</th></tr></thead>
         <tbody>
             @foreach (var snapshot in Model.Snapshots)

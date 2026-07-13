@@ -1,16 +1,20 @@
 @page "/about"
 @model AboutModel
 @{
-    ViewData["Title"] = "About";
+    ViewData["Title"] = "Health";
 }
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Health", IsCurrent: true))' />
 
 <div class="page-header">
     <div>
         <p class="page-kicker">Runtime status</p>
-        <h1>System/about</h1>
+        <h1>Health</h1>
         <p class="muted">Runtime and compatibility information without secret values.</p>
     </div>
 </div>
+
+<partial name="_LifecycleStates" model='new LifecycleStatesModel("Health lifecycle states", new[] { new LifecycleStateModel("healthy", "Connected", "Database and version metadata are available.", "ok"), new LifecycleStateModel("degraded", "Degraded", "Open Assets for stale source or coverage gaps.", "warning"), new LifecycleStateModel("error", "Error", "Safe status text is shown without connection details.", "error") })' />
 
 <section class="card">
     <dl class="detail-grid">

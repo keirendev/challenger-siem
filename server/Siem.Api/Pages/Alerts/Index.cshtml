@@ -4,6 +4,8 @@
     ViewData["Title"] = "Alerts";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Alerts", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Detection review</p>
@@ -14,8 +16,9 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Alerts unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
+<partial name="_Notice" model='new NoticeModel("Read-only alert lifecycle", "Alert triage, case promotion, suppression, and bulk actions are planned. Current pages expose bounded alert review and evidence pivots only.", "planned")' />
 
 <form method="get" class="card filters filter-panel" aria-label="Alert filters">
     <div class="form-row">
@@ -41,12 +44,13 @@
 </div>
 @if (Model.Alerts.Count == 0)
 {
-    <div class="empty">No alerts match the current filters.</div>
+    <div class="empty"><strong>No alerts match the current filters.</strong><p>Review status filters, detection prerequisites, and telemetry coverage before treating this as no signal.</p></div>
 }
 else
 {
     <div class="table-scroll">
     <table>
+        <caption>Alert review results with severity, confidence, lifecycle status, rule identity, host, and detail pivots</caption>
         <thead>
             <tr><th>Created</th><th>Title</th><th>Severity</th><th>Confidence</th><th>Status</th><th>Rule</th><th>Host</th><th></th></tr>
         </thead>

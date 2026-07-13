@@ -284,6 +284,86 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();
     }
 
+    public async Task<IReadOnlyList<EventEnvelope>> SearchGlobalEventsForOperatorAsync(string searchText, int limit, string role, CancellationToken cancellationToken, int offset = 0)
+    {
+        var trimmed = searchText.Trim();
+        if (trimmed.Length == 0)
+        {
+            return Array.Empty<EventEnvelope>();
+        }
+
+        var normalizedLimit = Math.Clamp(limit, 1, 500);
+        var clampedOffset = Math.Max(0, offset);
+        var canReviewSensitive = OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive);
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Parameters.AddWithValue("term", trimmed);
+        command.Parameters.AddWithValue("like_term", $"%{trimmed}%");
+        command.Parameters.AddWithValue("limit", normalizedLimit);
+        command.Parameters.AddWithValue("offset", clampedOffset);
+
+        var predicates = new List<string>
+        {
+            "agent_id ilike @like_term",
+            "hostname ilike @like_term",
+            "source ilike @like_term",
+            "coalesce(platform, '') ilike @like_term",
+            "coalesce(source_id, '') ilike @like_term",
+            "coalesce(event_code, '') ilike @like_term",
+            "coalesce(channel, '') ilike @like_term",
+            "coalesce(provider, '') ilike @like_term"
+        };
+
+        if (int.TryParse(trimmed, out var windowsEventId))
+        {
+            predicates.Add("windows_event_id = @windows_event_id");
+            command.Parameters.AddWithValue("windows_event_id", windowsEventId);
+        }
+
+        if (canReviewSensitive)
+        {
+            predicates.Add("message ilike @like_term");
+            predicates.Add("raw_json::text ilike @like_term");
+            predicates.Add("normalized_json::text ilike @like_term");
+        }
+
+        var sql = new StringBuilder("""
+            select
+                event_id,
+                agent_id,
+                hostname,
+                source,
+                platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
+                channel,
+                provider,
+                windows_event_id,
+                record_id,
+                event_time,
+                host_timezone,
+                ingest_time,
+                severity,
+                message,
+                raw_json,
+                normalized_json
+            from events
+            where
+            """);
+        sql.Append('(');
+        sql.Append(string.Join(" or ", predicates));
+        sql.Append(") order by event_time desc, id desc limit @limit offset @offset;");
+        command.CommandText = sql.ToString();
+
+        var results = new List<EventEnvelope>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(EventFieldPolicy.Apply(ReadEventEnvelope(reader), role));
+        }
+
+        return results;
+    }
+
     public async Task<EventEnvelope?> GetEventForOperatorAsync(string agentId, Guid eventId, string role, CancellationToken cancellationToken)
     {
         var item = await GetEventAsync(agentId, eventId, cancellationToken);

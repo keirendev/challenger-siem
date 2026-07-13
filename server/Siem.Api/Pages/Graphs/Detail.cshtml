@@ -5,6 +5,8 @@
     var detail = Model.Detail!;
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Investigation graphs", Page: "/Graphs/Index"), new BreadcrumbItem("Graph detail", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Graph detail</p>
@@ -13,10 +15,11 @@
     </div>
     <a class="button secondary" asp-page="/Graphs/Index">Back to graphs</a>
 </div>
-@if (Model.ErrorMessage is not null) { <div class="alert" role="alert">@Model.ErrorMessage</div> }
-@if (Model.Message is not null) { <div class="notice" role="status">@Model.Message</div> }
+@if (Model.ErrorMessage is not null) { <partial name="_Notice" model='new NoticeModel("Graph unavailable", Model.ErrorMessage, "error", IsAlert: true)' /> }
+@if (Model.Message is not null) { <partial name="_Notice" model='new NoticeModel("Graph update", Model.Message, "success")' /> }
+<partial name="_Tabs" model='new TabsModel("Graph detail sections", new[] { new TabItem("Metadata", "#metadata", true), new TabItem("Canvas", "#canvas"), new TabItem("Nodes", "#add-node"), new TabItem("Edges", "#add-edge"), new TabItem("Proposals", "#proposals"), new TabItem("Lifecycle", "#lifecycle") })' />
 
-<section class="card">
+<section class="card" id="metadata">
     <h2>Graph metadata</h2>
     <form method="post" asp-page-handler="Update" class="filters">
         <input type="hidden" name="graph_id" value="@Model.GraphId" />
@@ -28,7 +31,7 @@
     </form>
 </section>
 
-<section class="card graph-canvas" aria-label="Investigation graph canvas">
+<section class="card graph-canvas" id="canvas" aria-label="Investigation graph canvas">
     <h2>Relationship canvas</h2>
     @if (detail.Nodes.Count == 0)
     {
@@ -65,7 +68,7 @@
     }
 </section>
 
-<section class="card">
+<section class="card" id="add-node">
     <h2>Add node</h2>
     <form method="post" asp-page-handler="AddNode" class="filters">
         <input type="hidden" name="graph_id" value="@Model.GraphId" />
@@ -79,7 +82,7 @@
     </form>
 </section>
 
-<section class="card">
+<section class="card" id="add-edge">
     <h2>Add edge</h2>
     <form method="post" asp-page-handler="AddEdge" class="filters">
         <input type="hidden" name="graph_id" value="@Model.GraphId" />
@@ -92,7 +95,7 @@
     </form>
 </section>
 
-<section class="card">
+<section class="card" id="proposals">
     <h2>soc-agent proposals</h2>
     <p class="muted">soc-agent can propose graph updates, but applying a proposal requires explicit operator approval.</p>
     <form method="post" asp-page-handler="Propose" class="filters">
@@ -103,7 +106,7 @@
     @if (detail.Proposals.Count == 0) { <p class="muted">No proposals yet.</p> }
     else
     {
-        <table><thead><tr><th>Status</th><th>Instruction</th><th>Rationale</th><th>Proposed nodes</th><th></th></tr></thead><tbody>
+        <table><caption>soc-agent graph proposals requiring explicit operator approval before apply</caption><thead><tr><th>Status</th><th>Instruction</th><th>Rationale</th><th>Proposed nodes</th><th></th></tr></thead><tbody>
         @foreach (var proposal in detail.Proposals)
         {
             <tr>
@@ -126,8 +129,9 @@
     }
 </section>
 
-<section class="card">
+<section class="card confirmation-panel" id="lifecycle">
     <h2>Lifecycle</h2>
+    <p class="muted">Archiving changes graph lifecycle status only; it does not delete linked events, alerts, or telemetry.</p>
     <form method="post" asp-page-handler="Archive" class="actions">
         <input type="hidden" name="graph_id" value="@Model.GraphId" />
         <button type="submit" class="danger">Archive graph</button>

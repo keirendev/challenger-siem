@@ -3,6 +3,7 @@ using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 
@@ -32,6 +33,11 @@ public sealed class IndexModel(
 
     public string? ErrorMessage { get; private set; }
 
+    public string? GlobalSearchMessage { get; private set; }
+
+    [BindProperty]
+    public string? GlobalSearch { get; set; }
+
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         PageNumber = Math.Max(1, PageNumber);
@@ -41,6 +47,60 @@ public sealed class IndexModel(
             Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
         }
 
+        await LoadEventsAsync(cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostGlobalSearchAsync(CancellationToken cancellationToken)
+    {
+        PageNumber = 1;
+        Query = Query with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
+        var searchText = string.IsNullOrWhiteSpace(GlobalSearch) ? null : GlobalSearch.Trim();
+        if (searchText?.Length > 160)
+        {
+            searchText = searchText[..160];
+            GlobalSearchMessage = "Global search input was shortened to the 160-character event-search limit. The submitted term is not repeated in page links.";
+        }
+        else
+        {
+            GlobalSearchMessage = "Global search is currently scoped to bounded event metadata for every role, with sensitive keyword matching only for authorized analysts. Unified event, alert, case, and entity search is planned. The submitted term is not repeated in page links.";
+        }
+
+        if (searchText is null)
+        {
+            GlobalSearchMessage = "Enter a host, agent, event code, source, or authorized keyword to search the current bounded event index.";
+            Events = Array.Empty<EventEnvelope>();
+            HasNextPage = false;
+            return Page();
+        }
+
+        await LoadGlobalEventsAsync(searchText, cancellationToken);
+        return Page();
+    }
+
+    private async Task LoadGlobalEventsAsync(string searchText, CancellationToken cancellationToken)
+    {
+        Query = Query with { Limit = NormalizedLimit };
+        var fetchLimit = Math.Min(NormalizedLimit + 1, 500);
+
+        try
+        {
+            var loadedEvents = await eventRepository.SearchGlobalEventsForOperatorAsync(searchText, fetchLimit, OperatorAuthorization.Role(User)!, cancellationToken);
+            HasNextPage = loadedEvents.Count > NormalizedLimit;
+            Events = loadedEvents.Take(NormalizedLimit).ToArray();
+            if (Events.Count == 0)
+            {
+                GlobalSearchMessage = string.Concat(GlobalSearchMessage, " No matching permitted event metadata was found for the current role.");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Global event search could not be loaded.");
+            ErrorMessage = "Global event search is currently unavailable.";
+        }
+    }
+
+    private async Task LoadEventsAsync(CancellationToken cancellationToken)
+    {
         Query = Query with { Limit = NormalizedLimit };
         var fetchLimit = Math.Min(NormalizedLimit + 1, 500);
         var fetchQuery = Query with { Limit = fetchLimit };

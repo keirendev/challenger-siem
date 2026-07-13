@@ -4,6 +4,8 @@
     ViewData["Title"] = "Investigation graphs";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Investigation graphs", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Investigation workspace</p>
@@ -12,8 +14,8 @@
     </div>
 </div>
 
-@if (Model.ErrorMessage is not null) { <div class="alert" role="alert">@Model.ErrorMessage</div> }
-@if (Model.Message is not null) { <div class="notice" role="status">@Model.Message</div> }
+@if (Model.ErrorMessage is not null) { <partial name="_Notice" model='new NoticeModel("Graphs unavailable", Model.ErrorMessage, "error", IsAlert: true)' /> }
+@if (Model.Message is not null) { <partial name="_Notice" model='new NoticeModel("Graph update", Model.Message, "success")' /> }
 
 <section class="card">
     <div class="page-header">
@@ -52,12 +54,13 @@
 </div>
 @if (Model.Graphs.Count == 0)
 {
-    <div class="empty">No investigation graphs match the current filters.</div>
+    <div class="empty"><strong>No investigation graphs match the current filters.</strong><p>Create a graph from synthetic or approved investigation context, or clear the status filter.</p></div>
 }
 else
 {
     <div class="table-scroll">
     <table>
+        <caption>Investigation graph list with lifecycle status, node and edge counts, tags, updated time, and open action</caption>
         <thead><tr><th>Title</th><th>Status</th><th>Nodes</th><th>Edges</th><th>Tags</th><th>Updated</th><th></th></tr></thead>
         <tbody>
         @foreach (var graph in Model.Graphs)

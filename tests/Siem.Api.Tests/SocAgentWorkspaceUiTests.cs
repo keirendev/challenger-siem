@@ -7,7 +7,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void ComposerHidesManualAgentContextInputButKeepsContextScopingAndShortcutCopy()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
 
         Assert.DoesNotContain("Optional agent ID context", page);
         Assert.Contains("type=\"hidden\" id=\"ComposerContextAgentId\" name=\"ComposerContextAgentId\"", page, StringComparison.Ordinal);
@@ -19,7 +19,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void ScriptUsesThreadAwareAutoFollowStateAndSendShortcuts()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
 
         Assert.Contains("let autoFollow = false;", page, StringComparison.Ordinal);
         Assert.Contains("const threadEnd = document.getElementById('soc-agent-thread-end');", page, StringComparison.Ordinal);
@@ -45,7 +45,7 @@ public sealed class SocAgentWorkspaceUiTests
     public void WorkspaceCssUsesWiderThreadAwarePageLayoutWithoutNestedVerticalScrollbars()
     {
         var layout = ReadRepoFile("server", "Siem.Api", "Pages", "Shared", "_Layout.cshtml");
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
         var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
 
         Assert.Contains("ViewData[\"MainClass\"] = \"container soc-agent-container\";", page, StringComparison.Ordinal);
@@ -69,7 +69,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void ActivityRailShowsLiveToolActivityWithoutPersistentProviderSetupBoxes()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
         var codeBehind = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml.cs");
         var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
 
@@ -93,7 +93,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void LiveSendShowsOptimisticMessagePendingAssistantAndReplaysInitialStreamEvents()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
 
         Assert.Contains("function appendOptimisticOperatorMessage(content)", page, StringComparison.Ordinal);
         Assert.Contains("setPendingAssistantPlaceholder('Starting soc-agent live run…');", page, StringComparison.Ordinal);
@@ -109,7 +109,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void AssistantMessagesRenderSafeMarkdownWhileOperatorMessagesStayPlainText()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
         var codeBehind = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml.cs");
         var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
 
@@ -141,7 +141,7 @@ public sealed class SocAgentWorkspaceUiTests
     [Fact]
     public void SessionDeletionControlsAreConfirmationGatedAndCollapsedActivityPanelRemainsFocusable()
     {
-        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml");
+        var page = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml") + "\n" + ReadRepoFile("server", "Siem.Api", "wwwroot", "js", "soc-agent.js");
         var codeBehind = ReadRepoFile("server", "Siem.Api", "Pages", "SocAgent.cshtml.cs");
         var css = ReadRepoFile("server", "Siem.Api", "wwwroot", "css", "site.css");
 

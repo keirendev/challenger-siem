@@ -1,31 +1,34 @@
 @page "/agents"
 @model Agents.IndexModel
 @{
-    ViewData["Title"] = "Agents";
+    ViewData["Title"] = "Assets";
     var cleanupCandidateCount = Model.CleanupPreview.CandidateCount;
+    var canManageAgents = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ManageAgents);
 }
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Assets", IsCurrent: true))' />
 
 <div class="page-header">
     <div>
         <p class="page-kicker">Endpoint operations</p>
-        <h1>Agent inventory</h1>
+        <h1>Assets</h1>
         <p class="muted">Find unhealthy endpoints, inspect source coverage, and retire stale lab registrations without deleting telemetry.</p>
     </div>
 </div>
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Assets unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 
 @if (Model.CleanupErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.CleanupErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Cleanup blocked", Model.CleanupErrorMessage, "error", IsAlert: true)' />
 }
 
 @if (Model.CleanupMessage is not null)
 {
-    <div class="notice" role="status">@Model.CleanupMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Cleanup complete", Model.CleanupMessage, "success")' />
 }
 
 <form method="get" class="card filters filter-panel" aria-label="Agent inventory filters">
@@ -60,7 +63,9 @@
     </div>
 </form>
 
-<section class="card cleanup-panel" aria-labelledby="cleanup-title">
+@if (canManageAgents)
+{
+<section class="card cleanup-panel confirmation-panel" aria-labelledby="cleanup-title">
     <div class="page-header">
         <div>
             <p class="page-kicker">Lifecycle guardrail</p>
@@ -114,6 +119,11 @@
         </div>
     </form>
 </section>
+}
+else
+{
+    <partial name="_Notice" model='new NoticeModel("Admin-only lifecycle action", "Stale-agent retirement is hidden for this role. The server still authorizes the cleanup handler, and telemetry is never deleted by this action.", "unauthorized")' />
+}
 
 <section class="table-card" aria-labelledby="agents-results-title">
     <div class="table-title">
@@ -130,12 +140,13 @@
     </div>
     @if (Model.Agents.Count == 0)
     {
-        <div class="empty">No agents match the current filters.</div>
+        <div class="empty"><strong>No assets match the current filters.</strong><p>Review active filters, retired registration status, and source-health availability.</p></div>
     }
     else
     {
         <div class="table-scroll">
             <table>
+                <caption>Asset inventory with coverage, source issue counts, queue observations, and registration lifecycle status</caption>
                 <thead>
                     <tr>
                         <th>Agent</th>

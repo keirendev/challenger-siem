@@ -13,7 +13,7 @@ Tracked screenshots and documentation wireframes must satisfy all of these rules
 - Text wireframes must be hand-authored synthetic product examples. Do not paste real output and then sanitize it.
 - Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, browser caches, and logs stay under ignored `.local/` paths.
 
-The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph. Future gallery refreshes should align route captions with the page map in [web.md](web.md#current-route-map) while clearly labelling unimplemented IA wireframes as specification sketches rather than current UI.
+The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph. Future gallery refreshes should align route captions with the role-aware Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration shell in [web.md](web.md#current-route-map) while clearly labelling disabled planned affordances and unimplemented IA wireframes as specification sketches rather than current UI.
 
 ## Gallery
 
@@ -23,15 +23,15 @@ The login page is captured with empty username and password fields so no operato
 
 ![Operator login page with empty username and password fields](assets/web-console/login.png)
 
-### Dashboard
+### Overview
 
-The dashboard summarizes active/recent/stale/retired agents, queue observations, and recent ingest volume without listing hostnames.
+The overview dashboard summarizes active/recent/stale/retired agents, queue observations, recent ingest volume, and lifecycle guidance without listing hostnames.
 
 ![Dashboard metrics with synthetic development data](assets/web-console/dashboard.png)
 
-### Agent inventory
+### Assets
 
-The inventory screenshot is filtered to the synthetic demo agent so no unrelated hostnames appear.
+The assets inventory screenshot is filtered to the synthetic demo agent so no unrelated hostnames appear. If captured with a non-admin role, the admin-only cleanup action should appear as an authorization notice rather than a form.
 
 ![Agent inventory filtered to a synthetic demo agent](assets/web-console/agents.png)
 
@@ -41,9 +41,9 @@ The current screenshot uses the synthetic Windows matrix. The same page is now p
 
 ![Host coverage detail for a synthetic demo agent](assets/web-console/agent-detail.png)
 
-### Event search
+### Search
 
-Event search is filtered to the synthetic demo agent and unique marker.
+Event search is filtered to the synthetic demo agent and unique marker. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
 
 ![Event search results for a synthetic System event](assets/web-console/events.png)
 
@@ -79,9 +79,9 @@ The audit-policy page demonstrates empty-state handling when no synthetic audit 
 
 ![Audit policy drift empty-state page](assets/web-console/audit-policy.png)
 
-### System/about
+### Health
 
-The about page shows version, contract version, environment, and database connectivity status without secret values.
+The Health/about page shows version, contract version, environment, database connectivity status, and safe lifecycle guidance without secret values.
 
 ![System about page with non-sensitive runtime status](assets/web-console/about.png)
 
@@ -119,6 +119,6 @@ The gallery was validated with a headless browser against the real redesigned ap
 - `/graphs` and `/graphs/detail` with a synthetic graph.
 - `/soc-agent` live workspace, `/audit-policy`, and `/about`.
 - Logout and unauthenticated redirect/denial behavior.
-- Responsive-width smoke coverage, visible focus behavior, active navigation state, and lightweight CSS/page budget checks.
+- Responsive-width smoke coverage, visible focus behavior, active/disabled role-aware navigation state, forbidden-state behavior, global event-search POST behavior, CSP-compatible owned JavaScript loading, and lightweight CSS/page budget checks.
 
 See [web.md](web.md) for page behavior and [contributors.md](contributors.md#documentation-maintenance-checklist) for the screenshot maintenance checklist.

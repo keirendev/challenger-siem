@@ -1,0 +1,25 @@
+@model BreadcrumbsModel
+@if (Model.Items.Count > 0)
+{
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <ol>
+            @foreach (var item in Model.Items)
+            {
+                <li>
+                    @if (item.IsCurrent || (string.IsNullOrWhiteSpace(item.Page) && string.IsNullOrWhiteSpace(item.Url)))
+                    {
+                        <span aria-current="@(item.IsCurrent ? "page" : null)">@item.Label</span>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(item.Url))
+                    {
+                        <a href="@item.Url">@item.Label</a>
+                    }
+                    else
+                    {
+                        <a asp-page="@item.Page">@item.Label</a>
+                    }
+                </li>
+            }
+        </ol>
+    </nav>
+}
