@@ -242,6 +242,18 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 - Pagination is bounded by `limit` rather than full cursor pagination.
 - The agent poison-event strategy quarantines repeated failures locally for operator review; centralized poison review can be added later.
 
-## Linux agent foundation lifecycle
+## Linux agent lifecycle and L2 canary preparation
 
-Use the read-only `./scripts/linux-agent.sh plan` before every deployment. Follow [the Linux agent guide](linux-agent.md) for payload/config prerequisites, install or upgrade, validation, and uninstall. Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, or mandatory-access-control policy. Missing source access is a visible future coverage gap, not permission to mutate policy. Live systemd testing requires explicit approval and raw evidence remains under `.local/`.
+Use the read-only `./scripts/linux-agent.sh plan` before every deployment and follow [the Linux agent guide](linux-agent.md). Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, eBPF, file-integrity watches, or mandatory-access-control policy. Missing/denied/unsupported source access is a visible coverage state, not permission to mutate policy.
+
+The tracked synthetic validation path is:
+
+```bash
+dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj
+dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2'
+./scripts/validate-contracts.sh
+```
+
+Production configuration defaults to `Journal.TargetCoverageLevel=L1`. For a separately approved canary only, set `TargetCoverageLevel` to `L2` and declare bounded host roles such as `ssh_server`/`bastion` only when the operator has established them. Empty roles intentionally leave role applicability unknown. Review `/api/v1/source-health` and `/api/v1/telemetry-coverage` for requirement, applicability, prerequisite/event-family, denied/degraded/unsupported/stale/excepted states and recent counts by portable `source_id`.
+
+Do not treat unit benchmarks as the required private 24-hour L1 or seven-day L1+L2 soak. Live systemd testing and any host mutation require separate approval; raw telemetry, configs, logs, benchmark samples, screenshots, and detailed results stay under ignored `.local/` or approved OS runtime paths. The staged rollout gate owns the private soak, outage/rotation/restart/pressure windows, aggregate SLO decision, and rollback evidence.

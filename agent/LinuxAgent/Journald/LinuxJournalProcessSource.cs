@@ -32,7 +32,7 @@ public sealed class LinuxJournalProcessSource : ILinuxJournalSource
         start.ArgumentList.Add("--quiet");
         start.ArgumentList.Add("--output=json");
         start.ArgumentList.Add("--all");
-        start.ArgumentList.Add("--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,SYSLOG_FACILITY,PRIORITY,MESSAGE,MESSAGE_ID,_PID,_UID");
+        start.ArgumentList.Add("--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,SYSLOG_IDENTIFIER,SYSLOG_FACILITY,PRIORITY,MESSAGE,MESSAGE_ID,_PID,_UID,_COMM,_EXE,_CMDLINE,USER,LOGNAME,PAM_USER,PAM_TYPE,PAM_RHOST,PAM_SERVICE,REMOTE_ADDR,REMOTE_PORT,DESTINATION_ADDR,DESTINATION_PORT,PROTOCOL,RESULT,ACTION,UNIT,OBJECT_SYSTEMD_UNIT,PACKAGE_NAME,PACKAGE,MODULE");
         if (string.IsNullOrEmpty(afterCursor))
             start.ArgumentList.Add($"--lines={boundedRecords}");
         else

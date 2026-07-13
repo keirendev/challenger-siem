@@ -1,3 +1,4 @@
+using System.Globalization;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.State;
@@ -9,6 +10,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 {
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly object sync = new();
+    private readonly Dictionary<string, DateTimeOffset> latestBySource = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<string>> observedFamilies = new(StringComparer.Ordinal);
+    private readonly HashSet<string> observedSources = new(StringComparer.Ordinal);
     private JournalCheckpointState checkpoint = new();
     private string status = SourceHealthStatuses.Missing;
     private string? errorCode;
@@ -34,6 +38,10 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             version = sourceVersion;
             configHash = sourceConfigHash;
             latestEvent = loaded.CollectedEventTime;
+            if (loaded.CollectedEventTime.HasValue)
+            {
+                latestBySource[LinuxTelemetrySourceIds.JournalL1] = loaded.CollectedEventTime.Value;
+            }
             sourceState = loaded.CollectedCursor is null ? "empty" : "restarted";
         }
     }
@@ -47,11 +55,22 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         lock (sync)
         {
             checkpoint = checkpoint with { CollectedCursor = record.Cursor, CollectedEventTime = record.Envelope.EventTime };
-            // Track newest observed event time independently so reordered tails do not erase lag/health context.
             if (latestEvent is null || record.Envelope.EventTime > latestEvent)
             {
                 latestEvent = record.Envelope.EventTime;
             }
+            if (!latestBySource.TryGetValue(record.Envelope.SourceId!, out var sourceLatest)
+                || record.Envelope.EventTime > sourceLatest)
+            {
+                latestBySource[record.Envelope.SourceId!] = record.Envelope.EventTime;
+            }
+            observedSources.Add(record.Envelope.SourceId!);
+            if (!observedFamilies.TryGetValue(record.Envelope.SourceId!, out var families))
+            {
+                families = new HashSet<string>(StringComparer.Ordinal);
+                observedFamilies[record.Envelope.SourceId!] = families;
+            }
+            families.Add(record.EventFamily);
             status = SourceHealthStatuses.Healthy;
             errorCode = null;
             sourceState = "collecting";
@@ -102,11 +121,20 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                         errorCode = checkpoint.CollectedCursor is null ? "journal_empty" : null;
                     }
                 }
-                else if (!gap) { status = SourceHealthStatuses.Healthy; errorCode = null; }
+                else if (!gap)
+                {
+                    status = SourceHealthStatuses.Healthy;
+                    errorCode = null;
+                }
             }
             else
             {
-                status = result.Status == JournalReadStatus.Unavailable ? SourceHealthStatuses.Missing : SourceHealthStatuses.Error;
+                status = result.Status switch
+                {
+                    JournalReadStatus.Unavailable => SourceHealthStatuses.Missing,
+                    JournalReadStatus.PermissionDenied => SourceHealthStatuses.PermissionDenied,
+                    _ => SourceHealthStatuses.Error
+                };
                 sourceState = result.Status switch
                 {
                     JournalReadStatus.PermissionDenied => "permission_denied",
@@ -119,80 +147,236 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         }
     }
 
-    public void RecordMalformed(string code) { lock (sync) { malformedCount++; gap = true; gapState = "malformed_record"; status = SourceHealthStatuses.Error; errorCode = code; } }
+    public void RecordMalformed(string code)
+    {
+        lock (sync)
+        {
+            malformedCount++;
+            gap = true;
+            gapState = "malformed_record";
+            status = SourceHealthStatuses.Error;
+            errorCode = code;
+        }
+    }
+
     public void RecordBinaryOrInvalidText() { lock (sync) binaryOrInvalidTextCount++; }
     public void RecordDuplicate() { lock (sync) duplicateCount++; }
-    public void RecordReordered() { lock (sync) { reorderedCount++; gap = true; gapState = "reordered_input"; } }
-    public void RecordGap(string state) { lock (sync) { gap = true; gapState = state; status = SourceHealthStatuses.Stale; errorCode = $"journal_{state}_gap"; } }
-    public void RecordThrottle(string reason) { lock (sync) { throttled = true; sourceState = "throttled"; status = SourceHealthStatuses.Stale; errorCode = reason; } }
+
+    public void RecordReordered()
+    {
+        lock (sync)
+        {
+            reorderedCount++;
+            gap = true;
+            gapState = "reordered_input";
+        }
+    }
+
+    public void RecordGap(string stateValue)
+    {
+        lock (sync)
+        {
+            gap = true;
+            gapState = stateValue;
+            status = SourceHealthStatuses.Stale;
+            errorCode = $"journal_{stateValue}_gap";
+        }
+    }
+
+    public void RecordThrottle(string reason)
+    {
+        lock (sync)
+        {
+            throttled = true;
+            sourceState = "throttled";
+            status = SourceHealthStatuses.Degraded;
+            errorCode = reason;
+        }
+    }
 
     public JournalRuntimeSnapshot Snapshot()
     {
         lock (sync)
         {
-            var now = timeProvider.GetUtcNow();
-            var collected = Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime);
-            var acknowledged = Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime);
-            var manifest = new SourceManifestEntry
-            {
-                SourceId = LinuxJournalNormalizer.SourceId,
-                Platform = TelemetryPlatforms.Linux,
-                SourceKind = TelemetrySourceKinds.LinuxJournal,
-                SourceNamespace = "systemd",
-                Applicability = SourceApplicabilityStatuses.Applicable,
-                CheckpointKind = SourceCheckpointKinds.Cursor,
-                DisplayName = "Linux L1 system journal",
-                CoverageLevel = WindowsCoverageLevel.L1,
-                Required = true,
-                EnabledByDefault = options.Journal.Enabled,
-                SourcePack = "linux-l1-journal",
-                ParserId = "journald-json-v1",
-                Prerequisites = ["systemd_journal_readable"],
-                EventFamilies = ["kernel", "boot", "service", "authentication", "system"],
-                ValidationScenarios = ["cursor_restart", "rotation_vacuum", "outage_replay", "pressure"],
-                Privacy = "high_sensitivity",
-                InstallerManaged = false
-            };
-            var health = new SourceHealthReport
-            {
-                SourceId = manifest.SourceId,
-                Platform = manifest.Platform,
-                SourceKind = manifest.SourceKind,
-                DisplayName = manifest.DisplayName,
-                SourceNamespace = manifest.SourceNamespace,
-                Applicability = manifest.Applicability,
-                CoverageLevel = WindowsCoverageLevel.L1,
-                Status = options.Journal.Enabled ? status : SourceHealthStatuses.Disabled,
-                Required = true,
-                Enabled = options.Journal.Enabled,
-                LastEventTime = latestEvent,
-                CollectedCheckpoint = collected,
-                AcknowledgedCheckpoint = acknowledged,
-                LagSeconds = latestEvent.HasValue ? Math.Max(0, (long)(now - latestEvent.Value).TotalSeconds) : null,
-                ErrorCode = errorCode,
-                ErrorMessage = errorCode,
-                GapDetected = gap,
-                BookmarkGapDetected = gap,
-                ConfigHash = configHash,
-                SourceVersion = version,
-                Details = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["collector_state"] = sourceState,
-                    ["gap_state"] = gapState,
-                    ["rotation_state"] = gapState == "rotation" ? "gap" : "cursor_continuity_or_unknown",
-                    ["vacuum_state"] = gapState == "vacuum" ? "gap" : gapState == "invalid_cursor" ? "possible_gap" : "no_gap_observed",
-                    ["permission_state"] = permissionDenied ? "denied" : "allowed_or_unknown",
-                    ["throttle_state"] = throttled ? "active" : "inactive",
-                    ["duplicate_records"] = duplicateCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["reordered_records"] = reorderedCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["malformed_records"] = malformedCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["binary_or_invalid_text_records"] = binaryOrInvalidTextCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["configuration_state"] = options.Journal.Enabled ? "enabled" : "disabled",
-                    ["collector_version"] = version
-                }
-            };
+            var targetLevel = options.Journal.TargetCoverageLevel;
+            var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
+                targetLevel,
+                options.Journal.DeclaredRoles,
+                observedSources);
+            var health = manifest.Select(BuildHealth).ToArray();
             return new(manifest, health, throttled, checkpoint.CollectedCursor, checkpoint.AcknowledgedCursor);
         }
+    }
+
+    private SourceHealthReport BuildHealth(SourceManifestEntry manifest)
+    {
+        var now = timeProvider.GetUtcNow();
+        var inConfiguredLevel = manifest.CoverageLevel <= options.Journal.TargetCoverageLevel;
+        var enabled = options.Journal.Enabled && inConfiguredLevel
+            && manifest.Applicability is not SourceApplicabilityStatuses.Unsupported
+            and not SourceApplicabilityStatuses.NotApplicable;
+        var effectiveStatus = DetermineStatus(manifest, enabled);
+        var sourceLatest = manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
+            ? latestEvent
+            : latestBySource.GetValueOrDefault(manifest.SourceId);
+        var isJournalSource = manifest.SourceKind == TelemetrySourceKinds.LinuxJournal;
+        var collected = isJournalSource ? Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime) : null;
+        var acknowledged = isJournalSource ? Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime) : null;
+
+        return new SourceHealthReport
+        {
+            SourceId = manifest.SourceId,
+            Platform = manifest.Platform,
+            SourceKind = manifest.SourceKind,
+            DisplayName = manifest.DisplayName,
+            SourceNamespace = manifest.SourceNamespace,
+            Facility = manifest.Facility,
+            Unit = manifest.Unit,
+            Applicability = manifest.Applicability,
+            ApplicabilityReason = manifest.ApplicabilityReason,
+            CoverageLevel = manifest.CoverageLevel,
+            Status = effectiveStatus,
+            Required = manifest.Required,
+            Requirement = manifest.Requirement,
+            ApplicableRoles = manifest.ApplicableRoles,
+            Enabled = enabled,
+            LastEventTime = sourceLatest,
+            CollectedCheckpoint = collected,
+            AcknowledgedCheckpoint = acknowledged,
+            LagSeconds = sourceLatest.HasValue ? Math.Max(0, (long)(now - sourceLatest.Value).TotalSeconds) : null,
+            ErrorCode = ErrorFor(manifest, effectiveStatus),
+            ErrorMessage = ErrorFor(manifest, effectiveStatus),
+            GapDetected = isJournalSource && gap,
+            BookmarkGapDetected = isJournalSource && gap,
+            ConfigHash = configHash,
+            SourceVersion = version,
+            PrerequisiteStatuses = BuildPrerequisiteStatuses(manifest, enabled, effectiveStatus),
+            EventFamilyStatuses = BuildEventFamilyStatuses(manifest, enabled, effectiveStatus),
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["collector_state"] = sourceState,
+                ["gap_state"] = gapState,
+                ["rotation_state"] = gapState == "rotation" ? "gap" : "cursor_continuity_or_unknown",
+                ["vacuum_state"] = gapState == "vacuum" ? "gap" : gapState == "invalid_cursor" ? "possible_gap" : "no_gap_observed",
+                ["permission_state"] = permissionDenied ? "denied" : "allowed_or_unknown",
+                ["throttle_state"] = throttled ? "active" : "inactive",
+                ["duplicate_records"] = duplicateCount.ToString(CultureInfo.InvariantCulture),
+                ["reordered_records"] = reorderedCount.ToString(CultureInfo.InvariantCulture),
+                ["malformed_records"] = malformedCount.ToString(CultureInfo.InvariantCulture),
+                ["binary_or_invalid_text_records"] = binaryOrInvalidTextCount.ToString(CultureInfo.InvariantCulture),
+                ["configuration_state"] = enabled ? "enabled" : "disabled",
+                ["configured_coverage_level"] = options.Journal.TargetCoverageLevel.ToString(),
+                ["collector_version"] = version
+            }
+        };
+    }
+
+    private string DetermineStatus(SourceManifestEntry manifest, bool enabled)
+    {
+        if (manifest.Applicability == SourceApplicabilityStatuses.Unsupported)
+        {
+            return SourceHealthStatuses.Unsupported;
+        }
+        if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable)
+        {
+            return SourceHealthStatuses.NotApplicable;
+        }
+        if (!enabled)
+        {
+            return SourceHealthStatuses.Disabled;
+        }
+        if (gap && status is (SourceHealthStatuses.Healthy or SourceHealthStatuses.Stale or SourceHealthStatuses.Degraded))
+        {
+            return SourceHealthStatuses.Error;
+        }
+        if (manifest.Applicability == SourceApplicabilityStatuses.Unknown)
+        {
+            return SourceHealthStatuses.Degraded;
+        }
+        if (status == SourceHealthStatuses.Healthy
+            && manifest.CoverageLevel == WindowsCoverageLevel.L2
+            && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
+            && !observedSources.Contains(manifest.SourceId))
+        {
+            return SourceHealthStatuses.Degraded;
+        }
+        return status;
+    }
+
+    private string? ErrorFor(SourceManifestEntry manifest, string effectiveStatus)
+    {
+        if (effectiveStatus == SourceHealthStatuses.Unsupported)
+        {
+            return manifest.ApplicabilityReason ?? "source_unsupported";
+        }
+        if (effectiveStatus == SourceHealthStatuses.NotApplicable)
+        {
+            return null;
+        }
+        if (effectiveStatus == SourceHealthStatuses.Degraded)
+        {
+            return manifest.Applicability == SourceApplicabilityStatuses.Unknown
+                ? manifest.ApplicabilityReason ?? "source_applicability_unknown"
+                : "source_event_family_not_observed";
+        }
+        if (effectiveStatus == SourceHealthStatuses.Disabled && manifest.CoverageLevel > options.Journal.TargetCoverageLevel)
+        {
+            return "source_above_configured_level";
+        }
+        if (effectiveStatus == SourceHealthStatuses.Error && errorCode is null && gapState != "none")
+        {
+            return $"journal_{gapState}_gap";
+        }
+        return errorCode;
+    }
+
+    private IReadOnlyDictionary<string, string> BuildPrerequisiteStatuses(
+        SourceManifestEntry manifest,
+        bool enabled,
+        string effectiveStatus)
+    {
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var prerequisite in manifest.Prerequisites)
+        {
+            values[prerequisite] = effectiveStatus switch
+            {
+                SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
+                SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
+                SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+                SourceHealthStatuses.Stale => SourceEvidenceStatuses.Stale,
+                SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
+                SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
+                _ when !enabled => SourceEvidenceStatuses.Disabled,
+                _ when prerequisite is "systemd_journal_available" or "systemd_journal_readable" => SourceEvidenceStatuses.Satisfied,
+                _ when observedSources.Contains(manifest.SourceId) => SourceEvidenceStatuses.Satisfied,
+                _ => SourceEvidenceStatuses.Unknown
+            };
+        }
+        return values;
+    }
+
+    private IReadOnlyDictionary<string, string> BuildEventFamilyStatuses(
+        SourceManifestEntry manifest,
+        bool enabled,
+        string effectiveStatus)
+    {
+        observedFamilies.TryGetValue(manifest.SourceId, out var observed);
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var family in manifest.EventFamilies)
+        {
+            values[family] = effectiveStatus switch
+            {
+                SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
+                SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
+                SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+                SourceHealthStatuses.Stale => SourceEvidenceStatuses.Stale,
+                SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
+                _ when !enabled => SourceEvidenceStatuses.Disabled,
+                _ when observed?.Contains(family) == true => SourceEvidenceStatuses.Observed,
+                _ => SourceEvidenceStatuses.NotObserved
+            };
+        }
+        return values;
     }
 
     private static SourceCheckpoint Checkpoint(string? cursor, DateTimeOffset? time) => new()

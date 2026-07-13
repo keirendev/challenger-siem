@@ -103,6 +103,10 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     bookmark_gap_detected,
                     config_hash,
                     source_version,
+                    requirement_kind,
+                    applicable_roles,
+                    prerequisite_statuses,
+                    event_family_statuses,
                     collected_checkpoint,
                     acknowledged_checkpoint,
                     details,
@@ -139,6 +143,10 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @bookmark_gap_detected,
                     @config_hash,
                     @source_version,
+                    @requirement_kind,
+                    @applicable_roles,
+                    @prerequisite_statuses,
+                    @event_family_statuses,
                     @collected_checkpoint,
                     @acknowledged_checkpoint,
                     @details,
@@ -173,6 +181,10 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     bookmark_gap_detected = excluded.bookmark_gap_detected,
                     config_hash = excluded.config_hash,
                     source_version = excluded.source_version,
+                    requirement_kind = excluded.requirement_kind,
+                    applicable_roles = excluded.applicable_roles,
+                    prerequisite_statuses = excluded.prerequisite_statuses,
+                    event_family_statuses = excluded.event_family_statuses,
                     collected_checkpoint = excluded.collected_checkpoint,
                     acknowledged_checkpoint = excluded.acknowledged_checkpoint,
                     details = excluded.details,
@@ -208,6 +220,10 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("bookmark_gap_detected", source.BookmarkGapDetected);
             command.Parameters.AddWithValue("config_hash", string.IsNullOrWhiteSpace(source.ConfigHash) ? (object)DBNull.Value : source.ConfigHash);
             command.Parameters.AddWithValue("source_version", string.IsNullOrWhiteSpace(source.SourceVersion) ? (object)DBNull.Value : source.SourceVersion);
+            command.Parameters.AddWithValue("requirement_kind", string.IsNullOrWhiteSpace(source.Requirement) ? (object)DBNull.Value : source.Requirement);
+            AddJsonb(command, "applicable_roles", source.ApplicableRoles);
+            AddJsonb(command, "prerequisite_statuses", source.PrerequisiteStatuses);
+            AddJsonb(command, "event_family_statuses", source.EventFamilyStatuses);
             AddJsonb(command, "collected_checkpoint", source.CollectedCheckpoint);
             AddJsonb(command, "acknowledged_checkpoint", source.AcknowledgedCheckpoint);
             AddJsonb(command, "details", source.Details);
@@ -223,6 +239,8 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                 set hostname = @hostname,
                     agent_version = @agent_version,
                     host_timezone = coalesce(@host_timezone, host_timezone),
+                    platform = coalesce(@platform, platform),
+                    host_id = coalesce(@host_id, host_id),
                     last_seen = now(),
                     updated_at = now()
                 where agent_id = @agent_id;
@@ -231,6 +249,8 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("hostname", request.Hostname);
             command.Parameters.AddWithValue("agent_version", request.AgentVersion);
             Jsonb.Add(command, "host_timezone", request.HostTimezone);
+            command.Parameters.AddWithValue("platform", string.IsNullOrWhiteSpace(request.Platform) ? (object)DBNull.Value : request.Platform);
+            command.Parameters.AddWithValue("host_id", string.IsNullOrWhiteSpace(request.HostId) ? (object)DBNull.Value : request.HostId);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

@@ -527,6 +527,61 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task LinuxL2NormalizedIngestSearchAndCoverageUsePortableV1Storage()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"linux-l2-it-{Guid.NewGuid():N}";
+        const string hostname = "SYNTHETIC-LINUX-01";
+        var now = DateTimeOffset.UtcNow;
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await RegisterLinuxAsync(client, agentId, hostname);
+        await PostJsonWithBearerAsync<JsonElement>(client, "/api/v1/agents/heartbeat", CreateLinuxL2Heartbeat(agentId, hostname, now), token);
+
+        var envelope = CreateLinuxPackageEvent(agentId, hostname, now);
+        var ingest = await PostJsonWithBearerAsync<IngestBatchResponse>(client, "/api/v1/ingest/events", new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = now,
+            Events = [envelope]
+        }, token);
+        Assert.Equal(1, ingest.Accepted);
+
+        var query = $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&source=linux_journal&platform=linux&source_id={LinuxTelemetrySourceIds.PackageManagement}&category=package&action=install&user_name=synthetic-user&process_image=synthetic-package-tool&source_ip=192.0.2.44&service_name=synthetic-package.service&package_name=synthetic-package&limit=10";
+        var search = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client, query);
+        var stored = Assert.Single(search.Events, item => item.EventId == envelope.EventId);
+        Assert.Equal("synthetic-package", stored.Normalized?.PackageName);
+        Assert.Equal("synthetic-user", stored.Normalized?.User?.Name);
+        Assert.Equal("/usr/bin/synthetic-package-tool", stored.Normalized?.Process?.Executable);
+        Assert.Equal("192.0.2.44", stored.Normalized?.Network?.SourceIp);
+        Assert.Equal(envelope.EventId, DeterministicEventIdentity.ComputeSha256Uuid(stored));
+
+        var sourceHealth = await GetJsonWithOperatorApiTokenAsync<SourceHealthResponse>(client,
+            $"/api/v1/source-health?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2");
+        var summary = Assert.Single(sourceHealth.Summaries);
+        Assert.Equal(TelemetryPlatforms.Linux, summary.Platform);
+        Assert.Contains(sourceHealth.Sources, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement
+            && source.Requirement == SourceRequirementKinds.Mandatory
+            && source.EventFamilyStatuses!["package_install"] == SourceEvidenceStatuses.Observed);
+        Assert.Contains(sourceHealth.Sources, source => source.SourceId == LinuxTelemetrySourceIds.LoginSession
+            && source.Status == SourceHealthStatuses.Missing);
+
+        var coverage = await GetJsonWithOperatorApiTokenAsync<TelemetryCoverageResponse>(client,
+            $"/api/v1/telemetry-coverage?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2&lookback_hours=24");
+        var agentCoverage = Assert.Single(coverage.Agents);
+        Assert.Equal(TelemetryPlatforms.Linux, agentCoverage.Platform);
+        Assert.Equal(LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L2).Count, agentCoverage.ExpectedSourceCount);
+        Assert.Equal(1, Assert.Single(agentCoverage.Sources, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).RecentEventCount);
+        Assert.Empty(agentCoverage.DetectionPrerequisites);
+
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("select platform || ':' || host_id from agents where agent_id = @agent_id;");
+        command.Parameters.AddWithValue("agent_id", agentId);
+        Assert.Equal($"linux:host-{agentId}", Convert.ToString(await command.ExecuteScalarAsync(CancellationToken.None)));
+    }
+
+    [PostgresFact]
     public async Task DisabledAgentTokenIsRejectedUntilRegistrationReactivatesAgent()
     {
         var connectionString = database.RequireConnectionString();
@@ -655,6 +710,27 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         response.EnsureSuccessStatusCode();
         var registration = await response.Content.ReadFromJsonAsync<AgentRegistrationResponse>(JsonOptions.Default, CancellationToken.None);
         return registration?.ApiToken ?? throw new InvalidOperationException("Registration response did not include a token.");
+    }
+
+    private static async Task<string> RegisterLinuxAsync(HttpClient client, string agentId, string hostname)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/register")
+        {
+            Content = JsonContent.Create(new AgentRegistrationRequest
+            {
+                AgentId = agentId,
+                Hostname = hostname,
+                OsVersion = "Synthetic Linux",
+                AgentVersion = "1.1.0-test",
+                Platform = TelemetryPlatforms.Linux,
+                HostId = $"host-{agentId}"
+            }, options: JsonOptions.Default)
+        };
+        request.Headers.Add("X-Enrollment-Token", EnrollmentToken);
+        using var response = await client.SendAsync(request, CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+        var registration = await response.Content.ReadFromJsonAsync<AgentRegistrationResponse>(JsonOptions.Default, CancellationToken.None);
+        return registration?.ApiToken ?? throw new InvalidOperationException("Linux registration response did not include a token.");
     }
 
     private static async Task<T> PostJsonWithBearerAsync<T>(HttpClient client, string path, object body, string token)
@@ -802,6 +878,102 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                 }
             }
         };
+    }
+
+    private static HeartbeatRequest CreateLinuxL2Heartbeat(string agentId, string hostname, DateTimeOffset now)
+    {
+        var manifest = LinuxTelemetrySourceCatalog.All
+            .Where(entry => entry.SourceId is LinuxTelemetrySourceIds.JournalL1 or LinuxTelemetrySourceIds.PackageManagement)
+            .ToArray();
+        var health = manifest.Select(entry => new SourceHealthReport
+        {
+            SourceId = entry.SourceId,
+            Platform = entry.Platform,
+            SourceKind = entry.SourceKind,
+            DisplayName = entry.DisplayName,
+            SourceNamespace = entry.SourceNamespace,
+            Applicability = entry.Applicability,
+            CoverageLevel = entry.CoverageLevel,
+            Status = SourceHealthStatuses.Healthy,
+            Required = entry.Required,
+            Requirement = entry.Requirement,
+            ApplicableRoles = entry.ApplicableRoles,
+            Enabled = true,
+            LastEventTime = now,
+            CollectedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic-linux-l2;i=1", RecordedAt = now },
+            AcknowledgedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic-linux-l2;i=1", RecordedAt = now },
+            PrerequisiteStatuses = entry.Prerequisites.ToDictionary(item => item, _ => SourceEvidenceStatuses.Satisfied, StringComparer.Ordinal),
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                item => item,
+                item => item == "package_install" ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+                StringComparer.Ordinal),
+            Details = new Dictionary<string, string> { ["configured_coverage_level"] = "L2" }
+        }).ToArray();
+        return new HeartbeatRequest
+        {
+            AgentId = agentId,
+            Hostname = hostname,
+            AgentVersion = "1.1.0-test",
+            Os = "Synthetic Linux",
+            Platform = TelemetryPlatforms.Linux,
+            HostId = $"host-{agentId}",
+            LastEventTime = now,
+            QueueDepth = 0,
+            MemoryMb = 100,
+            ConfigHash = "synthetic-linux-l2-config",
+            QueueMetrics = new QueueSloMetrics { QueueDepth = 0, PoisonDepth = 0, MaxSizeMb = 512, WarningSizePercent = 80 },
+            SourceManifest = manifest,
+            SourceHealth = health
+        };
+    }
+
+    private static EventEnvelope CreateLinuxPackageEvent(string agentId, string hostname, DateTimeOffset eventTime)
+    {
+        var raw = JsonSerializer.SerializeToElement(new { action = "install", package = "synthetic-package" });
+        var envelope = new EventEnvelope
+        {
+            AgentId = agentId,
+            Hostname = hostname,
+            Platform = TelemetryPlatforms.Linux,
+            Source = EventSources.LinuxJournal,
+            SourceId = LinuxTelemetrySourceIds.PackageManagement,
+            EventCode = "package_install.install",
+            Unit = "synthetic-package.service",
+            EventTime = eventTime,
+            Severity = "information",
+            Message = "Synthetic package installed.",
+            Checkpoint = new SourceCheckpoint { Cursor = "s=synthetic-linux-l2;i=package-1", EventTime = eventTime, RecordedAt = eventTime },
+            Deduplication = new EventDeduplicationMetadata
+            {
+                Inputs = [DeduplicationInputs.AgentId, DeduplicationInputs.SourceId, DeduplicationInputs.CheckpointCursor]
+            },
+            Normalized = new NormalizedEventFields
+            {
+                Category = "package",
+                Action = "install",
+                Outcome = "success",
+                UserName = "synthetic-user",
+                ProcessImage = "/usr/bin/synthetic-package-tool",
+                SourceIp = "192.0.2.44",
+                ServiceName = "synthetic-package.service",
+                PackageName = "synthetic-package",
+                User = new UserTelemetryConcept { Name = "synthetic-user", Id = "1001" },
+                Process = new ProcessTelemetryConcept { Pid = "2201", Executable = "/usr/bin/synthetic-package-tool" },
+                Network = new NetworkTelemetryConcept { SourceIp = "192.0.2.44", SourcePort = 4242, Protocol = "tcp" },
+                Entities = Array.Empty<EventEntity>(),
+                Labels = new Dictionary<string, string> { ["linux.event_family"] = "package_install" }
+            },
+            Raw = raw,
+            DataHandling = new DataHandlingMetadata
+            {
+                RawSizeBytes = JsonSerializer.SerializeToUtf8Bytes(raw).Length,
+                RedactionApplied = false,
+                RedactedFields = Array.Empty<string>(),
+                TruncationApplied = false,
+                TruncatedFields = Array.Empty<string>()
+            }
+        };
+        return envelope with { EventId = DeterministicEventIdentity.ComputeSha256Uuid(envelope) };
     }
 
     private static EventEnvelope CreateEvent(

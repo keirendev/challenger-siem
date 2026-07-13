@@ -40,6 +40,11 @@
         "missing_mandatory_sources": { "type": "integer", "minimum": 0 },
         "stale_sources": { "type": "integer", "minimum": 0 },
         "error_sources": { "type": "integer", "minimum": 0 },
+        "degraded_sources": { "type": "integer", "minimum": 0 },
+        "permission_denied_sources": { "type": "integer", "minimum": 0 },
+        "unsupported_sources": { "type": "integer", "minimum": 0 },
+        "excepted_sources": { "type": "integer", "minimum": 0 },
+        "not_applicable_sources": { "type": "integer", "minimum": 0 },
         "queue_depth": { "type": "integer", "minimum": 0 },
         "last_heartbeat_time": { "type": ["string", "null"], "format": "date-time" },
         "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" }
@@ -51,7 +56,7 @@
             "properties": {
               "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
               "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
-              "overall_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"] },
+              "overall_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "degraded", "permission_denied", "unsupported", "error", "not_applicable", "excepted"] },
               "last_heartbeat_time": { "oneOf": [{ "$ref": "event-envelope.schema.json#/$defs/required_timestamp" }, { "type": "null" }] }
             }
           }

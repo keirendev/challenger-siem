@@ -49,6 +49,7 @@ Threat-intelligence lifecycle:
 Stateful detection-as-code and correlation:
 
 - Detection rules include version, source prerequisites, fields, state windows, suppression keys, ATT&CK tags, and test fixtures.
+- Linux L2 source health now exposes prerequisite and event-family evidence states so future Linux rules can fail closed on missing, stale, degraded, denied, unsupported, excepted, or inapplicable telemetry; built-in executable rules remain Windows-focused in this release.
 - Stateful evaluation stores bounded state and supports deterministic replay against synthetic fixtures.
 - Mutating rule activation remains operator-approved.
 

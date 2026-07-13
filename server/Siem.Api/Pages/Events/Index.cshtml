@@ -9,7 +9,7 @@
     <div>
         <p class="page-kicker">Triage workspace</p>
         <h1>Event search</h1>
-        <p class="muted">Search normalized Windows Event Log envelopes with visible filters, bounded pages, and fast pivots to event detail.</p>
+        <p class="muted">Search normalized Windows and portable Linux envelopes with visible filters, bounded pages, and fast pivots to event detail.</p>
     </div>
 </div>
 
@@ -36,7 +36,27 @@
         <input id="agent_id" name="agent_id" value="@Model.Query.AgentId" autocomplete="off" />
     </div>
     <div class="form-row">
-        <label for="channel">Channel</label>
+        <label for="source">Source kind</label>
+        <input id="source" name="source" value="@Model.Query.Source" autocomplete="off" placeholder="linux_journal" />
+    </div>
+    <div class="form-row">
+        <label for="platform">Platform</label>
+        <input id="platform" name="platform" value="@Model.Query.Platform" autocomplete="off" placeholder="windows or linux" />
+    </div>
+    <div class="form-row">
+        <label for="source_id">Source ID</label>
+        <input id="source_id" name="source_id" value="@Model.Query.SourceId" autocomplete="off" />
+    </div>
+    <div class="form-row">
+        <label for="event_code">Event code</label>
+        <input id="event_code" name="event_code" value="@Model.Query.EventCode" autocomplete="off" />
+    </div>
+    <div class="form-row">
+        <label for="package_name">Package</label>
+        <input id="package_name" name="package_name" value="@Model.Query.PackageName" autocomplete="off" />
+    </div>
+    <div class="form-row">
+        <label for="channel">Windows channel</label>
         <input id="channel" name="channel" value="@Model.Query.Channel" autocomplete="off" />
     </div>
     <div class="form-row">
@@ -133,8 +153,11 @@
                                 <div class="muted">ingested @TimeDisplay.FormatUtc(item.IngestTime, "HH:mm:ss")</div>
                             </td>
                             <td><strong>@item.Hostname</strong><div class="muted mono">@item.AgentId</div></td>
-                            <td>@item.Channel<div class="muted">@item.Provider</div></td>
-                            <td>@item.WindowsEventId</td>
+                            <td>
+                                @(item.SourceId ?? item.Channel ?? item.Source)
+                                <div class="muted">@(item.Unit ?? item.Provider ?? item.Platform)</div>
+                            </td>
+                            <td>@(item.EventCode ?? item.WindowsEventId?.ToString() ?? "—")</td>
                             <td>@(item.Normalized?.Category ?? "—")</td>
                             <td>@(item.Normalized?.Action ?? "—")</td>
                             <td><span class="badge">@item.Severity</span></td>
@@ -151,8 +174,8 @@
     <nav class="pagination" aria-label="Event result pages">
         <span class="muted">Page @Model.PageNumber · newest events first · raw JSON available only on detail pages.</span>
         <div class="actions">
-            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
-            <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber + 1)">Next</a>
+            <a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-source="@Model.Query.Source" asp-route-platform="@Model.Query.Platform" asp-route-source_id="@Model.Query.SourceId" asp-route-event_code="@Model.Query.EventCode" asp-route-package_name="@Model.Query.PackageName" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber - 1)">Previous</a>
+            <a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Events/Index" asp-route-from="@Model.Query.From" asp-route-to="@Model.Query.To" asp-route-hostname="@Model.Query.Hostname" asp-route-agent_id="@Model.Query.AgentId" asp-route-source="@Model.Query.Source" asp-route-platform="@Model.Query.Platform" asp-route-source_id="@Model.Query.SourceId" asp-route-event_code="@Model.Query.EventCode" asp-route-package_name="@Model.Query.PackageName" asp-route-channel="@Model.Query.Channel" asp-route-windows_event_id="@Model.Query.WindowsEventId" asp-route-keyword="@Model.Query.Keyword" asp-route-category="@Model.Query.Category" asp-route-action="@Model.Query.Action" asp-route-user_name="@Model.Query.UserName" asp-route-process_image="@Model.Query.ProcessImage" asp-route-destination_ip="@Model.Query.DestinationIp" asp-route-limit="@Model.NormalizedLimit" asp-route-page="@(Model.PageNumber + 1)">Next</a>
         </div>
     </nav>
 </section>

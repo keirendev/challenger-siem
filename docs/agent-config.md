@@ -1,6 +1,6 @@
 # Agent configuration format
 
-Windows agent configuration file: `agentsettings.json`.
+Agent configuration file: `agentsettings.json`. Windows fields are documented first; Linux-specific journal coverage fields follow below.
 
 The file should be stored in a protected Windows directory, for example:
 
@@ -107,3 +107,23 @@ MVP state can use `channel + record_id` tracking:
 ```
 
 Windows Event Log bookmarks can replace or supplement this later.
+
+## Linux journal coverage fields
+
+The Linux agent uses the same top-level `Agent` section but has a platform-specific fixed source configuration; see [`examples/synthetic-linux-agent-config.json`](../examples/synthetic-linux-agent-config.json). Its journal block is:
+
+```json
+{
+  "Journal": {
+    "Enabled": true,
+    "TargetCoverageLevel": "L1",
+    "DeclaredRoles": [],
+    "PollIntervalSeconds": 5,
+    "MaxRecordsPerPoll": 500,
+    "MaxInputRecordBytes": 131072,
+    "QueuePauseDepth": 100000
+  }
+}
+```
+
+`TargetCoverageLevel` accepts only `L1` or `L2`; `L1` remains the default until the private seven-day L1+L2 rollout soak passes. `DeclaredRoles` accepts at most 16 unique lowercase/number/underscore/hyphen identifiers and affects only role-specific source applicability (currently `ssh_server` and `bastion`). It does not enable services, grant access, select paths/commands, or approve coverage exceptions. An empty role list remains `unknown` rather than guessing. The fixed Linux source catalog and normalization behavior are documented in [linux-agent.md](linux-agent.md).

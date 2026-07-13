@@ -35,7 +35,7 @@ The inventory screenshot is filtered to the synthetic demo agent so no unrelated
 
 ### Host coverage and source health
 
-The host coverage page shows synthetic heartbeat/source-health rows overlaid with the expected Windows source matrix, recent event counts, completeness gaps, inventory/audit-policy status, and detection prerequisite status for the synthetic agent.
+The current screenshot uses the synthetic Windows matrix. The same page is now platform-aware and, for synthetic Linux agents, also shows requirement/applicability plus degraded, permission-denied, and unsupported source metrics without exposing telemetry.
 
 ![Host coverage detail for a synthetic demo agent](assets/web-console/agent-detail.png)
 

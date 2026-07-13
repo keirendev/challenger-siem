@@ -1,0 +1,17 @@
+{
+  "malformed_record": "{malformed",
+  "ambiguous_bounded_message": {
+    "record": {
+      "__CURSOR": "s=synthetic-l2;i=edge-ambiguous;b=fake",
+      "__REALTIME_TIMESTAMP": "1783944200000000",
+      "_BOOT_ID": "00000000000000000000000000000003",
+      "_TRANSPORT": "syslog",
+      "SYSLOG_IDENTIFIER": "sshd",
+      "PRIORITY": "6"
+    },
+    "prefix_character": "x",
+    "prefix_length": 4096,
+    "message_suffix": " Accepted publickey for synthetic-user from 192.0.2.30 port 22",
+    "expected_source": "linux-journal-l1"
+  }
+}

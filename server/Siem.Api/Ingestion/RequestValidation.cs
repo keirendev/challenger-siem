@@ -16,6 +16,9 @@ public static class RequestValidation
         SourceHealthStatuses.Missing,
         SourceHealthStatuses.Disabled,
         SourceHealthStatuses.Stale,
+        SourceHealthStatuses.Degraded,
+        SourceHealthStatuses.PermissionDenied,
+        SourceHealthStatuses.Unsupported,
         SourceHealthStatuses.Error,
         SourceHealthStatuses.NotApplicable,
         SourceHealthStatuses.Excepted
@@ -25,7 +28,8 @@ public static class RequestValidation
     {
         SourceApplicabilityStatuses.Applicable,
         SourceApplicabilityStatuses.NotApplicable,
-        SourceApplicabilityStatuses.Unknown
+        SourceApplicabilityStatuses.Unknown,
+        SourceApplicabilityStatuses.Unsupported
     };
 
     private static readonly HashSet<string> AllowedCheckpointKinds = new(StringComparer.Ordinal)
@@ -666,6 +670,10 @@ public static class RequestValidation
             ValidateMatchingSourceValue(errors, healthItem.Index, "unit", manifest.Unit, health.Unit);
             ValidateMatchingSourceValue(errors, healthItem.Index, "applicability", manifest.Applicability, health.Applicability);
             ValidateMatchingSourceValue(errors, healthItem.Index, "applicability_reason", manifest.ApplicabilityReason, health.ApplicabilityReason);
+            ValidateMatchingSourceValue(errors, healthItem.Index, "requirement", manifest.Requirement, health.Requirement);
+            ValidateMatchingStringList(errors, healthItem.Index, "applicable_roles", manifest.ApplicableRoles, health.ApplicableRoles);
+            ValidateEvidenceKeys(errors, healthItem.Index, "prerequisite_statuses", manifest.Prerequisites, health.PrerequisiteStatuses);
+            ValidateEvidenceKeys(errors, healthItem.Index, "event_family_statuses", manifest.EventFamilies, health.EventFamilyStatuses);
             ValidateCheckpointKind(errors, healthItem.Index, "collected_checkpoint", manifest.CheckpointKind, health.CollectedCheckpoint);
             ValidateCheckpointKind(errors, healthItem.Index, "acknowledged_checkpoint", manifest.CheckpointKind, health.AcknowledgedCheckpoint);
         }
@@ -710,6 +718,102 @@ public static class RequestValidation
         }
     }
 
+    private static void ValidateMatchingStringList(
+        Dictionary<string, List<string>> errors,
+        int healthIndex,
+        string field,
+        IReadOnlyList<string>? manifestValues,
+        IReadOnlyList<string>? healthValues)
+    {
+        if (manifestValues is null && healthValues is null)
+        {
+            return;
+        }
+        if (manifestValues is null || healthValues is null
+            || !manifestValues.SequenceEqual(healthValues, StringComparer.Ordinal))
+        {
+            Add(errors, $"source_health[{healthIndex}].{field}", $"Portable source {field} must match its manifest entry.");
+        }
+    }
+
+    private static void ValidateEvidenceKeys(
+        Dictionary<string, List<string>> errors,
+        int healthIndex,
+        string field,
+        IReadOnlyList<string> manifestValues,
+        IReadOnlyDictionary<string, string>? healthValues)
+    {
+        if (healthValues is null)
+        {
+            return;
+        }
+        if (!manifestValues.ToHashSet(StringComparer.Ordinal).SetEquals(healthValues.Keys))
+        {
+            Add(errors, $"source_health[{healthIndex}].{field}", $"Portable source {field} keys must exactly match its manifest metadata.");
+        }
+    }
+
+    private static void ValidateRequirementMetadata(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        string? requirement,
+        IReadOnlyList<string>? applicableRoles,
+        bool required,
+        bool portableSource)
+    {
+        if (requirement is null)
+        {
+            if (applicableRoles is not null)
+            {
+                Add(errors, $"{prefix}.requirement", "applicable_roles requires a source requirement value.");
+            }
+            return;
+        }
+        if (!portableSource || !SourceRequirementKinds.All.Contains(requirement))
+        {
+            Add(errors, $"{prefix}.requirement", "Source requirement is not supported.");
+            return;
+        }
+        if ((requirement == SourceRequirementKinds.Mandatory) != required)
+        {
+            Add(errors, $"{prefix}.required", "required must be true exactly for mandatory portable source requirements.");
+        }
+        if (applicableRoles is not null)
+        {
+            ValidateStringList(errors, $"{prefix}.applicable_roles", applicableRoles, requireNonEmptyItems: true);
+        }
+        if (requirement == SourceRequirementKinds.RoleSpecific && (applicableRoles is null || applicableRoles.Count == 0))
+        {
+            Add(errors, $"{prefix}.applicable_roles", "Role-specific sources require at least one applicable role.");
+        }
+        if (requirement != SourceRequirementKinds.RoleSpecific && applicableRoles is { Count: > 0 })
+        {
+            Add(errors, $"{prefix}.applicable_roles", "Only role-specific sources may declare applicable roles.");
+        }
+    }
+
+    private static void ValidateEvidenceStatuses(
+        Dictionary<string, List<string>> errors,
+        string key,
+        IReadOnlyDictionary<string, string>? values,
+        bool portableSource)
+    {
+        if (values is null)
+        {
+            return;
+        }
+        if (!portableSource)
+        {
+            Add(errors, key, "Evidence status maps are available only to portable sources.");
+            return;
+        }
+        ValidateMap(errors, key, values, ContractLimits.MaxMetadataListItems, 128, 64);
+        foreach (var pair in values.Where(pair => !SourceEvidenceStatuses.All.Contains(pair.Value)))
+        {
+            Add(errors, $"{key}.{pair.Key}", "Evidence status is not supported.");
+        }
+    }
+
     private static void ValidateCheckpointKind(
         Dictionary<string, List<string>> errors,
         int healthIndex,
@@ -748,6 +852,8 @@ public static class RequestValidation
         OptionalMaxLength(errors, $"{prefix}.source_pack", source.SourcePack, 128);
         OptionalMaxLength(errors, $"{prefix}.parser_id", source.ParserId, 128);
         OptionalMaxLength(errors, $"{prefix}.privacy", source.Privacy, 128);
+        ValidateRequirementMetadata(errors, prefix, source.Requirement, source.ApplicableRoles, source.Required,
+            TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind));
         ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
             source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, source.CheckpointKind);
         if (TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind) && string.IsNullOrWhiteSpace(source.CheckpointKind))
@@ -784,6 +890,10 @@ public static class RequestValidation
             ? AllowedSourceStatuses.Contains(source.Status)
             : AllowedSourceStatuses.Any(status => string.Equals(status, source.Status, StringComparison.OrdinalIgnoreCase));
         if (!supportedStatus) Add(errors, $"{prefix}.status", "Source status is not supported.");
+        if (portableSource && source.Status == SourceHealthStatuses.Excepted)
+        {
+            Add(errors, $"{prefix}.status", "Portable agents cannot self-report a server-managed coverage exception.");
+        }
         if (source.SourceKind is not null
             && source.Status == SourceHealthStatuses.NotApplicable
             && source.Applicability != SourceApplicabilityStatuses.NotApplicable)
@@ -796,6 +906,21 @@ public static class RequestValidation
         {
             Add(errors, $"{prefix}.status", "A non-applicable source must report not_applicable health.");
         }
+        if (source.SourceKind is not null
+            && source.Status == SourceHealthStatuses.Unsupported
+            && source.Applicability != SourceApplicabilityStatuses.Unsupported)
+        {
+            Add(errors, $"{prefix}.applicability", "unsupported health requires unsupported source applicability.");
+        }
+        if (source.SourceKind is not null
+            && source.Applicability == SourceApplicabilityStatuses.Unsupported
+            && source.Status != SourceHealthStatuses.Unsupported)
+        {
+            Add(errors, $"{prefix}.status", "An unsupported source must report unsupported health.");
+        }
+        ValidateRequirementMetadata(errors, prefix, source.Requirement, source.ApplicableRoles, source.Required, portableSource);
+        ValidateEvidenceStatuses(errors, $"{prefix}.prerequisite_statuses", source.PrerequisiteStatuses, portableSource);
+        ValidateEvidenceStatuses(errors, $"{prefix}.event_family_statuses", source.EventFamilyStatuses, portableSource);
         if (portableSource)
         {
             ValidateTimestamp(errors, $"{prefix}.last_event_time", source.LastEventTime);
@@ -905,10 +1030,10 @@ public static class RequestValidation
         OptionalMaxLength(errors, $"{prefix}.facility", facility, 128);
         OptionalMaxLength(errors, $"{prefix}.unit", unit, 255);
         OptionalMaxLength(errors, $"{prefix}.applicability_reason", applicabilityReason, 512);
-        if (applicability is SourceApplicabilityStatuses.NotApplicable or SourceApplicabilityStatuses.Unknown
+        if (applicability is SourceApplicabilityStatuses.NotApplicable or SourceApplicabilityStatuses.Unknown or SourceApplicabilityStatuses.Unsupported
             && string.IsNullOrWhiteSpace(applicabilityReason))
         {
-            Add(errors, $"{prefix}.applicability_reason", "Non-applicable or unknown sources require a reason.");
+            Add(errors, $"{prefix}.applicability_reason", "Non-applicable, unknown, or unsupported sources require a reason.");
         }
     }
 

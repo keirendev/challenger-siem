@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: foundation, bounded read-only inventory, and passive L1 system-journal collector implemented; audit/file/advanced collectors remain planned
+Status: foundation, bounded read-only inventory, passive L1, and opt-in structured journald L2 security pack implemented; audit/file/advanced collectors remain planned
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls and passive L1 system-journal collector below are implemented; audit/file and advanced coverage remain planned. This document does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls, passive L1 journal reader, and opt-in L2 structured journal normalization below are implemented; audit/file/eBPF and advanced collectors remain planned. This document does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 
@@ -67,15 +67,15 @@ Requirements for future implementation:
 - Package/update artifacts must be signed and verified before privileged installation. Downgrades and unexpected publisher/config changes must be explicit operator actions.
 - systemd hardening (or init-system equivalent) should deny privilege escalation, restrict namespaces/filesystems/devices/syscalls, isolate temporary paths, and bound CPU/memory/tasks/files, subject to validation against required collectors.
 
-## Implemented journal controls
+## Implemented L1/L2 journal controls
 
-The L1 collector uses systemd's existing machine-readable journal interface through fixed `/usr/bin/journalctl` or `/bin/journalctl` candidates. It launches directly without a shell, clears the environment except fixed locale values, uses fixed arguments/field projection, caps records per poll, captures only a bounded stable error classification, and terminates the process tree on cancellation. Configuration cannot select an executable, arguments, journal file/directory, namespace, command, helper, or fallback source.
+One collector uses systemd's existing machine-readable journal interface through fixed `/usr/bin/journalctl` or `/bin/journalctl` candidates. It launches directly without a shell, clears the environment except fixed locale values, uses fixed arguments/field projection, caps records per poll, captures only a bounded stable error classification, and terminates the process tree on cancellation. Configuration cannot select an executable, arguments, journal file/directory, namespace, command, helper, or fallback source. L2 changes classification only; it adds no reader, source path, privilege, producer configuration, audit collector, eBPF, or file-integrity watch.
 
 The service identity receives no new capability or group membership from installation. If the system journal is unreadable, health reports `permission_denied`; the agent does not retry as root, broaden ACLs, mutate a group, or read alternate files. Operators must assess the expanded data scope before independently granting `systemd-journal` or `adm` membership.
 
-Journal JSON is untrusted and bounded before parsing. The normalizer requires cursor, boot ID, and real-time timestamp; allowlists retained fields; replaces control text and binary/non-text values; caps fields, messages, and raw JSON; and redacts common credential-shaped assignments before queue insertion. Redaction/truncation paths are explicit. Malformed/oversized/missing-identity input creates a health gap without raw diagnostics. Deterministic event identity plus queue uniqueness bounds replay.
+Journal JSON is untrusted and bounded before parsing. The normalizer requires cursor, boot ID, and real-time timestamp; allowlists journal/process/PAM/user/remote/result/action/unit/package/module fields; replaces control text and binary/non-text values; caps command lines, fields, messages, and raw JSON; and redacts common credential-shaped assignments in every retained string before queue insertion. Structured fields always override message-derived evidence. Supplemental parsers inspect at most 4,096 message characters with fixed 50 ms regex timeouts or bounded token counts; ambiguous text stays L1 without invented enrichment. Redaction/truncation paths are explicit. Malformed/oversized/missing-identity input creates a health gap without raw diagnostics. Deterministic event identity plus queue uniqueness bounds replay.
 
-Each event commits to the private Agent.Core SQLite queue before the collected cursor is atomically persisted. Accepted/duplicate acknowledgement is persisted before queue deletion. Invalid/vacuumed cursor recovery starts a bounded read from available records while preserving a gap; pressure pauses collection rather than deleting unacknowledged rows. Source health exposes permission, gap, malformed/binary, duplicate/reorder, throttle, config, collector version, lag, and collected/acknowledged positions without payload content.
+Each event commits to the private Agent.Core SQLite queue before the collected cursor is atomically persisted. Accepted/duplicate acknowledgement is persisted before queue deletion. Invalid/vacuumed cursor recovery starts a bounded read from available records while preserving a gap; pressure pauses collection rather than deleting unacknowledged rows. Logical L2 families share that physical cursor and cannot bypass its ordering. Source health exposes requirement/applicability, prerequisite/event-family state, permission, unsupported/degraded/stale/gap, malformed/binary, duplicate/reorder, throttle, config, collector version, lag, and collected/acknowledged positions without payload content. Exceptions remain server-approved rather than agent-asserted.
 
 ## Implemented inventory controls
 
@@ -133,7 +133,7 @@ Changes to authentication, firewall, kernel, or mandatory access-control policy 
 
 ## Security verification gates
 
-Before any further Linux event or advanced collector release, review must include (the L1 release provides synthetic checks for the applicable parsing, cursor, replay, pressure, and privacy items but does not claim host-soak completion):
+Before any further Linux event or advanced collector release, review must include (L1/L2 provide synthetic checks for applicable parsing, structured precedence, cursor, replay, pressure, coverage-state, and privacy items but do not claim host-soak completion):
 
 - package signature/provenance and install/upgrade/uninstall permission tests;
 - service sandbox and effective privilege/capability inspection;
@@ -142,7 +142,7 @@ Before any further Linux event or advanced collector release, review must includ
 - redaction and prohibited-content tests using wholly synthetic canaries;
 - TLS identity, enrollment, token isolation/rotation, replay, and acknowledgement tests;
 - queue corruption, disk exhaustion, source rotation/truncation, reboot, and rollback tests;
-- 24-hour L1 and seven-day L1+L2 soaks and all resource SLO measurements specified in the coverage document;
+- the private 24-hour L1 and seven-day L1+L2 soaks and all resource SLO measurements specified in the coverage document;
 - confirmation that install and collection did not mutate audit, firewall, authentication, kernel, service, or security policy outside an explicitly approved plan.
 
 Immediate rollback is mandatory for suspected secret/prohibited-content collection, unauthorized mutation, privilege expansion, package verification failure, host instability, queue corruption/silent loss, uncontrolled resource use, or an SLO breach not corrected by bounded throttling. Disable the offending collector or remove the agent according to the reviewed plan, verify host policy and permissions, revoke credentials when compromise is possible, and retain only sanitized diagnostics in approved ignored/runtime locations.

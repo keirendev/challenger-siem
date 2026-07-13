@@ -31,6 +31,7 @@ public sealed class CrossPlatformContractTests
     [InlineData("windows-source-health.legacy.json", "source-health.schema.json", typeof(SourceHealthResponse))]
     [InlineData("linux-registration.synthetic.json", "agent-registration.schema.json", typeof(AgentRegistrationRequest))]
     [InlineData("linux-heartbeat.synthetic.json", "heartbeat.schema.json", typeof(HeartbeatRequest))]
+    [InlineData("linux-l2-heartbeat.synthetic.json", "heartbeat.schema.json", typeof(HeartbeatRequest))]
     [InlineData("linux-ingest.synthetic.json", "ingest-batch.schema.json", typeof(IngestBatchRequest))]
     public void GoldenFixturesValidateDeserializeAndRoundTrip(string fixtureName, string schemaName, Type contractType)
     {
@@ -44,6 +45,21 @@ public sealed class CrossPlatformContractTests
 
         var reparsed = JsonSerializer.Deserialize(serialized, contractType, JsonOptions);
         Assert.Equal(serialized, JsonSerializer.Serialize(reparsed, contractType, JsonOptions));
+    }
+
+    [Fact]
+    public void PortableHeartbeatCannotSelfReportServerManagedCoverageException()
+    {
+        var heartbeatNode = JsonNode.Parse(ReadFixture("linux-l2-heartbeat.synthetic.json"))!.AsObject();
+        heartbeatNode["source_health"]!.AsArray()[0]!["status"] = SourceHealthStatuses.Excepted;
+        AssertSchemaInvalid("heartbeat.schema.json", heartbeatNode);
+
+        var heartbeat = heartbeatNode.Deserialize<HeartbeatRequest>(JsonOptions)!;
+        Assert.Contains("source_health[0].status", RequestValidation.ValidateHeartbeat(heartbeat).Keys);
+
+        var responseNode = JsonNode.Parse(ReadFixture("windows-source-health.legacy.json"))!.AsObject();
+        responseNode["sources"] = new JsonArray(JsonNode.Parse(heartbeatNode["source_health"]!.AsArray()[0]!.ToJsonString()));
+        AssertSchemaValid("source-health.schema.json", responseNode);
     }
 
     [Fact]
@@ -636,6 +652,8 @@ public sealed class CrossPlatformContractTests
 
         var heartbeatSchema = JsonNode.Parse(File.ReadAllText(Path.Combine(SchemasRoot, "heartbeat.schema.json")))!;
         Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("source_kind"));
+        Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("requirement"));
+        Assert.True(heartbeatSchema["$defs"]!.AsObject().ContainsKey("evidence_status"));
         var linuxQueueRequired = heartbeatSchema["allOf"]![0]!["then"]!["properties"]!["queue_metrics"]!["oneOf"]![1]!["allOf"]![1]!["required"]!.AsArray();
         Assert.Equal(new[] { "max_size_mb", "warning_size_percent" }, linuxQueueRequired.Select(item => item!.GetValue<string>()));
         Assert.Equal("source_id", heartbeatSchema["properties"]!["source_manifest"]!["x-uniquePortableBy"]!.GetValue<string>());

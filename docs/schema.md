@@ -97,26 +97,26 @@ The existing flattened normalized fields remain unchanged. Additive optional `no
 
 Registration and heartbeat add optional `platform` (`windows` or `linux`) and platform-neutral `host_id`. Legacy Windows requests can omit both. Linux requests require both and do not need to fabricate `machine_guid`.
 
-A legacy source-manifest or source-health item can retain its original required `channel` shape. Event envelopes continue to call their discriminator `source`; `source_kind` exists only on manifest and health entries, matching the C# models. New explicitly typed items add:
+A legacy source-manifest or source-health item can retain its original required `channel` shape. Event envelopes continue to call their discriminator `source`; `source_kind` exists only on manifest and health entries, matching the C# models. Portable heartbeat input cannot report the server-owned `excepted` state; the heartbeat schema and runtime reject it, while server source-health responses may use `excepted` only after applying an active coverage exception. New explicitly typed items add:
 
 - `platform` and `source_kind`;
 - stable `source_id` plus `source_namespace` for identity;
 - optional `facility` and `unit`;
-- `applicability` (`applicable`, `not_applicable`, or `unknown`) and a required reason for the latter two states;
+- `applicability` (`applicable`, `not_applicable`, `unknown`, or `unsupported`) and a required reason for the latter three states;
 - manifest `checkpoint_kind` (`cursor`, `sequence`, or `cursor_and_sequence`);
 - source-health `collected_checkpoint` and `acknowledged_checkpoint`.
 
-Linux journal/audit kinds require `platform=linux`. Platform-neutral inventory-diff and agent-health kinds accept explicit `platform=windows` or `platform=linux`; source kind never implies platform for those records. All four additive portable kinds omit `channel` and Windows record-ID ranges. Health remains explicit through the existing `healthy`, `missing`, `disabled`, `stale`, `error`, `not_applicable`, and `excepted` statuses. Typed non-applicable sources pair `applicability=not_applicable` with `status=not_applicable`; an applicability reason explains why the source does not apply.
+Linux journal/audit kinds require `platform=linux`. Platform-neutral inventory-diff and agent-health kinds accept explicit `platform=windows` or `platform=linux`; source kind never implies platform for those records. All four additive portable kinds omit `channel` and Windows record-ID ranges. Health remains explicit through `healthy`, `missing`, `disabled`, `stale`, additive `degraded`, `permission_denied`, and `unsupported`, plus `error`, `not_applicable`, and `excepted`. Typed non-applicable and unsupported sources pair matching applicability/status values and require a reason. Optional additive `requirement` (`mandatory`, `optional`, `role_specific`), `applicable_roles`, and bounded prerequisite/event-family status maps carry Linux coverage semantics without becoming requirements for old valid v1 documents.
 
-A portable typed `source_id` is stable and unique per agent and source configuration. It occurs at most once in each heartbeat manifest and health array; every portable manifest entry matches exactly one portable health entry with the same `source_id`. The matching pair and top-level heartbeat must agree on platform, while the pair must also agree on source kind, namespace, facility, unit, and applicability. Its collected and acknowledged checkpoint shapes must match the manifest's `checkpoint_kind`: cursor only, sequence only, or both. Portable-source heartbeats require `host_id`; Linux source entries require top-level `platform=linux`, while Windows inventory/health entries require top-level `platform=windows`.
+A portable typed `source_id` is stable and unique per agent and source configuration. It occurs at most once in each heartbeat manifest and health array; every portable manifest entry matches exactly one health entry. The pair/top-level heartbeat agree on platform, kind, namespace, facility, unit, applicability/reason, requirement, applicable roles, and evidence-map keys. Checkpoint shapes match `checkpoint_kind`. Portable heartbeats require `host_id`; Linux entries require top-level `platform=linux`, while Windows neutral entries require `platform=windows`.
 
 Source manifests and source-health arrays retain their existing limit of 100 entries per heartbeat. Existing prerequisite/event-family/validation lists retain their original 32-item and 128-character limits, including legacy empty-string validity; typed portable list items must additionally be non-empty. Portable source-health `details` is limited to 32 bounded key/value entries, while untyped Windows `details` retains its original unrestricted map sizes. Linux heartbeat CPU, timestamp, and tamper-string bounds are conditional and do not reject a previously valid Windows heartbeat. When `queue_metrics` is present on a Linux heartbeat, `max_size_mb` and `warning_size_percent` are required and range-validated; legacy and portable-source Windows queue-metrics objects retain the existing optional-field shape, including empty and partial objects. JSON Schema annotations `x-uniquePortableBy` and `x-crossSourceIdentity` identify the non-standard cross-entry rules; deterministic contract validation and API runtime enforce them.
 
 ## Storage boundary
 
-Numbered migrations under `server/Siem.Api/Database/` apply in lexical order. `002_multiplatform_events.sql` upgrades the original Windows table in place: existing rows and `(agent_id, event_id)` deduplication are preserved, Windows identity columns become conditionally required, and portable platform/source/checkpoint/deduplication/data-handling fields are stored without fabricated Windows IDs. `003_portable_source_health.sql` makes legacy `channel` nullable for portable rows and additively stores platform/source identity, applicability, and collected/acknowledged checkpoints. `004_operator_rbac.sql` additively creates operator identity, session, and immutable security-audit tables. Reapplying all migrations is supported.
+Numbered migrations under `server/Siem.Api/Database/` apply in lexical order. `002_multiplatform_events.sql` upgrades the original Windows table in place: existing rows and `(agent_id, event_id)` deduplication are preserved, Windows identity columns become conditionally required, and portable platform/source/checkpoint/deduplication/data-handling fields are stored without fabricated Windows IDs. `003_portable_source_health.sql` makes legacy `channel` nullable for portable rows and stores platform/source identity, applicability, and checkpoints. `004_operator_rbac.sql` creates operator identity/session/security-audit tables. `005_linux_l2_source_coverage.sql` additively persists registered platform/host identity, Linux requirement/applicable-role/prerequisite/event-family metadata, and the expanded health-state constraint. Reapplying all migrations is supported.
 
-Portable v1 events ingest, deduplicate, persist, and search through the same `/api/v1` paths as Windows events. Search accepts additive `source`, `platform`, `source_id`, and `event_code` filters. Authenticated `GET /api/v1/storage/accounting` reports table, index, total relation bytes, row count, and measurement time for later quota enforcement.
+Portable v1 events ingest, deduplicate, persist, and search through the same `/api/v1` paths as Windows events. Search accepts additive `source`, `platform`, `source_id`, `event_code`, and normalized `package_name` filters. Authenticated `GET /api/v1/storage/accounting` reports table, index, total relation bytes, row count, and measurement time for later quota enforcement.
 
 ## Database tables
 
@@ -124,7 +124,7 @@ Implemented in `server/Siem.Api/Database/001_initial.sql`.
 
 ### `agents`
 
-Stores registered Windows endpoints, hashed per-agent API tokens, lifecycle status, and optional current `host_timezone` metadata. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry.
+Stores registered Windows/Linux endpoints, optional platform/host identity, hashed per-agent API tokens, lifecycle status, and optional current `host_timezone` metadata. `active` agents can authenticate and ingest; `disabled` agents are retired from default active views without deleting historical telemetry. Legacy Windows registrations may leave platform/host ID null.
 
 ### `events`
 
@@ -138,7 +138,7 @@ unique (agent_id, event_id)
 
 ### `agent_heartbeats` and `source_health`
 
-Store current heartbeat, source-manifest, and source-health data. Portable journal heartbeats carry source identity, applicability, collected/acknowledged cursor, latest event/lag, stable error/gap flags, config/version, and bounded details through the additive v1 shape while preserving existing Windows rows.
+Store current heartbeat, source-manifest, and source-health data. Portable journal heartbeats carry source identity, requirement/applicable roles, applicability, prerequisite/event-family statuses, collected/acknowledged cursor, latest event/lag, stable error/gap flags, config/version, and bounded details while preserving existing Windows rows. Linux catalog evaluation distinguishes mandatory, optional, role-specific, stale, degraded, denied, unsupported, excepted, and not-applicable rows.
 
 ### Operator identity, session, and audit tables
 
@@ -152,7 +152,7 @@ The current schema also includes asset inventory, coverage exceptions, detection
 
 ## Core current indexes
 
-Event indexes cover agent, hostname, event time, Windows identity, portable source/platform/source ID/event code, raw JSON, and selected normalized fields. Heartbeat, source-health, inventory, detection, alert, graph, `soc_agent`, and ingestion-error indexes remain migration-managed.
+Event indexes cover agent, hostname, event time, Windows identity, portable source/platform/source ID/event code, raw JSON, and selected normalized fields. Additive package-name search uses a migration-managed `normalized_json->>'package_name'` expression index rather than a new column. Agent-platform and source-requirement indexes plus heartbeat, source-health, inventory, detection, alert, graph, `soc_agent`, and ingestion-error indexes remain migration-managed.
 
 ## Applying and validating PostgreSQL
 

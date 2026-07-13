@@ -11,6 +11,8 @@ The original MVP milestone checklist has been implemented and archived at `docs/
 - Server-hosted web console with operator login, dashboard, agent inventory, host coverage/source-health detail, event search/detail, alert list/detail, audit-policy drift, about page, and `soc-agent` workspace.
 - Windows host full-coverage foundation docs, validation runbooks, role-pack designs, security-hardening roadmap, web/API/schema/operator docs, and synthetic test coverage.
 
+The Linux baseline additionally includes one durable L1 journal path, bounded inventory, and an opt-in L2 structured security catalog with platform-aware server coverage. L2 remains canary-only pending the private seven-day soak; Linux Audit Framework, eBPF, and file-integrity collection are not enabled.
+
 ## Current validation baseline
 
 Before release-oriented changes, run the relevant subset of:

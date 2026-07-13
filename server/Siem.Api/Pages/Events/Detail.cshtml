@@ -26,10 +26,15 @@ else if (Model.Envelope is not null)
             <dt>Agent ID</dt><dd>@Model.Envelope.AgentId</dd>
             <dt>Hostname</dt><dd>@Model.Envelope.Hostname</dd>
             <dt>Source</dt><dd>@Model.Envelope.Source</dd>
-            <dt>Channel</dt><dd>@Model.Envelope.Channel</dd>
-            <dt>Provider</dt><dd>@Model.Envelope.Provider</dd>
-            <dt>Windows Event ID</dt><dd>@Model.Envelope.WindowsEventId</dd>
-            <dt>Record ID</dt><dd>@Model.Envelope.RecordId</dd>
+            <dt>Platform</dt><dd>@(Model.Envelope.Platform ?? "—")</dd>
+            <dt>Source ID</dt><dd>@(Model.Envelope.SourceId ?? "—")</dd>
+            <dt>Event code</dt><dd>@(Model.Envelope.EventCode ?? "—")</dd>
+            <dt>Facility</dt><dd>@(Model.Envelope.Facility ?? "—")</dd>
+            <dt>Unit</dt><dd>@(Model.Envelope.Unit ?? "—")</dd>
+            <dt>Channel</dt><dd>@(Model.Envelope.Channel ?? "—")</dd>
+            <dt>Provider</dt><dd>@(Model.Envelope.Provider ?? "—")</dd>
+            <dt>Windows Event ID</dt><dd>@(Model.Envelope.WindowsEventId?.ToString() ?? "—")</dd>
+            <dt>Record ID</dt><dd>@(Model.Envelope.RecordId?.ToString() ?? "—")</dd>
             <dt>Event host time</dt><dd>@TimeDisplay.FormatHostTime(Model.Envelope.EventTime, Model.Envelope.HostTimezone)<div class="muted">@TimeDisplay.HostTimezoneLabel(Model.Envelope.HostTimezone)</div></dd>
             <dt>Event UTC</dt><dd>@TimeDisplay.FormatUtc(Model.Envelope.EventTime)</dd>
             <dt>Ingest time</dt><dd>@TimeDisplay.FormatUtc(Model.Envelope.IngestTime)</dd>
@@ -37,8 +42,16 @@ else if (Model.Envelope is not null)
             <dt>Severity</dt><dd><span class="badge">@Model.Envelope.Severity</span></dd>
             <dt>Category</dt><dd>@(Model.Envelope.Normalized?.Category ?? "—")</dd>
             <dt>Action</dt><dd>@(Model.Envelope.Normalized?.Action ?? "—")</dd>
-            <dt>User</dt><dd>@(Model.Envelope.Normalized?.UserName ?? Model.Envelope.Normalized?.TargetUserName ?? "—")</dd>
+            <dt>Outcome</dt><dd>@(Model.Envelope.Normalized?.Outcome ?? "—")</dd>
+            <dt>User</dt><dd>@(Model.Envelope.Normalized?.UserName ?? "—")</dd>
+            <dt>Target user</dt><dd>@(Model.Envelope.Normalized?.TargetUserName ?? "—")</dd>
             <dt>Process</dt><dd>@(Model.Envelope.Normalized?.ProcessImage ?? "—")</dd>
+            <dt>Service</dt><dd>@(Model.Envelope.Normalized?.ServiceName ?? "—")</dd>
+            <dt>Task</dt><dd>@(Model.Envelope.Normalized?.TaskName ?? "—")</dd>
+            <dt>Package</dt><dd>@(Model.Envelope.Normalized?.PackageName ?? "—")</dd>
+            <dt>Source network</dt><dd>@(Model.Envelope.Normalized?.SourceIp ?? "—"):@(Model.Envelope.Normalized?.SourcePort ?? "—")</dd>
+            <dt>Destination network</dt><dd>@(Model.Envelope.Normalized?.DestinationIp ?? "—"):@(Model.Envelope.Normalized?.DestinationPort ?? "—")</dd>
+            <dt>Protocol</dt><dd>@(Model.Envelope.Normalized?.Protocol ?? "—")</dd>
         </dl>
     </section>
 

@@ -16,13 +16,16 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
         var summaries = await LoadSummariesAsync(connection, agentId, cancellationToken);
         var sources = await LoadSourcesAsync(connection, agentId, cancellationToken);
 
-        var isLinuxAgent = sources.Any(source => source.Platform == TelemetryPlatforms.Linux);
-        if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0 && !isLinuxAgent)
+        if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0)
         {
-            var exceptions = await LoadActiveCoverageExceptionsAsync(connection, agentId, summaries.FirstOrDefault()?.Hostname, cancellationToken);
-            sources = TelemetryCoverageEvaluator.MergeExpectedSources(sources, targetLevel, exceptions, DateTimeOffset.UtcNow);
+            var summary = summaries[0];
+            var platform = summary.Platform
+                ?? sources.Select(source => source.Platform).FirstOrDefault(value => value is not null)
+                ?? TelemetryPlatforms.Windows;
+            var exceptions = await LoadActiveCoverageExceptionsAsync(connection, agentId, summary.Hostname, cancellationToken);
+            sources = TelemetryCoverageEvaluator.MergeExpectedSources(sources, targetLevel, exceptions, DateTimeOffset.UtcNow, platform);
             summaries = summaries
-                .Select(summary => TelemetryCoverageEvaluator.RecalculateSummary(summary, sources, targetLevel))
+                .Select(item => TelemetryCoverageEvaluator.RecalculateSummary(item with { Platform = platform }, sources, targetLevel))
                 .ToArray();
         }
 
@@ -50,11 +53,22 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             ), health as (
                 select
                     agent_id,
-                    count(*) filter (where required_source and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status = 'permission_denied')::int as mandatory_permission_denied_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status = 'unsupported')::int as mandatory_unsupported_sources,
                     count(*) filter (where status = 'stale')::int as stale_sources,
                     count(*) filter (where status = 'error')::int as error_sources,
-                    bool_or(status in ('missing', 'disabled', 'error')) as unhealthy,
-                    count(*) filter (where status = 'healthy')::int as healthy_sources
+                    count(*) filter (where status = 'degraded')::int as degraded_sources,
+                    count(*) filter (where status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (where status = 'unsupported')::int as unsupported_sources,
+                    count(*) filter (where status = 'excepted')::int as excepted_sources,
+                    count(*) filter (where status = 'not_applicable')::int as not_applicable_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)))::int as l1_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l1_covered_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)))::int as l2_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l2_covered_mandatory_sources,
+                    count(*) filter (where status = 'healthy')::int as healthy_sources,
+                    max(platform) as platform
                 from source_health
                 group by agent_id
             )
@@ -62,21 +76,43 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 a.agent_id,
                 a.hostname,
                 a.host_timezone,
+                coalesce(a.platform, h.platform) as platform,
                 coalesce(h.missing_mandatory_sources, 0) as missing_mandatory_sources,
                 coalesce(h.stale_sources, 0) as stale_sources,
                 coalesce(h.error_sources, 0) as error_sources,
+                coalesce(h.degraded_sources, 0) as degraded_sources,
+                coalesce(h.permission_denied_sources, 0) as permission_denied_sources,
+                coalesce(h.unsupported_sources, 0) as unsupported_sources,
+                coalesce(h.excepted_sources, 0) as excepted_sources,
+                coalesce(h.not_applicable_sources, 0) as not_applicable_sources,
                 coalesce(lh.queue_depth, 0) as queue_depth,
                 lh.heartbeat_time as last_heartbeat_time,
                 case
                     when a.last_seen is null then 'L0'
-                    when coalesce(h.missing_mandatory_sources, 0) = 0 and coalesce(h.error_sources, 0) = 0 and coalesce(h.healthy_sources, 0) >= 12 then 'L2'
-                    when coalesce(h.healthy_sources, 0) >= 1 then 'L1'
+                    when coalesce(a.platform, h.platform) = 'linux'
+                         and coalesce(h.l1_mandatory_sources, 0) > 0
+                         and h.l1_mandatory_sources = h.l1_covered_mandatory_sources
+                         and coalesce(h.l2_mandatory_sources, 0) > 0
+                         and h.l2_mandatory_sources = h.l2_covered_mandatory_sources then 'L2'
+                    when coalesce(a.platform, h.platform) = 'linux'
+                         and coalesce(h.l1_mandatory_sources, 0) > 0
+                         and h.l1_mandatory_sources = h.l1_covered_mandatory_sources then 'L1'
+                    when coalesce(a.platform, h.platform) <> 'linux'
+                         and coalesce(h.missing_mandatory_sources, 0) = 0
+                         and coalesce(h.error_sources, 0) = 0
+                         and coalesce(h.healthy_sources, 0) >= 12 then 'L2'
+                    when coalesce(a.platform, h.platform) <> 'linux'
+                         and coalesce(h.healthy_sources, 0) >= 1 then 'L1'
                     else 'L0'
                 end as current_level,
                 case
                     when coalesce(h.error_sources, 0) > 0 then 'error'
+                    when coalesce(h.mandatory_permission_denied_sources, 0) > 0 then 'permission_denied'
+                    when coalesce(h.mandatory_unsupported_sources, 0) > 0 then 'unsupported'
                     when coalesce(h.missing_mandatory_sources, 0) > 0 then 'missing'
                     when coalesce(h.stale_sources, 0) > 0 then 'stale'
+                    when coalesce(h.permission_denied_sources, 0) > 0 then 'permission_denied'
+                    when coalesce(h.degraded_sources, 0) > 0 or coalesce(h.unsupported_sources, 0) > 0 then 'degraded'
                     when coalesce(h.healthy_sources, 0) = 0 then 'missing'
                     else 'healthy'
                 end as overall_status
@@ -100,12 +136,18 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             {
                 AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
                 Hostname = reader.GetString(reader.GetOrdinal("hostname")),
+                Platform = ReadNullableString(reader, "platform"),
                 TargetLevel = WindowsCoverageLevel.L2,
                 CurrentLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_level"))),
                 OverallStatus = reader.GetString(reader.GetOrdinal("overall_status")),
                 MissingMandatorySources = reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
                 StaleSources = reader.GetInt32(reader.GetOrdinal("stale_sources")),
                 ErrorSources = reader.GetInt32(reader.GetOrdinal("error_sources")),
+                DegradedSources = reader.GetInt32(reader.GetOrdinal("degraded_sources")),
+                PermissionDeniedSources = reader.GetInt32(reader.GetOrdinal("permission_denied_sources")),
+                UnsupportedSources = reader.GetInt32(reader.GetOrdinal("unsupported_sources")),
+                ExceptedSources = reader.GetInt32(reader.GetOrdinal("excepted_sources")),
+                NotApplicableSources = reader.GetInt32(reader.GetOrdinal("not_applicable_sources")),
                 QueueDepth = reader.GetInt32(reader.GetOrdinal("queue_depth")),
                 LastHeartbeatTime = ReadNullableDateTimeOffset(reader, "last_heartbeat_time"),
                 HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")
@@ -151,6 +193,10 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 bookmark_gap_detected,
                 config_hash,
                 source_version,
+                requirement_kind,
+                applicable_roles,
+                prerequisite_statuses,
+                event_family_statuses,
                 collected_checkpoint,
                 acknowledged_checkpoint,
                 details,
@@ -200,6 +246,10 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 BookmarkGapDetected = reader.GetBoolean(reader.GetOrdinal("bookmark_gap_detected")),
                 ConfigHash = ReadNullableString(reader, "config_hash"),
                 SourceVersion = ReadNullableString(reader, "source_version"),
+                Requirement = ReadNullableString(reader, "requirement_kind"),
+                ApplicableRoles = Jsonb.Read<string[]>(reader, "applicable_roles"),
+                PrerequisiteStatuses = Jsonb.Read<Dictionary<string, string>>(reader, "prerequisite_statuses"),
+                EventFamilyStatuses = Jsonb.Read<Dictionary<string, string>>(reader, "event_family_statuses"),
                 CollectedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "collected_checkpoint"),
                 AcknowledgedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "acknowledged_checkpoint"),
                 Details = ReadStringDictionary(reader, "details")

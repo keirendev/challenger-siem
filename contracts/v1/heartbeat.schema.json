@@ -20,7 +20,7 @@
     "config_hash": { "type": ["string", "null"], "maxLength": 128 },
     "queue_metrics": { "oneOf": [{ "$ref": "#/$defs/queue_metrics" }, { "type": "null" }] },
     "source_manifest": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_manifest_entry" } },
-    "source_health": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_health_report" } },
+    "source_health": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/heartbeat_source_health_report" } },
     "tamper_checks": { "oneOf": [{ "$ref": "#/$defs/tamper_checks" }, { "type": "null" }] }
   },
   "allOf": [
@@ -88,8 +88,10 @@
   "x-crossSourceIdentity": true,
   "$defs": {
     "coverage_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
-    "source_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "error", "not_applicable", "excepted"] },
-    "applicability": { "type": "string", "enum": ["applicable", "not_applicable", "unknown"] },
+    "source_status": { "type": "string", "enum": ["healthy", "missing", "disabled", "stale", "degraded", "permission_denied", "unsupported", "error", "not_applicable", "excepted"] },
+    "applicability": { "type": "string", "enum": ["applicable", "not_applicable", "unknown", "unsupported"] },
+    "requirement": { "type": "string", "enum": ["mandatory", "optional", "role_specific"] },
+    "evidence_status": { "type": "string", "enum": ["satisfied", "observed", "not_observed", "missing", "disabled", "stale", "degraded", "permission_denied", "unsupported", "not_applicable", "excepted", "unknown"] },
     "checkpoint_kind": { "type": "string", "enum": ["cursor", "sequence", "cursor_and_sequence"] },
     "source_kind": { "type": "string", "enum": ["windows_event_log", "linux_journal", "linux_audit", "inventory_diff", "agent_health"] },
     "legacy_source_list": {
@@ -120,6 +122,8 @@
         "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
         "coverage_level": { "$ref": "#/$defs/coverage_level" },
         "required": { "type": "boolean" },
+        "requirement": { "$ref": "#/$defs/requirement" },
+        "applicable_roles": { "$ref": "#/$defs/portable_source_list" },
         "enabled_by_default": { "type": "boolean" },
         "source_pack": { "type": "string", "maxLength": 128 },
         "parser_id": { "type": "string", "maxLength": 128 },
@@ -159,8 +163,20 @@
           "then": { "properties": { "platform": { "const": "linux" } } }
         },
         {
-          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown"] } }, "required": ["applicability"] },
+          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown", "unsupported"] } }, "required": ["applicability"] },
           "then": { "required": ["applicability_reason"] }
+        }
+      ]
+    },
+    "heartbeat_source_health_report": {
+      "allOf": [
+        { "$ref": "#/$defs/source_health_report" },
+        {
+          "if": {
+            "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } },
+            "required": ["source_kind"]
+          },
+          "then": { "properties": { "status": { "not": { "const": "excepted" } } } }
         }
       ]
     },
@@ -182,6 +198,8 @@
         "coverage_level": { "$ref": "#/$defs/coverage_level" },
         "status": { "$ref": "#/$defs/source_status" },
         "required": { "type": "boolean" },
+        "requirement": { "$ref": "#/$defs/requirement" },
+        "applicable_roles": { "$ref": "#/$defs/portable_source_list" },
         "enabled": { "type": "boolean" },
         "last_event_time": { "type": ["string", "null"], "format": "date-time" },
         "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" },
@@ -200,6 +218,8 @@
         "bookmark_gap_detected": { "type": "boolean" },
         "config_hash": { "type": ["string", "null"], "maxLength": 128 },
         "source_version": { "type": ["string", "null"], "maxLength": 128 },
+        "prerequisite_statuses": { "$ref": "#/$defs/portable_evidence_statuses" },
+        "event_family_statuses": { "$ref": "#/$defs/portable_evidence_statuses" },
         "details": { "type": "object", "additionalProperties": { "type": "string" } }
       },
       "allOf": [
@@ -235,7 +255,7 @@
           "then": { "required": ["collected_checkpoint", "acknowledged_checkpoint"] }
         },
         {
-          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown"] } }, "required": ["applicability"] },
+          "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown", "unsupported"] } }, "required": ["applicability"] },
           "then": { "required": ["applicability_reason"] }
         },
         {
@@ -251,6 +271,20 @@
             "required": ["source_kind", "applicability"]
           },
           "then": { "properties": { "status": { "const": "not_applicable" } } }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "unsupported" } },
+            "required": ["source_kind", "status"]
+          },
+          "then": { "properties": { "applicability": { "const": "unsupported" } } }
+        },
+        {
+          "if": {
+            "properties": { "applicability": { "const": "unsupported" } },
+            "required": ["source_kind", "applicability"]
+          },
+          "then": { "properties": { "status": { "const": "unsupported" } } }
         }
       ]
     },
@@ -291,6 +325,12 @@
       "maxProperties": 32,
       "propertyNames": { "minLength": 1, "maxLength": 128 },
       "additionalProperties": { "type": "string", "maxLength": 1000 }
+    },
+    "portable_evidence_statuses": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "$ref": "#/$defs/evidence_status" }
     }
   }
 }

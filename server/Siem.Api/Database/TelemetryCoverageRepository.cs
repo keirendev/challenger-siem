@@ -10,7 +10,7 @@ public sealed class TelemetryCoverageRepository(
     SourceHealthRepository sourceHealth,
     AlertRepository alerts)
 {
-    private static readonly IReadOnlyList<string> ExpectedInventorySnapshotTypes = new[]
+    private static readonly IReadOnlyList<string> WindowsInventorySnapshotTypes = new[]
     {
         "host_identity",
         "network",
@@ -22,6 +22,26 @@ public sealed class TelemetryCoverageRepository(
         "defender_firewall_bitlocker_policy",
         "audit_policy",
         "windows_role_detection"
+    };
+
+    private static readonly IReadOnlyList<string> LinuxInventorySnapshotTypes = new[]
+    {
+        "linux_host_identity",
+        "linux_users",
+        "linux_groups",
+        "linux_services",
+        "linux_units",
+        "linux_timers",
+        "linux_packages",
+        "linux_available_updates",
+        "linux_interfaces",
+        "linux_listeners",
+        "linux_mounts",
+        "linux_firewall",
+        "linux_ssh",
+        "linux_mandatory_access_control",
+        "linux_secure_boot",
+        "linux_agent_integrity"
     };
 
     public async Task<TelemetryCoverageResponse> AssessAsync(
@@ -43,19 +63,28 @@ public sealed class TelemetryCoverageRepository(
             var sources = sourceResponse.Sources;
             var summary = sourceResponse.Summaries.FirstOrDefault()
                 ?? TelemetryCoverageEvaluator.CreateSummary(agent.AgentId, agent.Hostname, 0, null, sources, targetLevel);
-            summary = summary with { HostTimezone = summary.HostTimezone ?? agent.HostTimezone };
+            var platform = summary.Platform ?? agent.Platform;
+            summary = summary with
+            {
+                Platform = platform,
+                HostTimezone = summary.HostTimezone ?? agent.HostTimezone
+            };
             var eventCountsBySource = await LoadRecentEventCountsBySourceAsync(agent.AgentId, lookbackStart, lookbackEnd, cancellationToken);
             var recentEventCount = eventCountsBySource.Values.Sum();
             var sourceCoverage = sources
                 .Select(source => ToSourceCoverage(agent.AgentId, source, lookbackStart, eventCountsBySource, agent.HostTimezone))
                 .ToArray();
-            var inventory = await LoadInventoryStatusesAsync(agent.AgentId, lookbackStart, cancellationToken);
+            var inventory = await LoadInventoryStatusesAsync(agent.AgentId, platform, lookbackStart, cancellationToken);
             var inventoryByType = inventory.ToDictionary(item => item.SnapshotType, StringComparer.OrdinalIgnoreCase);
-            var detectionPrerequisites = TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(rules, sourceCoverage, inventoryByType, targetLevel);
+            var detectionPrerequisites = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+                ? Array.Empty<DetectionPrerequisiteTelemetryStatus>()
+                : TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(rules, sourceCoverage, inventoryByType, targetLevel);
             var alertStatusCounts = await LoadAlertStatusCountsAsync(agent.AgentId, lookbackStart, cancellationToken);
             var newAlertCount = alertStatusCounts.GetValueOrDefault(AlertStatuses.New);
             var activeGraphCount = await CountActiveGraphsAsync(agent.AgentId, cancellationToken);
-            var expectedSourceCount = WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel).Count;
+            var expectedSourceCount = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+                ? LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel).Count
+                : WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel).Count;
             var reportedSourceCount = CountReportedSources(sources);
             var sourceStatusCounts = sourceCoverage
                 .GroupBy(source => source.Status, StringComparer.OrdinalIgnoreCase)
@@ -66,6 +95,7 @@ public sealed class TelemetryCoverageRepository(
             {
                 AgentId = agent.AgentId,
                 Hostname = agent.Hostname,
+                Platform = platform,
                 AgentStatus = agent.Status,
                 LastSeen = agent.LastSeen,
                 HostTimezone = agent.HostTimezone,
@@ -79,6 +109,11 @@ public sealed class TelemetryCoverageRepository(
                 MissingMandatorySources = summary.MissingMandatorySources,
                 StaleSources = summary.StaleSources,
                 ErrorSources = summary.ErrorSources,
+                DegradedSources = summary.DegradedSources,
+                PermissionDeniedSources = summary.PermissionDeniedSources,
+                UnsupportedSources = summary.UnsupportedSources,
+                ExceptedSources = summary.ExceptedSources,
+                NotApplicableSources = summary.NotApplicableSources,
                 NewAlertCount = newAlertCount,
                 AlertStatusCounts = alertStatusCounts,
                 ActiveGraphCount = activeGraphCount,
@@ -105,7 +140,7 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select agent_id, hostname, status, last_seen, host_timezone
+            select agent_id, hostname, status, last_seen, host_timezone, coalesce(platform, 'windows') as platform
             from agents
             """;
         if (string.IsNullOrWhiteSpace(agentId))
@@ -128,7 +163,8 @@ public sealed class TelemetryCoverageRepository(
                 reader.GetString(reader.GetOrdinal("hostname")),
                 reader.GetString(reader.GetOrdinal("status")),
                 ReadDateTimeOffset(reader, "last_seen"),
-                Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone")));
+                Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
+                reader.GetString(reader.GetOrdinal("platform"))));
         }
 
         return results;
@@ -143,12 +179,12 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select channel, count(*)::int as event_count
+            select source_id, channel, count(*)::int as event_count
             from events
             where agent_id = @agent_id
               and event_time >= @lookback_start
               and event_time <= @lookback_end
-            group by channel;
+            group by source_id, channel;
             """;
         command.Parameters.AddWithValue("agent_id", agentId);
         command.Parameters.AddWithValue("lookback_start", lookbackStart.ToUniversalTime());
@@ -157,9 +193,18 @@ public sealed class TelemetryCoverageRepository(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var channel = reader.GetString(reader.GetOrdinal("channel"));
-            var sourceId = WindowsTelemetrySourceCatalog.FindByChannel(channel)?.SourceId ?? Slug(channel);
-            counts[sourceId] = counts.GetValueOrDefault(sourceId) + reader.GetInt32(reader.GetOrdinal("event_count"));
+            var sourceIdOrdinal = reader.GetOrdinal("source_id");
+            var channelOrdinal = reader.GetOrdinal("channel");
+            var sourceId = reader.IsDBNull(sourceIdOrdinal) ? null : reader.GetString(sourceIdOrdinal);
+            if (sourceId is null && !reader.IsDBNull(channelOrdinal))
+            {
+                var channel = reader.GetString(channelOrdinal);
+                sourceId = WindowsTelemetrySourceCatalog.FindByChannel(channel)?.SourceId ?? Slug(channel);
+            }
+            if (sourceId is not null)
+            {
+                counts[sourceId] = counts.GetValueOrDefault(sourceId) + reader.GetInt32(reader.GetOrdinal("event_count"));
+            }
         }
 
         return counts;
@@ -167,6 +212,7 @@ public sealed class TelemetryCoverageRepository(
 
     private async Task<IReadOnlyList<InventoryTelemetryStatus>> LoadInventoryStatusesAsync(
         string agentId,
+        string platform,
         DateTimeOffset lookbackStart,
         CancellationToken cancellationToken)
     {
@@ -199,7 +245,10 @@ public sealed class TelemetryCoverageRepository(
             }
         }
 
-        return ExpectedInventorySnapshotTypes
+        var expectedTypes = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+            ? LinuxInventorySnapshotTypes
+            : WindowsInventorySnapshotTypes;
+        return expectedTypes
             .Select(type => ToInventoryStatus(agentId, type, latest.GetValueOrDefault(type), lookbackStart))
             .ToArray();
     }
@@ -257,6 +306,15 @@ public sealed class TelemetryCoverageRepository(
             SourceId = source.SourceId,
             DisplayName = source.DisplayName,
             Channel = source.Channel ?? string.Empty,
+            Platform = source.Platform,
+            SourceKind = source.SourceKind,
+            SourceNamespace = source.SourceNamespace,
+            Applicability = source.Applicability,
+            ApplicabilityReason = source.ApplicabilityReason,
+            Requirement = source.Requirement,
+            ApplicableRoles = source.ApplicableRoles,
+            PrerequisiteStatuses = source.PrerequisiteStatuses,
+            EventFamilyStatuses = source.EventFamilyStatuses,
             CoverageLevel = source.CoverageLevel,
             Required = source.Required,
             Enabled = source.Enabled,
@@ -269,7 +327,9 @@ public sealed class TelemetryCoverageRepository(
             Details = source.Details,
             RecentEventCount = recentCount,
             Reason = SourceReason(source, recentCount),
-            EventSearchUrl = $"/events?agent_id={Uri.EscapeDataString(agentId)}&channel={Uri.EscapeDataString(source.Channel ?? string.Empty)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
+            EventSearchUrl = source.SourceId is { Length: > 0 } && source.SourceKind is not null
+                ? $"/events?agent_id={Uri.EscapeDataString(agentId)}&source_id={Uri.EscapeDataString(source.SourceId)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}"
+                : $"/events?agent_id={Uri.EscapeDataString(agentId)}&channel={Uri.EscapeDataString(source.Channel ?? string.Empty)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
             SourceHealthUrl = $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}"
         };
     }
@@ -305,6 +365,30 @@ public sealed class TelemetryCoverageRepository(
                 HostTimezone = snapshot.HostTimezone,
                 ItemCount = snapshot.ItemCount,
                 Reason = "Latest inventory snapshot is older than the validation lookback.",
+                Url = url
+            };
+        }
+
+        if (snapshot.Summary.TryGetValue("state", out var collectionState)
+            && !string.Equals(collectionState, "success", StringComparison.Ordinal))
+        {
+            var (status, reason) = collectionState switch
+            {
+                "not_applicable" => (SourceHealthStatuses.NotApplicable, "Inventory source is not applicable to this host."),
+                "permission_denied" => (SourceHealthStatuses.PermissionDenied, "Inventory source access was denied."),
+                "unavailable" => (SourceHealthStatuses.Missing, "Inventory source or prerequisite is unavailable."),
+                "timeout" => (SourceHealthStatuses.Degraded, "Inventory source exceeded its bounded collection deadline."),
+                "malformed" => (SourceHealthStatuses.Error, "Inventory source returned malformed bounded data."),
+                _ => (SourceHealthStatuses.Degraded, "Inventory source reported an unknown collection state.")
+            };
+            return new InventoryTelemetryStatus
+            {
+                SnapshotType = snapshotType,
+                Status = status,
+                LatestCollectedAt = snapshot.CollectedAt,
+                HostTimezone = snapshot.HostTimezone,
+                ItemCount = snapshot.ItemCount,
+                Reason = reason,
                 Url = url
             };
         }
@@ -367,6 +451,21 @@ public sealed class TelemetryCoverageRepository(
             gaps.Add($"{summary.ErrorSources} source(s) report collection errors or gap/clear indicators.");
         }
 
+        if (summary.PermissionDeniedSources > 0)
+        {
+            gaps.Add($"{summary.PermissionDeniedSources} source(s) report permission-denied access.");
+        }
+
+        if (summary.DegradedSources > 0)
+        {
+            gaps.Add($"{summary.DegradedSources} source(s) report degraded or uncertain coverage.");
+        }
+
+        if (summary.UnsupportedSources > 0)
+        {
+            gaps.Add($"{summary.UnsupportedSources} source(s) are explicitly unsupported by the current collector set.");
+        }
+
         if (recentEventCount == 0)
         {
             gaps.Add("No recent normalized events were observed for this agent in the validation lookback.");
@@ -427,6 +526,26 @@ public sealed class TelemetryCoverageRepository(
             return "Source reports a collection error, event-log gap, clear, or bookmark issue.";
         }
 
+        if (string.Equals(source.Status, SourceHealthStatuses.PermissionDenied, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Source access is permission denied; no privilege expansion was attempted.";
+        }
+
+        if (string.Equals(source.Status, SourceHealthStatuses.Unsupported, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Source is explicitly unsupported by the current collector set.";
+        }
+
+        if (string.Equals(source.Status, SourceHealthStatuses.Degraded, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Source coverage is degraded or applicability remains uncertain.";
+        }
+
+        if (string.Equals(source.Status, SourceHealthStatuses.NotApplicable, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Source is explicitly not applicable to the declared host role or platform.";
+        }
+
         if (string.Equals(source.Status, SourceHealthStatuses.Disabled, StringComparison.OrdinalIgnoreCase))
         {
             return "Source is disabled according to agent source-health.";
@@ -469,7 +588,7 @@ public sealed class TelemetryCoverageRepository(
         return new string(chars).Trim('-');
     }
 
-    private sealed record AgentRecord(string AgentId, string Hostname, string Status, DateTimeOffset LastSeen, HostTimezoneMetadata? HostTimezone);
+    private sealed record AgentRecord(string AgentId, string Hostname, string Status, DateTimeOffset LastSeen, HostTimezoneMetadata? HostTimezone, string Platform);
 
     private sealed record InventorySnapshotRecord(
         string SnapshotType,

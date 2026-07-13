@@ -1,11 +1,11 @@
 # Challenger SIEM
 
-Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoints and a Linux service foundation. It pairs C# endpoint agents with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
+Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoints and a bounded Linux endpoint service. It pairs C# endpoint agents with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
 
 ## Current capabilities
 
 - Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
-- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, and passive cursor-based L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records.
+- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, passive cursor-based L1 journald collection, and an opt-in L2 security source pack for login/session, SSH, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper activity.
 - Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
