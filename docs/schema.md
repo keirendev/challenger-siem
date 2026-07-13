@@ -97,7 +97,7 @@ The existing flattened normalized fields remain unchanged. Additive optional `no
 
 Registration and heartbeat add optional `platform` (`windows` or `linux`) and platform-neutral `host_id`. Legacy Windows requests can omit both. Linux requests require both and do not need to fabricate `machine_guid`.
 
-A legacy source-manifest or source-health item can retain its original required `channel` shape. Event envelopes continue to call their discriminator `source`; `source_kind` exists only on manifest and health entries, matching the C# models. New explicitly typed items add:
+A legacy source-manifest or source-health item can retain its original required `channel` shape. Event envelopes continue to call their discriminator `source`; `source_kind` exists only on manifest and health entries, matching the C# models. Portable heartbeat input cannot report the server-owned `excepted` state; the heartbeat schema and runtime reject it, while server source-health responses may use `excepted` only after applying an active coverage exception. New explicitly typed items add:
 
 - `platform` and `source_kind`;
 - stable `source_id` plus `source_namespace` for identity;

@@ -20,7 +20,7 @@
     "config_hash": { "type": ["string", "null"], "maxLength": 128 },
     "queue_metrics": { "oneOf": [{ "$ref": "#/$defs/queue_metrics" }, { "type": "null" }] },
     "source_manifest": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_manifest_entry" } },
-    "source_health": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/source_health_report" } },
+    "source_health": { "type": "array", "maxItems": 100, "x-uniquePortableBy": "source_id", "items": { "$ref": "#/$defs/heartbeat_source_health_report" } },
     "tamper_checks": { "oneOf": [{ "$ref": "#/$defs/tamper_checks" }, { "type": "null" }] }
   },
   "allOf": [
@@ -165,6 +165,18 @@
         {
           "if": { "properties": { "applicability": { "enum": ["not_applicable", "unknown", "unsupported"] } }, "required": ["applicability"] },
           "then": { "required": ["applicability_reason"] }
+        }
+      ]
+    },
+    "heartbeat_source_health_report": {
+      "allOf": [
+        { "$ref": "#/$defs/source_health_report" },
+        {
+          "if": {
+            "properties": { "source_kind": { "enum": ["linux_journal", "linux_audit", "inventory_diff", "agent_health"] } },
+            "required": ["source_kind"]
+          },
+          "then": { "properties": { "status": { "not": { "const": "excepted" } } } }
         }
       ]
     },

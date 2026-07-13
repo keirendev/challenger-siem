@@ -48,6 +48,21 @@ public sealed class CrossPlatformContractTests
     }
 
     [Fact]
+    public void PortableHeartbeatCannotSelfReportServerManagedCoverageException()
+    {
+        var heartbeatNode = JsonNode.Parse(ReadFixture("linux-l2-heartbeat.synthetic.json"))!.AsObject();
+        heartbeatNode["source_health"]!.AsArray()[0]!["status"] = SourceHealthStatuses.Excepted;
+        AssertSchemaInvalid("heartbeat.schema.json", heartbeatNode);
+
+        var heartbeat = heartbeatNode.Deserialize<HeartbeatRequest>(JsonOptions)!;
+        Assert.Contains("source_health[0].status", RequestValidation.ValidateHeartbeat(heartbeat).Keys);
+
+        var responseNode = JsonNode.Parse(ReadFixture("windows-source-health.legacy.json"))!.AsObject();
+        responseNode["sources"] = new JsonArray(JsonNode.Parse(heartbeatNode["source_health"]!.AsArray()[0]!.ToJsonString()));
+        AssertSchemaValid("source-health.schema.json", responseNode);
+    }
+
+    [Fact]
     public async Task LinuxRegistrationIsNotRejectedAsCrossPlatformStoragePending()
     {
         const string enrollmentToken = "synthetic-contract-enrollment-token";

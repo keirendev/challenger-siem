@@ -60,7 +60,7 @@ Polling defaults to 500 records every five seconds. Bounds are 1-300 seconds, 1-
 
 ## Health and coverage semantics
 
-Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degraded`, `permission_denied`, `unsupported`, `error`, `not_applicable`, and `excepted`. The server applies exceptions; the agent does not self-approve them.
+Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degraded`, `permission_denied`, `unsupported`, `error`, `not_applicable`, and `excepted`. The server applies exceptions; portable heartbeat validation rejects agent-reported `excepted`, while source-health responses may expose it only from an active server-side coverage exception.
 
 - `permission_denied` means the fixed source could not be read; the agent does not retry as root or change groups/ACLs.
 - `degraded` represents pressure, unresolved optional/role applicability, or a mandatory L2 family whose producer evidence has not yet been observed; it is distinct from stale data.

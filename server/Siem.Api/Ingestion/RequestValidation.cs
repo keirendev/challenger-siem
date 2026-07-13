@@ -890,6 +890,10 @@ public static class RequestValidation
             ? AllowedSourceStatuses.Contains(source.Status)
             : AllowedSourceStatuses.Any(status => string.Equals(status, source.Status, StringComparison.OrdinalIgnoreCase));
         if (!supportedStatus) Add(errors, $"{prefix}.status", "Source status is not supported.");
+        if (portableSource && source.Status == SourceHealthStatuses.Excepted)
+        {
+            Add(errors, $"{prefix}.status", "Portable agents cannot self-report a server-managed coverage exception.");
+        }
         if (source.SourceKind is not null
             && source.Status == SourceHealthStatuses.NotApplicable
             && source.Applicability != SourceApplicabilityStatuses.NotApplicable)

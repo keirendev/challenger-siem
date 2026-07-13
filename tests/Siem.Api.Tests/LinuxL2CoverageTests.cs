@@ -164,6 +164,20 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceHealthStatuses.Stale, staleSummary.OverallStatus);
         Assert.Equal(1, staleSummary.StaleSources);
 
+        var selfExceptedReports = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageManagement
+            ? report with { Status = SourceHealthStatuses.Excepted }
+            : report).ToArray();
+        var selfExcepted = TelemetryCoverageEvaluator.MergeExpectedSources(
+            selfExceptedReports,
+            WindowsCoverageLevel.L2,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            now,
+            TelemetryPlatforms.Linux);
+        Assert.Equal(SourceHealthStatuses.Degraded,
+            Assert.Single(selfExcepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).Status);
+        Assert.Equal(WindowsCoverageLevel.L1,
+            TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, selfExcepted, WindowsCoverageLevel.L2).CurrentLevel);
+
         var missingPackage = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageManagement
             ? report with { Status = SourceHealthStatuses.Missing }
             : report).ToArray();

@@ -8,6 +8,14 @@ public static class SourceHealthRules
 
     public static string EffectiveStatus(SourceHealthReport report, DateTimeOffset now)
     {
+        if (TelemetrySourceKinds.UsesPortableIdentity(report.SourceKind)
+            && string.Equals(report.Status, SourceHealthStatuses.Excepted, StringComparison.Ordinal))
+        {
+            // Coverage exceptions are server-owned. This defensive downgrade prevents a row
+            // accepted before the current validation rule from satisfying coverage by itself.
+            return SourceHealthStatuses.Degraded;
+        }
+
         if (!string.Equals(report.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase))
         {
             return report.Status;
