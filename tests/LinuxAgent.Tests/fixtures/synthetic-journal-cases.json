@@ -1,0 +1,51 @@
+[
+  {
+    "__CURSOR": "s=synthetic;i=1;b=fake",
+    "__REALTIME_TIMESTAMP": "1783944000000000",
+    "_BOOT_ID": "00000000000000000000000000000001",
+    "_TRANSPORT": "kernel",
+    "PRIORITY": "4",
+    "MESSAGE": "SYNTHETIC-LINUX-01 kernel test record"
+  },
+  {
+    "__CURSOR": "s=synthetic;i=2;b=fake",
+    "__REALTIME_TIMESTAMP": "1783944001000000",
+    "_BOOT_ID": "00000000000000000000000000000001",
+    "_TRANSPORT": "syslog",
+    "_SYSTEMD_UNIT": "synthetic.service",
+    "SYSLOG_IDENTIFIER": "synthetic-daemon",
+    "SYSLOG_FACILITY": "3",
+    "PRIORITY": "6",
+    "MESSAGE": "Synthetic service started token=FAKE-CANARY"
+  },
+  {
+    "__CURSOR": "s=synthetic;i=3;b=fake",
+    "__REALTIME_TIMESTAMP": "1783944002000000",
+    "_BOOT_ID": "00000000000000000000000000000001",
+    "_TRANSPORT": "syslog",
+    "_SYSTEMD_UNIT": "sshd.service",
+    "SYSLOG_IDENTIFIER": "sshd",
+    "SYSLOG_FACILITY": "4",
+    "PRIORITY": "5",
+    "MESSAGE": "Synthetic authentication for synthetic-user"
+  },
+  {
+    "__CURSOR": "s=synthetic;i=4;b=fake",
+    "__REALTIME_TIMESTAMP": "1783944003000000",
+    "_BOOT_ID": "00000000000000000000000000000001",
+    "_TRANSPORT": "journal",
+    "_SYSTEMD_UNIT": "systemd",
+    "MESSAGE_ID": "synthetic-boot-message",
+    "PRIORITY": "6",
+    "MESSAGE": "SYNTHETIC-LINUX-01 boot reached synthetic target"
+  },
+  {
+    "__CURSOR": "s=synthetic;i=5;b=fake",
+    "__REALTIME_TIMESTAMP": "1783944004000000",
+    "_BOOT_ID": "00000000000000000000000000000001",
+    "_TRANSPORT": "syslog",
+    "SYSLOG_IDENTIFIER": "synthetic-core",
+    "PRIORITY": "6",
+    "MESSAGE": "SYNTHETIC-LINUX-01 core system record"
+  }
+]

@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: foundation and bounded read-only inventory implemented; passive event collectors remain planned
+Status: foundation, bounded read-only inventory, and passive L1 system-journal collector implemented; audit/file/advanced collectors remain planned
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls below are implemented; passive event collection and advanced coverage remain planned. This document does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls and passive L1 system-journal collector below are implemented; audit/file and advanced coverage remain planned. This document does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 
@@ -67,6 +67,16 @@ Requirements for future implementation:
 - Package/update artifacts must be signed and verified before privileged installation. Downgrades and unexpected publisher/config changes must be explicit operator actions.
 - systemd hardening (or init-system equivalent) should deny privilege escalation, restrict namespaces/filesystems/devices/syscalls, isolate temporary paths, and bound CPU/memory/tasks/files, subject to validation against required collectors.
 
+## Implemented journal controls
+
+The L1 collector uses systemd's existing machine-readable journal interface through fixed `/usr/bin/journalctl` or `/bin/journalctl` candidates. It launches directly without a shell, clears the environment except fixed locale values, uses fixed arguments/field projection, caps records per poll, captures only a bounded stable error classification, and terminates the process tree on cancellation. Configuration cannot select an executable, arguments, journal file/directory, namespace, command, helper, or fallback source.
+
+The service identity receives no new capability or group membership from installation. If the system journal is unreadable, health reports `permission_denied`; the agent does not retry as root, broaden ACLs, mutate a group, or read alternate files. Operators must assess the expanded data scope before independently granting `systemd-journal` or `adm` membership.
+
+Journal JSON is untrusted and bounded before parsing. The normalizer requires cursor, boot ID, and real-time timestamp; allowlists retained fields; replaces control text and binary/non-text values; caps fields, messages, and raw JSON; and redacts common credential-shaped assignments before queue insertion. Redaction/truncation paths are explicit. Malformed/oversized/missing-identity input creates a health gap without raw diagnostics. Deterministic event identity plus queue uniqueness bounds replay.
+
+Each event commits to the private Agent.Core SQLite queue before the collected cursor is atomically persisted. Accepted/duplicate acknowledgement is persisted before queue deletion. Invalid/vacuumed cursor recovery starts a bounded read from available records while preserving a gap; pressure pauses collection rather than deleting unacknowledged rows. Source health exposes permission, gap, malformed/binary, duplicate/reorder, throttle, config, collector version, lag, and collected/acknowledged positions without payload content.
+
 ## Implemented inventory controls
 
 The inventory collector is a read-only, fixed catalog rather than a general host scanner. Every operation declares exact executable path candidates and arguments or one exact file path, accepted exit codes, a 5-20 second timeout, a 16 or 64 KiB command/content cap (or a 64 MiB streaming hash cap for the fixed executable), and cancellation. Processes run without a shell, inherit no environment, receive only fixed locale/PATH values, and are terminated as a process tree on timeout, cancellation, or output truncation. File access uses no-follow opens, accepts only regular single-link files, rejects symbolic links and special files, and reads only within the catalogued byte/time cap.
@@ -123,7 +133,7 @@ Changes to authentication, firewall, kernel, or mandatory access-control policy 
 
 ## Security verification gates
 
-Before any further Linux event or advanced collector release, review must include:
+Before any further Linux event or advanced collector release, review must include (the L1 release provides synthetic checks for the applicable parsing, cursor, replay, pressure, and privacy items but does not claim host-soak completion):
 
 - package signature/provenance and install/upgrade/uninstall permission tests;
 - service sandbox and effective privilege/capability inspection;

@@ -6,7 +6,9 @@ using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
+using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Services;
+using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -337,9 +339,12 @@ public sealed class LinuxInventoryTests
         var queue = new SyntheticQueue(new QueuedEvent(1, new EventEnvelope { EventId = eventId, AgentId = "synthetic-agent" }, 0, null));
         var options = new LinuxAgentOptions { AgentId = "synthetic-agent", ApiToken = "synthetic-private-token", ServerBaseUrl = new Uri("https://siem.example.invalid") };
         using var http = new HttpClient(new SyntheticIngestHandler(eventId)) { BaseAddress = options.ServerBaseUrl };
-        var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options));
+        var statePath = Path.Combine(Path.GetTempPath(), $"challenger-linux-state-{Guid.NewGuid():N}.json");
+        var journalRuntime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(statePath), TimeProvider.System);
+        var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options), journalRuntime);
 
         await drainer.DrainAsync(default).WaitAsync(TimeSpan.FromSeconds(2));
+        if (File.Exists(statePath)) File.Delete(statePath);
         Assert.Equal(new long[] { 1 }, queue.DeletedQueueIds);
         Assert.False(inventory.IsCompleted);
         releaseInventory.SetResult();

@@ -16,7 +16,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
         var summaries = await LoadSummariesAsync(connection, agentId, cancellationToken);
         var sources = await LoadSourcesAsync(connection, agentId, cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0)
+        var isLinuxAgent = sources.Any(source => source.Platform == TelemetryPlatforms.Linux);
+        if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0 && !isLinuxAgent)
         {
             var exceptions = await LoadActiveCoverageExceptionsAsync(connection, agentId, summaries.FirstOrDefault()?.Hostname, cancellationToken);
             sources = TelemetryCoverageEvaluator.MergeExpectedSources(sources, targetLevel, exceptions, DateTimeOffset.UtcNow);
@@ -124,7 +125,14 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             select
                 source_id,
                 display_name,
+                platform,
+                source_kind,
                 channel,
+                source_namespace,
+                facility,
+                unit,
+                applicability,
+                applicability_reason,
                 coverage_level,
                 status,
                 required_source,
@@ -143,6 +151,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 bookmark_gap_detected,
                 config_hash,
                 source_version,
+                collected_checkpoint,
+                acknowledged_checkpoint,
                 details,
                 host_timezone
             from source_health
@@ -163,7 +173,14 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             {
                 SourceId = reader.GetString(reader.GetOrdinal("source_id")),
                 DisplayName = reader.GetString(reader.GetOrdinal("display_name")),
-                Channel = reader.GetString(reader.GetOrdinal("channel")),
+                Platform = ReadNullableString(reader, "platform"),
+                SourceKind = ReadNullableString(reader, "source_kind"),
+                Channel = ReadNullableString(reader, "channel"),
+                SourceNamespace = ReadNullableString(reader, "source_namespace"),
+                Facility = ReadNullableString(reader, "facility"),
+                Unit = ReadNullableString(reader, "unit"),
+                Applicability = ReadNullableString(reader, "applicability"),
+                ApplicabilityReason = ReadNullableString(reader, "applicability_reason"),
                 CoverageLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
                 Status = reader.GetString(reader.GetOrdinal("status")),
                 Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
@@ -183,6 +200,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 BookmarkGapDetected = reader.GetBoolean(reader.GetOrdinal("bookmark_gap_detected")),
                 ConfigHash = ReadNullableString(reader, "config_hash"),
                 SourceVersion = ReadNullableString(reader, "source_version"),
+                CollectedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "collected_checkpoint"),
+                AcknowledgedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "acknowledged_checkpoint"),
                 Details = ReadStringDictionary(reader, "details")
             });
         }

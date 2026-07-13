@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added passive cursor-based Linux L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records with deterministic v1 IDs, bounded redaction/normalization, durable queue-before-checkpoint and acknowledgement-before-delete semantics, explicit source/gap/permission/pressure health, and synthetic restart/replay/failure/benchmark coverage.
+
 - Added bounded read-only Linux host and security-posture inventory snapshots for host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture, with explicit collection states, fixed source policies, independent scheduling, and deterministic payload/item limits while preserving the generic v1 inventory contracts.
 
 - Added a first-class .NET 8 Linux agent foundation using Agent.Core for enrollment, durable queueing, acknowledgement-aware recovery, heartbeat and bounded inventory transport, with a least-privilege systemd unit and preflight-first plan/install/upgrade/validate/uninstall workflows.

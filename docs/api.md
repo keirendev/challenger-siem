@@ -4,7 +4,7 @@ Base path: `/api/v1`.
 
 All production traffic must use HTTPS. The operator web review console is hosted by the same ASP.NET Core process outside the `/api/v1` API contract; see `docs/web.md`.
 
-Version 1 now has additive cross-platform contract fields. Every previously valid Windows registration, heartbeat, ingest, search, and source-health JSON shape keeps its original meaning and does not need to send the additions. The current PostgreSQL schema remains Windows-Event-Log-only pending the planned multi-platform storage migration: syntactically valid Linux registration and any heartbeat/event using an additive portable source kind are contract-valid but the current server returns HTTP 422 with `title=cross_platform_storage_pending` before persistence. This contract slice does not claim Linux collection, persistence, or search support and does not introduce `/api/v2`.
+Version 1 has additive cross-platform contract fields. Every previously valid Windows registration, heartbeat, ingest, search, and source-health JSON shape keeps its original meaning and does not need to send the additions. The multi-platform PostgreSQL migration persists portable Linux events through the existing ingest/search path without introducing `/api/v2`.
 
 Validate all v1 schemas plus synthetic legacy Windows and Linux golden fixtures with `./scripts/validate-contracts.sh`. The canonical conditions, bounds, checkpoint semantics, and deduplication recipe are documented in [schema.md](schema.md#additive-v1-cross-platform-contract).
 
@@ -121,6 +121,8 @@ For every additive portable source, the `raw` object has a hard 65,536-byte comp
 
 Collectors queue an event durably before advancing `collected_checkpoint`. They advance `acknowledged_checkpoint` and delete queue data only after the response lists the event as accepted or duplicate. A checkpoint gap therefore remains visible backlog rather than implied complete coverage.
 
+The Linux L1 collector emits `source=linux_journal`, `source_id=linux-journal-l1`, cursor checkpoints, and deterministic IDs over `agent_id`, `source_id`, and `checkpoint.cursor`. It uses `facility`, `unit`, `event_code`, and normalized category to represent kernel, boot, systemd service, authentication, and core-system records. Message/raw content is bounded and `data_handling` explicitly marks secret-shaped/binary redaction and truncation.
+
 Validation failures after successful agent authentication are persisted to `ingestion_errors` for the supported Windows path with bounded payload context that omits authorization headers, bearer tokens, rendered event messages, and raw event payloads. Contract-valid Linux events and Windows platform-neutral events are stopped by the storage boundary and are not written to either the Windows Event Log table or a fake compatibility path.
 
 ## Agent heartbeat
@@ -201,6 +203,8 @@ New typed source items add `platform`, `source_kind`, stable `source_id`, `sourc
 
 Portable typed `source_id` values are scoped to one agent/source configuration and must be unique within each manifest and health array. Every portable manifest item has exactly one corresponding health item; the pair agrees on platform, kind, namespace, facility, unit, and applicability, and each health checkpoint shape agrees with `checkpoint_kind`. The source platform must match the top-level heartbeat platform and `host_id` is required. Thus Windows can report neutral inventory/health sources without relabelling them as Linux, while a heartbeat containing a Linux source still requires top-level `platform=linux`. Arrays, maps, cross-entry relationships, and existing prerequisite/event-family/validation metadata are checked by deterministic schema tooling and runtime validation.
 
+The Linux agent reports one `linux-journal-l1` manifest/health pair. Its bounded `details` keys include `collector_state`, `gap_state`, `permission_state`, `throttle_state`, duplicate/reordered/malformed/binary-invalid-text counters, `configuration_state`, and `collector_version`. `last_event_time`/`lag_seconds`, collected/acknowledged cursor, stable `error_code`, gap flags, config hash, and source version use existing v1 fields. Empty, denied, invalid/vacuumed cursor, rotation, malformed/binary, reorder, and pressure conditions are therefore explicit without adding fields.
+
 Heartbeat also adds optional `platform` and `host_id` with the registration conditions. Linux heartbeats enforce the new CPU, queue, timestamp, and tamper-value bounds; every typed portable source entry enforces source-metadata and details-map bounds. If a Linux heartbeat supplies `queue_metrics`, both `max_size_mb` and `warning_size_percent` are required and range-validated. Untyped legacy Windows heartbeats retain the pre-existing v1 limits, including empty or partial `queue_metrics`, unrestricted string sizes in `details` and tamper fields, and no upper bound on reported CPU percentage. `host_timezone` remains optional and bounded; for heartbeat it describes the endpoint's current timezone, while source-health/event rows use the offset associated with the reported event time where available.
 
 ## Agent inventory upload
@@ -224,7 +228,7 @@ GET /api/v1/events?windows_event_id=4625
 Authorization: Bearer <review-token>
 ```
 
-The current database/search implementation returns persisted Windows Event Log events only. Cross-platform source, event-code, facility, unit, and checkpoint query fields are deferred to the multi-platform storage migration; the additive envelope must not be interpreted as already searchable.
+The database/search implementation returns persisted Windows and portable Linux events. Additive source, platform, source-ID, and event-code filters are available; facility, unit, and checkpoint remain event response fields rather than dedicated query filters.
 
 Supported current filters:
 
