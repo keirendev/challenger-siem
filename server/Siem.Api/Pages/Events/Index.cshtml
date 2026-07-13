@@ -5,6 +5,8 @@
     var activeFilters = Model.ActiveFilters();
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Search", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Triage workspace</p>
@@ -15,8 +17,13 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Search unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
+@if (Model.GlobalSearchMessage is not null)
+{
+    <partial name="_Notice" model='new NoticeModel("Global search scope", Model.GlobalSearchMessage, "partial")' />
+}
+<partial name="_Notice" model='new NoticeModel("Role-aware results", "Protected fields and sensitive filters are enforced server-side. Non-admin results may show redacted, omitted, or restricted values instead of raw telemetry.", "partial")' />
 
 <form method="get" class="card filters filter-panel" aria-label="Event search filters">
     <div class="form-row">
@@ -123,12 +130,13 @@
     </div>
     @if (Model.Events.Count == 0)
     {
-        <div class="empty">No events match the current filters.</div>
+        <div class="empty"><strong>No events match the current filters.</strong><p>Check the UTC range, active filters, role redaction caveats, and source-health coverage before treating this as no activity.</p></div>
     }
     else
     {
         <div class="table-scroll">
             <table>
+                <caption>Bounded event search results with host time, UTC time, severity, status text, and detail pivots</caption>
                 <thead>
                     <tr>
                         <th>Event time</th>

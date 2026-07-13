@@ -1,8 +1,14 @@
 @{
     var currentPage = (ViewContext.RouteData.Values["page"] as string) ?? string.Empty;
     var mainClass = ViewData["MainClass"] as string ?? "container";
+    var operatorName = User.Identity?.Name ?? "operator";
+    var operatorRole = OperatorAuthorization.Role(User) ?? "anonymous";
+    var canUseAnalystWorkspaces = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageInvestigations);
+    var canManageDetections = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageDetections);
+    var canManageOperators = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageOperators);
     bool IsActive(string page) => string.Equals(currentPage, page, StringComparison.OrdinalIgnoreCase)
         || currentPage.StartsWith(page + "/", StringComparison.OrdinalIgnoreCase);
+    bool IsAnyActive(params string[] pages) => pages.Any(IsActive);
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -11,36 +17,80 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@ViewData["Title"] - Challenger SIEM</title>
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @await RenderSectionAsync("Head", required: false)
 </head>
 <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar">
-        <a class="brand" asp-page="/Index">Challenger SIEM</a>
+    <header class="app-shell" role="banner">
+        <div class="shell-row shell-brand-row">
+            <a class="brand" asp-page="/Index" aria-label="Challenger SIEM overview">
+                <span class="brand-mark" aria-hidden="true">◆</span>
+                <span>Challenger SIEM</span>
+            </a>
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <div class="operator-panel" aria-label="Current operator">
+                    <span class="operator-name">@operatorName</span>
+                    <span class="badge role" aria-label="Current role @operatorRole">@operatorRole</span>
+                    <form class="logout" method="post" asp-page="/Logout">
+                        <button type="submit" class="button secondary small">Logout</button>
+                    </form>
+                </div>
+            }
+        </div>
         @if (User.Identity?.IsAuthenticated == true)
         {
-            <nav class="nav" aria-label="Primary">
-                <a class="@(IsActive("/Index") ? "active" : null)" aria-current="@(IsActive("/Index") ? "page" : null)" asp-page="/Index">Dashboard</a>
-                <a class="@(IsActive("/Agents") ? "active" : null)" aria-current="@(IsActive("/Agents") ? "page" : null)" asp-page="/Agents/Index">Agents</a>
-                <a class="@(IsActive("/Events") ? "active" : null)" aria-current="@(IsActive("/Events") ? "page" : null)" asp-page="/Events/Index">Events</a>
-                <a class="@(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index">Alerts</a>
-                @if (!User.IsInRole("viewer"))
+            <div class="shell-row shell-search-row">
+                <form class="global-search" method="post" asp-page="/Events/Index" asp-page-handler="GlobalSearch" aria-label="Global search">
+                    <label for="global-search-input">Global search</label>
+                    <input id="global-search-input" name="GlobalSearch" maxlength="160" autocomplete="off" inputmode="search" placeholder="Event code, host, agent, or keyword" aria-describedby="global-search-help" />
+                    <button type="submit" class="button">Search</button>
+                    <span id="global-search-help" class="muted">Searches the current bounded event index; unified search is planned.</span>
+                </form>
+                <div class="system-strip" aria-label="System status summary">
+                    <a asp-page="/About"><span class="badge ok">API v1</span></a>
+                    <span class="badge neutral">contracts/v1</span>
+                    <a asp-page="/Agents/Index" asp-route-health="stale"><span class="badge warning">coverage review</span></a>
+                </div>
+            </div>
+            <nav class="primary-nav" aria-label="Primary">
+                <a class="nav-item @(IsActive("/Index") ? "active" : null)" aria-current="@(IsActive("/Index") ? "page" : null)" asp-page="/Index"><span aria-hidden="true">01</span> Overview</a>
+                <a class="nav-item @(IsActive("/Events") ? "active" : null)" aria-current="@(IsActive("/Events") ? "page" : null)" asp-page="/Events/Index"><span aria-hidden="true">02</span> Search</a>
+                <a class="nav-item @(IsAnyActive("/Agents", "/AuditPolicy") ? "active" : null)" aria-current="@(IsAnyActive("/Agents", "/AuditPolicy") ? "page" : null)" asp-page="/Agents/Index"><span aria-hidden="true">03</span> Assets</a>
+                <a class="nav-item @(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index"><span aria-hidden="true">04</span> Alerts</a>
+                @if (canUseAnalystWorkspaces)
                 {
-                    <a class="@(IsActive("/Graphs") ? "active" : null)" aria-current="@(IsActive("/Graphs") ? "page" : null)" asp-page="/Graphs/Index">Graphs</a>
+                    <span class="nav-item disabled" aria-disabled="true" title="Case management is planned; current investigation graphs remain available below."><span aria-hidden="true">05</span> Cases <span class="nav-status">planned</span></span>
+                }
+                @if (canManageDetections)
+                {
+                    <span class="nav-item disabled" aria-disabled="true" title="Detection catalog UI is planned; rule metadata remains available through /api/v1."><span aria-hidden="true">06</span> Detections <span class="nav-status">planned</span></span>
+                }
+                <span class="nav-item disabled" aria-disabled="true" title="Saved dashboards are planned; overview cards remain the implemented monitoring surface."><span aria-hidden="true">07</span> Dashboards <span class="nav-status">planned</span></span>
+                <a class="nav-item @(IsActive("/About") ? "active" : null)" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About"><span aria-hidden="true">08</span> Health</a>
+                @if (canManageOperators)
+                {
+                    <span class="nav-item disabled" aria-disabled="true" title="Operator and retention administration are API/script workflows today."><span aria-hidden="true">09</span> Administration <span class="nav-status">planned</span></span>
+                }
+            </nav>
+            <nav class="secondary-nav" aria-label="Implemented role-aware workspaces">
+                @if (canUseAnalystWorkspaces)
+                {
+                    <a class="@(IsActive("/Graphs") ? "active" : null)" aria-current="@(IsActive("/Graphs") ? "page" : null)" asp-page="/Graphs/Index">Investigation graphs</a>
                     <a class="@(IsActive("/SocAgent") ? "active" : null)" aria-current="@(IsActive("/SocAgent") ? "page" : null)" asp-page="/SocAgent">soc-agent</a>
                 }
-                @if (User.IsInRole("admin"))
+                @if (canManageOperators)
                 {
                     <a class="@(IsActive("/AuditPolicy") ? "active" : null)" aria-current="@(IsActive("/AuditPolicy") ? "page" : null)" asp-page="/AuditPolicy">Audit policy</a>
                 }
-                <a class="@(IsActive("/About") ? "active" : null)" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About">About</a>
+                <span class="muted">UI hiding is not an authorization boundary; server policies remain authoritative.</span>
             </nav>
-            <form class="logout" method="post" asp-page="/Logout">
-                <button type="submit">Logout</button>
-            </form>
         }
     </header>
     <main id="main-content" class="@mainClass" tabindex="-1">
         @RenderBody()
     </main>
+    <script src="~/js/design-system.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

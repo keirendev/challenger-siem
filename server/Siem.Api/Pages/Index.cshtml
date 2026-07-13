@@ -1,14 +1,16 @@
 @page "/"
 @model IndexModel
 @{
-    ViewData["Title"] = "Dashboard";
+    ViewData["Title"] = "Overview";
 }
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", IsCurrent: true))' />
 
 <div class="page-header">
     <div>
         <p class="page-kicker">Operations overview</p>
-        <h1>Dashboard</h1>
-        <p class="muted">Current ingestion, endpoint health, queue pressure, and review-console status.</p>
+        <h1>Overview</h1>
+        <p class="muted">Dashboard metrics for ingestion, endpoint health, queue pressure, and review-console status.</p>
     </div>
     <div class="actions">
         <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale">Review stale agents</a>
@@ -18,8 +20,14 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Overview unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
+else if (Model.Summary.ActiveAgents == 0 && Model.Summary.RecentEventCount == 0)
+{
+    <partial name="_Notice" model='new NoticeModel("No telemetry yet", "No active agents or recent events are visible. Register a synthetic agent or review setup before treating this as a healthy quiet state.", "empty")' />
+}
+
+<partial name="_LifecycleStates" model='new LifecycleStatesModel("Overview lifecycle states", new[] { new LifecycleStateModel("loading", "Loading", "Metric skeletons preserve layout during refresh."), new LifecycleStateModel("degraded", "Degraded", "Stale agents, queue pressure, and storage warnings stay visible.", "warning"), new LifecycleStateModel("success", "Success", "Counts are bounded and link to the implemented review surfaces.", "ok") })' />
 
 <section class="metrics" aria-label="Dashboard metrics">
     <article class="card">

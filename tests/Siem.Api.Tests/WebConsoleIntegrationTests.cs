@@ -15,6 +15,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 {
     private const string EnrollmentToken = "web-integration-enrollment-token";
     private const string OperatorPassword = "Synthetic-Web-Admin1!";
+    private const string ViewerPassword = "Synthetic-Web-Viewer1!";
 
     [PostgresFact]
     public async Task WebConsoleDisplaysSeededAgentHeartbeatAndEventData()
@@ -87,6 +88,12 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Dashboard", dashboard, StringComparison.Ordinal);
         Assert.Contains("Skip to main content", dashboard, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Primary\"", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Global search", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Cases", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Detections", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Dashboards", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Administration", dashboard, StringComparison.Ordinal);
+        Assert.Contains("aria-disabled=\"true\"", dashboard, StringComparison.Ordinal);
         Assert.Contains("active agents", dashboard, StringComparison.Ordinal);
         Assert.Contains("retired agents", dashboard, StringComparison.Ordinal);
 
@@ -103,6 +110,19 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Windows System", coverage, StringComparison.Ordinal);
         Assert.Contains("host timezone", coverage, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Pacific Standard Time", coverage, StringComparison.Ordinal);
+
+        using (var globalSearchResponse = await client.PostAsync("/events?handler=GlobalSearch", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = ExtractAntiforgeryToken(dashboard),
+            ["GlobalSearch"] = agentId
+        })))
+        {
+            Assert.Equal(HttpStatusCode.OK, globalSearchResponse.StatusCode);
+            var globalSearchHtml = await globalSearchResponse.Content.ReadAsStringAsync();
+            Assert.Contains("Global search scope", globalSearchHtml, StringComparison.Ordinal);
+            Assert.Contains(agentId, globalSearchHtml, StringComparison.Ordinal);
+            Assert.DoesNotContain("keyword=", globalSearchHtml, StringComparison.OrdinalIgnoreCase);
+        }
 
         var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&category=system&limit=10");
         Assert.Contains(agentId, events, StringComparison.Ordinal);
@@ -166,6 +186,134 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             var afterDelete = await GetHtmlAsync(client, deleteLocation);
             Assert.Contains("Deleted soc-agent chat session", afterDelete, StringComparison.Ordinal);
             Assert.DoesNotContain(sessionId.ToString(), afterDelete, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [PostgresFact]
+    public async Task ViewerNavigationOmitsPrivilegedWorkspacesAndShowsForbiddenState()
+    {
+        var connectionString = database.RequireConnectionString();
+        EnsureTestOperator(connectionString, "synthetic-web-viewer", "Synthetic Web Viewer", "viewer", ViewerPassword);
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        await LoginAsync(client, "synthetic-web-viewer", ViewerPassword);
+
+        var dashboard = await GetHtmlAsync(client, "/");
+        Assert.Contains("Current role viewer", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Overview", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Search", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Assets", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Alerts", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Dashboards", dashboard, StringComparison.Ordinal);
+        Assert.DoesNotContain("Investigation graphs</a>", dashboard, StringComparison.Ordinal);
+        Assert.DoesNotContain("soc-agent</a>", dashboard, StringComparison.Ordinal);
+        Assert.DoesNotContain("Administration", dashboard, StringComparison.Ordinal);
+
+        using var denied = await client.GetAsync("/soc-agent");
+        Assert.Equal(HttpStatusCode.Redirect, denied.StatusCode);
+        Assert.Contains("/forbidden", denied.Headers.Location?.OriginalString ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        var forbidden = await GetHtmlAsync(client, denied.Headers.Location!.OriginalString);
+        Assert.Contains("Access forbidden", forbidden, StringComparison.Ordinal);
+        Assert.Contains("viewer", forbidden, StringComparison.Ordinal);
+    }
+
+    [PostgresFact]
+    public async Task ViewerGlobalSearchUsesPermittedMetadataAndKeepsSensitiveTermsOutOfUrls()
+    {
+        var connectionString = database.RequireConnectionString();
+        EnsureTestOperator(connectionString, "synthetic-web-viewer", "Synthetic Web Viewer", "viewer", ViewerPassword);
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var matchingAgentId = $"viewer-global-{Guid.NewGuid():N}";
+        var otherAgentId = $"viewer-global-other-{Guid.NewGuid():N}";
+        var sensitiveMarker = $"sensitive-global-marker-{Guid.NewGuid():N}";
+
+        var matchingToken = await RegisterAsync(client, matchingAgentId, "VIEWER-GLOBAL-HOST");
+        var otherToken = await RegisterAsync(client, otherAgentId, "VIEWER-GLOBAL-OTHER");
+        await PostWithBearerAsync(client, "/api/v1/ingest/events", new IngestBatchRequest
+        {
+            AgentId = matchingAgentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = DateTimeOffset.UtcNow,
+            Events = new[]
+            {
+                new EventEnvelope
+                {
+                    EventId = Guid.NewGuid(),
+                    AgentId = matchingAgentId,
+                    Hostname = "VIEWER-GLOBAL-HOST",
+                    Source = EventSources.WindowsEventLog,
+                    Channel = "System",
+                    Provider = "MetadataProvider",
+                    WindowsEventId = 6005,
+                    RecordId = Random.Shared.NextInt64(1, long.MaxValue),
+                    EventTime = DateTimeOffset.UtcNow,
+                    HostTimezone = SyntheticPacificTimezone(),
+                    Severity = "information",
+                    Message = "Viewer metadata global-search match",
+                    Normalized = new NormalizedEventFields { Category = "system", Action = "observed" },
+                    Raw = JsonSerializer.SerializeToElement(new { synthetic = true })
+                }
+            }
+        }, matchingToken);
+        await PostWithBearerAsync(client, "/api/v1/ingest/events", new IngestBatchRequest
+        {
+            AgentId = otherAgentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = DateTimeOffset.UtcNow,
+            Events = new[]
+            {
+                new EventEnvelope
+                {
+                    EventId = Guid.NewGuid(),
+                    AgentId = otherAgentId,
+                    Hostname = "VIEWER-GLOBAL-OTHER",
+                    Source = EventSources.WindowsEventLog,
+                    Channel = "Application",
+                    Provider = "SensitiveMessageProvider",
+                    WindowsEventId = 7001,
+                    RecordId = Random.Shared.NextInt64(1, long.MaxValue),
+                    EventTime = DateTimeOffset.UtcNow.AddSeconds(-1),
+                    HostTimezone = SyntheticPacificTimezone(),
+                    Severity = "warning",
+                    Message = $"Viewer must not match this sensitive marker {sensitiveMarker}",
+                    Normalized = new NormalizedEventFields { Category = "application", Action = "observed" },
+                    Raw = JsonSerializer.SerializeToElement(new { sensitive_marker = sensitiveMarker })
+                }
+            }
+        }, otherToken);
+
+        await LoginAsync(client, "synthetic-web-viewer", ViewerPassword);
+        var dashboard = await GetHtmlAsync(client, "/");
+        using (var metadataResponse = await client.PostAsync("/events?handler=GlobalSearch", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = ExtractAntiforgeryToken(dashboard),
+            ["GlobalSearch"] = matchingAgentId
+        })))
+        {
+            Assert.Equal(HttpStatusCode.OK, metadataResponse.StatusCode);
+            var html = await metadataResponse.Content.ReadAsStringAsync();
+            Assert.Contains(matchingAgentId, html, StringComparison.Ordinal);
+            Assert.DoesNotContain(otherAgentId, html, StringComparison.Ordinal);
+            Assert.DoesNotContain("keyword=", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        dashboard = await GetHtmlAsync(client, "/");
+        using (var sensitiveResponse = await client.PostAsync("/events?handler=GlobalSearch", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = ExtractAntiforgeryToken(dashboard),
+            ["GlobalSearch"] = sensitiveMarker
+        })))
+        {
+            Assert.Equal(HttpStatusCode.OK, sensitiveResponse.StatusCode);
+            Assert.DoesNotContain(Uri.EscapeDataString(sensitiveMarker), sensitiveResponse.RequestMessage?.RequestUri?.OriginalString ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            var html = await sensitiveResponse.Content.ReadAsStringAsync();
+            Assert.Contains("No matching permitted event metadata", html, StringComparison.Ordinal);
+            Assert.DoesNotContain(otherAgentId, html, StringComparison.Ordinal);
+            Assert.DoesNotContain(sensitiveMarker, html, StringComparison.OrdinalIgnoreCase);
+            AssertHtmlUrlsDoNotContain(html, sensitiveMarker);
         }
     }
 
@@ -276,9 +424,20 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
 
     private static void EnsureTestOperator(string connectionString)
     {
+        EnsureTestOperator(connectionString, "synthetic-web-admin", "Synthetic Web Admin", "admin", OperatorPassword);
+    }
+
+    private static void EnsureTestOperator(string connectionString, string username, string displayName, string role, string password)
+    {
         using var connection=new NpgsqlConnection(connectionString); connection.Open(); using var command=connection.CreateCommand();
-        command.CommandText="insert into operators(operator_id,username,normalized_username,display_name,role,password_hash) values(@id,'synthetic-web-admin','SYNTHETIC-WEB-ADMIN','Synthetic Web Admin','admin',@hash) on conflict(normalized_username) do update set password_hash=excluded.password_hash,role='admin',enabled=true;";
-        command.Parameters.AddWithValue("id",Guid.NewGuid());command.Parameters.AddWithValue("hash",new Challenger.Siem.Api.Auth.OperatorPasswordHasher().Hash(OperatorPassword));command.ExecuteNonQuery();
+        command.CommandText="insert into operators(operator_id,username,normalized_username,display_name,role,password_hash) values(@id,@username,@normalized_username,@display_name,@role,@hash) on conflict(normalized_username) do update set password_hash=excluded.password_hash,role=excluded.role,display_name=excluded.display_name,enabled=true;";
+        command.Parameters.AddWithValue("id",Guid.NewGuid());
+        command.Parameters.AddWithValue("username",username);
+        command.Parameters.AddWithValue("normalized_username",username.ToUpperInvariant());
+        command.Parameters.AddWithValue("display_name",displayName);
+        command.Parameters.AddWithValue("role",role);
+        command.Parameters.AddWithValue("hash",new Challenger.Siem.Api.Auth.OperatorPasswordHasher().Hash(password));
+        command.ExecuteNonQuery();
     }
 
     private static async Task<string> RegisterAsync(HttpClient client, string agentId, string hostname)
@@ -358,15 +517,15 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         return location;
     }
 
-    private static async Task LoginAsync(HttpClient client)
+    private static async Task LoginAsync(HttpClient client, string username = "synthetic-web-admin", string password = OperatorPassword)
     {
         var login = await GetHtmlAsync(client, "/login");
         var token = ExtractAntiforgeryToken(login);
         using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = token,
-            ["Username"] = "synthetic-web-admin",
-            ["Password"] = OperatorPassword,
+            ["Username"] = username,
+            ["Password"] = password,
             ["ReturnUrl"] = "/"
         }));
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
@@ -384,6 +543,16 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         var match = Regex.Match(location, "[?&]session_id=(?<session_id>[0-9a-fA-F-]{36})", RegexOptions.CultureInvariant);
         Assert.True(match.Success, "soc-agent redirect should include a session_id query value.");
         return Guid.Parse(match.Groups["session_id"].Value);
+    }
+
+    private static void AssertHtmlUrlsDoNotContain(string html, string forbiddenValue)
+    {
+        foreach (Match match in Regex.Matches(html, "(?:href|action)=\"(?<url>[^\"]*)\"", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var url = WebUtility.HtmlDecode(match.Groups["url"].Value);
+            Assert.DoesNotContain(forbiddenValue, url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Uri.EscapeDataString(forbiddenValue), url, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static string ExtractAntiforgeryToken(string html)

@@ -93,16 +93,15 @@ The scripts register a synthetic agent, ingest a synthetic event, exercise the r
 
 ## Review console workflow
 
-Common current operator path (the mature Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration IA is specified in [web.md](web.md)):
+Common current operator path (aligned to the Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration IA in [web.md](web.md)):
 
-1. Open [dashboard](web.md#current-route-map) to check active, stale, retired, queued, and recent-ingest metrics.
-2. Use **Agents** to filter by hostname/agent ID/status/health and open host coverage details.
-3. Use **Events** to filter by time, host, agent, channel, Windows Event ID, keyword, normalized category/action, user, process, or destination IP.
-4. Open event detail to inspect normalized fields, entities, message text, and raw JSON for that event.
-5. Use **Alerts** to review the current alert foundation and empty-state handling until detection execution is expanded.
-6. Use **Graphs** to create operator-managed relationship graphs and optionally request proposal-only `soc-agent` graph updates.
-7. Use **soc-agent** for bounded local SIEM-aware summaries with citations to review pages. External provider mode must use server-side provider authentication only: ChatGPT subscription OAuth is the primary setup path and can reuse Pi's server-side `~/.pi/agent/auth.json` after Pi `/login` for ChatGPT Codex Responses models such as `gpt-5.5`, while API-key credentials and documented delegated API-bearer auth files remain advanced alternatives kept out of git.
-8. Use **Audit policy** and **About** for drift/status views without secret values.
+1. Open **Overview** to check active, stale, retired, queued, and recent-ingest metrics.
+2. Use **Search** for bounded event search by time, host, agent, source, Windows Event ID, keyword, normalized category/action, user, process, or destination IP. The shell global search posts to this same bounded event-search path without placing the query in the browser URL; unified search remains planned.
+3. Use **Assets** to filter by hostname/agent ID/status/health and open host coverage details. Admin-only stale-agent retirement remains confirmation-gated and preserves telemetry.
+4. Use **Alerts** to review the current alert foundation and empty-state handling until triage/case workflow mutations are implemented.
+5. Use the role-aware implemented workspace links for **Investigation graphs** and **soc-agent** when your role permits analyst workflows. `soc-agent` remains citation-oriented and cannot mutate detections, configuration, agents, stored data, or repository files.
+6. Treat **Cases**, **Detections**, **Dashboards**, and broad **Administration** entries as honest planned affordances when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
+7. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
 

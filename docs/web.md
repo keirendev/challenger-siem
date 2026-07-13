@@ -17,11 +17,11 @@ Implemented today in the ASP.NET Core API process:
 - Database-backed operator identities, revocable cookie sessions, operator API credentials, antiforgery-protected Razor forms, and role enforcement described in [auth.md](auth.md).
 - Role-aware server-side field policy for events and alerts: admin receives full event raw payload; non-admin roles receive omitted raw payload and redacted sensitive event/alert context.
 - Bounded list pagination and page-size limits for current list pages.
-- A local, no-CDN dark shell with skip link, semantic landmarks, visible focus, responsive tables, notices, empty states, and current navigation.
+- A local, no-CDN Challenger SIEM design-system shell with skip link, landmarks, breadcrumbs, role-aware IA navigation, current operator/role/session affordances, bounded global event-search POST, CSP-compatible same-origin CSS/JavaScript, responsive tables, notices, badges, tabs, pagination, empty/error/degraded/unauthorized states, and current navigation.
 
 Not implemented today and therefore specified as future approved work only:
 
-- First-class `/search`, `/assets`, `/cases`, `/detections`, `/dashboards`, `/health`, and `/administration` console sections.
+- Separate first-class `/search`, `/assets`, `/cases`, `/detections`, `/dashboards`, `/health`, and `/administration` route trees. The active shell already exposes the mature IA labels and maps implemented sections to existing Razor routes while showing honest disabled/planned affordances for unimplemented top-level workflows.
 - Alert triage mutations, case management, case closure, dashboard builder/editing, detection rule activation/editing/backtesting, response/remediation actions, export workflows, SSO/MFA/tenancy, and SOAR playbooks.
 - Autonomous `soc-agent` mutation. Current `soc-agent` tools are read-only; graph proposals require explicit operator approval before graph changes.
 
@@ -57,16 +57,17 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | Current page | Role access | Purpose | Notes |
 | --- | --- | --- | --- |
 | `/login` | anonymous | Operator username/password sign-in | Empty fields in public screenshots only. |
-| `/` | authenticated | Dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations. |
-| `/agents` | authenticated view; cleanup admin-only | Agent inventory and non-destructive stale-agent retirement | Cleanup requires admin permission and checkbox confirmation. |
-| `/agents/detail` | authenticated | Host coverage/source-health detail | Platform-aware Windows/Linux source matrix and detection prerequisites. |
-| `/events` | authenticated | Event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. |
+| `/` | authenticated | Overview dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations, lifecycle-state guidance. |
+| `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
+| `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, tabs, inventory/audit snapshots, and detection prerequisites. |
+| `/events` | authenticated | Search / event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
 | `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
 | `/graphs` and `/graphs/detail` | analyst, detection-engineer, admin | Investigation graphs | Create/update nodes/edges, archive graphs, request/apply `soc-agent` proposals with explicit approval for proposal apply. |
 | `/soc-agent` | analyst, detection-engineer, admin | Live SIEM-aware chat workspace | Read-only tools; chat deletion requires confirmation and conflicts while a run is active. |
 | `/audit-policy` | admin | Audit-policy snapshot review | Admin-only because inventory API is currently operator-management scoped. |
-| `/about` | authenticated | Version, environment, database status | No credentials or connection details. |
+| `/about` | authenticated | Health/version, environment, database status | No credentials or connection details; the shell links Health here until a consolidated health route is implemented. |
+| `/forbidden` | authenticated | Forbidden/unauthorized state | Cookie access-denied target for authenticated operators whose role lacks a workflow. |
 
 ## Role visibility and action matrix
 
@@ -267,8 +268,9 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 ### Notices, badges, and banners
 
 - Use consistent classes and text for `healthy`, `degraded`, `stale`, `offline`, `unknown`, severities, and role restrictions.
-- Notices use `role="status"` for non-urgent updates and `role="alert"` for blocking errors.
-- Badges include text, icon/shape, and accessible label; color is supplementary.
+- Notices use `role="status"` for non-urgent updates and `role="alert"` for blocking errors. The shared `_Notice` partial centralizes title/message/state semantics.
+- Badges include text, icon/shape, and accessible label; color is supplementary. The shared `_Badge` partial and status CSS classes use the Challenger vocabulary consistently.
+- Breadcrumbs, tabs, planned-state cards, lifecycle state strips, pagination blocks, confirmation panels, filters, table captions, empty/error/partial/degraded/success/unauthorized states, and data-dense table wrappers are shared Razor/CSS patterns rather than separate theme paths.
 
 ### Forms and dialogs
 
@@ -496,7 +498,7 @@ Manual path:
 
 When a change affects Razor Pages, web auth/session/CSRF/cookies, review-console routes or view models, web smoke scripts, `docs/web.md`, `docs/web-console-demo.md`, or user-visible browser behavior:
 
-- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright or equivalent browser validation for visual/interactive changes.
+- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright, pi_browser, or equivalent browser validation for visual/interactive changes.
 - For docs-only IA/specification updates, perform a design review against this document, [challenger-family-alignment.md](challenger-family-alignment.md), [auth.md](auth.md), [api.md](api.md), [schema.md](schema.md), current Razor Pages/API source, and synthetic representative data.
 - Update the [web-console demo](web-console-demo.md) text or screenshots if page layout, navigation, filters, wireframes, or visible data expectations change.
 - Regenerate screenshots only from synthetic data and inspect them for tokens, cookies, connection strings, real host/user identifiers, private lab telemetry, browser profile names, browser/OS chrome, local paths, window titles with private data, and raw API responses before staging.

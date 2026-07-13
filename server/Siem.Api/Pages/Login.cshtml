@@ -7,11 +7,11 @@
     <p class="page-kicker">Secure review console</p>
     <h1 id="login-title">Operator login</h1>
     <p class="muted">Sign in with your Challenger SIEM operator identity. Credentials are verified server-side and the browser receives a hardened, revocable session cookie.</p>
-    @if (Model.ErrorMessage is not null) { <div class="alert" role="alert">@Model.ErrorMessage</div> }
-    <form method="post">
+    @if (Model.ErrorMessage is not null) { <partial name="_Notice" model='new NoticeModel("Login failed", Model.ErrorMessage, "error", IsAlert: true)' /> }
+    <form method="post" class="form-stack" aria-describedby="login-safety-help">
         <input type="hidden" asp-for="ReturnUrl" />
-        <div class="form-row"><label asp-for="Username">Username</label><input asp-for="Username" autocomplete="username" autofocus /></div>
-        <div class="form-row"><label asp-for="Password">Password</label><input asp-for="Password" type="password" autocomplete="current-password" /></div>
+        <div class="form-row"><label asp-for="Username">Username</label><input asp-for="Username" autocomplete="username" autofocus aria-describedby="username-help" /><span id="username-help" class="field-help">Use your assigned operator identity.</span></div>
+        <div class="form-row"><label asp-for="Password">Password</label><input asp-for="Password" type="password" autocomplete="current-password" aria-describedby="password-help" /><span id="password-help" class="field-help">Password is sent only to the server over the configured transport.</span></div>
         <p class="muted">Never put passwords, API credentials, or session cookies in URLs, logs, screenshots, or public reports.</p>
         <p><button type="submit">Sign in</button></p>
     </form>

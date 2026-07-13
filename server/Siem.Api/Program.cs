@@ -113,7 +113,7 @@ builder.Services
     {
         options.LoginPath = "/login";
         options.LogoutPath = "/logout";
-        options.AccessDeniedPath = "/login";
+        options.AccessDeniedPath = "/forbidden";
         options.Cookie.Name = ".ChallengerSiem.Operator";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Strict;
@@ -156,6 +156,9 @@ StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
 {
+    context.Response.Headers.TryAdd("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'");
+    context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.TryAdd("Referrer-Policy", "same-origin");
     if (!app.Environment.IsDevelopment() && !context.Request.IsHttps)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;

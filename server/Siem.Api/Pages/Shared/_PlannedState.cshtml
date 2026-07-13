@@ -1,0 +1,12 @@
+@model PlannedStateModel
+<section class="state-card @Model.State" aria-label="@Model.Title">
+    <div class="state-icon" aria-hidden="true">◇</div>
+    <div>
+        <h2>@Model.Title</h2>
+        <p>@Model.Message</p>
+        @if (!string.IsNullOrWhiteSpace(Model.RoleHint))
+        {
+            <p class="muted">@Model.RoleHint</p>
+        }
+    </div>
+</section>

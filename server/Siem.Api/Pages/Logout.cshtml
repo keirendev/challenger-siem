@@ -4,6 +4,8 @@
     ViewData["Title"] = "Logout";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Logout", IsCurrent: true))' />
+
 <section class="card narrow">
     <h1>Logout</h1>
     <p class="muted">Use the button below to end this operator session.</p>

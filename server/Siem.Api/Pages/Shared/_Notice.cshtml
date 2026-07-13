@@ -1,0 +1,5 @@
+@model NoticeModel
+<div class="notice-block @Model.State" role="@(Model.IsAlert ? "alert" : "status")" aria-live="@(Model.IsAlert ? "assertive" : "polite")">
+    <strong>@Model.Title</strong>
+    <p>@Model.Message</p>
+</div>

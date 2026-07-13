@@ -1,0 +1,20 @@
+@page "/forbidden"
+@model Challenger.Siem.Api.Pages.ForbiddenModel
+@{
+    ViewData["Title"] = "Access forbidden";
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Access forbidden", IsCurrent: true))' />
+
+<section class="state-card forbidden" role="alert" aria-labelledby="forbidden-title">
+    <div class="state-icon" aria-hidden="true">!</div>
+    <div>
+        <p class="page-kicker">Authorization state</p>
+        <h1 id="forbidden-title">Access forbidden</h1>
+        <p>Your current role <strong>@Model.OperatorRole</strong> is authenticated but not authorized for this workflow. Navigation hides unavailable actions for clarity, but the server enforces authorization on every page handler and API boundary.</p>
+        <div class="actions">
+            <a class="button" asp-page="/Index">Return to overview</a>
+            <a class="button secondary" asp-page="/About">Open health status</a>
+        </div>
+    </div>
+</section>

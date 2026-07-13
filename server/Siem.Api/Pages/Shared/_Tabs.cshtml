@@ -1,0 +1,14 @@
+@model TabsModel
+<nav class="tabs" aria-label="@Model.Label">
+    @foreach (var item in Model.Items)
+    {
+        if (item.IsDisabled)
+        {
+            <span class="tab disabled" aria-disabled="true" title="@(item.Description ?? "Planned")">@item.Label</span>
+        }
+        else
+        {
+            <a class="tab @(item.IsActive ? "active" : null)" aria-current="@(item.IsActive ? "page" : null)" href="@item.Url">@item.Label</a>
+        }
+    }
+</nav>

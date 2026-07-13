@@ -1,0 +1,11 @@
+@model LifecycleStatesModel
+<section class="lifecycle-strip" aria-label="@Model.Label">
+    @foreach (var state in Model.States)
+    {
+        <article class="lifecycle-state @state.Tone" data-state="@state.State">
+            <span class="badge @state.Tone">@state.State</span>
+            <strong>@state.Title</strong>
+            <p>@state.Message</p>
+        </article>
+    }
+</section>

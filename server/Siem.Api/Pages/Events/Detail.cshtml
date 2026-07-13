@@ -4,6 +4,8 @@
     ViewData["Title"] = "Event detail";
 }
 
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Search", Page: "/Events/Index"), new BreadcrumbItem("Event detail", IsCurrent: true))' />
+
 <div class="page-header">
     <div>
         <p class="page-kicker">Event drill-down</p>
@@ -15,11 +17,12 @@
 
 @if (Model.ErrorMessage is not null)
 {
-    <div class="alert" role="alert">@Model.ErrorMessage</div>
+    <partial name="_Notice" model='new NoticeModel("Event unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 else if (Model.Envelope is not null)
 {
-    <section class="card">
+    <partial name="_Tabs" model='new TabsModel("Event detail sections", new[] { new TabItem("Fields", "#fields", true), new TabItem("Entities", "#entities"), new TabItem("Message", "#message"), new TabItem("Raw JSON", "#raw") })' />
+    <section class="card" id="fields">
         <h2>Normalized fields</h2>
         <dl class="detail-grid">
             <dt>Event ID</dt><dd>@Model.Envelope.EventId</dd>
@@ -55,7 +58,7 @@ else if (Model.Envelope is not null)
         </dl>
     </section>
 
-    <section class="card">
+    <section class="card" id="entities">
         <h2>Entities</h2>
         @if (Model.Envelope.Normalized?.Entities.Count > 0)
         {
@@ -72,18 +75,18 @@ else if (Model.Envelope is not null)
         }
     </section>
 
-    <section class="card">
+    <section class="card" id="message">
         <h2>Message</h2>
         <pre class="message-box">@Model.Envelope.Message</pre>
     </section>
 
-    <section class="card">
+    <section class="card" id="raw">
         <div class="page-header">
             <div>
                 <h2>Raw JSON</h2>
                 <p class="muted">Rendered only on the authenticated detail page; do not copy into public issues, docs, or logs.</p>
             </div>
-            <button type="button" class="secondary" onclick="navigator.clipboard?.writeText(document.getElementById('raw-json').value)">Copy raw JSON</button>
+            <button type="button" class="secondary" data-copy-from="raw-json">Copy raw JSON</button>
         </div>
         <textarea id="raw-json" class="raw-json" readonly>@Model.RawJson</textarea>
     </section>
