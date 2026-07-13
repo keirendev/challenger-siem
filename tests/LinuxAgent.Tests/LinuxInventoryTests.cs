@@ -299,7 +299,7 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Selinux, InventorySourceResult.Success("Disabled\n"));
         source.Set(LinuxInventoryOperation.SecureBoot, InventorySourceResult.Success("SecureBoot enabled\n"));
         var syntheticHash = new string('a', 64);
-        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 0, sha256: syntheticHash));
+        source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 1001, sha256: syntheticHash));
         source.Set(LinuxInventoryOperation.AgentExecutable, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, size: 4096, ownerId: 0, sha256: syntheticHash));
         return source;
     }

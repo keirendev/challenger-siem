@@ -8,7 +8,7 @@ Passive journal and audit event collection remains planned. An empty source mani
 
 - Linux on x86-64 or ARM64 with systemd and a .NET 8 published application payload.
 - Dedicated locked `challenger-siem` service identity created by the operator or package manager before installation.
-- HTTPS server URL only. Configuration: `/etc/challenger-siem-agent/agentsettings.json` (0600). Queue/state: `/var/lib/challenger-siem-agent` (0700). Binary: `/opt/challenger-siem-agent`. Unit: `/etc/systemd/system/challenger-siem-agent.service`.
+- HTTPS server URL only. Configuration: `/etc/challenger-siem-agent/agentsettings.json` (dedicated identity, 0600, writable only within its private configuration directory so enrollment can persist the credential). Queue/state: `/var/lib/challenger-siem-agent` (0700). Binary: `/opt/challenger-siem-agent`. Unit: `/etc/systemd/system/challenger-siem-agent.service`.
 - Enrollment, heartbeat, durable queue delivery, and read-only inventory upload through the existing v1 agent APIs.
 - No Linux capability, audit/firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, privileged helper, or arbitrary command/path collection interface.
 

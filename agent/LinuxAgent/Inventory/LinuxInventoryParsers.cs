@@ -39,8 +39,8 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.AppArmor => new[] { Item("mandatory_access_control", "apparmor", source.ExitCode == 1 ? "disabled" : "enabled") },
             LinuxInventoryOperation.Selinux => ParseFixedState(source.Content, "mandatory_access_control", "selinux", new[] { "enforcing", "permissive", "disabled" }),
             LinuxInventoryOperation.SecureBoot => ParseSecureBoot(source.Content),
-            LinuxInventoryOperation.AgentConfig => ParseAgentFile("configuration", source, UnixFileMode.UserRead | UnixFileMode.UserWrite),
-            LinuxInventoryOperation.AgentExecutable => ParseAgentFile("executable", source, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute),
+            LinuxInventoryOperation.AgentConfig => ParseAgentFile("configuration", source, UnixFileMode.UserRead | UnixFileMode.UserWrite, ownerMustBeRoot: false),
+            LinuxInventoryOperation.AgentExecutable => ParseAgentFile("executable", source, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, ownerMustBeRoot: true),
             _ => null
         };
         if (parsed is null)
@@ -275,11 +275,12 @@ public static class LinuxInventoryParsers
         return state is null ? null : new[] { Item("secure_boot", "uefi_secure_boot", state) };
     }
 
-    private static IReadOnlyList<InventoryItem>? ParseAgentFile(string name, InventorySourceResult source, UnixFileMode expected)
+    private static IReadOnlyList<InventoryItem>? ParseAgentFile(string name, InventorySourceResult source, UnixFileMode expected, bool ownerMustBeRoot)
     {
         if (!source.FileMode.HasValue || !source.FileSize.HasValue || source.FileSize < 0 || !source.FileOwnerId.HasValue) return null;
         var actual = source.FileMode.Value;
-        var status = actual == expected && source.FileOwnerId == 0 ? "expected_permissions" : "permission_drift";
+        var expectedOwner = ownerMustBeRoot ? source.FileOwnerId == 0 : source.FileOwnerId != 0;
+        var status = actual == expected && expectedOwner ? "expected_permissions" : "permission_drift";
         if (source.Sha256 is null || source.Sha256.Length != 64 || !source.Sha256.All(char.IsAsciiHexDigit)) return null;
         return new[] { Item("agent_integrity", name, status, new Dictionary<string, string>
         {
