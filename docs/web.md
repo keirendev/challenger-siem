@@ -6,6 +6,8 @@ Current implementation status is called out explicitly. Target sections describe
 
 For public-safe visual examples, see the [sanitized web-console demo](web-console-demo.md). Demo screenshots, wireframes, seed data, and examples must use synthetic data only.
 
+The selected frontend architecture is enhanced ASP.NET Core/Razor Pages in the existing API process. The measured [frontend architecture ADR](frontend-architecture-adr.md) rejects a separate TypeScript frontend for current high-density search/timeline work because it does not justify the added build, auth/session/CSRF/CSP, protected-field authorization, testing, dependency, and operational cost. Future web work should evolve the active Razor pages in place unless a new ADR passes the documented gates.
+
 ## Current implementation boundary
 
 Implemented today in the ASP.NET Core API process:

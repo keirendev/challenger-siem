@@ -1,0 +1,175 @@
+using Xunit;
+
+namespace Challenger.Siem.Api.Tests;
+
+public sealed class FrontendArchitectureSpikeTests
+{
+    [Fact]
+    public void SelectedRazorPathKeepsPaginationCancellationAndAuthorizationInServerCode()
+    {
+        var root = RepositoryRoot();
+        var indexModel = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Events/Index.cshtml.cs"));
+        var eventRepository = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Database/EventRepository.cs"));
+        var program = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Program.cs"));
+
+        Assert.Contains("OnGetAsync(CancellationToken cancellationToken)", indexModel, StringComparison.Ordinal);
+        Assert.Contains("Limit = NormalizedLimit", indexModel, StringComparison.Ordinal);
+        Assert.Contains("(PageNumber - 1) * NormalizedLimit", indexModel, StringComparison.Ordinal);
+        Assert.Contains("SearchEventsForOperatorAsync(fetchQuery, OperatorAuthorization.Role(User)!", indexModel, StringComparison.Ordinal);
+
+        Assert.Contains("Math.Clamp(query.Limit, 1, 500)", eventRepository, StringComparison.Ordinal);
+        Assert.Contains("limit @limit offset @offset", eventRepository, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive)", eventRepository, StringComparison.Ordinal);
+        Assert.Contains("EventFieldPolicy.Apply(item, role)", eventRepository, StringComparison.Ordinal);
+
+        Assert.Contains("EventSearchQuery.FromQuery(context.Request.Query)", program, StringComparison.Ordinal);
+        Assert.Contains("SearchEventsForOperatorAsync(query, OperatorAuthorization.Role(context.User)!", program, StringComparison.Ordinal);
+        Assert.Contains("csrf_safe_bearer_required", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RazorMarkupKeepsAccessibilityResponsiveAndLifecycleSurfacesForSearchWorkflow()
+    {
+        var root = RepositoryRoot();
+        var layout = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Shared/_Layout.cshtml"));
+        var events = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Events/Index.cshtml"));
+        var detail = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Events/Detail.cshtml"));
+        var css = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/css/site.css"));
+
+        Assert.Contains("Skip to main content", layout, StringComparison.Ordinal);
+        Assert.Contains("<main id=\"main-content\"", layout, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Primary\"", layout, StringComparison.Ordinal);
+        Assert.Contains("asp-page=\"/Logout\"", layout, StringComparison.Ordinal);
+
+        Assert.Contains("aria-label=\"Event search filters\"", events, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Active event filters\"", events, StringComparison.Ordinal);
+        Assert.Contains("role=\"alert\"", events, StringComparison.Ordinal);
+        Assert.Contains("class=\"empty\"", events, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Event result pages\"", events, StringComparison.Ordinal);
+        Assert.Contains("table-scroll", events, StringComparison.Ordinal);
+        Assert.Contains("raw JSON available only on detail pages", events, StringComparison.Ordinal);
+
+        Assert.Contains("Raw JSON", detail, StringComparison.Ordinal);
+        Assert.Contains("do not copy into public issues, docs, or logs", detail, StringComparison.Ordinal);
+
+        Assert.Contains("a:focus-visible", css, StringComparison.Ordinal);
+        Assert.Contains("outline: 3px", css, StringComparison.Ordinal);
+        Assert.Contains(".table-scroll", css, StringComparison.Ordinal);
+        Assert.Contains("overflow-x: auto", css, StringComparison.Ordinal);
+        Assert.Contains("@media (max-width: 900px)", css, StringComparison.Ordinal);
+        Assert.Contains("@media (max-width: 640px)", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FrontendArchitectureAdrRecordsScoringMeasurementsAndCleanupDecision()
+    {
+        var root = RepositoryRoot();
+        var adr = File.ReadAllText(Path.Combine(root, "docs/frontend-architecture-adr.md"));
+        var dependencies = File.ReadAllText(Path.Combine(root, "docs/dependencies.md"));
+        var development = File.ReadAllText(Path.Combine(root, "docs/development.md"));
+
+        Assert.Contains("Continue with an enhanced ASP.NET Core/Razor Pages frontend", adr, StringComparison.Ordinal);
+        Assert.Contains("**89**", adr, StringComparison.Ordinal);
+        Assert.Contains("**57**", adr, StringComparison.Ordinal);
+        Assert.Contains("DOMContentLoaded 12 ms; load 73 ms", adr, StringComparison.Ordinal);
+        Assert.Contains("500", adr, StringComparison.Ordinal);
+        Assert.Contains("then deleted", adr, StringComparison.Ordinal);
+        Assert.Contains("non-production test harness", adr, StringComparison.Ordinal);
+        Assert.Contains("Deletion criteria for superseded UI code", adr, StringComparison.Ordinal);
+        Assert.Contains("Do not add a separate TypeScript frontend", adr, StringComparison.Ordinal);
+
+        Assert.Contains("No TypeScript frontend, npm package manager, lockfile, bundler", dependencies, StringComparison.Ordinal);
+        Assert.Contains("Temporary browser traces, screenshots, generated prototypes", development, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root, "package.json")), "The spike must not leave a JavaScript package manifest.");
+        Assert.False(File.Exists(Path.Combine(root, "package-lock.json")), "The spike must not leave an npm lockfile.");
+        Assert.False(File.Exists(Path.Combine(root, "pnpm-lock.yaml")), "The spike must not leave a pnpm lockfile.");
+        Assert.False(File.Exists(Path.Combine(root, "yarn.lock")), "The spike must not leave a Yarn lockfile.");
+    }
+
+    [Fact]
+    public async Task RetainedPrototypeHarnessDemonstratesHighDensitySearchTimelineAndLifecycleStates()
+    {
+        var result = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(2, 50, "DEMO", "", ""),
+            operatorRole: "viewer",
+            CancellationToken.None);
+
+        Assert.Equal(500, result.TotalRows);
+        Assert.Equal(50, result.RenderedRows);
+        Assert.True(result.HasNextPage);
+        Assert.InRange(result.TimelineBuckets, 1, 12);
+        Assert.Contains("Host: DEMO", result.ActiveFilters);
+        Assert.Contains("<main id=\"main-content\">", result.Html, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Primary\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Synthetic search filters\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("<caption>Synthetic high-density event rows</caption>", result.Html, StringComparison.Ordinal);
+        Assert.Contains("id=\"timeline\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("a:focus-visible", result.Html, StringComparison.Ordinal);
+        Assert.Contains("@media(max-width:900px)", result.Html, StringComparison.Ordinal);
+        Assert.Contains("@media(max-width:480px)", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"loading\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"empty\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"error\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"unauthorized\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"stale\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"degraded\"", result.Html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RetainedPrototypeHarnessExercisesCancellationAndProtectedFieldEnforcement()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 500, "", "", ""),
+            operatorRole: "viewer",
+            cancelled.Token));
+
+        var viewer = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 25, "DEMO-WIN11", "Security", "high"),
+            operatorRole: "viewer",
+            CancellationToken.None);
+        var admin = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 25, "DEMO-WIN11", "Security", "high"),
+            operatorRole: "admin",
+            CancellationToken.None);
+
+        Assert.DoesNotContain("synthetic-user-", viewer.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("/opt/challenger-demo/bin/tool", viewer.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("192.0.2.", viewer.Html, StringComparison.Ordinal);
+        Assert.Contains("[redacted: protected event fields]", viewer.Html, StringComparison.Ordinal);
+        Assert.Contains("omitted before render", viewer.Html, StringComparison.Ordinal);
+
+        Assert.Contains("synthetic-user-", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("/opt/challenger-demo/bin/tool", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("shown to admin", admin.Html, StringComparison.Ordinal);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "Challenger.Siem.sln")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        current = new DirectoryInfo(Environment.CurrentDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "Challenger.Siem.sln")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate Challenger.Siem.sln from the test process.");
+    }
+}
