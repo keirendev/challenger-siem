@@ -35,10 +35,17 @@ The project should remain open-source and custom-built.
 | --- | --- | --- |
 | pypsrp | Optional local WinRM helper support for authorized Windows lab validation | MIT, open-source |
 
+## Frontend architecture decision
+
+The [frontend architecture ADR](frontend-architecture-adr.md) selects enhanced ASP.NET Core/Razor Pages as the only active web-console architecture for high-density search and timeline work. No TypeScript frontend, npm package manager, lockfile, bundler, client router, external component library, CDN, analytics script, font service, or generated static build output is approved by this spike.
+
+TypeScript ecosystem candidates such as TypeScript, Vite, React, Svelte, and table-virtualization/component packages were stopped at preflight because they did not demonstrate a material measurable benefit over the existing Razor path after accounting for auth/session/CSRF/CSP design, server-side protected-field authorization, build/release complexity, testing, and supply-chain ownership. Reconsidering a separate frontend requires a new ADR with passing gates, a dependency/license inventory, synthetic measurements, and complete removal of rejected prototype artifacts.
+
 ## Not in scope for MVP
 
 - Docker / Compose-based development or deployment.
 - Proprietary SaaS ingestion, analytics, or alerting platforms.
+- A separate TypeScript frontend or JavaScript build pipeline for the SIEM console until a future ADR demonstrates a material benefit and passes the security/accessibility/dependency gates.
 - OpenSearch, Elasticsearch, ClickHouse, or object storage until the custom PostgreSQL-backed MVP is proven.
 
 ## Linux agent runtime

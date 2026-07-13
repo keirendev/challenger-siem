@@ -56,6 +56,12 @@ Rotate an API credential locally with `./scripts/operator-account.sh rotate-api-
 
 Startup requires only `ConnectionStrings:SiemDatabase` and `Auth:EnrollmentToken`. Operator identity state is PostgreSQL-backed. Keep both values and all operator credentials outside source control.
 
+## Frontend auth and CSP boundary
+
+The active web-console architecture remains server-rendered ASP.NET Core/Razor Pages as recorded in the [frontend architecture ADR](frontend-architecture-adr.md). Browser pages must not receive operator API credentials, enrollment tokens, per-agent tokens, provider credentials, raw auth files, connection strings, or cookie values in JavaScript-readable content. Protected review fields are filtered by server repositories before Razor rendering or API serialization; client-side hiding is not an authorization boundary.
+
+Do not add a separate frontend origin, client router, API-cookie bridge, external CDN, analytics script, font service, or JavaScript package pipeline without a new security review. Future Content Security Policy hardening should prefer same-origin static assets and requires inventorying existing inline script surfaces before a strict policy is enabled.
+
 ## External `soc-agent` provider credentials
 
 Provider credentials remain server-side and separate from operator and endpoint credentials. Supported provider files/environment variables, official endpoint allowlists, expiry/scope checks, and redaction behavior are documented in [soc-agent.md](soc-agent.md). Browser clients never receive provider tokens.

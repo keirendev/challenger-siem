@@ -11,6 +11,7 @@ Use this checklist before closing the parent MVP specification issue.
 - [ ] PostgreSQL schema validation passes: `./scripts/validate-schema.sh`.
 - [ ] Fake API smoke passes: `./scripts/smoke-test-server.sh`.
 - [ ] Web console smoke passes: `./scripts/smoke-test-web.sh`.
+- [ ] Frontend architecture remains consistent with [the Razor-selected ADR](frontend-architecture-adr.md): no rejected prototype, npm toolchain, lockfile, generated static bundle, external CDN/analytics/font dependency, or parallel UI route is included.
 - [ ] Windows agent publish succeeds: `./scripts/publish-windows-agent.sh`.
 - [ ] Copy-ready bundle generation succeeds with an ignored generated settings file.
 
