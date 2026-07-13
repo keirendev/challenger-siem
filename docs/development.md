@@ -55,9 +55,15 @@ Follow `docs/versioning.md` when a change needs a version bump or changelog entr
 ## Build and test
 
 ```bash
+./scripts/validate-repository-safety.sh
+./tests/repository-safety/run.sh
 dotnet build Challenger.Siem.sln
 dotnet test Challenger.Siem.sln
 ```
+
+The repository-safety validator examines tracked and staged path names without reading files or scanning ignored `.local/` evidence. Keep Linux agent queues, state, generated settings, journal/audit exports, captures, databases, logs, traces, screenshots, and benchmark/soak output outside the work tree in restrictive OS locations, or under `.local/` for bounded developer evidence. Do not place runtime artifacts in a tracked fixture directory.
+
+Public fixtures must be hand-authored and wholly synthetic. Files below any `fixtures/` directory use the `synthetic-` prefix (except `README.md`) and fake values such as `SYNTHETIC-LINUX-01`, `synthetic-user`, and documentation-only addresses. Never derive a fixture by sanitizing real journal, audit, endpoint, browser, or benchmark output.
 
 The Windows agent targets `net8.0-windows` and is configured to compile on this Linux development host. Running real event collection still requires Windows.
 
