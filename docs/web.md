@@ -22,7 +22,7 @@ Implemented today in the ASP.NET Core API process:
 Not implemented today and therefore specified as future approved work only:
 
 - Separate first-class `/search`, `/assets`, `/cases`, `/detections`, `/dashboards`, `/health`, and `/administration` route trees. The active shell already exposes the mature IA labels and maps implemented sections to existing Razor routes while showing honest disabled/planned affordances for unimplemented top-level workflows.
-- Alert triage mutations, case management, case closure, dashboard builder/editing, detection rule activation/editing/backtesting, response/remediation actions, export workflows, SSO/MFA/tenancy, and SOAR playbooks.
+- Dashboard builder/editing, detection rule activation/editing/backtesting, response/remediation actions, export workflows, SSO/MFA/tenancy, and SOAR playbooks.
 - Autonomous `soc-agent` mutation. Current `soc-agent` tools are read-only; graph proposals require explicit operator approval before graph changes.
 
 ## Product goals and IA principles
@@ -44,7 +44,7 @@ The mature console should use these top-level sections. Current implemented rout
 | Search | Find and pivot across events, alerts, entities, and evidence | `/events`, `/events/detail` | Unified event/entity/timeline search with saved filters, field dictionary, retention labels, redaction notices, and query-cost feedback | Event search implemented; unified search future |
 | Assets | Review hosts, agents, source coverage, inventory, and entity posture | `/agents`, `/agents/detail`, `/audit-policy` | Asset inventory, host coverage, source matrix, queue/pressure, inventory snapshots, role packs, audit-policy drift | Agent/source-health subset implemented |
 | Alerts | Review detection outputs and promote to cases | `/alerts`, `/alerts/detail` | Alert queue, grouping, suppression context, evidence timeline, owner/status transitions, related assets/entities/cases | Review skeleton implemented; triage future |
-| Cases | Manage investigations through audited closure | none | Case queue, assignments, notes, evidence links, tasks, severity/status, closure reason, audit trail | Future |
+| Cases | Manage investigations through audited closure | `/cases`, `/cases/detail` | Case queue, assignments, notes, evidence links, related alerts/entities/graphs, severity/status, closure reason, audit trail | Implemented case lifecycle foundation |
 | Detections | Review and engineer detection content | `/api/v1/detections/rules` only | Rule catalog, prerequisites, coverage, versions, test/backtest status, draft/proposal/activation workflows | Metadata API implemented; UI/mutations future |
 | Dashboards | Monitor saved operating views | dashboard cards on `/` | Saved SOC, coverage, ingestion, retention, and detection dashboards with chart accessibility and no raw telemetry widgets | Future beyond overview cards |
 | Health | Diagnose pipeline and platform health | `/agents/detail`, `/about`, storage APIs | Agent/source/queue/storage/capacity/API health, stale/degraded/partial data, retention status, schema/version status | Scattered current surfaces |
@@ -62,7 +62,7 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, tabs, inventory/audit snapshots, and detection prerequisites. |
 | `/events` | authenticated | Search / event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
-| `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
+| `/alerts` and `/alerts/detail` | authenticated view; analyst+ mutation | Alert review and triage | Non-admin alert summaries/evidence are redacted. Analyst+ can assign, acknowledge, set lifecycle status, suppress, close/reopen, and create linked cases with antiforgery forms. |
 | `/graphs` and `/graphs/detail` | analyst, detection-engineer, admin | Investigation graphs | Create/update nodes/edges, archive graphs, request/apply `soc-agent` proposals with explicit approval for proposal apply. |
 | `/soc-agent` | analyst, detection-engineer, admin | Live SIEM-aware chat workspace | Read-only tools; chat deletion requires confirmation and conflicts while a run is active. |
 | `/audit-policy` | admin | Audit-policy snapshot review | Admin-only because inventory API is currently operator-management scoped. |
@@ -82,6 +82,7 @@ This matrix summarizes implemented authorization and target UI visibility. The s
 | Sensitive event search filters | no | yes | yes | yes | Analysts/detection engineers can search by sensitive fields; non-admin returned values are redacted. |
 | Full raw payload and unredacted protected event fields | no | no | no | yes | Admin only. |
 | Alert metadata | yes | yes | yes | yes | Non-admin alert context redacted. |
+| Alert triage and case lifecycle mutations | no | yes | yes | yes | Assign/acknowledge/status/suppress/close/reopen alerts and create/update/close/reopen cases. |
 | Investigation graph mutations | no | yes | yes | yes | Current graph create/update/node/edge/archive/proposal apply. |
 | `soc-agent` chat/live workspace | no | yes | yes | yes | Same-origin live endpoints require analyst policy. |
 | Detection engineering mutations | no | no | yes | yes | Permission exists; mutable UI/workflow is future. |
@@ -153,11 +154,11 @@ Use `critical`, `high`, `medium`, `low`, and `informational` for alert/case seve
 
 ### Alert lifecycle (target)
 
-`new → acknowledged → investigating → escalated → contained → resolved → closed` with optional `suppressed`, `false_positive`, `duplicate`, and `retention_limited` annotations. Current alert pages are read-only; these transitions are future.
+`new → acknowledged → investigating → escalated → contained → resolved → closed` with optional `suppressed`, `false_positive`, `duplicate`, and `retention_limited` annotations. The Razor and `/api/v1` workflows implement assign, acknowledge, status updates, suppression with reason/expiry, close with disposition/summary, and reopen with optimistic concurrency and audit.
 
 ### Case lifecycle (target)
 
-`draft → open → investigating → pending_external → contained → resolved → closed` with `reopened` possible from `closed`. Closure requires owner, disposition, summary, linked evidence, coverage-gap acknowledgement when present, and audit entry. Cases are not implemented today.
+`draft → open → investigating → pending_external → contained → resolved → closed` with `reopened` possible from `closed`. Closure requires disposition, summary, coverage-gap acknowledgement state, confirmation, and audit entry. The implemented foundation supports owners, severity/priority, notes, evidence links, related alerts/entities/graphs, timeline/activity, close, and reopen.
 
 ### Detection lifecycle (target)
 
@@ -206,7 +207,7 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 ### 4. Alert-to-case workflow (target)
 
 - Alert detail shows rule version, severity, confidence, prerequisites, evidence, related entities, source-health gaps, and retention state.
-- Analyst actions: acknowledge, assign owner, change status, link/create case, suppress with reason, mark duplicate/false-positive, add note.
+- Analyst actions: acknowledge, assign owner, change status, link/create case, suppress with reason, mark duplicate/false-positive via disposition, and add case notes.
 - Detection-engineer actions: propose rule tuning or detection change; cannot bypass evidence/audit.
 - Admin actions: same plus policy/system management where implemented.
 - Conflict state: stale alert/case version requires reload and displays both attempted and current status.

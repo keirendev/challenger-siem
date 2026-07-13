@@ -1,0 +1,54 @@
+@page "/cases"
+@model Challenger.Siem.Api.Pages.Cases.IndexModel
+@{
+    ViewData["Title"] = "Cases";
+}
+
+<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Cases", IsCurrent: true))' />
+
+<div class="page-header">
+    <div>
+        <p class="page-kicker">Case management</p>
+        <h1>Cases</h1>
+        <p class="muted">Manage investigations with ownership, priority, lifecycle, evidence, notes, related alerts, entities, graphs, and audited closure.</p>
+    </div>
+</div>
+
+@if (Model.Message is not null) { <partial name="_Notice" model='new NoticeModel("Case workflow", Model.Message, "success")' /> }
+@if (Model.ErrorMessage is not null) { <partial name="_Notice" model='new NoticeModel("Case action failed", Model.ErrorMessage, "error", IsAlert: true)' /> }
+
+<section class="card" aria-labelledby="create-case-title">
+    <h2 id="create-case-title">Create case</h2>
+    <form method="post" asp-page-handler="Create" class="filters">
+        <div class="form-row"><label asp-for="Title">Title</label><input asp-for="Title" maxlength="160" required /></div>
+        <div class="form-row"><label asp-for="Description">Description</label><textarea asp-for="Description" maxlength="4000"></textarea></div>
+        <div class="form-row"><label asp-for="Severity">Severity</label><select asp-for="Severity"><option>informational</option><option>low</option><option selected>medium</option><option>high</option><option>critical</option></select></div>
+        <div class="form-row"><label asp-for="Priority">Priority</label><select asp-for="Priority"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select></div>
+        <div class="form-row"><label asp-for="AlertId">Optional alert ID</label><input asp-for="AlertId" /></div>
+        <div class="actions"><button type="submit">Create case</button></div>
+    </form>
+</section>
+
+<form method="get" class="card filters filter-panel" aria-label="Case filters">
+    <div class="form-row"><label asp-for="Status">Status</label><select asp-for="Status"><option value="">Any active</option><option value="all">All</option><option>open</option><option>investigating</option><option>pending_external</option><option>contained</option><option>resolved</option><option>closed</option></select></div>
+    <div class="form-row"><label asp-for="Owner">Owner</label><input asp-for="Owner" maxlength="96" /></div>
+    <div class="actions"><button type="submit">Search cases</button><a class="button secondary" asp-page="/Cases/Index">Clear</a></div>
+</form>
+
+<section class="table-card" aria-labelledby="cases-results-title">
+<div class="table-title"><div><h2 id="cases-results-title">Case results</h2><p class="muted">Showing @Model.FirstResultNumber-@Model.LastResultNumber from a bounded @Challenger.Siem.Api.Pages.Cases.IndexModel.PageSize-row page.</p></div><span class="pill">status: @(string.IsNullOrWhiteSpace(Model.Status) ? "any active" : Model.Status)</span></div>
+@if (Model.Cases.Count == 0)
+{
+    <div class="empty"><strong>No cases match the current filters.</strong><p>Create a case from synthetic alerts or adjust filters. Absence of cases is not evidence that telemetry is healthy.</p></div>
+}
+else
+{
+    <div class="table-scroll"><table><caption>Cases with owner, severity, priority, status, linked alerts and evidence</caption><thead><tr><th>Updated</th><th>Case</th><th>Owner</th><th>Severity</th><th>Priority</th><th>Status</th><th>Links</th><th></th></tr></thead><tbody>
+    @foreach (var item in Model.Cases)
+    {
+        <tr><td>@TimeDisplay.FormatUtc(item.UpdatedAt, "yyyy-MM-dd HH:mm")</td><td><strong>@item.CaseKey</strong><div>@item.Title</div></td><td>@(item.Owner ?? "unassigned")</td><td><span class="badge danger">@item.Severity</span></td><td>@item.Priority</td><td><span class="badge">@item.Status</span></td><td>@item.AlertCount alerts · @item.EvidenceCount evidence</td><td><a asp-page="/Cases/Detail" asp-route-case_id="@item.CaseId">Open</a></td></tr>
+    }
+    </tbody></table></div>
+}
+<nav class="pagination" aria-label="Case result pages"><span class="muted">Page @Model.PageNumber · recent activity first</span><div class="actions"><a class="button secondary @(Model.HasPreviousPage ? null : "disabled")" aria-disabled="@(!Model.HasPreviousPage)" asp-page="/Cases/Index" asp-route-status="@Model.Status" asp-route-owner="@Model.Owner" asp-route-page="@(Model.PageNumber - 1)">Previous</a><a class="button secondary @(Model.HasNextPage ? null : "disabled")" aria-disabled="@(!Model.HasNextPage)" asp-page="/Cases/Index" asp-route-status="@Model.Status" asp-route-owner="@Model.Owner" asp-route-page="@(Model.PageNumber + 1)">Next</a></div></nav>
+</section>

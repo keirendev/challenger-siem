@@ -60,7 +60,7 @@
                 <a class="nav-item @(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index"><span aria-hidden="true">04</span> Alerts</a>
                 @if (canUseAnalystWorkspaces)
                 {
-                    <span class="nav-item disabled" aria-disabled="true" title="Case management is planned; current investigation graphs remain available below."><span aria-hidden="true">05</span> Cases <span class="nav-status">planned</span></span>
+                    <a class="nav-item @(IsActive("/Cases") ? "active" : null)" aria-current="@(IsActive("/Cases") ? "page" : null)" asp-page="/Cases/Index"><span aria-hidden="true">05</span> Cases</a>
                 }
                 @if (canManageDetections)
                 {

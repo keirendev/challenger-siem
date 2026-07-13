@@ -98,10 +98,11 @@ Common current operator path (aligned to the Overview/Search/Assets/Alerts/Cases
 1. Open **Overview** to check active, stale, retired, queued, and recent-ingest metrics.
 2. Use **Search** for bounded event search by time, host, agent, source, Windows Event ID, keyword, normalized category/action, user, process, or destination IP. The shell global search posts to this same bounded event-search path without placing the query in the browser URL; unified search remains planned.
 3. Use **Assets** to filter by hostname/agent ID/status/health and open host coverage details. Admin-only stale-agent retirement remains confirmation-gated and preserves telemetry.
-4. Use **Alerts** to review the current alert foundation and empty-state handling until triage/case workflow mutations are implemented.
-5. Use the role-aware implemented workspace links for **Investigation graphs** and **soc-agent** when your role permits analyst workflows. `soc-agent` remains citation-oriented and cannot mutate detections, configuration, agents, stored data, or repository files.
-6. Treat **Cases**, **Detections**, **Dashboards**, and broad **Administration** entries as honest planned affordances when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
-7. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
+4. Use **Alerts** to review detection output, assign/acknowledge/investigate, suppress with reason/expiry, close/reopen with disposition, and promote synthetic or real review signals into cases. Evidence rows explicitly state whether underlying telemetry is retained, removed by retention, or missing.
+5. Use **Cases** to manage investigations with owner, severity, priority, status, notes, evidence links, related alerts/entities/graphs, activity timeline, confirmed closure, and reopen.
+6. Use the role-aware implemented workspace links for **Investigation graphs** and **soc-agent** when your role permits analyst workflows. `soc-agent` remains citation-oriented and cannot mutate detections, configuration, agents, stored data, or repository files.
+7. Treat **Detections**, **Dashboards**, and broad **Administration** entries as honest planned affordances when shown; current implemented child capabilities remain linked separately and server authorization is authoritative.
+8. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
 
 The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
 

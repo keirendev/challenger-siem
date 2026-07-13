@@ -16,7 +16,7 @@ Roles are exact, single-valued assignments:
 | --- | ---: | ---: | ---: | ---: |
 | Dashboard, inventory, alert and event metadata | yes | yes | yes | yes |
 | Sensitive review (with server-side redaction) | no | yes | yes | yes |
-| `soc-agent` and investigation mutations | no | yes | yes | yes |
+| Alert triage, cases, `soc-agent`, and investigation mutations | no | yes | yes | yes |
 | Detection engineering mutations | no | no | yes | yes |
 | Agent retirement, operator management, storage accounting, full raw fields | no | no | no | yes |
 

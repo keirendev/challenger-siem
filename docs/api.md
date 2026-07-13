@@ -377,7 +377,44 @@ GET /api/v1/detections/rules
 Authorization: Bearer <operator-api-credential>
 ```
 
-The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md). Mutating alert triage, rule activation, UI case workflows, and host remediation remain future approved workflows.
+The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md).
+
+Alert triage mutations are additive v1 analyst/detection-engineer/admin routes. Unsafe calls require an operator bearer credential rather than a browser cookie, use bounded request bodies, write append-only activity/security-audit entries, and use `expected_version` optimistic concurrency with `409` conflict on stale versions:
+
+```http
+POST /api/v1/alerts/<alert-id>/assign
+POST /api/v1/alerts/<alert-id>/acknowledge
+POST /api/v1/alerts/<alert-id>/status
+POST /api/v1/alerts/<alert-id>/suppress
+POST /api/v1/alerts/<alert-id>/close
+POST /api/v1/alerts/<alert-id>/reopen
+Authorization: Bearer <operator-api-credential>
+```
+
+Request fields are additive and action-specific: `expected_version`, `owner`, `status`, `disposition`, `reason`, `summary`, `suppressed_until`, and optional `idempotency_key`. Suppression requires a bounded reason and optional future expiry. Closure requires disposition and summary. Alert responses preserve existing v1 fields and add optional owner/version/lifecycle/disposition/suppression/case/activity metadata. Evidence rows report `telemetry_retention_state` as `telemetry_retained`, `telemetry_removed_by_retention`, or `underlying_telemetry_missing` so evidence identity remains explicit after retention or unexpected loss.
+
+## Cases
+
+```http
+GET /api/v1/cases?status=open&owner=analyst
+POST /api/v1/cases
+GET /api/v1/cases/<case-id>
+PUT /api/v1/cases/<case-id>
+POST /api/v1/cases/<case-id>/assign
+POST /api/v1/cases/<case-id>/status
+POST /api/v1/cases/<case-id>/notes
+POST /api/v1/cases/<case-id>/alerts
+POST /api/v1/cases/<case-id>/entities
+POST /api/v1/cases/<case-id>/graphs
+POST /api/v1/cases/<case-id>/evidence
+POST /api/v1/cases/<case-id>/close
+POST /api/v1/cases/<case-id>/reopen
+Authorization: Bearer <operator-api-credential>
+```
+
+Cases support title/description, owner, severity, priority, status, disposition, closure criteria/summary, coverage-gap acknowledgement, related alerts/entities/investigation graphs, immutable notes, explicit evidence links, and activity timeline. Create accepts optional `alert_ids`; relationship endpoints link additional alerts/entities/graphs/evidence. Mutations require analyst-level investigation permission, bounded inputs, optional idempotency keys, optimistic concurrency where lifecycle state changes an existing case, and security audit entries. Closing a case requires explicit confirmation, disposition, closure summary, and coverage-gap acknowledgement state; reopening moves the case back to `investigating`. Browser `/cases` Razor workflows use antiforgery-protected forms for the same lifecycle and confirmation semantics.
+
+Detection rule activation, host remediation, and response actions remain future approved workflows.
 
 
 ## Managed telemetry storage accounting and retention
