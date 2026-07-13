@@ -60,7 +60,7 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | `/` | authenticated | Overview dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations, lifecycle-state guidance. |
 | `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
 | `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, tabs, inventory/audit snapshots, and detection prerequisites. |
-| `/events` | authenticated | Search / event search | Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
+| `/events` | authenticated | Search / event search | Bounded structured filters, cursor pagination, configurable columns, UTC timeline buckets, saved searches, entity/detail pivots, and admin-only confirmation-gated CSV export. Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
 | `/events/detail` | authenticated | Event detail | Admin gets raw JSON; non-admin raw is `{}` with sensitive fields redacted or restricted. |
 | `/alerts` and `/alerts/detail` | authenticated | Alert review skeleton | Non-admin alert summaries/evidence are redacted. No triage mutation today. |
 | `/graphs` and `/graphs/detail` | analyst, detection-engineer, admin | Investigation graphs | Create/update nodes/edges, archive graphs, request/apply `soc-agent` proposals with explicit approval for proposal apply. |
@@ -187,13 +187,13 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 
 ### 2. Search-first investigation (current plus target)
 
-- Start at Search (`/events` today) with UTC time range, host/agent, source, event code, keyword, and normalized filters.
+- Start at Search (`/events` today) with UTC time range, host/agent/platform/source, provider/facility/unit, event code, severity/outcome, detection/entity, keyword, network, file, service, process, user, and normalized filters.
 - Loading state: skeleton filter panel and result table; keep submitted filter summary visible.
 - Empty state: show active filters, time range, role redaction caveats, coverage/source-health links, and clear-filter action.
 - Partial state: show when a role strips sensitive filters, raw fields are omitted, retention removed evidence, or a source is stale/degraded.
 - Pivot targets: event detail, asset detail, alert detail, graph add-node, future entity timeline, future case evidence.
 - Error state: safe message with retry and schema/health hint; no SQL/connection details.
-- Success state: bounded results, total/visible count when known, query limit, pagination, UTC and host-local time labels.
+- Success state: bounded results, visible count, query limit, cursor pagination, active filter/result-scope display, configurable columns, UTC timeline buckets, saved-search state, and explicit host-local time labels.
 
 ### 3. Asset/coverage investigation (current plus target)
 
@@ -256,7 +256,7 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 
 - Filters use labels, help text, validation messages, and clear/apply actions.
 - Time filters are UTC unless explicitly labelled host-local; host-local displays must include timezone/offset.
-- Saved searches and dashboards must store only bounded filter metadata, not raw result payloads.
+- Saved searches and dashboards must store only bounded filter metadata, owner/visibility/version/audit metadata, and display preferences, not raw result payloads.
 - Keyword searches over raw/normalized text must show role and performance limits.
 
 ### Breadcrumbs and pivots

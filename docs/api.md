@@ -238,26 +238,46 @@ Authorization: Bearer <operator-api-credential>
 
 The database/search implementation returns persisted Windows and portable Linux events. Additive source, platform, source-ID, and event-code filters are available; facility, unit, and checkpoint remain event response fields rather than dedicated query filters.
 
-Supported current filters:
+Supported current filters are strictly bounded and validation failures return a field-level validation response instead of running a broad query:
 
-- `hostname`
-- `agent_id`
-- `channel`
-- `windows_event_id`
-- `from` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
-- `to` (UTC; offset-less `datetime-local` values from the web console are interpreted as UTC)
-- `keyword`
-- `category`
-- `action`
-- `user_name`
-- `process_image`
-- `source_ip`
-- `destination_ip`
-- `service_name`
-- `file_path`
-- `registry_key`
-- `package_name` (additive normalized package filter)
-- `limit` (maximum 500)
+- `from` / `to` UTC event-time range; offset-less browser `datetime-local` values are interpreted as UTC.
+- `hostname`, `agent_id`, `platform`, `source`, `source_id`, `channel`, `provider`, `facility`, and `unit`.
+- `windows_event_id`, additive native `event_code`, `severity`, normalized `category`, `action`, and `outcome`.
+- Protected sensitive filters for analyst+ roles: `keyword`, `user_name`, `process_image`, `process_command_line`, `source_ip`, `destination_ip`, `network_ip`, `source_port`, `destination_port`, `protocol`, `service_name`, `file_path`, `registry_key`, and `package_name`. Viewer requests may include them, but the server strips them before querying.
+- Detection/entity pivots: `detection_rule_id`, `entity_type`, and `entity_value`.
+- Pagination/display controls: `limit` (maximum 500), opaque `cursor`, `bucket_seconds` (60-86400), and comma-separated `columns`.
+
+Responses keep the original `events` array and add optional `page`, `active_filters`, `result_scope`, and `redaction` metadata. Pagination is newest-first by canonical UTC `event_time` plus storage row ID; clients should pass `page.next_cursor` back as `cursor` for the next page.
+
+Timeline aggregation:
+
+```http
+GET /api/v1/events/timeline?from=2026-07-14T00:00:00Z&to=2026-07-14T12:00:00Z&bucket_seconds=3600
+Authorization: Bearer <operator-api-credential>
+```
+
+Returns up to 500 UTC buckets grouped by source and severity. Host-local timezone labels are display metadata only; filtering and correlation remain UTC.
+
+Saved searches:
+
+```http
+GET /api/v1/events/saved-searches
+POST /api/v1/events/saved-searches
+PUT /api/v1/events/saved-searches/<saved-search-id>
+DELETE /api/v1/events/saved-searches/<saved-search-id>
+Authorization: Bearer <operator-api-credential>
+```
+
+Saved searches store owner, private/shared visibility, version, bounded query metadata, and column preferences. They never store result rows or raw event payloads. Create/update/delete operations are audited; shared saved searches require an analyst, detection-engineer, or admin operator.
+
+Admin export:
+
+```http
+POST /api/v1/events/export?confirm_export=EXPORT&from=2026-07-14T00:00:00Z&limit=500
+Authorization: Bearer <admin-operator-api-credential>
+```
+
+CSV export is bounded (maximum 5,000 rows), admin-only, confirmation-gated, audited, uses a safe `Content-Disposition` filename, applies the same role field policy before output, omits raw JSON, and prefixes formula/URL-like cell values to prevent spreadsheet injection.
 
 ## Source health
 

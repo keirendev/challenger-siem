@@ -294,29 +294,12 @@ public sealed class SocAgentService(
             await AddCitationAsync(new SocAgentCitation { Kind = "source_health", Label = "Host coverage", Url = $"/agents/detail?agent_id={Uri.EscapeDataString(request.ContextAgentId)}" });
         }
 
-        var eventQuery = new EventSearchQuery(
-            Hostname: null,
-            AgentId: request.ContextAgentId,
-            Channel: null,
-            WindowsEventId: null,
-            From: DateTimeOffset.UtcNow.AddHours(-24),
-            To: null,
-            Keyword: null,
-            Category: null,
-            Action: null,
-            UserName: null,
-            ProcessImage: null,
-            SourceIp: null,
-            DestinationIp: null,
-            ServiceName: null,
-            FilePath: null,
-            RegistryKey: null,
-            Source: null,
-            Platform: null,
-            SourceId: null,
-            EventCode: null,
-            PackageName: null,
-            Limit: Math.Clamp(options.MaxEvents, 1, 50));
+        var eventQuery = EventSearchQuery.Empty with
+        {
+            AgentId = request.ContextAgentId,
+            From = DateTimeOffset.UtcNow.AddHours(-24),
+            Limit = Math.Clamp(options.MaxEvents, 1, 50)
+        };
         await StartToolAsync("event_search", "Loading recent normalized events for the current scope.");
         var recentEvents = await events.SearchEventsForOperatorAsync(eventQuery, operatorRole, cancellationToken);
         await AddToolAsync(new SocAgentToolRunSummary { ToolName = "event_search", RowCount = recentEvents.Count, Summary = "Loaded recent normalized events for the current scope." });
