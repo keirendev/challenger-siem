@@ -41,4 +41,4 @@ In non-Development ASP.NET Core environments the API rejects plain HTTP requests
 
 ## Secret handling
 
-TLS private keys, enrollment tokens, review tokens, database passwords, generated agent settings, and raw telemetry stay in ignored local files or external secret stores. They must not be committed, pasted into issue comments, or included in release artifacts.
+TLS private keys, enrollment tokens, operator API credentials, database passwords, generated agent settings, and raw telemetry stay in ignored local files or external secret stores. They must not be committed, pasted into issue comments, or included in release artifacts.

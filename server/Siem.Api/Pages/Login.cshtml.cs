@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Database;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -9,69 +9,33 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace Challenger.Siem.Api.Pages;
 
 [AllowAnonymous]
-public sealed class LoginModel(TokenService tokens, IConfiguration configuration) : PageModel
+public sealed class LoginModel(OperatorRepository operators, SecurityAuditRepository audit) : PageModel
 {
-    [BindProperty]
-    public string ReviewToken { get; set; } = string.Empty;
-
-    [BindProperty(SupportsGet = true)]
-    public string? ReturnUrl { get; set; }
-
+    [BindProperty] public string Username { get; set; } = string.Empty;
+    [BindProperty] public string Password { get; set; } = string.Empty;
+    [BindProperty(SupportsGet = true)] public string? ReturnUrl { get; set; }
     public string? ErrorMessage { get; private set; }
 
-    public IActionResult OnGet()
-    {
-        return User.Identity?.IsAuthenticated == true
-            ? LocalRedirect(GetSafeReturnUrl())
-            : Page();
-    }
+    public IActionResult OnGet() => User.Identity?.IsAuthenticated == true ? LocalRedirect(GetSafeReturnUrl()) : Page();
 
-    public async Task<IActionResult> OnPostAsync()
+    public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
     {
-        var expectedToken = configuration["Auth:ReviewToken"];
-        if (string.IsNullOrWhiteSpace(expectedToken))
+        LoginResult result;
+        try { result = await operators.AuthenticatePasswordAsync(Username, Password, cancellationToken); }
+        catch (ArgumentException) { result = new("invalid", null, null); }
+        Password = string.Empty; ModelState.Remove(nameof(Password));
+        if (result.Session is null || result.SessionToken is null)
         {
-            ErrorMessage = "Review access is not configured.";
-            ClearSubmittedToken();
+            ErrorMessage = result.Status == "locked" ? "Account is temporarily locked. Try again later or use the documented local recovery procedure." : "Invalid username or password.";
+            await audit.RecordAsync(null, string.IsNullOrWhiteSpace(Username) ? null : Username.Trim(), "operator.login", "failure", "operator", null, HttpContext, new Dictionary<string,object?>{{"reason",result.Status}}, cancellationToken);
             return Page();
         }
-
-        if (!tokens.FixedTimeEquals(expectedToken, ReviewToken))
-        {
-            ErrorMessage = "Invalid review token.";
-            ClearSubmittedToken();
-            return Page();
-        }
-
-        var identity = new ClaimsIdentity(
-            new[]
-            {
-                new Claim(ClaimTypes.Name, "operator"),
-                new Claim(ClaimTypes.Role, "review")
-            },
-            CookieAuthenticationDefaults.AuthenticationScheme);
-
-        await HttpContext.SignInAsync(
-            CookieAuthenticationDefaults.AuthenticationScheme,
-            new ClaimsPrincipal(identity),
-            new AuthenticationProperties
-            {
-                IsPersistent = false,
-                IssuedUtc = DateTimeOffset.UtcNow,
-                ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
-            });
-
+        var op=result.Session.Operator;
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
+            OperatorAuthentication.Principal(op, CookieAuthenticationDefaults.AuthenticationScheme, result.SessionToken),
+            new AuthenticationProperties { IsPersistent=false, IssuedUtc=DateTimeOffset.UtcNow, ExpiresUtc=result.Session.ExpiresAt, AllowRefresh=false });
+        await audit.RecordAsync(op.OperatorId,op.Username,"operator.login","success","session",result.Session.SessionId.ToString(),HttpContext,new Dictionary<string,object?>{{"role",op.Role}},cancellationToken);
         return LocalRedirect(GetSafeReturnUrl());
     }
-
-    private string GetSafeReturnUrl()
-    {
-        return Url.IsLocalUrl(ReturnUrl) ? ReturnUrl! : "/";
-    }
-
-    private void ClearSubmittedToken()
-    {
-        ReviewToken = string.Empty;
-        ModelState.Remove(nameof(ReviewToken));
-    }
+    private string GetSafeReturnUrl()=>Url.IsLocalUrl(ReturnUrl)?ReturnUrl!:"/";
 }

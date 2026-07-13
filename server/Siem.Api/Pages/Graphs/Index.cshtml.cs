@@ -1,10 +1,12 @@
 using Challenger.Siem.Api.Database;
+using Microsoft.AspNetCore.Authorization;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Challenger.Siem.Api.Pages.Graphs;
 
+[Authorize(Policy = "investigations")]
 public sealed class IndexModel(InvestigationGraphRepository graphs, ILogger<IndexModel> logger) : PageModel
 {
     public const int PageSize = 25;
@@ -56,9 +58,9 @@ public sealed class IndexModel(InvestigationGraphRepository graphs, ILogger<Inde
             {
                 Title = Title,
                 Description = Description,
-                Owner = "review-token-operator",
+                Owner = User.Identity?.Name ?? "operator",
                 Tags = ParseTags(Tags)
-            }, "review-token-operator", cancellationToken);
+            }, User.Identity?.Name ?? "operator", cancellationToken);
             Message = "Investigation graph created.";
             return RedirectToPage("/Graphs/Detail", new { graph_id = created.GraphId });
         }

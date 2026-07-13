@@ -15,7 +15,7 @@ Checks:
    ./scripts/current-version.sh
    ```
 
-2. Ensure `ConnectionStrings__SiemDatabase`, `Auth__EnrollmentToken`, and `Auth__ReviewToken` are set in the shell or sourced from `.local/dev.env`.
+2. Ensure `ConnectionStrings__SiemDatabase` and `Auth__EnrollmentToken` are set in the shell or sourced from `.local/dev.env`.
 3. Verify PostgreSQL is reachable and the schema has been applied:
 
    ```bash
@@ -44,10 +44,10 @@ Run `./scripts/apply-schema.sh` again against the intended development database,
 
 ## Review API or web console returns unauthorized
 
-- Review API routes require `Authorization: Bearer <Auth__ReviewToken>`.
-- The web console login page uses the same review token but then stores an HTTP-only session cookie.
-- If login loops back to `/login`, clear the local test cookie jar/browser context and confirm the API process has the expected `Auth__ReviewToken`.
-- Do not put the review token in URLs; use headers for API calls and the login form for the browser.
+- Review API routes require `Authorization: Bearer <SIEM_OPERATOR_API_TOKEN>`.
+- The web console login page uses an operator username/password and creates a revocable HTTP-only session cookie.
+- If login loops back to `/login`, clear the local test cookie jar/browser context and confirm the operator is enabled, unlocked, and the schema is current.
+- Do not put the operator API credential in URLs; use bearer headers for API calls and username/password fields for the browser.
 
 ## Web smoke test fails
 
@@ -61,7 +61,7 @@ Then inspect only the needed bounded files under `.local/`, such as the smoke AP
 
 - API did not become healthy.
 - Development database schema is missing a newer table/index.
-- Review token or enrollment token is not set.
+- Operator API credential or enrollment token is not set.
 - A web route changed and the smoke script/docs need to be updated.
 
 For browser behavior, run a Playwright harness against the real app. Curl/HTML smoke checks do not validate redirects, cookies, form behavior, or user-visible navigation as fully as a browser.

@@ -16,7 +16,7 @@ Web:
 - `POST /soc-agent/live/runs/{run_id}/cancel` - cancels an active server-side turn and records a bounded cancelled assistant message when interrupted.
 - `GET /soc-agent/live/sessions/{session_id}/active` - lets the page recover an active run after refresh without duplicating messages.
 
-Review-token APIs:
+Operator-credential APIs:
 
 - `GET /api/v1/soc-agent/status` - provider/model/auth status with safe connect/setup metadata and no secrets.
 - `GET /api/v1/soc-agent/sessions` - recent bounded chat sessions.

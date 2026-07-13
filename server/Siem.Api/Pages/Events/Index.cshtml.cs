@@ -1,4 +1,5 @@
 using System.Globalization;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V1;
@@ -46,7 +47,7 @@ public sealed class IndexModel(
 
         try
         {
-            var loadedEvents = await eventRepository.SearchEventsAsync(fetchQuery, cancellationToken, (PageNumber - 1) * NormalizedLimit);
+            var loadedEvents = await eventRepository.SearchEventsForOperatorAsync(fetchQuery, OperatorAuthorization.Role(User)!, cancellationToken, (PageNumber - 1) * NormalizedLimit);
             HasNextPage = loadedEvents.Count > NormalizedLimit;
             Events = loadedEvents.Take(NormalizedLimit).ToArray();
         }

@@ -1,10 +1,13 @@
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
+using Microsoft.AspNetCore.Authorization;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Challenger.Siem.Api.Pages.Graphs;
 
+[Authorize(Policy = "investigations")]
 public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<DetailModel> logger) : PageModel
 {
     [BindProperty(SupportsGet = true, Name = "graph_id")]
@@ -66,7 +69,7 @@ public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<Det
     {
         try
         {
-            var updated = await graphs.UpdateAsync(GraphId, new InvestigationGraphUpdateRequest { Title = Title, Description = Description, Tags = ParseTags(Tags), Owner = "review-token-operator", ExpectedVersion = ExpectedVersion }, "review-token-operator", cancellationToken);
+            var updated = await graphs.UpdateAsync(GraphId, new InvestigationGraphUpdateRequest { Title = Title, Description = Description, Tags = ParseTags(Tags), Owner = User.Identity?.Name ?? "operator", ExpectedVersion = ExpectedVersion }, User.Identity?.Name ?? "operator", cancellationToken);
             Message = updated is null ? null : "Graph metadata updated."; ErrorMessage = updated is null ? "Graph was changed by another request or archived; reload and try again." : null;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { ErrorMessage = ex.Message; }
@@ -77,7 +80,7 @@ public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<Det
     {
         try
         {
-            await graphs.AddNodeAsync(GraphId, new InvestigationGraphNodeRequest { NodeType = NodeType, Label = NodeLabel, ReferenceKind = NodeReferenceKind, ReferenceId = NodeReferenceId, LinkUrl = NodeLinkUrl, Notes = NodeNotes }, "review-token-operator", cancellationToken);
+            await graphs.AddNodeAsync(GraphId, new InvestigationGraphNodeRequest { NodeType = NodeType, Label = NodeLabel, ReferenceKind = NodeReferenceKind, ReferenceId = NodeReferenceId, LinkUrl = NodeLinkUrl, Notes = NodeNotes }, User.Identity?.Name ?? "operator", cancellationToken);
             Message = "Node added.";
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { ErrorMessage = ex.Message; }
@@ -89,7 +92,7 @@ public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<Det
     {
         try
         {
-            await graphs.AddEdgeAsync(GraphId, new InvestigationGraphEdgeRequest { SourceNodeId = SourceNodeId, TargetNodeId = TargetNodeId, EdgeType = EdgeType, Label = EdgeLabel, Notes = EdgeNotes }, "review-token-operator", cancellationToken);
+            await graphs.AddEdgeAsync(GraphId, new InvestigationGraphEdgeRequest { SourceNodeId = SourceNodeId, TargetNodeId = TargetNodeId, EdgeType = EdgeType, Label = EdgeLabel, Notes = EdgeNotes }, User.Identity?.Name ?? "operator", cancellationToken);
             Message = "Edge added.";
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { ErrorMessage = ex.Message; }
@@ -99,14 +102,14 @@ public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<Det
 
     public async Task<IActionResult> OnPostArchiveAsync(CancellationToken cancellationToken)
     {
-        await graphs.ArchiveAsync(GraphId, "review-token-operator", cancellationToken);
+        await graphs.ArchiveAsync(GraphId, User.Identity?.Name ?? "operator", cancellationToken);
         Message = "Graph archived.";
         return RedirectToPage("/Graphs/Index", new { status = "archived" });
     }
 
     public async Task<IActionResult> OnPostProposeAsync(CancellationToken cancellationToken)
     {
-        try { await graphs.CreateSocAgentProposalAsync(GraphId, ProposalInstruction, "review-token-operator", cancellationToken); Message = "soc-agent proposal created for review."; }
+        try { await graphs.CreateSocAgentProposalAsync(GraphId, ProposalInstruction, User.Identity?.Name ?? "operator", cancellationToken); Message = "soc-agent proposal created for review."; }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { ErrorMessage = ex.Message; }
         return RedirectToPage(new { graph_id = GraphId });
     }
@@ -114,7 +117,7 @@ public sealed class DetailModel(InvestigationGraphRepository graphs, ILogger<Det
     public async Task<IActionResult> OnPostApplyProposalAsync(CancellationToken cancellationToken)
     {
         if (!ConfirmApplyProposal) { ErrorMessage = "Confirm explicit operator approval before applying the proposal."; return RedirectToPage(new { graph_id = GraphId }); }
-        await graphs.ApplyProposalAsync(GraphId, ProposalId, "review-token-operator", cancellationToken);
+        await graphs.ApplyProposalAsync(GraphId, ProposalId, User.Identity?.Name ?? "operator", cancellationToken);
         Message = "Proposal applied.";
         return RedirectToPage(new { graph_id = GraphId });
     }

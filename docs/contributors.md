@@ -71,7 +71,7 @@ Answer this checklist for every pull request and update docs in the same change 
 ### Security and public-data safety
 
 - Could any new example, fixture, screenshot, log, test output, or PR comment disclose a secret or real endpoint/client data?
-- Are placeholder values clearly fake, such as `<long-random-review-token>`, `DEMO-WIN11`, `demo-agent-001`, or documentation-only RFC 5737 IP ranges?
+- Are placeholder values clearly fake, such as `<operator-api-credential>`, `DEMO-WIN11`, `demo-agent-001`, or documentation-only RFC 5737 IP ranges?
 - Are generated settings, queue/state databases, event exports, captures, and lab evidence excluded from staging?
 
 ### Versioning and changelog

@@ -96,7 +96,7 @@ SOAR playbooks and guarded response integrations:
 
 RBAC, SSO/MFA, tenancy, and SIEM self-audit:
 
-- Migration path: retain review token for local MVP, add operator identities, roles, SSO/OIDC, MFA, tenant scoping, and permission checks.
+- Migration path: retain operator API credential for local MVP, add operator identities, roles, SSO/OIDC, MFA, tenant scoping, and permission checks.
 - Self-audit records auth events, config changes, graph/proposal actions, alert/case changes, and export activity without secrets.
 - Future roles should separate view, edit, approve, administer, and export permissions.
 

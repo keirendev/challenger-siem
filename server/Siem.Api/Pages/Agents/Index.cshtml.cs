@@ -1,4 +1,5 @@
 using System.Globalization;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Review;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -64,6 +65,7 @@ public sealed class IndexModel(
 
     public async Task<IActionResult> OnPostCleanupStaleAsync(CancellationToken cancellationToken)
     {
+        if (!OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ManageAgents)) return Forbid();
         Status = NormalizeStatus(Status);
         NormalizePageNumber();
         if (!ConfirmCleanup)

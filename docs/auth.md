@@ -1,61 +1,65 @@
-# Authentication design
+# Authentication and operator authorization
 
-## MVP mechanisms
+## Separate credential domains
 
-### Enrollment token
+Endpoint agents and human operators never share credentials or authentication code paths.
 
-Used only for initial agent registration.
+- `X-Enrollment-Token` is used only to register an endpoint.
+- Per-agent bearer tokens are issued at registration, stored hashed by the server, and authorize only that agent's ingest, heartbeat, and inventory routes.
+- Operators authenticate with a database identity and password for the browser, or a separately rotated operator API credential for review API automation. Operator credentials cannot call agent transport routes and agent credentials cannot call operator routes.
 
-- Client sends it in `X-Enrollment-Token` to `POST /api/v1/agents/register`.
-- Server compares it to `Auth:EnrollmentToken` from configuration.
-- It must be long, random, and managed outside source control.
-- The Windows agent can use it for first-run enrollment and then clears the enrollment token from the persisted settings file after storing the returned per-agent token as `ProtectedApiToken` with Windows DPAPI machine protection.
+## Operator roles
 
-### Per-agent API token
+Roles are exact, single-valued assignments:
 
-Issued by the server during registration.
+| Capability | viewer | analyst | detection-engineer | admin |
+| --- | ---: | ---: | ---: | ---: |
+| Dashboard, inventory, alert and event metadata | yes | yes | yes | yes |
+| Sensitive review (with server-side redaction) | no | yes | yes | yes |
+| `soc-agent` and investigation mutations | no | yes | yes | yes |
+| Detection engineering mutations | no | no | yes | yes |
+| Agent retirement, operator management, storage accounting, full raw fields | no | no | no | yes |
 
-- Client uses it as `Authorization: Bearer <token>` for ingest and heartbeat endpoints.
-- Server stores only a SHA-256 hash of the token.
-- Windows agents should prefer DPAPI-protected local `ProtectedApiToken` persistence after enrollment; plaintext `ApiToken` remains supported for ignored local lab settings.
-- Re-registering an existing `agent_id` rotates the stored token and invalidates the previous token.
+Authorization is checked in endpoint/Razor handlers and mutation boundaries. Event repositories apply field policy before API or Razor serialization: non-admin responses omit raw payloads and redact event text, command lines, account names/identifiers, paths/registry data, and network addresses/ports. UI visibility is not an authorization control.
 
-### Review token
+## Credential and session security
 
-Protects the initial search/review API and web review console.
+Passwords are salted PBKDF2-HMAC-SHA256 hashes with 210,000 iterations. Passwords must be 14-256 characters and include upper-case, lower-case, numeric, and symbol characters. Operator API credentials and session handles are random 256-bit values; only SHA-256 hashes are persisted.
 
-- API clients use `Authorization: Bearer <review-token>` for review endpoints such as `GET /api/v1/events`, `/api/v1/source-health`, `/api/v1/telemetry-coverage`, `/api/v1/inventory`, `/api/v1/alerts`, `/api/v1/detections/rules`, `POST /api/v1/soc-agent/ask`, and the additive `/api/v1/soc-agent/status` / session chat endpoints, including `DELETE /api/v1/soc-agent/sessions/{session_id}`.
-- Browser operators submit the token to `/login` for the web console.
-- Server compares it to `Auth:ReviewToken` from configuration.
-- A successful web login issues an HTTP-only same-origin cookie; the review token is not stored in browser local storage.
-- Logout clears the operator session cookie.
+Five failed password attempts lock an account for 15 minutes. Browser sessions have an absolute eight-hour expiry, are database-validated on each request, do not slide, and are revoked by logout, password change/recovery, or API-credential rotation. The protected cookie is `HttpOnly`, `SameSite=Strict`, and always `Secure` outside Development. Razor forms use ASP.NET Core antiforgery tokens. Unsafe `/api` calls reject cookie-only authentication and require the CSRF-safe operator bearer credential.
+
+## Local bootstrap and recovery
+
+Apply all migrations before account operations. Bootstrap is deliberately local and succeeds only while the operator table is empty. Supply the password through the process environment, never an argument or tracked file:
+
+```bash
+SIEM_OPERATOR_PASSWORD='<private-strong-password>' \
+  ./scripts/operator-account.sh bootstrap --username local-admin --display-name 'Local administrator' --role admin
+```
+
+Create later identities through authenticated `POST /api/v1/operators` as an admin. The body accepts `username`, `display_name`, exact `role`, and `password`; do not retain request bodies or API responses in shell history/logs.
+
+Change a known password or perform local recovery (which also clears lockout) using the same local database path. Both revoke every existing session:
+
+```bash
+SIEM_OPERATOR_PASSWORD='<private-new-password>' ./scripts/operator-account.sh change-password --username local-admin
+SIEM_OPERATOR_PASSWORD='<private-new-password>' ./scripts/operator-account.sh recover --username local-admin
+```
+
+Rotate an API credential locally with `./scripts/operator-account.sh rotate-api-token --username local-admin`, or call `POST /api/v1/operators/me/api-token/rotate` while authenticated. The credential is shown once, all browser sessions are revoked, and it must be moved directly into an external secret store or ignored local environment. There is no review-token configuration, hidden fallback, default account, or production bootstrap endpoint.
+
+## Immutable security audit
+
+`security_audit_events` records successful and failed access attempts plus account/session/security mutations. A database trigger rejects update and delete. Entries contain actor/target identifiers, action/outcome, request ID, a one-way remote-address hash, and bounded non-secret metadata. Passwords, API/session credentials, cookies, authorization headers, raw telemetry, command lines, account data, paths, and network values are never audit details.
 
 ## Required server configuration
 
-The API fails startup with non-secret key names if any of these settings are missing or blank:
+Startup requires only `ConnectionStrings:SiemDatabase` and `Auth:EnrollmentToken`. Operator identity state is PostgreSQL-backed. Keep both values and all operator credentials outside source control.
 
-- `ConnectionStrings:SiemDatabase`
-- `Auth:EnrollmentToken`
-- `Auth:ReviewToken`
+## External `soc-agent` provider credentials
 
-Do not put real values in committed `appsettings.json`; use environment variables, secret stores, or ignored `.local/dev.env` files.
+Provider credentials remain server-side and separate from operator and endpoint credentials. Supported provider files/environment variables, official endpoint allowlists, expiry/scope checks, and redaction behavior are documented in [soc-agent.md](soc-agent.md). Browser clients never receive provider tokens.
 
-## External `soc-agent` provider auth
+## Transport
 
-The `soc-agent` chat UI never asks operators to enter ChatGPT/OpenAI passwords, browser cookies, API keys, or session tokens. External-provider modes use server-side credentials configured through ignored environment variables, ignored auth files, or a secret store. ChatGPT subscription OAuth is the primary external setup path and accepts `SocAgent__Provider=ChatGPT`, `SocAgent__AuthMode=SubscriptionOAuth`, and either Pi's existing `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` or an explicit `SocAgent__SubscriptionAuthFilePath` plus optional `SocAgent__SubscriptionAuthFileProviderKey` / `SocAgent__SubscriptionRequiredScopes`. Pi `openai-codex` credentials call the ChatGPT Codex Responses backend for plan-allowed subscription models such as `gpt-5.5`; dedicated subscription bundles use the OpenAI API path and must carry the documented API audience/scope metadata. When `SocAgent__SubscriptionConnectEnabled=true`, the web page can start a server-mediated authorization-code/PKCE flow using official `SocAgent__SubscriptionAuthorizationUrl` and `SocAgent__SubscriptionTokenEndpoint` values plus server-side OAuth client settings; the callback stores credentials only in the configured server-side auth file. API-key mode remains an advanced alternative and accepts `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Delegated API-bearer auth-file mode accepts `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and optional `SocAgent__AuthFileProviderKey`. Provider credentials are not rendered to browser clients, copied into prompts, logged, or stored in chat history.
-
-When `SocAgent:Provider=ChatGPT` or `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and server-side credentials are present, the server may send bounded/redacted tool context to a configured provider endpoint. Pi `openai-codex` entries are read from server-side `auth.json`, reported as `pi_auth_json`, left for Pi to refresh/manage, and used with the allowlisted `https://chatgpt.com/backend-api/codex/responses` path. Dedicated subscription OAuth files must declare a supported credential type, bearer token type, explicit expiry, official OpenAI API audience, allowlisted issuer when present, and the configured model-invocation scope; near-expiry non-Pi subscription tokens are refreshed only through an allowlisted official token endpoint before using `https://api.openai.com/v1/chat/completions`. Interactive subscription OAuth uses a protected state/PKCE correlation cookie, requires an authenticated operator to start, and allows the callback to complete with that correlation cookie because the normal review-session cookie is SameSite strict and may not be sent on cross-site provider redirects. Delegated API-bearer auth files must use the documented minimal providers schema, a bearer token type, an explicit expiry, and an official OpenAI API audience. Files in the repository must live under `.local/` or use ignored names such as `auth.json`, `auth.*.json`, or `*.auth.json`; operator-managed paths outside the repository are also allowed. If external provider auth is required but unavailable, expired, scope-missing, plan-limited, unsupported, budget-exhausted, refresh-failed, or safely mapped as a provider error, `/soc-agent` shows setup/status guidance and falls back to the configured local provider only when explicitly enabled by `SocAgent:FallbackToLocalWhenUnavailable`.
-
-If an official delegated OAuth/OIDC/PKCE connect flow is configured in the future, the UI may link only to an allowlisted official provider authorization URL or server-side auth-start endpoint with state/CSRF protections. Non-allowlisted provider URLs and unsupported auth-file exports fail closed.
-
-## Transport security
-
-Local development and the authorized lab can use HTTP loopback or the documented VM callback URL. Any non-local production deployment must use HTTPS for registration, ingest, heartbeat, web console, and review API traffic.
-
-## Future improvements
-
-- mTLS certificates for endpoints.
-- Token rotation endpoint.
-- Role-based operator accounts for review/search.
-- Rate limiting per agent.
-- Audit logging for all failed authentication attempts without logging secrets.
+All non-local deployment traffic must use HTTPS. Development may use the documented loopback or isolated lab HTTP exception.

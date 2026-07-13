@@ -5,6 +5,7 @@ All notable project changes should be recorded here.
 ## Unreleased
 
 - Added passive cursor-based Linux L1 system-journal collection for kernel, boot, systemd service, authentication, and core-system records with deterministic v1 IDs, bounded redaction/normalization, durable queue-before-checkpoint and acknowledgement-before-delete semantics, explicit source/gap/permission/pressure health, and synthetic restart/replay/failure/benchmark coverage.
+- Replaced the production operator review credential with PostgreSQL-backed operator identities, exact viewer/analyst/detection-engineer/admin RBAC, hardened revocable sessions, CSRF-safe mutations, lockout and credential lifecycle controls, role-aware sensitive-field redaction, a secure local bootstrap/recovery command, and append-only secret-safe security audit events while preserving endpoint-agent authentication and `/api/v1` agent contracts.
 
 - Added bounded read-only Linux host and security-posture inventory snapshots for host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture, with explicit collection states, fixed source policies, independent scheduling, and deterministic payload/item limits while preserving the generic v1 inventory contracts.
 
