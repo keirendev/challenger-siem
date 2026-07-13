@@ -13,6 +13,7 @@ public sealed class LinuxAgentWorker(
     IOptions<LinuxAgentOptions> configured,
     IEventQueue queue,
     SiemIngestClient client,
+    LinuxQueueDrainer queueDrainer,
     LinuxEnrollmentService enrollment,
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
@@ -46,7 +47,7 @@ public sealed class LinuxAgentWorker(
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }
-                await DrainAsync(cancellationToken);
+                await queueDrainer.DrainAsync(cancellationToken);
                 await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
@@ -57,8 +58,13 @@ public sealed class LinuxAgentWorker(
             }
         }
     }
+}
 
-    private async Task DrainAsync(CancellationToken cancellationToken)
+public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IEventQueue queue, SiemIngestClient client)
+{
+    private readonly LinuxAgentOptions options = configured.Value;
+
+    public async Task DrainAsync(CancellationToken cancellationToken)
     {
         var batch = await queue.DequeueBatchAsync(options.DrainBatchSize, cancellationToken);
         if (batch.Count == 0) return;

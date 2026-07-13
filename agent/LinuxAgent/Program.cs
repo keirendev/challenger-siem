@@ -45,6 +45,7 @@ builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 builder.Services.AddSingleton<LinuxEnrollmentService>();
+builder.Services.AddSingleton<LinuxQueueDrainer>();
 builder.Services.AddSingleton<ILinuxInventorySource, LinuxInventorySource>();
 builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
 {

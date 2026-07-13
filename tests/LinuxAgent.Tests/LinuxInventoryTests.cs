@@ -1,8 +1,13 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using Challenger.Siem.Agent.Core.Queue;
+using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Services;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Challenger.Siem.LinuxAgent.Tests;
@@ -59,6 +64,18 @@ public sealed class LinuxInventoryTests
         var integrity = snapshots.Single(x => x.SnapshotType == "linux_agent_integrity").Items;
         Assert.False(integrity.Single(item => item.Name == "configuration").Metadata.ContainsKey("sha256"));
         Assert.Matches("^[a-f0-9]{64}$", integrity.Single(item => item.Name == "executable").Metadata["sha256"]);
+    }
+
+    [Theory]
+    [InlineData(LinuxInventoryOperation.Nftables, 1, "netlink: Operation not permitted", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.Ufw, 1, "ERROR: You need to be root", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.Firewalld, 1, "Authorization failed", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.Nftables, 1, "synthetic parse failure", InventorySourceState.Unavailable)]
+    [InlineData(LinuxInventoryOperation.Users, 2, "synthetic lookup failure", InventorySourceState.Unavailable)]
+    public void CommandFailureClassificationRequiresAnExplicitPermissionSignal(
+        LinuxInventoryOperation operation, int exitCode, string boundedError, InventorySourceState expected)
+    {
+        Assert.Equal(expected, LinuxInventorySource.ClassifyCommandFailure(operation, exitCode, boundedError));
     }
 
     [Fact]
@@ -303,27 +320,29 @@ public sealed class LinuxInventoryTests
     }
 
     [Fact]
-    public async Task BlockedInventoryDoesNotBlockPassiveOrQueueWork()
+    public async Task BlockedInventoryDoesNotBlockTheActiveDurableQueueDrainPath()
     {
-        var clock = new ManualTimeProvider(Now);
-        var schedule = new InventorySchedule(clock, TimeSpan.FromHours(1), TimeSpan.Zero);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var inventory = schedule.TryRunDueAsync(async _ => { started.SetResult(); await release.Task; }, default);
-        await started.Task;
-
-        var queueDrains = 0;
-        var passiveEvents = 0;
-        var passiveWork = Task.WhenAll(Enumerable.Range(0, 1_000).Select(_ => Task.Run(() =>
+        var source = CompleteSource();
+        var releaseInventory = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = async (operation, cancellationToken) =>
         {
-            Interlocked.Increment(ref queueDrains);
-            Interlocked.Increment(ref passiveEvents);
-        })));
-        await passiveWork.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(1_000, queueDrains);
-        Assert.Equal(1_000, passiveEvents);
+            if (operation != LinuxInventoryOperation.Users) return source.Get(operation);
+            await releaseInventory.Task.WaitAsync(cancellationToken);
+            return source.Get(operation);
+        };
+        var inventory = Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        await source.UsersStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var eventId = Guid.Parse("10000000-0000-0000-0000-000000000192");
+        var queue = new SyntheticQueue(new QueuedEvent(1, new EventEnvelope { EventId = eventId, AgentId = "synthetic-agent" }, 0, null));
+        var options = new LinuxAgentOptions { AgentId = "synthetic-agent", ApiToken = "synthetic-private-token", ServerBaseUrl = new Uri("https://siem.example.invalid") };
+        using var http = new HttpClient(new SyntheticIngestHandler(eventId)) { BaseAddress = options.ServerBaseUrl };
+        var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options));
+
+        await drainer.DrainAsync(default).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(new long[] { 1 }, queue.DeletedQueueIds);
         Assert.False(inventory.IsCompleted);
-        release.SetResult();
+        releaseInventory.SetResult();
         await inventory;
     }
 
@@ -376,6 +395,46 @@ public sealed class LinuxInventoryTests
             if (operation == LinuxInventoryOperation.Users) UsersStarted.TrySetResult();
             cancellationToken.ThrowIfCancellationRequested();
             return Handler is null ? Get(operation) : await Handler(operation, cancellationToken);
+        }
+    }
+
+    private sealed class SyntheticQueue(QueuedEvent queued) : IEventQueue
+    {
+        private bool returned;
+        public IReadOnlyList<long> DeletedQueueIds { get; private set; } = Array.Empty<long>();
+        public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int maxEvents, CancellationToken cancellationToken)
+        {
+            IReadOnlyList<QueuedEvent> result = returned ? Array.Empty<QueuedEvent>() : new[] { queued };
+            returned = true;
+            return Task.FromResult(result);
+        }
+        public Task MarkAttemptAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task DeleteAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken)
+        {
+            DeletedQueueIds = queueIds.ToArray();
+            return Task.CompletedTask;
+        }
+        public Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken) => throw new Xunit.Sdk.XunitException("Synthetic accepted event must not be poisoned.");
+        public Task<int> CountAsync(CancellationToken cancellationToken) => Task.FromResult(returned ? 0 : 1);
+        public Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken) => Task.FromResult(new QueueSloMetrics());
+    }
+
+    private sealed class SyntheticIngestHandler(Guid acceptedEventId) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.Equal("/api/v1/ingest/events", request.RequestUri?.AbsolutePath);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new IngestBatchResponse
+                {
+                    BatchId = Guid.Parse("20000000-0000-0000-0000-000000000192"),
+                    Accepted = 1,
+                    AcceptedEventIds = new[] { acceptedEventId }
+                })
+            });
         }
     }
 

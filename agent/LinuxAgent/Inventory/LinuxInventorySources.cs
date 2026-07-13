@@ -206,7 +206,7 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         var truncated = output.Truncated || errorOutput.Truncated;
         if (!policy.AcceptedExitCodes.Contains(process.ExitCode) && !truncated)
         {
-            return IsPermissionDenied(policy.Operation, process.ExitCode)
+            return ClassifyCommandFailure(policy.Operation, process.ExitCode, Encoding.UTF8.GetString(errorOutput.Bytes)) == InventorySourceState.PermissionDenied
                 ? new(InventorySourceState.PermissionDenied, "command_permission_denied")
                 : new(InventorySourceState.Unavailable, "command_failed");
         }
@@ -310,9 +310,18 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         }
     }
 
-    private static bool IsPermissionDenied(LinuxInventoryOperation operation, int exitCode) =>
-        exitCode is 13 or 126
-        || (exitCode == 1 && operation is LinuxInventoryOperation.Nftables or LinuxInventoryOperation.Ufw);
+    internal static InventorySourceState ClassifyCommandFailure(LinuxInventoryOperation operation, int exitCode, string boundedStandardError)
+    {
+        if (exitCode is 13 or 126) return InventorySourceState.PermissionDenied;
+        var permissionMarker = operation switch
+        {
+            LinuxInventoryOperation.Nftables => boundedStandardError.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase),
+            LinuxInventoryOperation.Ufw => boundedStandardError.Contains("need to be root", StringComparison.OrdinalIgnoreCase),
+            LinuxInventoryOperation.Firewalld => boundedStandardError.Contains("authorization failed", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+        return permissionMarker ? InventorySourceState.PermissionDenied : InventorySourceState.Unavailable;
+    }
 
     private static void Kill(Process process)
     {
