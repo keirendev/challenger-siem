@@ -10,7 +10,7 @@
     <div>
         <p class="page-kicker">Event drill-down</p>
         <h1>Event detail</h1>
-        <p class="muted">Normalized fields, entities, message text, and the original raw event payload for an authenticated operator.</p>
+        <p class="muted">Normalized fields, ingest/checkpoint metadata, role-redacted raw payload, and safe entity pivots.</p>
     </div>
     <a class="button secondary" asp-page="/Events/Index">Back to search</a>
 </div>
@@ -21,7 +21,8 @@
 }
 else if (Model.Envelope is not null)
 {
-    <partial name="_Tabs" model='new TabsModel("Event detail sections", new[] { new TabItem("Fields", "#fields", true), new TabItem("Entities", "#entities"), new TabItem("Message", "#message"), new TabItem("Raw JSON", "#raw") })' />
+    <partial name="_Notice" model='new NoticeModel("Raw payload policy", Model.RawJson == "{}" ? "Raw payload and protected fields are omitted or redacted for this role." : "Raw payload is visible to this role. Keep it out of public issues, docs, screenshots, logs, and exports unless synthetic.", "partial")' />
+    <partial name="_Tabs" model='new TabsModel("Event detail sections", new[] { new TabItem("Fields", "#fields", true), new TabItem("Metadata", "#metadata"), new TabItem("Entities", "#entities"), new TabItem("Message", "#message"), new TabItem("Raw JSON", "#raw") })' />
     <section class="card" id="fields">
         <h2>Normalized fields</h2>
         <dl class="detail-grid">
@@ -49,30 +50,51 @@ else if (Model.Envelope is not null)
             <dt>User</dt><dd>@(Model.Envelope.Normalized?.UserName ?? "—")</dd>
             <dt>Target user</dt><dd>@(Model.Envelope.Normalized?.TargetUserName ?? "—")</dd>
             <dt>Process</dt><dd>@(Model.Envelope.Normalized?.ProcessImage ?? "—")</dd>
+            <dt>Command line</dt><dd>@(Model.Envelope.Normalized?.ProcessCommandLine ?? "—")</dd>
             <dt>Service</dt><dd>@(Model.Envelope.Normalized?.ServiceName ?? "—")</dd>
             <dt>Task</dt><dd>@(Model.Envelope.Normalized?.TaskName ?? "—")</dd>
             <dt>Package</dt><dd>@(Model.Envelope.Normalized?.PackageName ?? "—")</dd>
+            <dt>File</dt><dd>@(Model.Envelope.Normalized?.FilePath ?? "—")</dd>
+            <dt>Registry</dt><dd>@(Model.Envelope.Normalized?.RegistryKey ?? "—")</dd>
             <dt>Source network</dt><dd>@(Model.Envelope.Normalized?.SourceIp ?? "—"):@(Model.Envelope.Normalized?.SourcePort ?? "—")</dd>
             <dt>Destination network</dt><dd>@(Model.Envelope.Normalized?.DestinationIp ?? "—"):@(Model.Envelope.Normalized?.DestinationPort ?? "—")</dd>
             <dt>Protocol</dt><dd>@(Model.Envelope.Normalized?.Protocol ?? "—")</dd>
         </dl>
     </section>
 
+    <section class="card" id="metadata">
+        <h2>Ingest, checkpoint, and handling metadata</h2>
+        <dl class="detail-grid">
+            <dt>Checkpoint cursor</dt><dd>@(Model.Envelope.Checkpoint?.Cursor ?? "—")</dd>
+            <dt>Checkpoint sequence</dt><dd>@(Model.Envelope.Checkpoint?.Sequence?.ToString() ?? "—")</dd>
+            <dt>Checkpoint event time</dt><dd>@TimeDisplay.FormatUtc(Model.Envelope.Checkpoint?.EventTime)</dd>
+            <dt>Dedup algorithm</dt><dd>@(Model.Envelope.Deduplication?.Algorithm ?? "legacy/server key")</dd>
+            <dt>Dedup inputs</dt><dd>@(Model.Envelope.Deduplication is null ? "—" : string.Join(", ", Model.Envelope.Deduplication.Inputs))</dd>
+            <dt>Raw size bytes</dt><dd>@(Model.Envelope.DataHandling?.RawSizeBytes.ToString() ?? "—")</dd>
+            <dt>Redaction before queue</dt><dd>@(Model.Envelope.DataHandling?.RedactionApplied.ToString() ?? "—")</dd>
+            <dt>Truncation before queue</dt><dd>@(Model.Envelope.DataHandling?.TruncationApplied.ToString() ?? "—")</dd>
+        </dl>
+    </section>
+
     <section class="card" id="entities">
-        <h2>Entities</h2>
+        <h2>Entities and pivots</h2>
         @if (Model.Envelope.Normalized?.Entities.Count > 0)
         {
-            <ul>
+            <ul class="entity-list">
                 @foreach (var entity in Model.Envelope.Normalized.Entities)
                 {
-                    <li><strong>@entity.Type</strong> @entity.Value <span class="muted">@entity.Role</span></li>
+                    <li><strong>@entity.Type</strong> @entity.Value <span class="muted">@entity.Role</span> <a asp-page="/Events/Index" asp-route-entity_type="@entity.Type" asp-route-entity_value="@entity.Value" asp-route-from="@Model.Envelope.EventTime.AddHours(-1).ToString("O")" asp-route-to="@Model.Envelope.EventTime.AddHours(1).ToString("O")">Pivot ±1h</a></li>
                 }
             </ul>
         }
         else
         {
-            <p class="muted">No normalized entities were reported.</p>
+            <p class="muted">No normalized entities were reported or they are redacted for this role.</p>
         }
+        <div class="actions">
+            <a class="button secondary" asp-page="/Events/Index" asp-route-agent_id="@Model.Envelope.AgentId" asp-route-from="@Model.Envelope.EventTime.AddHours(-1).ToString("O")" asp-route-to="@Model.Envelope.EventTime.AddHours(1).ToString("O")">Host timeline ±1h</a>
+            <a class="button secondary" asp-page="/Events/Index" asp-route-source_id="@Model.Envelope.SourceId" asp-route-channel="@Model.Envelope.Channel" asp-route-from="@Model.Envelope.EventTime.AddHours(-1).ToString("O")" asp-route-to="@Model.Envelope.EventTime.AddHours(1).ToString("O")">Source pivot ±1h</a>
+        </div>
     </section>
 
     <section class="card" id="message">
@@ -84,9 +106,12 @@ else if (Model.Envelope is not null)
         <div class="page-header">
             <div>
                 <h2>Raw JSON</h2>
-                <p class="muted">Rendered only on the authenticated detail page; do not copy into public issues, docs, or logs.</p>
+                <p class="muted">Admin-only full display. Non-admin roles receive an omitted/redacted object and explicit policy notice.</p>
             </div>
-            <button type="button" class="secondary" data-copy-from="raw-json">Copy raw JSON</button>
+            @if (Model.RawJson != "{}")
+            {
+                <button type="button" class="secondary" data-copy-from="raw-json">Copy raw JSON</button>
+            }
         </div>
         <textarea id="raw-json" class="raw-json" readonly>@Model.RawJson</textarea>
     </section>

@@ -376,8 +376,188 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     }
 
     var query = EventSearchQuery.FromQuery(context.Request.Query);
-    var results = await events.SearchEventsForOperatorAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
-    return Results.Ok(new EventSearchResponse { Events = results });
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+
+    var page = await events.SearchEventsPageForOperatorAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
+    return Results.Ok(new EventSearchResponse
+    {
+        Events = page.Events,
+        Page = page.Page,
+        ActiveFilters = page.ActiveFilters,
+        ResultScope = page.ResultScope,
+        Redaction = page.RedactionNotice
+    });
+});
+
+app.MapGet("/api/v1/events/timeline", async Task<IResult> (
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var query = EventSearchQuery.FromQuery(context.Request.Query);
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+
+    var timeline = await events.GetTimelineAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
+    return Results.Ok(new EventTimelineResponse
+    {
+        Buckets = timeline.Buckets,
+        BucketSeconds = timeline.BucketSeconds
+    });
+});
+
+app.MapGet("/api/v1/events/saved-searches", async Task<IResult> (
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    return operatorId.HasValue ? Results.Ok(new { saved_searches = await events.ListSavedSearchesAsync(operatorId.Value, cancellationToken) }) : Results.Unauthorized();
+});
+
+app.MapPost("/api/v1/events/saved-searches", async Task<IResult> (
+    SavedEventSearchRequest request,
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    SecurityAuditRepository audit,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (!operatorId.HasValue) return Results.Unauthorized();
+    try
+    {
+        var canShare = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ReviewSensitive);
+        var saved = await events.SaveSearchAsync(request, operatorId.Value, context.User.Identity?.Name ?? "operator", canShare, cancellationToken);
+        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.create", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
+        return Results.Ok(saved);
+    }
+    catch (UnauthorizedAccessException)
+    {
+        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.create", "denied", "saved_event_search", null, context, null, cancellationToken);
+        return Results.Forbid();
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["saved_search"] = new[] { ex.Message } });
+    }
+});
+
+app.MapPut("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
+    Guid savedSearchId,
+    SavedEventSearchRequest request,
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    SecurityAuditRepository audit,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (!operatorId.HasValue) return Results.Unauthorized();
+    try
+    {
+        var canShare = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ReviewSensitive);
+        var saved = await events.SaveSearchAsync(request, operatorId.Value, context.User.Identity?.Name ?? "operator", canShare, cancellationToken, savedSearchId);
+        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.update", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
+        return Results.Ok(saved);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException)
+    {
+        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.update", "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
+        return Results.Forbid();
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["saved_search"] = new[] { ex.Message } });
+    }
+});
+
+app.MapDelete("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
+    Guid savedSearchId,
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    SecurityAuditRepository audit,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (!operatorId.HasValue) return Results.Unauthorized();
+    var deleted = await events.DeleteSavedSearchAsync(savedSearchId, operatorId.Value, cancellationToken);
+    await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.delete", deleted ? "success" : "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
+    return deleted ? Results.Ok(new { status = "deleted" }) : Results.NotFound();
+});
+
+app.MapPost("/api/v1/events/export", async Task<IResult> (
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    SecurityAuditRepository audit,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasOperatorAccess(context))
+    {
+        return OperatorAccessFailure(context);
+    }
+
+    var role = OperatorAuthorization.Role(context.User)!;
+    var operatorId = OperatorAuthentication.OperatorId(context.User);
+    if (!OperatorAuthorization.HasPermission(role, OperatorPermission.ManageOperators))
+    {
+        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.export", "denied", "events", null, context, null, cancellationToken);
+        return Results.Forbid();
+    }
+
+    if (!string.Equals(context.Request.Query["confirm_export"].FirstOrDefault(), "EXPORT", StringComparison.Ordinal))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["confirm_export"] = new[] { "Type EXPORT to confirm this bounded audited event export." } });
+    }
+
+    var query = EventSearchQuery.FromQuery(context.Request.Query, EventSearchQuery.MaxExportLimit);
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+
+    var export = await events.ExportCsvForOperatorAsync(query, role, cancellationToken);
+    await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.export", "success", "events", null, context, new Dictionary<string, object?> { ["rows"] = export.Rows, ["limit"] = export.BoundedLimit, ["format"] = "csv" }, cancellationToken);
+    context.Response.Headers.ContentDisposition = $"attachment; filename=\"{export.FileName}\"";
+    return Results.File(export.Content, "text/csv; charset=utf-8", export.FileName);
 });
 
 app.MapGet("/api/v1/storage/accounting", async Task<IResult> (

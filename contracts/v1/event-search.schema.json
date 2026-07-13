@@ -10,6 +10,34 @@
       "type": "array",
       "maxItems": 500,
       "items": { "$ref": "event-envelope.schema.json" }
-    }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit", "returned", "has_next", "sort"],
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+        "returned": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "next_cursor": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "has_next": { "type": "boolean" },
+        "sort": { "type": "string", "const": "event_time_desc" }
+      }
+    },
+    "active_filters": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value", "protected"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "protected": { "type": "boolean" }
+        }
+      }
+    },
+    "result_scope": { "type": "string", "maxLength": 500 },
+    "redaction": { "type": "string", "maxLength": 100 }
   }
 }

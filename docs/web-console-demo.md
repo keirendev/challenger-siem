@@ -43,13 +43,13 @@ The current screenshot uses the synthetic Windows matrix. The same page is now p
 
 ### Search
 
-Event search is filtered to the synthetic demo agent and unique marker. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
+Event search is filtered to the synthetic demo agent and unique marker. The current page also includes structured filters, active-scope labels, UTC timeline buckets, saved-search controls, column selection, cursor pagination, and admin-only export confirmation. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
 
 ![Event search results for a synthetic System event](assets/web-console/events.png)
 
 ### Event detail
 
-The detail page shows normalized fields, entities, message text, and raw JSON that were all generated from a synthetic payload.
+The detail page shows normalized fields, ingest/checkpoint metadata, entity pivots, message text, and role-controlled raw JSON that were all generated from a synthetic payload.
 
 ![Event detail page with synthetic normalized fields and raw JSON](assets/web-console/event-detail.png)
 

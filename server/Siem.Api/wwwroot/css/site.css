@@ -256,6 +256,34 @@ a:hover {
     gap: 0.35rem;
 }
 
+.form-row legend {
+    color: #d9e4f6;
+    font-weight: 800;
+}
+
+.form-row label:has(input[type="checkbox"]) {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--muted);
+}
+
+.inline-form {
+    display: inline-flex;
+    margin-left: 0.5rem;
+}
+
+.entity-list {
+    display: grid;
+    gap: 0.75rem;
+    padding-left: 1.2rem;
+}
+
+.notice.error {
+    border-color: rgb(251 113 133 / 0.55);
+    background: rgb(127 29 29 / 0.25);
+}
+
 label {
     color: #d9e4f6;
     font-weight: 760;
