@@ -18,9 +18,10 @@ Challenger SIEM should not absorb the responsibilities of sibling products. XDR 
 
 - Use **Challenger SIEM** on first reference and **SIEM** only when context is clear.
 - Keep operator-facing copy precise about current capability, MVP/lab-only behavior, and future work.
-- Align web-console badges and status language with family terms such as `healthy`, `degraded`, `stale`, `offline`, `unknown`, `critical`, `high`, `medium`, `low`, and `informational`.
+- Align web-console information architecture, workflows, badges, status language, accessibility, responsive behavior, and sensitive-field annotations with the product specification in [web.md](web.md).
+- Use family terms such as `healthy`, `degraded`, `stale`, `offline`, `unknown`, `critical`, `high`, `medium`, `low`, and `informational` consistently across pages and docs.
 - Use safety-focused confirmation flows for cleanup or mutation workflows.
-- Keep screenshots and examples synthetic and clearly labeled.
+- Keep screenshots, wireframes, examples, and issue/PR text synthetic and clearly labeled.
 
 ## Engineering and contracts
 
