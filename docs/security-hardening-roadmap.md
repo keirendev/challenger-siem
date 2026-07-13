@@ -11,6 +11,7 @@ Default policy:
 - Store normalized fields for search, but pass only bounded/redacted fields to external tools or future `soc-agent` providers.
 - Cap script blocks to 4096 characters and command lines to 2048 characters before tool/model sharing unless an operator explicitly approves a larger local-only review.
 - Redact query strings, bearer tokens, basic-auth fragments, and common key/value secret patterns.
+- Keep release-gate browser traces, screenshots, HAR files, cookies, API responses, generated credentials, browser profiles, PostgreSQL dumps, and performance output under ignored `.local/release-gates/`; use `./scripts/release-gates.sh cleanup --confirm DELETE-RELEASE-GATE-RESOURCES` for owned cleanup.
 
 ## Operator RBAC and field-level access control design
 

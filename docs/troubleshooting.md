@@ -64,7 +64,19 @@ Then inspect only the needed bounded files under `.local/`, such as the smoke AP
 - Operator API credential or enrollment token is not set.
 - A web route changed and the smoke script/docs need to be updated.
 
-For browser behavior, run a Playwright harness against the real app. Curl/HTML smoke checks do not validate redirects, cookies, form behavior, or user-visible navigation as fully as a browser.
+For browser behavior, run the Playwright release gate against the real app: `./scripts/release-gates.sh install-browsers` and `./scripts/release-gates.sh run`. Curl/HTML smoke checks do not validate redirects, cookies, form behavior, or user-visible navigation as fully as a browser.
+
+## Release gates do not run
+
+Checks:
+
+1. Confirm ignored PostgreSQL admin configuration exists in `.local/release-gates.env` or environment variables: `SIEM_RELEASE_GATE_PGHOST`, `SIEM_RELEASE_GATE_PGADMINUSER`, and `SIEM_RELEASE_GATE_PGADMINPASSWORD`.
+2. Confirm local tools are available: `dotnet`, `psql`, `curl`, `python3`, and `pwsh` for browser installation.
+3. Install Chromium under the ignored cache: `./scripts/release-gates.sh install-browsers`.
+4. If the runner stops after creating resources, use the printed state path with `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES`.
+5. Inspect only bounded local logs under `.local/release-gates/<run-id>/`; do not paste generated credentials, cookies, connection strings, raw API responses, browser profiles, traces, or screenshots into issues or PRs.
+
+A missing prerequisite is a release-gate failure in release mode, not a pass. Normal `dotnet test` keeps the Playwright project inert unless `SIEM_RELEASE_GATE_ENABLED=1` is set by the runner.
 
 ## Event times show UTC instead of host time
 

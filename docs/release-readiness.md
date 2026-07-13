@@ -11,6 +11,8 @@ Use this checklist before closing the parent MVP specification issue.
 - [ ] PostgreSQL schema validation passes: `./scripts/validate-schema.sh`.
 - [ ] Fake API smoke passes: `./scripts/smoke-test-server.sh`.
 - [ ] Web console smoke passes: `./scripts/smoke-test-web.sh`.
+- [ ] Real-app browser/accessibility/security/performance release gates pass against disposable PostgreSQL synthetic data: `./scripts/release-gates.sh install-browsers` then `./scripts/release-gates.sh run`.
+- [ ] Release-gate cleanup is either completed with `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES` or intentionally deferred with the owned state path recorded locally.
 - [ ] Frontend architecture remains consistent with [the Razor-selected ADR](frontend-architecture-adr.md): no rejected prototype, npm toolchain, lockfile, generated static bundle, external CDN/analytics/font dependency, or parallel UI route is included.
 - [ ] Windows agent publish succeeds: `./scripts/publish-windows-agent.sh`.
 - [ ] Copy-ready bundle generation succeeds with an ignored generated settings file.
@@ -29,7 +31,7 @@ Record sanitized evidence under ignored `.local/` only:
 
 ## Repository hygiene
 
-- [ ] `git status --short --ignored` shows `.local/`, `.pi/`, `AGENTS.md`, `bin/`, `obj/`, and `dist/` only as ignored or absent.
+- [ ] `git status --short --ignored` shows `.local/` including `.local/release-gates/`, `.pi/`, `AGENTS.md`, `bin/`, `obj/`, and `dist/` only as ignored or absent.
 - [ ] `git diff --cached --name-status` contains only intended tracked project files.
 - [ ] No secrets, generated agent settings, raw telemetry, logs, dumps, captures, or WinRM credentials are staged.
 - [ ] `VERSION` and `CHANGELOG.md` follow `docs/versioning.md`.
