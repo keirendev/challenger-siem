@@ -2,7 +2,7 @@
 
 Base path: `/api/v1`.
 
-All production traffic must use HTTPS. The operator web review console is hosted by the same ASP.NET Core process outside the `/api/v1` API contract; see `docs/web.md`.
+All production traffic must use HTTPS. Operator routes use `Authorization: Bearer <operator-api-credential>` issued to a database-backed operator identity; endpoint-agent bearer credentials remain a completely separate domain. Role checks and sensitive-field policy are described in [auth.md](auth.md). The web console uses a revocable cookie session outside the `/api/v1` contract; see [web.md](web.md).
 
 Version 1 now has additive cross-platform contract fields. Every previously valid Windows registration, heartbeat, ingest, search, and source-health JSON shape keeps its original meaning and does not need to send the additions. The current PostgreSQL schema remains Windows-Event-Log-only pending the planned multi-platform storage migration: syntactically valid Linux registration and any heartbeat/event using an additive portable source kind are contract-valid but the current server returns HTTP 422 with `title=cross_platform_storage_pending` before persistence. This contract slice does not claim Linux collection, persistence, or search support and does not introduce `/api/v2`.
 
@@ -217,11 +217,17 @@ The Linux agent uses this existing generic additive endpoint for up to 20 curren
 
 This capability preserves the existing `/api/v1/agents/inventory` request, generic snapshot/item shapes, and all other v1 contracts; it adds no Linux-specific route or `/api/v2`. It does not change server-side telemetry coverage calculations or imply Linux passive event coverage.
 
+## Operator identity management
+
+Admin-only `POST /api/v1/operators` creates an operator with `username`, `display_name`, one exact `role`, and a strong initial `password`. Authenticated operators can use `POST /api/v1/operators/me/password` to change their password after supplying the current password, and `POST /api/v1/operators/me/api-token/rotate` to receive a new API credential exactly once. Credential changes revoke active sessions. Unsafe API methods accept bearer authentication only, preventing cookie-based CSRF.
+
+Initial bootstrap and locked-account recovery are deliberately not network APIs; use the local commands in [auth.md](auth.md).
+
 ## Search events
 
 ```http
 GET /api/v1/events?windows_event_id=4625
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 The current database/search implementation returns persisted Windows Event Log events only. Cross-platform source, event-code, facility, unit, and checkpoint query fields are deferred to the multi-platform storage migration; the additive envelope must not be interpreted as already searchable.
@@ -250,7 +256,7 @@ Supported current filters:
 
 ```http
 GET /api/v1/source-health?agent_id=win11-test-001&target_level=L2
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Returns coverage summaries and per-source health rows populated from persisted Windows heartbeat data. Existing source rows remain valid with their original v1 summary vocabulary and collection sizes; conditional response-size bounds apply when a response contains typed portable records, while Linux summary-field bounds remain Linux-scoped. The response schema can also represent typed Linux-native and platform-neutral source identity, applicability, facility/unit, and collected/acknowledged checkpoints after the downstream storage migration. Coverage summaries and source rows can include optional `platform` and `host_timezone` metadata. When `agent_id` is supplied today, the response is overlaid with the canonical Windows source matrix for the requested `target_level` (`L2` by default), so expected but unreported Windows sources appear as `missing` or `excepted` rows.
@@ -259,7 +265,7 @@ Returns coverage summaries and per-source health rows populated from persisted W
 
 ```http
 GET /api/v1/telemetry-coverage?agent_id=win11-test-001&target_level=L2&lookback_hours=24
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Returns a bounded operator validation summary for active Windows agents (or one `agent_id`) over a clamped 1-168 hour lookback. The response includes sanitized aggregate counts, expected/reported source-health coverage, recent normalized event counts by source, missing/stale/error source reasons, additive source version/config-hash/details fields for profile-backed sources such as Sysmon, host timezone metadata when reported, inventory and audit-policy snapshot status, alert status counts, active graph counts, and per-rule detection prerequisite status. Status wording distinguishes `missing_prerequisites` or `unknown` telemetry validation from a confirmed detection miss.
@@ -268,7 +274,7 @@ Returns a bounded operator validation summary for active Windows agents (or one 
 
 ```http
 GET /api/v1/inventory?agent_id=win11-test-001&snapshot_type=audit_policy
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Returns bounded generic asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, role detection, and the additive Linux snapshot types listed above. Existing Windows and generic v1 response shapes and meanings are preserved.
@@ -277,7 +283,7 @@ Returns bounded generic asset inventory snapshots such as audit policy, security
 
 ```http
 GET /api/v1/platform/capabilities
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Returns a bounded catalog of specification-gap foundation status and documentation links for authenticated operators. See `docs/spec-gap-foundations.md`.
@@ -294,12 +300,12 @@ POST /api/v1/graphs/<graph-id>/nodes
 POST /api/v1/graphs/<graph-id>/edges
 POST /api/v1/graphs/<graph-id>/proposals
 POST /api/v1/graphs/<graph-id>/proposals/<proposal-id>/apply
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Graph records contain bounded metadata (`title`, `description`, `owner`, `tags`, `version`), typed nodes, typed edges, and proposal artifacts. Node types include `agent`, `host`, `user`, `process`, `ip`, `domain`, `file`, `registry_key`, `service`, `event`, `alert`, `detection_rule`, `source_health`, `note`, and `custom`. Edge types include `observed_on`, `generated`, `parent_of`, `communicated_with`, `authenticated_as`, `touched_file`, `modified_registry`, `evidence_for`, `related_to`, and `annotates`.
 
-Updates use `expected_version` for optimistic concurrency. `soc-agent` proposals are pending until an operator explicitly applies them; proposal application is audited and remains under the review-token/session model.
+Updates use `expected_version` for optimistic concurrency. `soc-agent` proposals are pending until an operator explicitly applies them; proposal application is audited and remains under the operator role/session model.
 
 ## soc-agent
 
@@ -307,7 +313,7 @@ Provider status:
 
 ```http
 GET /api/v1/soc-agent/status
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. When interactive subscription OAuth is enabled, `connect_url` may point at the local `/soc-agent/oauth/start` route, which requires an authenticated operator and redirects to an official provider authorization endpoint with state/PKCE. Subscription OAuth and delegated auth-file responses may include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`; Pi auth-file reuse is reported with values such as `auth_mode=pi_auth_json`, `provider_path=pi_auth_json_openai_codex`, and `refresh_status=pi_managed`. Responses never include provider secrets, raw auth-file contents, account identifiers, or full auth-file paths.
@@ -316,7 +322,7 @@ Backwards-compatible one-shot ask:
 
 ```http
 POST /api/v1/soc-agent/ask
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 Content-Type: application/json
 
 {
@@ -333,7 +339,7 @@ POST /api/v1/soc-agent/sessions
 GET /api/v1/soc-agent/sessions/<session-id>
 DELETE /api/v1/soc-agent/sessions/<session-id>
 POST /api/v1/soc-agent/sessions/<session-id>/messages
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 Content-Type: application/json
 
 {
@@ -344,7 +350,7 @@ Content-Type: application/json
 
 Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. `DELETE /api/v1/soc-agent/sessions/<session-id>` is a backward-compatible management addition that removes the selected chat session and its `soc_agent_messages` rows through the database cascade, returns `404` when the session is already absent, and returns `409` with `status=run_active` while a live run is active for that session. Bounded one-shot `soc_agent_turns` audit rows are independent and retained. Delete responses are terse metadata only and do not echo message bodies. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
 
-Same-origin web live transport (outside `/api/v1`, authenticated by the existing operator session cookie rather than review tokens in URLs or browser storage):
+Same-origin web live transport (outside `/api/v1`, authenticated by the existing operator session cookie rather than operator API credentials in URLs or browser storage):
 
 ```http
 POST /soc-agent/live/runs
@@ -361,7 +367,7 @@ GET /soc-agent/live/sessions/<session-id>/active
 GET /api/v1/alerts
 GET /api/v1/alerts/<alert-id>
 GET /api/v1/detections/rules
-Authorization: Bearer <review-token>
+Authorization: Bearer <operator-api-credential>
 ```
 
 The initial alert/detection APIs expose the storage and review skeleton plus built-in detection metadata. Mutating alert triage and rule activation remain future approved workflows.
@@ -369,4 +375,4 @@ The initial alert/detection APIs expose the storage and review skeleton plus bui
 
 ## Managed event storage accounting
 
-`GET /api/v1/storage/accounting` requires the review token and returns PostgreSQL byte accounting for the managed `events` table and indexes plus row count and measurement time. Event search also accepts additive `source`, `platform`, `source_id`, and `event_code` query parameters. Existing v1 Windows filters and response shapes remain compatible.
+`GET /api/v1/storage/accounting` requires the operator API credential and returns PostgreSQL byte accounting for the managed `events` table and indexes plus row count and measurement time. Event search also accepts additive `source`, `platform`, `source_id`, and `event_code` query parameters. Existing v1 Windows filters and response shapes remain compatible.

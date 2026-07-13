@@ -58,7 +58,6 @@ public sealed class CrossPlatformContractTests
                 {
                     ["ConnectionStrings:SiemDatabase"] = "Host=127.0.0.1;Database=unused_contract_test;Username=unused_contract_test",
                     ["Auth:EnrollmentToken"] = enrollmentToken,
-                    ["Auth:ReviewToken"] = "synthetic-contract-review-token"
                 });
             });
         });

@@ -17,11 +17,11 @@ sudo -u postgres createdb --owner siem challenger_siem
 cat > .local/dev.env <<'EOF'
 ConnectionStrings__SiemDatabase='Host=localhost;Port=5432;Database=challenger_siem;Username=siem;Password=<password>'
 Auth__EnrollmentToken='<long-random-enrollment-token>'
-Auth__ReviewToken='<long-random-review-token>'
 EOF
 
 ./scripts/apply-schema.sh
 ./scripts/validate-schema.sh
+SIEM_OPERATOR_PASSWORD='<private-strong-password>' ./scripts/operator-account.sh bootstrap --username local-admin --role admin
 ```
 
 For routine cleanup, prefer the scoped synthetic cleanup flow later in this page. For a full fresh start in an operator-owned disposable local test database, use the guarded reset workflow in [Fresh-start reset for disposable test environments](#fresh-start-reset-for-disposable-test-environments) instead of ad hoc SQL. Do not run destructive reset commands against shared, production, client, or unclassified databases.
@@ -32,14 +32,12 @@ Do not commit real tokens or passwords. The API validates these required setting
 
 - `ConnectionStrings__SiemDatabase`
 - `Auth__EnrollmentToken`
-- `Auth__ReviewToken`
 
 For shell-only runs you can export them directly:
 
 ```bash
 export ConnectionStrings__SiemDatabase='Host=localhost;Port=5432;Database=challenger_siem;Username=siem;Password=<password>'
 export Auth__EnrollmentToken='<long-random-enrollment-token>'
-export Auth__ReviewToken='<long-random-review-token>'
 ```
 
 ## Project version
@@ -96,7 +94,7 @@ For a foreground development run:
 dotnet run --project server/Siem.Api
 ```
 
-The web review console is hosted by the API process at the API base URL. Open the base URL in a browser and log in with `Auth__ReviewToken`. The login creates an HTTP-only same-origin cookie and does not store the review token in browser local storage.
+The web review console is hosted by the API process at the API base URL. Open the base URL and log in with the bootstrapped operator username/password. Login creates an HTTP-only, strict-SameSite, revocable session cookie; credentials are not stored in browser local storage.
 
 Current foreground lab binding for Windows agents:
 
@@ -163,7 +161,7 @@ To smoke-test the web console against seeded SIEM data without Docker, run:
 ./scripts/smoke-test-web.sh
 ```
 
-It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `Auth__ReviewToken`, creates a synthetic `soc-agent` chat tied to that agent, and verifies the dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` pages. Temporary HTML and API responses remain under `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` to remove only the per-run `web-smoke-*` agent data and its agent-linked `soc-agent` chat history after a successful smoke run.
+It starts the API, registers a synthetic agent, ingests a synthetic event, logs into the web console with `SIEM_OPERATOR_USERNAME` and `SIEM_OPERATOR_PASSWORD`, creates a synthetic `soc-agent` chat tied to that agent, and verifies the dashboard, agent inventory, event search, event detail, investigation graphs, and `soc-agent` pages. Temporary HTML and API responses remain under `.local/`. Set `SIEM_WEB_SMOKE_CLEANUP=1` to remove only the per-run `web-smoke-*` agent data and its agent-linked `soc-agent` chat history after a successful smoke run.
 
 To inspect or clean accumulated synthetic records without running a smoke test, use the guarded cleanup script. Dry-run is the default and prints only aggregate table counts, including dependent `soc_agent_*` and investigation-graph rows selected by a target agent or explicit synthetic selector:
 
@@ -240,5 +238,5 @@ curl -k https://localhost:5001/api/v1/ingest/events \
   --data @examples/fake-event-batch.json
 
 curl -k 'https://localhost:5001/api/v1/events?windows_event_id=4625' \
-  -H "Authorization: Bearer $Auth__ReviewToken"
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN"
 ```

@@ -21,7 +21,6 @@ Required components:
    ```bash
    ConnectionStrings__SiemDatabase='Host=127.0.0.1;Database=challenger_siem;Username=<db-user>;Password=<db-password>'
    Auth__EnrollmentToken='<long-random-enrollment-token>'
-   Auth__ReviewToken='<long-random-review-token>'
    ```
 
 4. Optional WinRM credentials in ignored local configuration when validating the authorized Windows lab VM.
@@ -31,6 +30,7 @@ Apply and validate the database schema:
 ```bash
 ./scripts/apply-schema.sh
 ./scripts/validate-schema.sh
+SIEM_OPERATOR_PASSWORD='<private-strong-password>' ./scripts/operator-account.sh bootstrap --username local-admin --role admin
 ```
 
 See [schema.md](schema.md) for table/index details.
@@ -51,7 +51,7 @@ Start the API and web console:
 ./scripts/platform.sh status
 ```
 
-The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with `Auth__ReviewToken`. The web console uses an HTTP-only same-origin session cookie after login; the review token is not stored in browser local storage.
+The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with an operator username/password. The web console uses an HTTP-only, strict-SameSite, database-revocable session cookie after login.
 
 ## Validate with synthetic data
 
@@ -123,7 +123,7 @@ Keep Linux generated configuration and credentials under `/etc/challenger-siem-a
 
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-the-schema).
 - Check local health: `curl http://127.0.0.1:<port>/health`.
-- Search events through `GET /api/v1/events` with the review token; see [api.md](api.md#search-events).
+- Search events through `GET /api/v1/events` with the operator API credential; see [api.md](api.md#search-events).
 - Retire stale lab registrations through the deliberate web/API workflow when preserving telemetry; use scoped synthetic cleanup for smoke/lab rows and `./scripts/reset-test-environment.sh` only for a full fresh start in a disposable local test environment.
 - Follow [release-readiness.md](release-readiness.md) before tagging or publishing a release.
 

@@ -263,7 +263,7 @@ internal static class SocAgentDelegatedAuthFileLoader
         var directory = new DirectoryInfo(startDirectory);
         while (directory is not null)
         {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")))
+            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) || File.Exists(Path.Combine(directory.FullName, ".git")))
             {
                 return directory.FullName;
             }

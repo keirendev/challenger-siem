@@ -11,7 +11,9 @@ fi
 
 : "${ConnectionStrings__SiemDatabase:?ConnectionStrings__SiemDatabase is required}"
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
-: "${Auth__ReviewToken:?Auth__ReviewToken is required}"
+: "${SIEM_OPERATOR_API_TOKEN:?SIEM_OPERATOR_API_TOKEN is required}"
+: "${SIEM_OPERATOR_USERNAME:?SIEM_OPERATOR_USERNAME is required}"
+: "${SIEM_OPERATOR_PASSWORD:?SIEM_OPERATOR_PASSWORD is required}"
 
 BASE_URL="${SIEM_WEB_SMOKE_BASE_URL:-http://127.0.0.1:5081}"
 RUN_API="${SIEM_WEB_SMOKE_RUN_API:-1}"
@@ -114,7 +116,7 @@ curl --silent --fail "$BASE_URL/api/v1/ingest/events" \
   --data @"$INGEST_REQUEST" > "$INGEST_RESPONSE"
 
 curl --silent --fail "$BASE_URL/api/v1/events?agent_id=$AGENT_ID&limit=1" \
-  -H "Authorization: Bearer $Auth__ReviewToken" > "$QUERY_RESPONSE"
+  -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN" > "$QUERY_RESPONSE"
 
 curl --silent --fail -c "$COOKIE_JAR" "$BASE_URL/login" > "$LOGIN_HTML"
 CSRF_TOKEN="$(python - <<'PY'
@@ -130,7 +132,8 @@ PY
 curl --silent --fail -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
   -X POST "$BASE_URL/login" \
   --data-urlencode "__RequestVerificationToken=$CSRF_TOKEN" \
-  --data-urlencode "ReviewToken=$Auth__ReviewToken" \
+  --data-urlencode "Username=$SIEM_OPERATOR_USERNAME" \
+  --data-urlencode "Password=$SIEM_OPERATOR_PASSWORD" \
   --data-urlencode "ReturnUrl=/" >/dev/null
 
 curl --silent --fail -b "$COOKIE_JAR" "$BASE_URL/" > "$DASHBOARD_HTML"

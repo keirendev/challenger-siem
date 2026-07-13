@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc;
@@ -32,7 +33,7 @@ public sealed class DetailModel(EventRepository eventRepository, ILogger<DetailM
 
         try
         {
-            Envelope = await eventRepository.GetEventAsync(AgentId, EventId, cancellationToken);
+            Envelope = await eventRepository.GetEventForOperatorAsync(AgentId, EventId, OperatorAuthorization.Role(User)!, cancellationToken);
             if (Envelope is null)
             {
                 return NotFound();

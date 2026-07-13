@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Replaced the production operator review credential with PostgreSQL-backed operator identities, exact viewer/analyst/detection-engineer/admin RBAC, hardened revocable sessions, CSRF-safe mutations, lockout and credential lifecycle controls, role-aware sensitive-field redaction, a secure local bootstrap/recovery command, and append-only secret-safe security audit events while preserving endpoint-agent authentication and `/api/v1` agent contracts.
+
 - Added bounded read-only Linux host and security-posture inventory snapshots for host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture, with explicit collection states, fixed source policies, independent scheduling, and deterministic payload/item limits while preserving the generic v1 inventory contracts.
 
 - Added a first-class .NET 8 Linux agent foundation using Agent.Core for enrollment, durable queueing, acknowledgement-aware recovery, heartbeat and bounded inventory transport, with a least-privilege systemd unit and preflight-first plan/install/upgrade/validate/uninstall workflows.

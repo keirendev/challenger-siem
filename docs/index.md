@@ -26,7 +26,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, telemetry coverage validation, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
 - [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
 - [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
-- [Authentication design](auth.md) - enrollment token, per-agent token, review token, and external `soc-agent` provider guardrails.
+- [Authentication design](auth.md) - enrollment token, per-agent token, operator API credential, and external `soc-agent` provider guardrails.
 - [HTTPS/TLS deployment path](tls.md) - local HTTP exception, production HTTPS options, and agent trust expectations.
 
 ## Linux endpoint agent
@@ -61,7 +61,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 - Use only synthetic hostnames, users, IDs, IPs, event messages, prompts, graph nodes, and screenshots in tracked docs.
 - Keep raw API responses, cookies, browser traces, generated agent settings, queue/state databases, endpoint telemetry, event-log exports, and lab evidence under ignored `.local/` paths.
-- Never paste review tokens, enrollment tokens, per-agent API tokens, connection strings, private keys, cookies, real Windows usernames/hostnames, or collected client data into docs, examples, screenshots, issues, or pull requests.
+- Never paste operator API credentials, enrollment tokens, per-agent API tokens, connection strings, private keys, cookies, real Windows usernames/hostnames, or collected client data into docs, examples, screenshots, issues, or pull requests.
 - If a screenshot or example might contain private data, discard it locally and regenerate from synthetic fixtures before committing.
 
 ## Maintaining the wiki

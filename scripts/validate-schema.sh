@@ -46,7 +46,7 @@ psql_args_from_connection_string() {
 
 CHECK_SQL="$(cat <<'SQL'
 with required_tables(name) as (
-    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('ingestion_errors')
+    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('ingestion_errors'), ('operators'), ('operator_sessions'), ('security_audit_events')
 ), missing_tables as (
     select 'missing table ' || name as problem
     from required_tables
@@ -82,7 +82,11 @@ with required_tables(name) as (
         ('idx_soc_agent_turns_created'),
         ('idx_soc_agent_turns_context_agent'),
         ('idx_ingestion_errors_agent_id'),
-        ('idx_ingestion_errors_time')
+        ('idx_ingestion_errors_time'),
+        ('idx_operator_sessions_operator'),
+        ('idx_operator_sessions_active'),
+        ('idx_security_audit_occurred'),
+        ('idx_security_audit_operator')
 ), missing_indexes as (
     select 'missing index ' || name as problem
     from required_indexes
@@ -102,7 +106,14 @@ with required_tables(name) as (
         ('agent_heartbeats', 'host_timezone'),
         ('source_health', 'host_timezone'),
         ('asset_inventory_snapshots', 'host_timezone'),
-        ('alert_evidence', 'host_timezone')
+        ('alert_evidence', 'host_timezone'),
+        ('operators', 'password_hash'),
+        ('operators', 'api_token_hash'),
+        ('operators', 'locked_until'),
+        ('operator_sessions', 'token_hash'),
+        ('operator_sessions', 'expires_at'),
+        ('operator_sessions', 'revoked_at'),
+        ('security_audit_events', 'details')
 ), missing_columns as (
     select 'missing column ' || table_name || '.' || column_name as problem
     from required_columns rc

@@ -7,8 +7,7 @@ public static class StartupConfigurationValidator
     private static readonly string[] RequiredKeys =
     {
         "ConnectionStrings:SiemDatabase",
-        "Auth:EnrollmentToken",
-        "Auth:ReviewToken"
+        "Auth:EnrollmentToken"
     };
 
     public static void ValidateRequiredConfiguration(IConfiguration configuration)

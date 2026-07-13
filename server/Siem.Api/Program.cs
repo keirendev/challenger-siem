@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
@@ -8,6 +9,7 @@ using Challenger.Siem.Api.Platform;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
@@ -24,10 +26,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
     options.SerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+    options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
 
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<TokenService>();
+builder.Services.AddSingleton<OperatorPasswordHasher>();
 builder.Services.AddSingleton(sp =>
 {
     var configuration = sp.GetRequiredService<IConfiguration>();
@@ -40,6 +44,9 @@ builder.Services.AddSingleton(sp =>
     return NpgsqlDataSource.Create(connectionString);
 });
 builder.Services.AddScoped<AgentRepository>();
+builder.Services.AddScoped<OperatorRepository>();
+builder.Services.AddScoped<SecurityAuditRepository>();
+builder.Services.AddScoped<OperatorCookieEvents>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
@@ -74,26 +81,47 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AllowAnonymousToPage("/Login");
 });
 builder.Services
-    .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options =>
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = OperatorAuthentication.SmartScheme;
+        options.DefaultChallengeScheme = OperatorAuthentication.SmartScheme;
+    })
+    .AddPolicyScheme(OperatorAuthentication.SmartScheme, null, options => options.ForwardDefaultSelector = context =>
+        context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? OperatorAuthentication.BearerScheme
+            : CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddScheme<AuthenticationSchemeOptions, OperatorBearerHandler>(OperatorAuthentication.BearerScheme, null)
+    .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
     {
         options.LoginPath = "/login";
         options.LogoutPath = "/logout";
         options.AccessDeniedPath = "/login";
-        options.Cookie.Name = ".ChallengerSiem.Review";
+        options.Cookie.Name = ".ChallengerSiem.Operator";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Strict;
-        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-            ? CookieSecurePolicy.SameAsRequest
-            : CookieSecurePolicy.Always;
-        options.ExpireTimeSpan = TimeSpan.FromHours(8);
-        options.SlidingExpiration = true;
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+        options.Cookie.MaxAge = OperatorRepository.SessionLifetime;
+        options.ExpireTimeSpan = OperatorRepository.SessionLifetime;
+        options.SlidingExpiration = false;
+        options.EventsType = typeof(OperatorCookieEvents);
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("analyst", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ReviewSensitive)));
+    options.AddPolicy("investigations", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ManageInvestigations)));
+    options.AddPolicy("detections", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ManageDetections)));
+    options.AddPolicy("admin", policy => policy.RequireRole(OperatorRoles.Admin));
+});
 
 var app = builder.Build();
 
 StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
+var commandExit = await OperatorAccountCommand.TryRunAsync(args, app.Services, CancellationToken.None);
+if (commandExit.HasValue)
+{
+    Environment.ExitCode = commandExit.Value;
+    return;
+}
 
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
@@ -109,9 +137,72 @@ app.Use(async (context, next) =>
 });
 app.UseStaticFiles();
 app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api")
+        && context.Request.Method is not ("GET" or "HEAD" or "OPTIONS")
+        && context.User.Identity?.IsAuthenticated == true
+        && !context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { error = "csrf_safe_bearer_required" });
+        return;
+    }
+    await next();
+});
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value ?? string.Empty;
+    var isOperatorApi = path.StartsWith("/api/v1/", StringComparison.Ordinal)
+        && !path.StartsWith("/api/v1/agents/", StringComparison.Ordinal)
+        && !path.StartsWith("/api/v1/ingest/", StringComparison.Ordinal);
+    if (isOperatorApi)
+    {
+        var audit = context.RequestServices.GetRequiredService<SecurityAuditRepository>();
+        var authenticated = context.User.Identity?.IsAuthenticated == true;
+        var allowed = authenticated && context.RequestServices.GetRequiredService<TokenService>().HasOperatorAccess(context);
+        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name,
+            "operator.api_access", allowed ? "success" : "denied", "route", path, context,
+            new Dictionary<string,object?> { ["method"] = context.Request.Method }, context.RequestAborted);
+    }
+    await next();
+});
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.MapPost("/api/v1/operators", async Task<IResult> (OperatorCreateRequest request, HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
+{
+    if (!OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ManageOperators)) return Results.Forbid();
+    try
+    {
+        var created = await operators.CreateAsync(request.Username, request.DisplayName, request.Role, request.Password, false, cancellationToken);
+        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "operator.create", "success", "operator", created.OperatorId.ToString(), context, new Dictionary<string,object?> { ["role"] = created.Role }, cancellationToken);
+        return Results.Ok(new { created.OperatorId, created.Username, created.DisplayName, created.Role, created.Enabled });
+    }
+    catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string,string[]> { ["operator"] = new[] { ex.Message } }); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/v1/operators/me/password", async Task<IResult> (OperatorPasswordChangeRequest request, HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
+{
+    var id = OperatorAuthentication.OperatorId(context.User); if (!id.HasValue) return Results.Unauthorized();
+    if (!await operators.VerifyPasswordAsync(id.Value, request.CurrentPassword, cancellationToken))
+    {
+        await audit.RecordAsync(id, context.User.Identity?.Name, "operator.password.change", "failure", "operator", id.ToString(), context, null, cancellationToken);
+        return Results.Unauthorized();
+    }
+    try { await operators.ChangePasswordAsync(id.Value, request.NewPassword, false, cancellationToken); }
+    catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string,string[]> { ["new_password"] = new[] { ex.Message } }); }
+    await audit.RecordAsync(id, context.User.Identity?.Name, "operator.password.change", "success", "operator", id.ToString(), context, null, cancellationToken);
+    return Results.Ok(new { status = "changed", sessions_revoked = true });
+}).RequireAuthorization();
+
+app.MapPost("/api/v1/operators/me/api-token/rotate", async Task<IResult> (HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
+{
+    var id=OperatorAuthentication.OperatorId(context.User); if(!id.HasValue)return Results.Unauthorized(); var token=await operators.RotateApiTokenAsync(id.Value,cancellationToken);
+    await audit.RecordAsync(id,context.User.Identity?.Name,"operator.api_token.rotate","success","operator",id.ToString(),context,null,cancellationToken);
+    return Results.Ok(new { api_token=token, shown_once=true, sessions_revoked=true });
+}).RequireAuthorization();
 
 app.MapPost("/api/v1/agents/register", async Task<IResult> (
     HttpContext context,
@@ -257,13 +348,13 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var query = EventSearchQuery.FromQuery(context.Request.Query);
-    var results = await events.SearchEventsAsync(query, cancellationToken);
+    var results = await events.SearchEventsForOperatorAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
     return Results.Ok(new EventSearchResponse { Events = results });
 });
 
@@ -274,9 +365,9 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     return Results.Ok(await events.GetManagedStorageAccountingAsync(cancellationToken));
@@ -289,9 +380,9 @@ app.MapGet("/api/v1/source-health", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
@@ -306,9 +397,9 @@ app.MapGet("/api/v1/telemetry-coverage", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
@@ -324,9 +415,9 @@ app.MapGet("/api/v1/inventory", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
@@ -336,9 +427,9 @@ app.MapGet("/api/v1/inventory", async Task<IResult> (
 
 app.MapGet("/api/v1/platform/capabilities", (HttpContext context, TokenService tokens, IConfiguration configuration) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     return Results.Ok(new PlatformCapabilitiesResponse { Capabilities = PlatformCapabilityCatalog.All });
@@ -351,13 +442,14 @@ app.MapGet("/api/v1/alerts", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var status = context.Request.Query["status"].FirstOrDefault();
-    return Results.Ok(new { alerts = await alerts.SearchAlertsAsync(status, cancellationToken) });
+    var role = OperatorAuthorization.Role(context.User)!;
+    return Results.Ok(new { alerts = (await alerts.SearchAlertsAsync(status, cancellationToken)).Select(item => AlertFieldPolicy.Apply(item, role)) });
 });
 
 app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
@@ -368,13 +460,13 @@ app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var alert = await alerts.GetAlertAsync(alertId, cancellationToken);
-    return alert is null ? Results.NotFound() : Results.Ok(alert);
+    return alert is null ? Results.NotFound() : Results.Ok(AlertFieldPolicy.Apply(alert, OperatorAuthorization.Role(context.User)!));
 });
 
 app.MapGet("/api/v1/graphs", async Task<IResult> (
@@ -384,9 +476,9 @@ app.MapGet("/api/v1/graphs", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var status = context.Request.Query["status"].FirstOrDefault();
@@ -401,14 +493,14 @@ app.MapPost("/api/v1/graphs", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.CreateAsync(request, "review-token-operator", cancellationToken));
+        return Results.Ok(await graphs.CreateAsync(request, context.User.Identity?.Name ?? "operator", cancellationToken));
     }
     catch (ArgumentException ex)
     {
@@ -424,9 +516,9 @@ app.MapGet("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var detail = await graphs.GetDetailAsync(graphId, cancellationToken);
@@ -442,14 +534,14 @@ app.MapPut("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     try
     {
-        var updated = await graphs.UpdateAsync(graphId, request, "review-token-operator", cancellationToken);
+        var updated = await graphs.UpdateAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
         return updated is null ? Results.Conflict(new { error = "version_conflict_or_archived" }) : Results.Ok(updated);
     }
     catch (ArgumentException ex)
@@ -466,12 +558,12 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/archive", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
-    var archived = await graphs.ArchiveAsync(graphId, "review-token-operator", cancellationToken);
+    var archived = await graphs.ArchiveAsync(graphId, context.User.Identity?.Name ?? "operator", cancellationToken);
     return archived is null ? Results.NotFound() : Results.Ok(archived);
 });
 
@@ -484,14 +576,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/nodes", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.AddNodeAsync(graphId, request, "review-token-operator", cancellationToken));
+        return Results.Ok(await graphs.AddNodeAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken));
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
     {
@@ -508,14 +600,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/edges", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.AddEdgeAsync(graphId, request, "review-token-operator", cancellationToken));
+        return Results.Ok(await graphs.AddEdgeAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken));
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
     {
@@ -532,14 +624,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/proposals", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.CreateSocAgentProposalAsync(graphId, request.Instruction, "review-token-operator", cancellationToken));
+        return Results.Ok(await graphs.CreateSocAgentProposalAsync(graphId, request.Instruction, context.User.Identity?.Name ?? "operator", cancellationToken));
     }
     catch (ArgumentException ex)
     {
@@ -556,12 +648,12 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/proposals/{proposalId:guid}/apply", a
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
-    var proposal = await graphs.ApplyProposalAsync(graphId, proposalId, "review-token-operator", cancellationToken);
+    var proposal = await graphs.ApplyProposalAsync(graphId, proposalId, context.User.Identity?.Name ?? "operator", cancellationToken);
     return proposal is null ? Results.NotFound() : Results.Ok(proposal);
 });
 
@@ -573,9 +665,9 @@ app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     if (string.IsNullOrWhiteSpace(request.Question) || request.Question.Length > 4000)
@@ -591,9 +683,9 @@ app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
 
 app.MapGet("/api/v1/soc-agent/status", (HttpContext context, SocAgentService socAgent, TokenService tokens, IConfiguration configuration) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     return Results.Ok(socAgent.GetProviderStatus());
@@ -606,9 +698,9 @@ app.MapGet("/api/v1/soc-agent/sessions", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     return Results.Ok(new { sessions = await socAgent.GetRecentSessionsAsync(cancellationToken) });
@@ -622,9 +714,9 @@ app.MapPost("/api/v1/soc-agent/sessions", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var session = await socAgent.CreateSessionAsync(request, cancellationToken);
@@ -639,9 +731,9 @@ app.MapGet("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var detail = await socAgent.GetSessionDetailAsync(sessionId, cancellationToken);
@@ -656,9 +748,9 @@ app.MapDelete("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult>
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     var result = await socAgent.DeleteSessionAsync(sessionId, cancellationToken);
@@ -680,9 +772,9 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > 4000)
@@ -728,12 +820,12 @@ app.MapPost("/soc-agent/live/runs", async Task<IResult> (
     {
         return Results.Conflict(new { error = "run_already_active", message = ex.Message });
     }
-}).RequireAuthorization();
+}).RequireAuthorization("analyst");
 
 app.MapGet("/soc-agent/live/sessions/{sessionId:guid}/active", (
     Guid sessionId,
     SocAgentLiveRunCoordinator liveRuns) => Results.Ok(liveRuns.GetActiveRun(sessionId)))
-    .RequireAuthorization();
+    .RequireAuthorization("analyst");
 
 app.MapPost("/soc-agent/live/runs/{runId:guid}/cancel", (
     Guid runId,
@@ -741,7 +833,7 @@ app.MapPost("/soc-agent/live/runs/{runId:guid}/cancel", (
 {
     var result = liveRuns.CancelRun(runId);
     return result is null ? Results.NotFound() : Results.Ok(result);
-}).RequireAuthorization();
+}).RequireAuthorization("analyst");
 
 app.MapGet("/soc-agent/live/runs/{runId:guid}/events", async Task<IResult> (
     Guid runId,
@@ -779,7 +871,7 @@ app.MapGet("/soc-agent/live/runs/{runId:guid}/events", async Task<IResult> (
     }
 
     return Results.Empty;
-}).RequireAuthorization();
+}).RequireAuthorization("analyst");
 
 app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionOAuthConnectService connect) =>
 {
@@ -792,7 +884,7 @@ app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionO
     {
         return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
     }
-}).RequireAuthorization();
+}).RequireAuthorization("analyst");
 
 app.MapGet("/soc-agent/oauth/callback", async Task<IResult> (
     HttpContext context,
@@ -817,9 +909,9 @@ app.MapGet("/api/v1/detections/rules", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.ValidateReviewToken(context, configuration))
+    if (!tokens.HasOperatorAccess(context))
     {
-        return Results.Unauthorized();
+        return OperatorAccessFailure(context);
     }
 
     return Results.Ok(new { rules = await alerts.GetRulesAsync(cancellationToken) });
@@ -828,6 +920,8 @@ app.MapGet("/api/v1/detections/rules", async Task<IResult> (
 app.MapRazorPages();
 
 app.Run();
+
+static IResult OperatorAccessFailure(HttpContext context) => context.User.Identity?.IsAuthenticated == true ? Results.Forbid() : Results.Unauthorized();
 
 static int ParseIntOrDefault(string? value, int fallback)
 {

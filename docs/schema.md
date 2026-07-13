@@ -140,9 +140,15 @@ unique (agent_id, event_id)
 
 Store the current Windows heartbeat, source-manifest, and source-health persistence shape. Cross-platform checkpoint/source columns are intentionally deferred to the multi-platform migration.
 
+### Operator identity, session, and audit tables
+
+Migration `003_operator_rbac.sql` additively creates `operators`, `operator_sessions`, and `security_audit_events`. Operators have a unique normalized username, one exact role, salted password hash, optional hashed API credential, enable/lockout state, and credential-change timestamps. Session rows store only a random handle hash plus absolute expiry/revocation state. Password or API-credential changes revoke active sessions.
+
+Security audit rows are append-only: a PostgreSQL trigger rejects updates and deletes. Audit details are JSONB limited by application policy to action/outcome and non-secret identifiers; credentials, cookies, authorization headers, raw telemetry, and protected event fields are excluded.
+
 ### Other tables
 
-The current schema also includes asset inventory, coverage exceptions, detection rules, alerts/evidence, investigation graphs, `soc_agent` records, and bounded ingestion errors. Their behavior is unchanged by this contract-only slice.
+The current schema also includes asset inventory, coverage exceptions, detection rules, alerts/evidence, investigation graphs, `soc_agent` records, and bounded ingestion errors.
 
 ## Core current indexes
 
@@ -157,4 +163,4 @@ With PostgreSQL client tools installed and a private ignored connection configur
 ./scripts/validate-schema.sh
 ```
 
-The apply script runs every numbered migration and fails on the first error. The validator checks portable columns and indexes. Validate upgrades only on operator-owned empty or synthetic databases; keep plans and database output under ignored `.local/`.
+The apply script runs every numbered migration and fails on the first error. The validator checks portable columns plus operator/session/audit tables, columns, and indexes. Validate upgrades only on operator-owned empty or synthetic databases; keep plans and database output under ignored `.local/`.

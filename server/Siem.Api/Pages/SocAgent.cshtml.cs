@@ -1,10 +1,12 @@
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Challenger.Siem.Api.Pages;
 
+[Authorize(Policy = "analyst")]
 public sealed class SocAgentModel(
     SocAgentService socAgent,
     SocAgentSubscriptionOAuthConnectService subscriptionOAuthConnect,

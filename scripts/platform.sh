@@ -34,7 +34,6 @@ Environment overrides:
 Required for start, usually from .local/dev.env:
   ConnectionStrings__SiemDatabase
   Auth__EnrollmentToken
-  Auth__ReviewToken
 EOF
 }
 
@@ -112,7 +111,7 @@ require_start_config() {
 
   local missing=()
   local name
-  for name in ConnectionStrings__SiemDatabase Auth__EnrollmentToken Auth__ReviewToken; do
+  for name in ConnectionStrings__SiemDatabase Auth__EnrollmentToken; do
     if [[ -z "${!name:-}" ]]; then
       missing+=("$name")
     fi
@@ -199,7 +198,7 @@ start_platform() {
 
   export ASPNETCORE_ENVIRONMENT="$ASPNETCORE_ENVIRONMENT_EFFECTIVE"
   export ASPNETCORE_URLS="$PLATFORM_URLS"
-  export ConnectionStrings__SiemDatabase Auth__EnrollmentToken Auth__ReviewToken
+  export ConnectionStrings__SiemDatabase Auth__EnrollmentToken
 
   nohup dotnet run --project server/Siem.Api --no-launch-profile >> "$LOG_FILE" 2>&1 &
   pid=$!

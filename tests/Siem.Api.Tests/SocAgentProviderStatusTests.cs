@@ -528,13 +528,20 @@ public sealed class SocAgentProviderStatusTests
             Provider = "OpenAI",
             AuthMode = "DelegatedFile",
             ExternalCallsEnabled = true,
-            AuthFilePath = "server/Siem.Api/appsettings.json"
+            AuthFilePath = RepositoryFile("server", "Siem.Api", "appsettings.json")
         });
 
         var status = service.GetStatus();
 
         Assert.Equal("provider_error", status.Status);
         Assert.Contains("ignored/local", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RepositoryFile(params string[] parts)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Challenger.Siem.sln"))) current = current.Parent;
+        return Path.Combine(new[] { current?.FullName ?? throw new InvalidOperationException("Repository root not found.") }.Concat(parts).ToArray());
     }
 
     private static string ValidAuthJson(

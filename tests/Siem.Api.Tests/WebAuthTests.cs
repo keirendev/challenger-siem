@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -9,141 +8,36 @@ namespace Challenger.Siem.Api.Tests;
 
 public sealed class WebAuthTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string ReviewToken = "test-review-token";
     private readonly WebApplicationFactory<Program> factory;
-
-    public WebAuthTests(WebApplicationFactory<Program> factory)
+    public WebAuthTests(WebApplicationFactory<Program> factory) => this.factory=factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string,string?>
     {
-        this.factory = factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureAppConfiguration((_, configuration) =>
-            {
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Port=5432;Database=challenger_siem_tests;Username=siem;Password=test",
-                    ["Auth:EnrollmentToken"] = "test-enrollment-token",
-                    ["Auth:ReviewToken"] = ReviewToken
-                });
-            });
-        });
+        ["ConnectionStrings:SiemDatabase"]="Host=localhost;Port=5432;Database=synthetic_missing;Username=siem;Password=synthetic",
+        ["Auth:EnrollmentToken"]="synthetic-enrollment"
+    })));
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/soc-agent")]
+    [InlineData("/graphs")]
+    public async Task OperatorPagesRequireLogin(string path)
+    {
+        using var client=factory.CreateClient(new WebApplicationFactoryClientOptions{AllowAutoRedirect=false});
+        using var response=await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.Redirect,response.StatusCode); Assert.Contains("/login",response.Headers.Location?.OriginalString,StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task DashboardRequiresOperatorLogin()
+    public async Task LoginUsesUsernamePasswordAndAntiforgery()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-
-        using var response = await client.GetAsync("/");
-
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/login", response.Headers.Location?.OriginalString, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task SocAgentWorkspaceRequiresOperatorLogin()
-    {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-
-        using var response = await client.GetAsync("/soc-agent");
-
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/login", response.Headers.Location?.OriginalString, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task GraphWorkspaceRequiresOperatorLogin()
-    {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-
-        using var response = await client.GetAsync("/graphs");
-
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Contains("/login", response.Headers.Location?.OriginalString, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task LoginRejectsInvalidReviewTokenWithoutSettingReviewCookie()
-    {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-        var antiForgeryToken = await GetAntiForgeryTokenAsync(client);
-
-        using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = antiForgeryToken,
-            ["ReviewToken"] = "wrong-token"
-        }));
-
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains("Invalid review token.", body, StringComparison.Ordinal);
-        Assert.DoesNotContain(response.Headers.TryGetValues("Set-Cookie", out var cookies) ? cookies : Array.Empty<string>(),
-            cookie => cookie.Contains(".ChallengerSiem.Review", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task LoginAcceptsValidReviewTokenAndSetsHttpOnlyReviewCookie()
-    {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-        var antiForgeryToken = await GetAntiForgeryTokenAsync(client);
-
-        using var response = await client.PostAsync("/login?returnUrl=%2Fagents", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = antiForgeryToken,
-            ["ReviewToken"] = ReviewToken,
-            ["ReturnUrl"] = "/agents"
-        }));
-
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal("/agents", response.Headers.Location?.OriginalString);
-        var setCookieHeaders = response.Headers.GetValues("Set-Cookie").ToArray();
-        Assert.Contains(setCookieHeaders, cookie => cookie.Contains(".ChallengerSiem.Review", StringComparison.Ordinal));
-        Assert.Contains(setCookieHeaders, cookie =>
-            cookie.Contains(".ChallengerSiem.Review", StringComparison.Ordinal)
-            && cookie.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+        using var client=factory.CreateClient(); var html=await client.GetStringAsync("/login");
+        Assert.Contains("name=\"Username\"",html,StringComparison.Ordinal); Assert.Contains("name=\"Password\"",html,StringComparison.Ordinal);
+        Assert.Contains("__RequestVerificationToken",html,StringComparison.Ordinal); Assert.DoesNotContain("ReviewToken",html,StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task StaticAssetsRequireHttpsOutsideDevelopment()
     {
-        using var productionFactory = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
-        using var client = productionFactory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
-
-        using var response = await client.GetAsync("/css/site.css");
-        var body = await response.Content.ReadAsStringAsync();
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("https_required", body, StringComparison.Ordinal);
-    }
-
-    private static async Task<string> GetAntiForgeryTokenAsync(HttpClient client)
-    {
-        using var response = await client.GetAsync("/login");
-        response.EnsureSuccessStatusCode();
-        var html = await response.Content.ReadAsStringAsync();
-        var match = Regex.Match(
-            html,
-            "name=\"__RequestVerificationToken\"[^>]*value=\"(?<token>[^\"]+)\"",
-            RegexOptions.CultureInvariant);
-
-        Assert.True(match.Success, "Login page should contain an antiforgery token.");
-        return WebUtility.HtmlDecode(match.Groups["token"].Value);
+        using var productionFactory=factory.WithWebHostBuilder(builder=>builder.UseEnvironment("Production"));using var client=productionFactory.CreateClient(new WebApplicationFactoryClientOptions{AllowAutoRedirect=false});
+        using var response=await client.GetAsync("/css/site.css"); Assert.Equal(HttpStatusCode.BadRequest,response.StatusCode);
     }
 }

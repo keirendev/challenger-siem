@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Contracts.V1;
 using Npgsql;
 using NpgsqlTypes;
@@ -252,6 +253,22 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         }
 
         return results;
+    }
+
+    public async Task<IReadOnlyList<EventEnvelope>> SearchEventsForOperatorAsync(EventSearchQuery query, string role, CancellationToken cancellationToken, int offset = 0)
+    {
+        if (!OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive))
+        {
+            query = query with { Keyword = null, UserName = null, ProcessImage = null, SourceIp = null, DestinationIp = null, ServiceName = null, FilePath = null, RegistryKey = null };
+        }
+        var events = await SearchEventsAsync(query, cancellationToken, offset);
+        return events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();
+    }
+
+    public async Task<EventEnvelope?> GetEventForOperatorAsync(string agentId, Guid eventId, string role, CancellationToken cancellationToken)
+    {
+        var item = await GetEventAsync(agentId, eventId, cancellationToken);
+        return item is null ? null : EventFieldPolicy.Apply(item, role);
     }
 
     public async Task<EventEnvelope?> GetEventAsync(string agentId, Guid eventId, CancellationToken cancellationToken)
