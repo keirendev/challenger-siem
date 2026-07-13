@@ -130,3 +130,7 @@ Keep any future Linux generated configuration and credentials under a restrictiv
 ## Troubleshooting
 
 See [troubleshooting.md](troubleshooting.md) for common database, auth, schema, web login, smoke-test, Windows agent, WinRM, source-health, and screenshot issues.
+
+## Linux endpoints
+
+The Linux service foundation supports secure enrollment, heartbeat, bounded inventory transport, and durable Agent.Core queue delivery. See [Linux agent foundation](linux-agent.md). It does not yet claim L1 journal coverage; do not broaden source permissions or host policy to imply coverage.

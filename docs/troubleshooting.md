@@ -135,3 +135,7 @@ Run:
 ```
 
 The same value is used for .NET assembly metadata and default agent version values in helper scripts. See [versioning.md](versioning.md).
+
+## Linux installer preflight fails
+
+Treat unsupported architecture/init, missing locked service identity, non-0600 input configuration, or absent executable payload as blocking. Correct the prerequisite and rerun read-only plan; the workflow performs these checks before creating installation paths. Never bypass the checks or place credentials in command arguments.

@@ -1,6 +1,6 @@
 # Challenger SIEM
 
-Challenger SIEM is a custom, no-Docker SIEM prototype focused first on Windows endpoints. It pairs a C# Windows agent with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
+Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoints and a Linux service foundation. It pairs C# endpoint agents with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
 
 ## Current capabilities
 
@@ -84,6 +84,7 @@ Copy `dist/windows-agent-copy/WindowsAgent.exe`, the generated `agentsettings.js
 
 ```text
 agent/WindowsAgent/     Windows endpoint agent
+agent/LinuxAgent/       Linux endpoint service foundation
 server/Siem.Api/        ASP.NET Core ingestion/search API and Razor Pages console
 shared/Contracts/       Versioned C# API contracts
 contracts/v1/           JSON Schema contracts for external clients

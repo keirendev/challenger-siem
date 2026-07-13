@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added a first-class .NET 8 Linux agent foundation using Agent.Core for enrollment, durable queueing, acknowledgement-aware recovery, heartbeat and bounded inventory transport, with a least-privilege systemd unit and preflight-first plan/install/upgrade/validate/uninstall workflows.
+
 - Extracted a platform-neutral Agent.Core reliability library for the durable queue, v1 transport, acknowledgement/retry handling, deterministic identity, serialization, and configuration hashing while preserving the Windows agent collection/checkpoint semantics.
 
 - Added numbered idempotent PostgreSQL migrations, multi-platform event persistence/search, portable-source indexes, and authenticated managed event-storage accounting while preserving Windows v1 rows and semantics.

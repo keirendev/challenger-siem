@@ -242,3 +242,7 @@ Do not reboot hosts, change firewall/auth settings, uninstall services, delete o
 - Operator authentication is a review token and HTTP-only session cookie, not full RBAC/SSO.
 - Pagination is bounded by `limit` rather than full cursor pagination.
 - The agent poison-event strategy quarantines repeated failures locally for operator review; centralized poison review can be added later.
+
+## Linux agent foundation lifecycle
+
+Use the read-only `./scripts/linux-agent.sh plan` before every deployment. Follow [the Linux agent guide](linux-agent.md) for payload/config prerequisites, install or upgrade, validation, and uninstall. Routine lifecycle operations never configure audit, firewall, authentication, kernel, journal retention, groups, capabilities, or mandatory-access-control policy. Missing source access is a visible future coverage gap, not permission to mutate policy. Live systemd testing requires explicit approval and raw evidence remains under `.local/`.

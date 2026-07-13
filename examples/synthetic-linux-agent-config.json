@@ -1,0 +1,21 @@
+{
+  "Agent": {
+    "AgentId": "synthetic-linux-01",
+    "ServerBaseUrl": "https://siem.example.invalid",
+    "ApiToken": "<replace-with-private-agent-token>",
+    "EnrollmentToken": "",
+    "HeartbeatIntervalSeconds": 60,
+    "InventoryIntervalSeconds": 3600,
+    "DrainBatchSize": 100,
+    "Queue": {
+      "Path": "/var/lib/challenger-siem-agent/queue.sqlite",
+      "MaxSizeMb": 512,
+      "MaxSendAttempts": 10,
+      "MaxBackoffSeconds": 300,
+      "WarningSizePercent": 80
+    },
+    "State": {
+      "Path": "/var/lib/challenger-siem-agent/state.json"
+    }
+  }
+}
