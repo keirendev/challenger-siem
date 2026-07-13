@@ -206,7 +206,7 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         var truncated = output.Truncated || errorOutput.Truncated;
         if (!policy.AcceptedExitCodes.Contains(process.ExitCode) && !truncated)
         {
-            return process.ExitCode is 13 or 126
+            return IsPermissionDenied(policy.Operation, process.ExitCode)
                 ? new(InventorySourceState.PermissionDenied, "command_permission_denied")
                 : new(InventorySourceState.Unavailable, "command_failed");
         }
@@ -309,6 +309,10 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
             return new(InventorySourceState.Unavailable, "file_unavailable");
         }
     }
+
+    private static bool IsPermissionDenied(LinuxInventoryOperation operation, int exitCode) =>
+        exitCode is 13 or 126
+        || (exitCode == 1 && operation is LinuxInventoryOperation.Nftables or LinuxInventoryOperation.Ufw);
 
     private static void Kill(Process process)
     {

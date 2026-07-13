@@ -263,9 +263,10 @@ public static class LinuxInventoryParsers
             var fields = SplitFields(line);
             if (fields.Length < 2) continue;
             if (fields[0].Equals("Match", StringComparison.OrdinalIgnoreCase)) break;
-            if (accepted.TryGetValue(fields[0], out var values) && values.Contains(fields[1])) metadata[fields[0].ToLowerInvariant()] = fields[1].ToLowerInvariant();
+            if (accepted.TryGetValue(fields[0], out var values) && values.Contains(fields[1]))
+                metadata.TryAdd(fields[0].ToLowerInvariant(), fields[1].ToLowerInvariant());
         }
-        return new[] { Item("ssh", "sshd", "configured", metadata) };
+        return metadata.Count == 0 ? null : new[] { Item("ssh", "sshd", "observed_primary_config", metadata) };
     }
 
     private static IReadOnlyList<InventoryItem>? ParseSecureBoot(string? content)

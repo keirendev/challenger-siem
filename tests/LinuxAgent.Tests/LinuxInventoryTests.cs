@@ -205,7 +205,7 @@ public sealed class LinuxInventoryTests
         var source = CompleteSource();
         source.Set(LinuxInventoryOperation.Users, InventorySourceResult.Success($"synthetic-user:x:1001:1001:{canary}:/home/{canary}:/bin/bash\n"));
         source.Set(LinuxInventoryOperation.Groups, InventorySourceResult.Success($"synthetic-group:x:1001:synthetic-user,{canary}\n"));
-        source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success($"PasswordAuthentication no\nProxyCommand {canary}\nMatch User {canary}\nPasswordAuthentication yes\n"));
+        source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success($"PasswordAuthentication no\nPasswordAuthentication yes\nProxyCommand {canary}\nMatch User {canary}\nPasswordAuthentication yes\n"));
         source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success($"table inet synthetic\nchain input {{ comment {canary}; }}\n"));
 
         var snapshots = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
@@ -214,6 +214,55 @@ public sealed class LinuxInventoryTests
         Assert.DoesNotContain("/home/", json, StringComparison.Ordinal);
         Assert.DoesNotContain("proxycommand", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("chain", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("no", snapshots.Single(x => x.SnapshotType == "linux_ssh").Items.Single().Metadata["passwordauthentication"]);
+    }
+
+    [Fact]
+    public async Task EmptyApprovedSshPostureIsMalformedRatherThanHealthy()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("Include /etc/ssh/sshd_config.d/*.conf\n"));
+        var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(x => x.SnapshotType == "linux_ssh");
+        Assert.Equal("malformed", snapshot.Summary["state"]);
+        Assert.Empty(snapshot.Items);
+    }
+
+    [Fact]
+    public async Task DeterministicDayBurstBenchmarkStaysWithinFrequencyAndPayloadBudgets()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.Services, InventorySourceResult.Success(string.Join('\n', Enumerable.Range(0, 1_000)
+            .Select(index => $"synthetic-{index:D4}.service loaded active running"))));
+        source.Set(LinuxInventoryOperation.DpkgPackages, InventorySourceResult.Success(string.Join('\n', Enumerable.Range(0, 2_000)
+            .Select(index => $"synthetic-package-{index:D4}\t1.2.{index}"))));
+        var clock = new ManualTimeProvider(Now);
+        var collector = new LinuxInventory(source, clock, TimeSpan.FromSeconds(30), LinuxInventory.DefaultMaxSerializedBytes);
+        var schedule = new InventorySchedule(clock, TimeSpan.FromHours(1), TimeSpan.Zero);
+        var payloadSizes = new List<int>();
+        var passiveSteps = 0;
+
+        for (var hour = 0; hour < 24; hour++)
+        {
+            for (var step = 0; step < 10; step++) passiveSteps++;
+            Assert.Equal(InventoryRunDecision.Started, await schedule.TryRunDueAsync(async cancellationToken =>
+            {
+                var snapshots = await collector.CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", cancellationToken);
+                payloadSizes.Add(collector.SerializedSize("synthetic-agent", clock.GetUtcNow(), snapshots));
+            }, default));
+            clock.Advance(TimeSpan.FromHours(1));
+        }
+
+        Assert.Equal(24, payloadSizes.Count);
+        Assert.All(payloadSizes, size => Assert.InRange(size, 1, LinuxInventory.DefaultMaxSerializedBytes));
+        Assert.Equal(240, passiveSteps);
+    }
+
+    [Fact]
+    public void InventoryServiceHasNoDurableQueueDependency()
+    {
+        var dependencies = typeof(LinuxInventoryService).GetConstructors().Single().GetParameters().Select(parameter => parameter.ParameterType.FullName).ToArray();
+        Assert.DoesNotContain("Challenger.Siem.Agent.Core.Queue.IEventQueue", dependencies);
     }
 
     [Fact]
@@ -265,9 +314,14 @@ public sealed class LinuxInventoryTests
 
         var queueDrains = 0;
         var passiveEvents = 0;
-        await Task.WhenAll(Task.Run(() => Interlocked.Increment(ref queueDrains)), Task.Run(() => Interlocked.Increment(ref passiveEvents)));
-        Assert.Equal(1, queueDrains);
-        Assert.Equal(1, passiveEvents);
+        var passiveWork = Task.WhenAll(Enumerable.Range(0, 1_000).Select(_ => Task.Run(() =>
+        {
+            Interlocked.Increment(ref queueDrains);
+            Interlocked.Increment(ref passiveEvents);
+        })));
+        await passiveWork.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(1_000, queueDrains);
+        Assert.Equal(1_000, passiveEvents);
         Assert.False(inventory.IsCompleted);
         release.SetResult();
         await inventory;
