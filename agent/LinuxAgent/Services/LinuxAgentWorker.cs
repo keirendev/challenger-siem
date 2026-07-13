@@ -7,6 +7,7 @@ using Challenger.Siem.Agent.Core.Util;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Services;
@@ -19,6 +20,7 @@ public sealed class LinuxAgentWorker(
     LinuxTransportRuntimeState transportState,
     LinuxEnrollmentService enrollment,
     LinuxJournalRuntime journalRuntime,
+    LinuxSelfIntegrityRuntime selfIntegrityRuntime,
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
     private readonly LinuxAgentOptions options = configured.Value;
@@ -36,6 +38,8 @@ public sealed class LinuxAgentWorker(
                 if (DateTimeOffset.UtcNow >= nextHeartbeat)
                 {
                     var journal = journalRuntime.Snapshot();
+                    var selfIntegrityManifest = selfIntegrityRuntime.Manifest;
+                    var selfIntegrityHealth = selfIntegrityRuntime.Health();
                     await client.SendHeartbeatAsync(new HeartbeatRequest
                     {
                         AgentId = options.AgentId,
@@ -50,8 +54,8 @@ public sealed class LinuxAgentWorker(
                         ResourceMetrics = ResourceMetricsSampler.Sample(),
                         ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json"),
                         QueueMetrics = transportState.Enrich(await queue.GetMetricsAsync(transportState.LastSuccessfulSendTime, cancellationToken)),
-                        SourceManifest = journal.Manifest,
-                        SourceHealth = journal.Health
+                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).ToArray(),
+                        SourceHealth = journal.Health.Concat([selfIntegrityHealth]).ToArray()
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }
@@ -135,7 +139,7 @@ public sealed class LinuxTransportRuntimeState
     }
 }
 
-public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IEventQueue queue, SiemIngestClient client, LinuxJournalRuntime journalRuntime, LinuxTransportRuntimeState? transportState = null)
+public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IEventQueue queue, SiemIngestClient client, LinuxJournalRuntime journalRuntime, LinuxTransportRuntimeState? transportState = null, LinuxSelfIntegrityRuntime? selfIntegrityRuntime = null)
 {
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly LinuxTransportRuntimeState runtimeState = transportState ?? new LinuxTransportRuntimeState();
@@ -159,7 +163,12 @@ public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IE
         }
         var acknowledgedIds = IngestAcknowledgement.AcknowledgedQueueIds(batch, acknowledgement);
         var acknowledgedSet = acknowledgedIds.ToHashSet();
-        await journalRuntime.RecordAcknowledgedAsync(batch.Where(item => acknowledgedSet.Contains(item.QueueId)).Select(item => item.Envelope).ToArray(), cancellationToken);
+        var acknowledgedEvents = batch.Where(item => acknowledgedSet.Contains(item.QueueId)).Select(item => item.Envelope).ToArray();
+        await journalRuntime.RecordAcknowledgedAsync(acknowledgedEvents, cancellationToken);
+        if (selfIntegrityRuntime is not null)
+        {
+            await selfIntegrityRuntime.RecordAcknowledgedAsync(acknowledgedEvents, cancellationToken);
+        }
         await queue.DeleteAsync(acknowledgedIds, cancellationToken);
         if (acknowledgedIds.Length > 0) runtimeState.ObserveSuccess();
         var rejected = IngestAcknowledgement.RejectedQueueIds(batch, acknowledgement);

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -142,6 +143,207 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 
         await using var dataSource = NpgsqlDataSource.Create(connectionString);
         await AssertDatabaseStateAsync(dataSource, agentId, invalidBatchId);
+    }
+
+    [PostgresFact]
+    public async Task ManagedRetentionDryRunExecuteRetryAndEvidenceStateUseBoundedScope()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"retention-agent-{Guid.NewGuid():N}";
+        var hostname = "RETENTION-HOST";
+        var oldOptionalId = Guid.NewGuid();
+        var oldMandatoryId = Guid.NewGuid();
+        var recentId = Guid.NewGuid();
+        var alertId = Guid.NewGuid();
+        var oldTime = DateTimeOffset.UtcNow.AddDays(-5);
+        var recentTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+        using var factory = CreateFactory(connectionString, new Dictionary<string, string?>
+        {
+            ["Storage:Retention:TargetRetentionDays"] = "1",
+            ["Storage:Retention:ManagedCapacityBytes"] = "4096",
+            ["Storage:Retention:CleanupBatchSize"] = "1",
+            ["Storage:Retention:MaxBatchesPerRun"] = "10"
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await RegisterAsync(client, agentId, hostname, "1.2.0-test");
+        var batch = new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = DateTimeOffset.UtcNow,
+            Events = new[]
+            {
+                CreateEvent(agentId, hostname, oldOptionalId, "Windows PowerShell", 4104, oldTime, "old optional retention"),
+                CreateEvent(agentId, hostname, oldMandatoryId, "System", 6005, oldTime.AddMinutes(1), "old mandatory retention"),
+                CreateEvent(agentId, hostname, recentId, "Microsoft-Windows-Sysmon/Operational", 1, recentTime, "recent optional retention")
+            }
+        };
+        await PostJsonWithBearerAsync<IngestBatchResponse>(client, "/api/v1/ingest/events", batch, token);
+
+        await using (var dataSource = NpgsqlDataSource.Create(connectionString))
+        {
+            await using var alertCommand = dataSource.CreateCommand("""
+                insert into alerts(alert_id, rule_id, rule_version, title, severity, confidence, status, agent_id, hostname, summary)
+                values(@alert_id, 'synthetic.retention', 1, 'Synthetic retention alert', 'medium', 'medium', 'new', @agent_id, @hostname, 'Synthetic retention alert');
+                insert into alert_evidence(alert_id, agent_id, event_id, event_time, channel, windows_event_id, summary)
+                values(@alert_id, @agent_id, @old_event_id, @old_time, 'Windows PowerShell', 4104, 'old evidence'),
+                      (@alert_id, @agent_id, @recent_event_id, @recent_time, 'Microsoft-Windows-Sysmon/Operational', 1, 'recent evidence');
+                """);
+            alertCommand.Parameters.AddWithValue("alert_id", alertId);
+            alertCommand.Parameters.AddWithValue("agent_id", agentId);
+            alertCommand.Parameters.AddWithValue("hostname", hostname);
+            alertCommand.Parameters.AddWithValue("old_event_id", oldOptionalId);
+            alertCommand.Parameters.AddWithValue("old_time", oldTime);
+            alertCommand.Parameters.AddWithValue("recent_event_id", recentId);
+            alertCommand.Parameters.AddWithValue("recent_time", recentTime);
+            await alertCommand.ExecuteNonQueryAsync();
+        }
+
+        using (var unauth = await client.GetAsync("/api/v1/storage/retention/status"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+        }
+
+        var dryRun = await PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: true));
+        Assert.Equal("dry_run", dryRun.Mode);
+        Assert.Equal(0, dryRun.RemovedRows);
+        Assert.Contains(dryRun.Categories, item => item.TableName == "events" && item.Category == "optional_extended_events" && item.EligibleRows >= 1);
+        Assert.Contains(dryRun.Categories, item => item.TableName == "events" && item.Category == "mandatory_windows_event_log" && item.EligibleRows >= 1);
+        Assert.DoesNotContain(dryRun.ManagedTables, table => table == "operators");
+        Assert.Contains("operators", dryRun.ProtectedTables);
+
+        var firstPass = await PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: false, MaxBatches: 1));
+        Assert.Equal("execute", firstPass.Mode);
+        Assert.Equal(1, firstPass.RemovedEventRows);
+        var secondPass = await PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: false, MaxBatches: 1));
+        Assert.Equal(1, secondPass.RemovedEventRows);
+
+        var search = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client, $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&limit=10");
+        Assert.DoesNotContain(search.Events, item => item.EventId == oldOptionalId);
+        Assert.DoesNotContain(search.Events, item => item.EventId == oldMandatoryId);
+        Assert.Contains(search.Events, item => item.EventId == recentId);
+
+        var alert = await GetJsonWithOperatorApiTokenAsync<AlertRecord>(client, $"/api/v1/alerts/{alertId}");
+        Assert.Contains(alert.Evidence, item => item.EventId == oldOptionalId && item.TelemetryRetentionState == "telemetry_removed_by_retention");
+        Assert.Contains(alert.Evidence, item => item.EventId == recentId && item.TelemetryRetentionState == "telemetry_retained");
+
+        await using (var dataSource = NpgsqlDataSource.Create(connectionString))
+        await using (var command = dataSource.CreateCommand("select count(*) from operators where username = 'synthetic-admin';"))
+        {
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync() ?? 0L));
+        }
+    }
+
+    [PostgresFact]
+    public async Task ManagedRetentionLockContentionAndEmergencyPreferOptionalTelemetry()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"emergency-agent-{Guid.NewGuid():N}";
+        var hostname = "EMERGENCY-HOST";
+        var optionalId = Guid.NewGuid();
+        var mandatoryId = Guid.NewGuid();
+        using var factory = CreateFactory(connectionString, new Dictionary<string, string?>
+        {
+            ["Storage:Retention:TargetRetentionDays"] = "30",
+            ["Storage:Retention:ManagedCapacityBytes"] = "1024",
+            ["Storage:Retention:CleanupBatchSize"] = "1",
+            ["Storage:Retention:MaxBatchesPerRun"] = "1",
+            ["Storage:Retention:EmergencyTargetPercent"] = "95"
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await RegisterAsync(client, agentId, hostname, "1.2.0-test");
+        var now = DateTimeOffset.UtcNow;
+        await PostJsonWithBearerAsync<IngestBatchResponse>(client, "/api/v1/ingest/events", new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = now,
+            Events = new[]
+            {
+                CreateEvent(agentId, hostname, optionalId, "Windows PowerShell", 4104, now.AddMinutes(-20), new string('o', 256)),
+                CreateEvent(agentId, hostname, mandatoryId, "Security", 4624, now.AddMinutes(-10), new string('m', 256))
+            }
+        }, token);
+
+        await using (var dataSource = NpgsqlDataSource.Create(connectionString))
+        await using (var lockConnection = await dataSource.OpenConnectionAsync())
+        {
+            await using (var lockCommand = lockConnection.CreateCommand())
+            {
+                lockCommand.CommandText = "select pg_advisory_lock(197301100);";
+                await lockCommand.ExecuteNonQueryAsync();
+            }
+            using var conflictRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/storage/retention/run")
+            {
+                Content = JsonContent.Create(new RetentionRunRequest(DryRun: false), options: JsonOptions.Default)
+            };
+            conflictRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
+            using var conflict = await client.SendAsync(conflictRequest);
+            Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+            await using var unlock = lockConnection.CreateCommand();
+            unlock.CommandText = "select pg_advisory_unlock(197301100);";
+            await unlock.ExecuteNonQueryAsync();
+        }
+
+        var emergency = await PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: false, Emergency: true, MaxBatches: 1));
+        Assert.Equal("emergency", emergency.Trigger);
+        Assert.Equal(1, emergency.RemovedEventRows);
+        Assert.Contains(emergency.Categories, item => item.Category == "optional_extended_events" && item.RemovedRows == 1);
+
+        var remaining = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client, $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&limit=10");
+        Assert.DoesNotContain(remaining.Events, item => item.EventId == optionalId);
+        Assert.Contains(remaining.Events, item => item.EventId == mandatoryId);
+    }
+
+    [PostgresFact]
+    public async Task ManagedRetentionStatusAccountingAndSearchRemainResponsiveWithSyntheticVolume()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"volume-agent-{Guid.NewGuid():N}";
+        var hostname = "VOLUME-HOST";
+        using var factory = CreateFactory(connectionString, new Dictionary<string, string?>
+        {
+            ["Storage:Retention:TargetRetentionDays"] = "1",
+            ["Storage:Retention:ManagedCapacityBytes"] = "1048576",
+            ["Storage:Retention:CleanupBatchSize"] = "25",
+            ["Storage:Retention:MaxBatchesPerRun"] = "4"
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var token = await RegisterAsync(client, agentId, hostname, "1.2.0-test");
+        var oldTime = DateTimeOffset.UtcNow.AddDays(-10);
+        for (var batchIndex = 0; batchIndex < 4; batchIndex++)
+        {
+            var events = Enumerable.Range(0, 25)
+                .Select(index => CreateEvent(agentId, hostname, Guid.NewGuid(), "Application", 1000 + index, oldTime.AddSeconds(batchIndex * 25 + index), "volume retention"))
+                .ToArray();
+            await PostJsonWithBearerAsync<IngestBatchResponse>(client, "/api/v1/ingest/events", new IngestBatchRequest { AgentId = agentId, BatchId = Guid.NewGuid(), SentAt = DateTimeOffset.UtcNow, Events = events }, token);
+        }
+
+        var status = await GetJsonWithOperatorApiTokenAsync<RetentionStatusResponse>(client, "/api/v1/storage/retention/status");
+        Assert.True(status.Accounting.EventRows >= 100);
+        Assert.Equal("expired_telemetry_present", status.RetentionLagState);
+
+        var concurrentEventId = Guid.NewGuid();
+        var started = DateTimeOffset.UtcNow;
+        var cleanupTask = PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: false));
+        var ingestTask = PostJsonWithBearerAsync<IngestBatchResponse>(client, "/api/v1/ingest/events", new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = DateTimeOffset.UtcNow,
+            Events = new[] { CreateEvent(agentId, hostname, concurrentEventId, "System", 6005, DateTimeOffset.UtcNow, "concurrent ingest retention") }
+        }, token);
+        await Task.WhenAll(cleanupTask, ingestTask);
+        var cleanup = await cleanupTask;
+        var cleanupElapsed = DateTimeOffset.UtcNow - started;
+        Assert.True(cleanup.RemovedEventRows >= 100);
+        Assert.Equal(1, (await ingestTask).Accepted);
+        Assert.True(cleanupElapsed < TimeSpan.FromSeconds(20));
+
+        var queryStarted = DateTimeOffset.UtcNow;
+        var remaining = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client, $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&limit=10");
+        Assert.Single(remaining.Events, item => item.EventId == concurrentEventId);
+        Assert.True(DateTimeOffset.UtcNow - queryStarted < TimeSpan.FromSeconds(5));
     }
 
     [PostgresFact]

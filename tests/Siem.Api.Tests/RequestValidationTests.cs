@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Contracts.V1;
@@ -20,6 +21,45 @@ public sealed class RequestValidationTests
         var used = capacity * usedPercent / 100;
 
         Assert.Equal(expected, EventRepository.CalculateStorageWarningState(used, capacity));
+    }
+
+    [Fact]
+    public void StorageAccountingThresholdsExposeHardCapacityCeiling()
+    {
+        var thresholds = EventRepository.BuildStorageThresholds(ManagedRetentionOptions.HardManagedCapacityBytes);
+
+        Assert.Contains(thresholds, item => item.Percent == 70 && item.State == "warning_70");
+        Assert.Contains(thresholds, item => item.Percent == 85 && item.State == "warning_85");
+        Assert.Contains(thresholds, item => item.Percent == 95 && item.State == "critical_95");
+        Assert.Contains(thresholds, item => item.Percent == 100 && item.State == "over_capacity" && item.Bytes == ManagedRetentionOptions.HardManagedCapacityBytes);
+    }
+
+    [Fact]
+    public void ManagedRetentionOptionsValidatorRejectsUnboundedCleanupConfiguration()
+    {
+        var validator = new ManagedRetentionOptionsValidator();
+        var invalid = new ManagedRetentionOptions
+        {
+            TargetRetentionDays = 0,
+            ManagedCapacityBytes = ManagedRetentionOptions.HardManagedCapacityBytes + 1,
+            CleanupBatchSize = 0,
+            MaxBatchesPerRun = 0,
+            EmergencyTargetPercent = 100,
+            HostedServiceIntervalMinutes = 1,
+            AdvisoryLockKey = 0
+        };
+
+        var result = validator.Validate(null, invalid);
+
+        Assert.True(result.Failed);
+        Assert.Contains(result.Failures, item => item.Contains("TargetRetentionDays", StringComparison.Ordinal));
+        Assert.Contains(result.Failures, item => item.Contains("ManagedCapacityBytes", StringComparison.Ordinal));
+        Assert.Contains(result.Failures, item => item.Contains("100 GiB", StringComparison.Ordinal));
+        Assert.Contains(result.Failures, item => item.Contains("CleanupBatchSize", StringComparison.Ordinal));
+
+        var tooSmall = validator.Validate(null, new ManagedRetentionOptions { ManagedCapacityBytes = 1 });
+        Assert.True(tooSmall.Failed);
+        Assert.Contains(tooSmall.Failures, item => item.Contains("ManagedCapacityBytes", StringComparison.Ordinal));
     }
 
     [Fact]

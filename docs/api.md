@@ -203,7 +203,7 @@ New typed source items add `platform`, `source_kind`, stable `source_id`, `sourc
 
 Portable typed `source_id` values are scoped to one agent/source configuration and must be unique within each manifest and health array. Every portable manifest item has exactly one corresponding health item; the pair agrees on platform, kind, namespace, facility, unit, applicability/reason, requirement, and applicable roles; health evidence-map keys match the manifest prerequisites/families; and each checkpoint shape agrees with `checkpoint_kind`. The source platform must match the top-level heartbeat platform and `host_id` is required. Thus Windows can report neutral inventory/health sources without relabelling them as Linux, while a heartbeat containing a Linux source still requires top-level `platform=linux`. Arrays, maps, cross-entry relationships, and existing prerequisite/event-family/validation metadata are checked by deterministic schema tooling and runtime validation.
 
-The Linux agent reports the physical `linux-journal-l1` pair plus the L2 catalog pairs, all backed by the same journal cursor. Portable heartbeat input cannot self-report `excepted`; runtime and schema validation reject it, while active server-side coverage exceptions may apply that state to source-health and coverage responses. L2 is disabled while `TargetCoverageLevel=L1`; SSH role applicability uses bounded declared roles, firewall remains optional/unknown until observed, and Linux Audit Framework is explicitly unsupported. Bounded `details` retain collector/gap/permission/throttle/config/counter state, while first-class fields carry requirements, applicability, prerequisites, and event-family evidence. Empty, denied, stale, degraded, unsupported, invalid/vacuumed cursor, rotation, malformed/binary, reorder, and pressure conditions remain distinguishable.
+The Linux agent reports the physical `linux-journal-l1` pair plus the L2 catalog pairs, all backed by the same journal cursor. It also reports the optional `linux-agent-self-integrity-snapshot` L3 `agent_health` manifest/health row as disabled until the separate self-integrity approval hash is configured. Portable heartbeat input cannot self-report `excepted`; runtime and schema validation reject it, while active server-side coverage exceptions may apply that state to source-health and coverage responses. L2 is disabled while `TargetCoverageLevel=L1`; SSH role applicability uses bounded declared roles, firewall remains optional/unknown until observed, and Linux Audit Framework is explicitly unsupported. Bounded `details` retain collector/gap/permission/throttle/config/counter state, while first-class fields carry requirements, applicability, prerequisites, and event-family evidence. Empty, denied, stale, degraded, unsupported, invalid/vacuumed cursor, rotation, malformed/binary, reorder, pressure, and self-integrity approval/cleanup states remain distinguishable.
 
 Heartbeat also adds optional `platform` and `host_id` with the registration conditions. Linux heartbeats enforce CPU/RSS, queue, timestamp, and tamper-value bounds; every typed portable source entry enforces source-metadata and details-map bounds. If a Linux heartbeat supplies `queue_metrics`, both `max_size_mb` and `warning_size_percent` are required and range-validated. Additive observability fields are timestamped and nullable: `resource_metrics.cpu_percent` remains `null` when unsupported, `rss_bytes` is reported when the runtime can read resident set size, and queue metrics expose bytes, used percent, pressure state, send/backoff/recovery timestamps, poison counters, and explicit zero drop counts only when known. Untyped legacy Windows heartbeats retain the pre-existing v1 limits, including empty or partial `queue_metrics`, unrestricted string sizes in `details` and tamper fields, and no upper bound on reported CPU percentage. `host_timezone` remains optional and bounded; for heartbeat it describes the endpoint's current timezone, while source-health/event rows use the offset associated with the reported event time where available.
 
@@ -377,9 +377,38 @@ GET /api/v1/detections/rules
 Authorization: Bearer <operator-api-credential>
 ```
 
-The initial alert/detection APIs expose the storage and review skeleton plus built-in detection metadata. Mutating alert triage and rule activation remain future approved workflows.
+The alert/detection APIs expose storage/review metadata plus built-in detection metadata. Rule metadata now additively includes tactics, correlation-window seconds, suppression keys, false-positive notes, and response guidance while preserving existing fields. Linux server-side execution creates alerts for accepted non-duplicate Linux events only, persists the exact rule version, and records exact evidence event IDs. Missing, stale, throttled, gapped, or permission-denied prerequisite telemetry lowers confidence or suppresses evaluation explicitly; it is never interpreted as proof that no threat exists. See [Linux server-side detections](linux-detections.md). Mutating alert triage, rule activation, UI case workflows, and host remediation remain future approved workflows.
 
 
-## Managed event storage accounting
+## Managed telemetry storage accounting and retention
 
-`GET /api/v1/storage/accounting` requires the operator API credential and returns PostgreSQL byte accounting for the managed `events` table and indexes plus row count and measurement time. It now includes the configured managed capacity (default 100 GiB), used percentage, threshold states at 70/85/95%, oldest/newest event timestamps, and an explicit `retention_lag_state` of `retention_policy_not_enabled` until deletion policy work is implemented separately. It never returns database connection details. Event search also accepts additive `source`, `platform`, `source_id`, and `event_code` query parameters. Existing v1 Windows filters and response shapes remain compatible.
+`GET /api/v1/storage/accounting` requires an admin/operator-management API credential and returns exact live-row byte accounting for the managed telemetry retention scope plus managed index allocation, row count, measurement time, configured managed capacity (default 100 GiB), used percentage, threshold states at 70/85/95/100%, oldest/newest managed telemetry timestamps, retention lag, and per-table accounting. The managed retention scope is explicitly allowlisted to `events`, `agent_heartbeats`, `asset_inventory_snapshots`, and `ingestion_errors`; protected tables such as operators, sessions, security audit, agents, source-health current state, alerts, alert evidence, investigation graphs, `soc-agent`, detections, configuration, schemas, and arbitrary files are not retention-delete targets. The response never returns database connection details.
+
+Retention status:
+
+```http
+GET /api/v1/storage/retention/status
+Authorization: Bearer <operator-api-credential>
+```
+
+Returns current accounting, whether managed retention is enabled, advisory-lock availability, the active retention cutoff, last run summary, managed table allowlist, and protected-table list.
+
+Dry-run or execute a bounded retention pass:
+
+```http
+POST /api/v1/storage/retention/run
+Authorization: Bearer <operator-api-credential>
+Content-Type: application/json
+
+{
+  "dry_run": true,
+  "emergency": false,
+  "max_batches": 20
+}
+```
+
+Dry-run is the safe default and reports eligible rows/estimated bytes/categories/oldest-newest intervals without deleting. Execute mode uses a PostgreSQL advisory lock, bounded transactions, deterministic oldest-first ordering, and idempotent batches so an interrupted or `bounded_incomplete` run can be retried safely. Normal cleanup removes managed telemetry older than the configured target (default 30 days). At or above the configured capacity ceiling, emergency mode removes optional operational/history telemetry and optional extended events before mandatory event telemetry; each run reports the exact categories and intervals removed. Data is never silently discarded.
+
+Alert evidence rows are retained independently of underlying telemetry. Evidence responses add `telemetry_retention_state` with `telemetry_retained`, `telemetry_removed_by_retention`, or `underlying_telemetry_missing` so immutable evidence references remain safe after managed event cleanup.
+
+Event search also accepts additive `source`, `platform`, `source_id`, and `event_code` query parameters. Existing v1 Windows filters and response shapes remain compatible.

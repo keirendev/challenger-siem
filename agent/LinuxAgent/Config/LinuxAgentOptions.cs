@@ -17,6 +17,7 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
     public int DrainBatchSize { get; set; } = 100;
     public InventoryOptions Inventory { get; set; } = new();
     public JournalOptions Journal { get; set; } = new();
+    public SelfIntegrityOptions SelfIntegrity { get; set; } = new();
     public QueueOptions Queue { get; set; } = new();
     public StateOptions State { get; set; } = new();
 
@@ -36,6 +37,14 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && Journal.DeclaredRoles.Distinct(StringComparer.Ordinal).Count() == Journal.DeclaredRoles.Length
         && Journal.DeclaredRoles.All(role => role.Length is >= 1 and <= 64
             && role.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'));
+
+    public bool HasValidSelfIntegrityBounds() =>
+        SelfIntegrity.IntervalSeconds >= MinimumInventoryIntervalSeconds
+        && SelfIntegrity.StartupDelaySeconds is >= 0 and <= 300
+        && SelfIntegrity.ScanTimeoutSeconds is >= 5 and <= 30
+        && SelfIntegrity.QueuePauseDepth is >= 100 and <= 1_000_000
+        && SelfIntegrity.MaxEventsPerScan is >= 1 and <= 20
+        && (string.IsNullOrWhiteSpace(SelfIntegrity.ApprovedPlanHash) || SelfIntegrity.ApprovedPlanHash.StartsWith("sha256:", StringComparison.Ordinal));
 }
 
 public sealed class InventoryOptions
@@ -54,6 +63,19 @@ public sealed class JournalOptions
     public int MaxRecordsPerPoll { get; set; } = 500;
     public int MaxInputRecordBytes { get; set; } = 131072;
     public int QueuePauseDepth { get; set; } = 100000;
+}
+
+public sealed class SelfIntegrityOptions
+{
+    public bool Enabled { get; set; }
+    public string ApprovedPlanHash { get; set; } = string.Empty;
+    public int StartupDelaySeconds { get; set; } = 60;
+    public int IntervalSeconds { get; set; } = 3600;
+    public int ScanTimeoutSeconds { get; set; } = 30;
+    public int QueuePauseDepth { get; set; } = 100000;
+    public int MaxEventsPerScan { get; set; } = 20;
+    public bool CleanupStateOnDisable { get; set; }
+    public string StatePath { get; set; } = "/var/lib/challenger-siem-agent/self-integrity-state.json";
 }
 
 public sealed class QueueOptions

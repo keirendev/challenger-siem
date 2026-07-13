@@ -2,7 +2,7 @@
 
 The .NET 8 Linux agent is a first-class endpoint service built on the same `Agent.Core` durable SQLite queue, acknowledgement, retry metadata, deterministic serialization, configuration hashing, and `/api/v1` transport as the Windows agent. It enrolls, heartbeats, passively reads the systemd journal through one cursor, uploads bounded host/security-posture inventory, and drains only already-durable queued events.
 
-The default journal target remains **L1**. Operators may set the bounded target to **L2** for an approved canary; default L2 rollout remains blocked on the private seven-day L1+L2 soak. This implementation does not perform or claim that soak.
+The default journal target remains **L1**. Operators may set the bounded target to **L2** for an approved canary; default L2 rollout remains blocked on the private seven-day L1+L2 soak. A narrow L3 `linux-agent-self-integrity-snapshot` collector is implemented but disabled by default and requires separate explicit approval. This implementation does not perform or claim any private soak.
 
 ## Supported capability and safety boundary
 
@@ -10,7 +10,7 @@ The default journal target remains **L1**. Operators may set the bounded target 
 - Dedicated locked `challenger-siem` identity; no root steady state, capability grant, privileged helper, or installer-added group membership.
 - HTTPS server URL only. Configuration: `/etc/challenger-siem-agent/agentsettings.json` (0600). Queue/state: `/var/lib/challenger-siem-agent` (0700). Binary: `/opt/challenger-siem-agent`. Unit: `/etc/systemd/system/challenger-siem-agent.service`.
 - Fixed direct `/usr/bin/journalctl` or `/bin/journalctl` machine-readable invocation, with no shell, configurable executable/arguments/path, alternate file reader, or fallback collector.
-- No audit collector or audit-policy change, eBPF, file-integrity monitoring, firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, or general command/path interface. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) is a design decision only and does not enable those collectors.
+- No audit collector or audit-policy change, eBPF, broad/live file-integrity monitoring, firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, or general command/path interface. The only L3 implementation is the explicit-opt-in snapshot-based agent self-integrity source for strict agent-owned paths; it creates no watches and changes no host policy.
 
 ## One durable journal path
 
@@ -33,6 +33,7 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 | `linux-service-change` | L2 | mandatory | service start/stop/reload/failure | applicable when L2 is selected |
 | `linux-agent-log-tamper` | L2 | mandatory | agent/log tamper | applicable when L2 is selected |
 | `linux-audit-framework` | L2 | optional | audit | explicitly `unsupported`; no audit collector or enablement is included |
+| `linux-agent-self-integrity-snapshot` | L3 | optional | agent-owned binary/unit/config/directory metadata snapshot | disabled by default; requires explicit self-integrity approval hash |
 
 Every manifest includes platform/source kind/namespace, coverage level, checkpoint kind, `mandatory`/`optional`/`role_specific` requirement, applicable roles, prerequisites, event families, validation scenarios, parser/source-pack identity, privacy level, and applicability/reason. Corresponding health includes bounded prerequisite and event-family state maps.
 
@@ -84,6 +85,17 @@ Relevant defaults:
       "CollectionTimeoutSeconds": 120,
       "MaxSerializedBytes": 262144
     },
+    "SelfIntegrity": {
+      "Enabled": false,
+      "ApprovedPlanHash": "",
+      "StartupDelaySeconds": 60,
+      "IntervalSeconds": 3600,
+      "ScanTimeoutSeconds": 30,
+      "QueuePauseDepth": 100000,
+      "MaxEventsPerScan": 20,
+      "CleanupStateOnDisable": false,
+      "StatePath": "/var/lib/challenger-siem-agent/self-integrity-state.json"
+    },
     "Journal": {
       "Enabled": true,
       "TargetCoverageLevel": "L1",
@@ -98,6 +110,8 @@ Relevant defaults:
 ```
 
 `TargetCoverageLevel` accepts only `L1` or `L2`. `DeclaredRoles` accepts at most 16 bounded lowercase/number/underscore/hyphen role identifiers. An empty role list preserves `unknown` role-specific applicability rather than guessing. Use `L2` only in an approved canary; it does not grant permission to change a producer or host policy.
+
+`SelfIntegrity.Enabled` remains `false` unless an operator separately approves the exact self-integrity preflight plan and sets `ApprovedPlanHash` to the matching `sha256:` plan hash. Installation, enrollment, or requested coverage level does not enable it. The fixed allowlist is limited to `/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent` (metadata plus SHA-256 capped at 64 MiB), `/etc/systemd/system/challenger-siem-agent.service` (metadata plus SHA-256 capped at 256 KiB), `/etc/challenger-siem-agent/agentsettings.json` (metadata only; no hash/content), `/etc/challenger-siem-agent/` (directory metadata only), and `/var/lib/challenger-siem-agent/` (directory metadata only). Symlinks, hard-link surprises, devices, FIFOs, sockets, arbitrary paths, recursive scans, and secret values are rejected. Disable cleanup removes only `SelfIntegrity.StatePath` when `CleanupStateOnDisable=true`; it never touches monitored files or host policy.
 
 ## Bounded inventory snapshots
 
@@ -121,7 +135,7 @@ Publish privately and create a mode-0600 configuration from the synthetic exampl
 
 ## API, validation, and rollout gate
 
-Events continue through additive `source=linux_journal` portable-v1 envelopes and `/api/v1/ingest/events`; heartbeat uses additive manifest/health fields; inventory uses the existing generic endpoint. Heartbeats also report bounded resource/queue observability where available: RSS/managed memory, nullable CPU, queue bytes/depth/oldest age, pressure state, send/backoff/recovery timestamps, poison counters, and explicit drop zero when no local shedding occurred. Per-source health reports observed time, rate, lag/silence, gap counts, permission-denied/recovery timestamps, and transition state without raw journal data. Server source-health and telemetry-coverage APIs overlay the Linux catalog, count recent portable events by `source_id`, and expose platform/requirement/applicability/evidence metadata. No `/api/v2` or incompatible Windows behavior is introduced.
+Events continue through additive `source=linux_journal` portable-v1 envelopes and `/api/v1/ingest/events`; heartbeat uses additive manifest/health fields; inventory uses the existing generic endpoint. Heartbeats also report bounded resource/queue observability where available: RSS/managed memory, nullable CPU, queue bytes/depth/oldest age, pressure state, send/backoff/recovery timestamps, poison counters, and explicit drop zero when no local shedding occurred. Per-source health reports observed time, rate, lag/silence, gap counts, permission-denied/recovery timestamps, and transition state without raw journal data. Server source-health and telemetry-coverage APIs overlay the Linux catalog, count recent portable events by `source_id`, and expose platform/requirement/applicability/evidence metadata. Server-side [Linux detections](linux-detections.md) consume only accepted v1 events and current source-health prerequisites; degraded prerequisites lower confidence or suppress evaluation rather than implying safety. No `/api/v2` or incompatible Windows behavior is introduced.
 
 Run:
 
@@ -134,4 +148,4 @@ dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj
 
 Tracked tests are hand-authored synthetic data only. They cover every catalog family with positive/negative evidence, structured-field precedence, ambiguity, malformed/binary/control/secret/oversized input, source catalog/health states, cursor/replay/pressure, normalized portable contract behavior, and 5,000-record L1/L2 throughput/allocation guards. Those unit benchmarks are regression checks, not host CPU/RSS/write measurements.
 
-The private seven-day L1+L2 canary, distribution/systemd matrix, outage/rotation/restart windows, and resource/disruption SLOs remain an outstanding rollout gate. Do not claim default L2 readiness from unit tests. Optional L3 audit/eBPF/file-integrity ideas are separately gated by the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md); only a future snapshot-based agent self-integrity design candidate is selected, and it is not implemented here. Stop rollout on secret/excluded-data collection, unauthorized mutation, host impact, queue corruption, silent loss, persistent gaps, or SLO breach; keep all live evidence under ignored `.local/` or approved OS runtime paths.
+The private seven-day L1+L2 canary, distribution/systemd matrix, outage/rotation/restart windows, and resource/disruption SLOs remain outstanding rollout gates. Do not claim default L2 or L3 readiness from unit tests. Optional L3 audit/eBPF/broad-file-integrity ideas remain deferred by the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md); the implemented L3 scope is only the explicit-opt-in snapshot-based agent self-integrity source, and private approval/soak gates remain outstanding. Stop rollout on secret/excluded-data collection, unauthorized mutation, host impact, queue corruption, silent loss, persistent gaps, or SLO breach; keep all live evidence under ignored `.local/` or approved OS runtime paths.

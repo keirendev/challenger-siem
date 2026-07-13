@@ -235,9 +235,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         {
             var targetLevel = options.Journal.TargetCoverageLevel;
             var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-                targetLevel,
-                options.Journal.DeclaredRoles,
-                observedSources);
+                    targetLevel,
+                    options.Journal.DeclaredRoles,
+                    observedSources)
+                .Where(entry => entry.SourceId != LinuxTelemetrySourceIds.AgentSelfIntegrity)
+                .ToArray();
             var health = manifest.Select(BuildHealth).ToArray();
             return new(manifest, health, throttled, checkpoint.CollectedCursor, checkpoint.AcknowledgedCursor);
         }

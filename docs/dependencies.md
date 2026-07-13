@@ -47,7 +47,7 @@ The Linux agent targets .NET 8 and uses the existing Agent.Core SQLite/HTTP reli
 
 ## Evaluated Linux L3 telemetry components
 
-The [optional Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) evaluates audit, narrowly scoped eBPF, and allowlisted file-integrity approaches. This documentation-only spike adds **no runtime dependency**, package, collector, kernel object, audit rule, fanotify/inotify watch, IMA policy, or host-policy mutation.
+The [optional Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) evaluates audit, narrowly scoped eBPF, and allowlisted file-integrity approaches. Challenger SIEM implements only the disabled-by-default explicit-opt-in snapshot-based agent self-integrity collector selected by that ADR. This implementation adds **no third-party runtime dependency**, package, kernel object, audit rule, fanotify/inotify watch, IMA policy, broad/live file monitor, or host-policy mutation.
 
 | Component or facility | Evaluated purpose | License / dependency decision |
 | --- | --- | --- |
@@ -57,4 +57,4 @@ The [optional Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) evaluates audit
 | BCC or runtime BPF compilation toolchains | Alternative eBPF implementation path | Rejected for endpoint runtime use because it would add a compiler/kernel-header runtime surface and broader supply-chain burden. |
 | fanotify / inotify | Future file-change hints or live monitoring | Deferred for broad use. Direct kernel APIs do not require a third-party library, but live watches add overflow/interference semantics and are not enabled. |
 | Linux IMA/EVM | Future measurement-policy integration on hosts that already operate it | Deferred. Kernel/boot/policy configuration is host security policy; no IMA policy or template setting is installed or required. |
-| Snapshot-based agent self-integrity | Selected future design candidate for exact agent-owned paths | Adopted as design only. Intended to reuse existing .NET file APIs and Agent.Core transport if implemented; no new dependency is approved by this spike. |
+| Snapshot-based agent self-integrity | Exact agent-owned binary, service-unit, configuration metadata, and state/config directory snapshots | Implemented as a disabled-by-default explicit opt-in source using existing .NET file APIs and Agent.Core transport. It adds no new dependency and does not collect file contents or secret values. |

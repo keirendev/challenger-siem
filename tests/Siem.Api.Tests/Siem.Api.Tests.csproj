@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../server/Siem.Api/Siem.Api.csproj" />
+    <ProjectReference Include="../../agent/LinuxAgent/LinuxAgent.csproj" />
   </ItemGroup>
 
   <ItemGroup>
