@@ -145,7 +145,7 @@ Before opening a pull request, review the [documentation-maintenance checklist](
 
 For web-app related changes, run browser E2E against the real app and update [web-console-demo.md](web-console-demo.md) if visible pages, routes, filters, or screenshots change.
 
-For high-density search/timeline frontend work, follow the [frontend architecture ADR](frontend-architecture-adr.md): keep the active implementation in Razor Pages, use bounded server-side pagination and cancellation, keep protected-field filtering server-side, and avoid adding a TypeScript toolchain unless a new ADR first passes the documented gates. Temporary browser traces, screenshots, generated prototypes, and performance notes stay under ignored `.local/` paths and must be deleted or reduced to durable tests/docs before handoff.
+For high-density search/timeline frontend work, follow the [frontend architecture ADR](frontend-architecture-adr.md): keep the active implementation in Razor Pages, use bounded server-side pagination and cancellation, keep protected-field filtering server-side, and avoid adding a TypeScript toolchain unless a new ADR first passes the documented gates. Temporary browser traces, screenshots, generated prototypes, and performance notes stay under ignored `.local/` paths and must be deleted or reduced to durable tests/docs before handoff. The retained `FrontendArchitecturePrototypeHarness` is a non-production test asset only; do not route it, ship it, or treat it as a parallel UI.
 
 ## Smoke test with fake data
 

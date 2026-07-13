@@ -74,6 +74,7 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.Contains("DOMContentLoaded 12 ms; load 73 ms", adr, StringComparison.Ordinal);
         Assert.Contains("500", adr, StringComparison.Ordinal);
         Assert.Contains("then deleted", adr, StringComparison.Ordinal);
+        Assert.Contains("non-production test harness", adr, StringComparison.Ordinal);
         Assert.Contains("Deletion criteria for superseded UI code", adr, StringComparison.Ordinal);
         Assert.Contains("Do not add a separate TypeScript frontend", adr, StringComparison.Ordinal);
 
@@ -83,6 +84,66 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.False(File.Exists(Path.Combine(root, "package-lock.json")), "The spike must not leave an npm lockfile.");
         Assert.False(File.Exists(Path.Combine(root, "pnpm-lock.yaml")), "The spike must not leave a pnpm lockfile.");
         Assert.False(File.Exists(Path.Combine(root, "yarn.lock")), "The spike must not leave a Yarn lockfile.");
+    }
+
+    [Fact]
+    public async Task RetainedPrototypeHarnessDemonstratesHighDensitySearchTimelineAndLifecycleStates()
+    {
+        var result = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(2, 50, "DEMO", "", ""),
+            operatorRole: "viewer",
+            CancellationToken.None);
+
+        Assert.Equal(500, result.TotalRows);
+        Assert.Equal(50, result.RenderedRows);
+        Assert.True(result.HasNextPage);
+        Assert.InRange(result.TimelineBuckets, 1, 12);
+        Assert.Contains("Host: DEMO", result.ActiveFilters);
+        Assert.Contains("<main id=\"main-content\">", result.Html, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Primary\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Synthetic search filters\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("<caption>Synthetic high-density event rows</caption>", result.Html, StringComparison.Ordinal);
+        Assert.Contains("id=\"timeline\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("a:focus-visible", result.Html, StringComparison.Ordinal);
+        Assert.Contains("@media(max-width:900px)", result.Html, StringComparison.Ordinal);
+        Assert.Contains("@media(max-width:480px)", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"loading\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"empty\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"error\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"unauthorized\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"stale\"", result.Html, StringComparison.Ordinal);
+        Assert.Contains("data-state=\"degraded\"", result.Html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RetainedPrototypeHarnessExercisesCancellationAndProtectedFieldEnforcement()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 500, "", "", ""),
+            operatorRole: "viewer",
+            cancelled.Token));
+
+        var viewer = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 25, "DEMO-WIN11", "Security", "high"),
+            operatorRole: "viewer",
+            CancellationToken.None);
+        var admin = await FrontendArchitecturePrototypeHarness.RenderAsync(
+            new FrontendPrototypeOptions(1, 25, "DEMO-WIN11", "Security", "high"),
+            operatorRole: "admin",
+            CancellationToken.None);
+
+        Assert.DoesNotContain("synthetic-user-", viewer.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("/opt/challenger-demo/bin/tool", viewer.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("192.0.2.", viewer.Html, StringComparison.Ordinal);
+        Assert.Contains("[redacted: protected event fields]", viewer.Html, StringComparison.Ordinal);
+        Assert.Contains("omitted before render", viewer.Html, StringComparison.Ordinal);
+
+        Assert.Contains("synthetic-user-", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("/opt/challenger-demo/bin/tool", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.", admin.Html, StringComparison.Ordinal);
+        Assert.Contains("shown to admin", admin.Html, StringComparison.Ordinal);
     }
 
     private static string RepositoryRoot()

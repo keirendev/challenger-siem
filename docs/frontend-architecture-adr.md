@@ -52,13 +52,16 @@ Scores are 0 to the criterion weight. The comparison is based on current reposit
 
 A temporary local-only Razor-shaped HTML prototype was generated under an ignored `.local/` path, served from loopback, measured with headless Chromium, and then deleted. The prototype used only synthetic identifiers (`DEMO-WIN11`, `DEMO-LNX-02`, `demo-agent-*`), no scripts, no cookies, no external fonts/assets, no raw responses, and no real host/user data.
 
+A small non-production test harness is retained in `tests/Siem.Api.Tests/FrontendArchitecturePrototypeHarness.cs` so the spike remains reproducible without adding a routed page, parallel UI, JavaScript package pipeline, static bundle, or runtime dependency. The harness renders a Razor-shaped synthetic HTML slice in memory only, exercises cancellation before and after filtering, clamps pagination to a bounded page size, aggregates timeline buckets, and verifies role-dependent protected-field redaction. It is a test asset, not product UI.
+
 Prototype coverage:
 
 - 500 bounded synthetic result rows with active filter scope and page limit.
-- 8 timeline buckets grouped by hour/source/status.
+- Timeline buckets grouped by hour/source/status.
+- Cancellation checked before filtering and after filtering; page size clamped to a bounded maximum.
 - Loading, empty, error, unauthorized, stale/degraded, and partial/redacted state blocks.
 - Labels, `main` landmark, primary nav label, skip link, visible-focus CSS rule, table caption, keyboard-reachable row action links, and responsive filter/table patterns.
-- Protected-field behavior represented as redacted summaries; durable enforcement remains the server-side repository policy.
+- Protected-field behavior represented as redacted summaries for non-admin roles; durable enforcement remains the server-side repository policy.
 
 Measured headless Chromium results:
 
