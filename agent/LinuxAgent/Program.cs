@@ -1,3 +1,63 @@
-using Challenger.Siem.Agent.Core.Queue; using Challenger.Siem.Agent.Core.Transport; using Challenger.Siem.LinuxAgent.Config; using Challenger.Siem.LinuxAgent.Services; using Challenger.Siem.LinuxAgent.State; using Microsoft.Extensions.Options;
-if(!OperatingSystem.IsLinux()){Console.Error.WriteLine("Challenger SIEM Linux Agent requires Linux.");return 2;}
-var b=Host.CreateApplicationBuilder(args);var path=Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG")??"/etc/challenger-siem-agent/agentsettings.json";b.Configuration.AddJsonFile(path,false,true).AddEnvironmentVariables("CHALLENGER_SIEM_AGENT_");b.Services.AddOptions<LinuxAgentOptions>().Bind(b.Configuration.GetSection("Agent")).Validate(x=>!string.IsNullOrWhiteSpace(x.AgentId),"AgentId is required").Validate(x=>x.ServerBaseUrl is not null&&x.ServerBaseUrl.Scheme==Uri.UriSchemeHttps,"ServerBaseUrl must use HTTPS").Validate(x=>!string.IsNullOrWhiteSpace(x.ApiToken)||!string.IsNullOrWhiteSpace(x.EnrollmentToken),"A credential is required").Validate(x=>x.HeartbeatIntervalSeconds>0&&x.InventoryIntervalSeconds>0&&x.DrainBatchSize is >0 and <=500,"Intervals and batch size are invalid").ValidateOnStart();b.Services.AddSingleton<IAgentTransportConfiguration>(s=>s.GetRequiredService<IOptions<LinuxAgentOptions>>().Value);b.Services.AddSingleton(s=>new LinuxStateStore(s.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.State.Path));b.Services.AddSingleton<IEventQueue>(s=>{var q=s.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.Queue;return new SqliteEventQueue(new AgentQueueOptions{Path=q.Path,MaxSizeMb=q.MaxSizeMb,MaxSendAttempts=q.MaxSendAttempts,MaxBackoffSeconds=q.MaxBackoffSeconds,WarningSizePercent=q.WarningSizePercent},s.GetRequiredService<ILogger<SqliteEventQueue>>());});b.Services.AddHttpClient<SiemIngestClient>((s,c)=>{c.BaseAddress=s.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.ServerBaseUrl;c.Timeout=TimeSpan.FromSeconds(30);});b.Services.AddSingleton<LinuxEnrollmentService>();b.Services.AddHostedService<LinuxAgentWorker>();b.Services.AddSystemd();await b.Build().RunAsync();return 0;
+using Challenger.Siem.Agent.Core.Queue;
+using Challenger.Siem.Agent.Core.Transport;
+using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Inventory;
+using Challenger.Siem.LinuxAgent.Services;
+using Challenger.Siem.LinuxAgent.State;
+using Microsoft.Extensions.Options;
+
+if (!OperatingSystem.IsLinux())
+{
+    Console.Error.WriteLine("Challenger SIEM Linux Agent requires Linux.");
+    return 2;
+}
+
+var builder = Host.CreateApplicationBuilder(args);
+var path = Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json";
+builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: true).AddEnvironmentVariables("CHALLENGER_SIEM_AGENT_");
+builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetSection(LinuxAgentOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.AgentId), "AgentId is required")
+    .Validate(options => options.ServerBaseUrl is not null && options.ServerBaseUrl.Scheme == Uri.UriSchemeHttps, "ServerBaseUrl must use HTTPS")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.ApiToken) || !string.IsNullOrWhiteSpace(options.EnrollmentToken), "A credential is required")
+    .Validate(options => options.HeartbeatIntervalSeconds > 0 && options.DrainBatchSize is > 0 and <= 500,
+        "Heartbeat interval or drain batch size is outside the supported range")
+    .Validate(options => options.HasValidInventoryBounds(), "Inventory bounds are outside the supported range")
+    .ValidateOnStart();
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IAgentTransportConfiguration>(services => services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value);
+builder.Services.AddSingleton(services => new LinuxStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.State.Path));
+builder.Services.AddSingleton<IEventQueue>(services =>
+{
+    var queue = services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.Queue;
+    return new SqliteEventQueue(new AgentQueueOptions
+    {
+        Path = queue.Path,
+        MaxSizeMb = queue.MaxSizeMb,
+        MaxSendAttempts = queue.MaxSendAttempts,
+        MaxBackoffSeconds = queue.MaxBackoffSeconds,
+        WarningSizePercent = queue.WarningSizePercent
+    }, services.GetRequiredService<ILogger<SqliteEventQueue>>());
+});
+builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
+{
+    client.BaseAddress = services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.ServerBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddSingleton<LinuxEnrollmentService>();
+builder.Services.AddSingleton<LinuxQueueDrainer>();
+builder.Services.AddSingleton<ILinuxInventorySource, LinuxInventorySource>();
+builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
+{
+    var options = services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.Inventory;
+    return new LinuxInventory(
+        services.GetRequiredService<ILinuxInventorySource>(),
+        services.GetRequiredService<TimeProvider>(),
+        TimeSpan.FromSeconds(options.CollectionTimeoutSeconds),
+        options.MaxSerializedBytes);
+});
+builder.Services.AddHostedService<LinuxAgentWorker>();
+builder.Services.AddHostedService<LinuxInventoryService>();
+builder.Services.AddSystemd();
+await builder.Build().RunAsync();
+return 0;

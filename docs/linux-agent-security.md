@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: foundation implemented; passive collectors remain planned
+Status: foundation and bounded read-only inventory implemented; passive event collectors remain planned
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). It does not authorize deployment or host changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). The bounded inventory controls below are implemented; passive event collection and advanced coverage remain planned. This document does not authorize deployment or host changes.
 
 The design follows the existing Windows/public-repository baseline: authenticate agents separately from operators, use HTTPS outside development, protect endpoint credentials, keep queues/state restricted, never log secrets, bound raw telemetry, report collection gaps, and keep real telemetry and local evidence out of git. Linux support must not weaken those controls merely to obtain broader visibility.
 
@@ -67,6 +67,16 @@ Requirements for future implementation:
 - Package/update artifacts must be signed and verified before privileged installation. Downgrades and unexpected publisher/config changes must be explicit operator actions.
 - systemd hardening (or init-system equivalent) should deny privilege escalation, restrict namespaces/filesystems/devices/syscalls, isolate temporary paths, and bound CPU/memory/tasks/files, subject to validation against required collectors.
 
+## Implemented inventory controls
+
+The inventory collector is a read-only, fixed catalog rather than a general host scanner. Every operation declares exact executable path candidates and arguments or one exact file path, accepted exit codes, a 5-20 second timeout, a 16 or 64 KiB command/content cap (or a 64 MiB streaming hash cap for the fixed executable), and cancellation. Processes run without a shell, inherit no environment, receive only fixed locale/PATH values, and are terminated as a process tree on timeout, cancellation, or output truncation. File access uses no-follow opens, accepts only regular single-link files, rejects symbolic links and special files, and reads only within the catalogued byte/time cap.
+
+The parser boundary emits bounded allowlisted fields rather than raw command/file output. It excludes stdout/stderr, arbitrary paths and file contents, account descriptions/home directories/shells, group membership, addresses, command lines, firewall rules, repository configuration/content, and unapproved SSH directives. Source failures become stable secret-safe codes and one of `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, or `malformed`; truncation is explicit.
+
+Collection runs as a non-overlapping service independently of heartbeat, durable queue drain, and future passive work. The one-hour default interval has a five-minute enforced minimum and a default 30-second startup delay. A default 120-second collection deadline, 20-snapshot maximum, 200-item-per-snapshot maximum, and 256 KiB default serialized budget constrain host and transport impact.
+
+The agent observes high-level package/update, network listener, firewall, SSH, mandatory-access-control, Secure Boot, and agent-file posture without changing them. It does not refresh repositories or alter packages, services, audit/firewall/authentication/kernel/MAC policy, Secure Boot, ownership, or modes. The agent-integrity snapshot reports regular-file, numeric owner, and mode observations for the fixed configuration and executable paths plus a bounded SHA-256 fingerprint of the non-secret executable. The credential-bearing configuration is never read or hashed for inventory. The executable fingerprint supports change review but is not trusted attestation and cannot provide tamper-proof guarantees against root or kernel control.
+
 ## Collection and privacy boundary
 
 Permitted telemetry is the security metadata defined by the coverage specification: bounded event metadata, identity/process/network/file metadata needed for approved detections, security-control status, and agent/source health. Every collector needs a field inventory, purpose, sensitivity classification, retention expectation, and redaction tests.
@@ -113,7 +123,7 @@ Changes to authentication, firewall, kernel, or mandatory access-control policy 
 
 ## Security verification gates
 
-Before any Linux collector release, review must include:
+Before any further Linux event or advanced collector release, review must include:
 
 - package signature/provenance and install/upgrade/uninstall permission tests;
 - service sandbox and effective privilege/capability inspection;
@@ -131,6 +141,6 @@ Immediate rollback is mandatory for suspected secret/prohibited-content collecti
 
 Only minimal, hand-authored synthetic fixtures with fake hosts, users, IDs, documentation-only addresses, commands, and messages belong in this public repository. Fixture filenames below a `fixtures/` directory use the `synthetic-` prefix (except `README.md`); recommended canaries include `SYNTHETIC-LINUX-01` and `synthetic-user`. Never derive fixtures by sanitizing real records, and never commit or attach real journal/syslog/audit output, inventory, benchmark output, generated settings, queues/state, credentials, logs, captures, traces, screenshots, dumps, or host-policy snapshots—even with a synthetic filename.
 
-Future packaged agents must use restrictive OS-owned locations outside a source checkout: configuration/credentials under an appropriate `/etc` path, durable queue/state under `/var/lib`, transient files under `/run`, and bounded diagnostics under `/var/log` or the system journal. Exact product paths and permissions are an implementation decision requiring review. Developer and lab evidence belongs only under ignored `.local/`; safety tooling must not traverse or mutate that evidence. Run `./scripts/validate-repository-safety.sh` to check indexed filenames before publication.
+Packaged agents use restrictive OS-owned locations outside a source checkout: configuration/credentials under `/etc/challenger-siem-agent`, durable queue/state under `/var/lib/challenger-siem-agent`, the executable under `/opt/challenger-siem-agent`, and the service definition under `/etc/systemd/system`. Transient files and bounded diagnostics, if added, must remain under appropriate `/run`, `/var/log`, or system-journal boundaries and require review. Developer and lab evidence belongs only under ignored `.local/`; safety tooling must not traverse or mutate that evidence. Run `./scripts/validate-repository-safety.sh` to check indexed filenames before publication.
 
-This is at least as strict as the [Windows specification's security and raw-payload rules](windows-host-full-coverage-spec.md#16-security-and-privacy-requirements) and the [documentation public-data rules](index.md#public-data-rules-for-docs-and-screenshots). Future implementation must preserve versioned API/schema compatibility and update this design when its threat or privilege boundary changes.
+This is at least as strict as the [Windows specification's security and raw-payload rules](windows-host-full-coverage-spec.md#16-security-and-privacy-requirements) and the [documentation public-data rules](index.md#public-data-rules-for-docs-and-screenshots). Further implementation must preserve the existing additive generic `/api/v1/agents/inventory` and v1 schema compatibility and update this design when its threat or privilege boundary changes.

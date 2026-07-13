@@ -213,6 +213,10 @@ Content-Type: application/json
 
 Agents send bounded inventory and audit-policy snapshots independently of raw event batches. Snapshot payloads include `agent_id`, `hostname`, `snapshot_type`, `collected_at`, optional `host_timezone`, bounded `items`, and summary counts/statuses. The server validates that every snapshot `agent_id` matches the authenticated batch agent and stores the snapshots for `/api/v1/inventory`, `/api/v1/telemetry-coverage`, `/audit-policy`, and host coverage review.
 
+The Linux agent uses this existing generic additive endpoint for up to 20 current-state snapshots and 200 items per snapshot, with a default agent-side serialized payload budget of 256 KiB. Its implemented types are `linux_host_identity`, `linux_users`, `linux_groups`, `linux_services`, `linux_units`, `linux_timers`, `linux_packages`, `linux_available_updates`, `linux_interfaces`, `linux_listeners`, `linux_mounts`, `linux_firewall`, `linux_ssh`, `linux_mandatory_access_control`, `linux_secure_boot`, and `linux_agent_integrity`. Linux snapshot summaries use the exact `state` values `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, and `malformed`, plus stable `error_code`, `item_count`, and `truncated` metadata. Additive payload-budget truncation metadata may also be present.
+
+This capability preserves the existing `/api/v1/agents/inventory` request, generic snapshot/item shapes, and all other v1 contracts; it adds no Linux-specific route or `/api/v2`. It does not change server-side telemetry coverage calculations or imply Linux passive event coverage.
+
 ## Search events
 
 ```http
@@ -267,7 +271,7 @@ GET /api/v1/inventory?agent_id=win11-test-001&snapshot_type=audit_policy
 Authorization: Bearer <review-token>
 ```
 
-Returns bounded asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, and role detection.
+Returns bounded generic asset inventory snapshots such as audit policy, security-control state, users/groups, services/drivers, scheduled tasks, installed software, patches/features, host identity, role detection, and the additive Linux snapshot types listed above. Existing Windows and generic v1 response shapes and meanings are preserved.
 
 ## Platform capabilities
 

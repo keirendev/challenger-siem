@@ -4,6 +4,8 @@ All notable project changes should be recorded here.
 
 ## Unreleased
 
+- Added bounded read-only Linux host and security-posture inventory snapshots for host/kernel identity, users/groups, services/units/timers, packages/available updates, interfaces/listeners, mounts, firewall, SSH, mandatory access controls, Secure Boot, and observable agent file-permission/fingerprint posture, with explicit collection states, fixed source policies, independent scheduling, and deterministic payload/item limits while preserving the generic v1 inventory contracts.
+
 - Added a first-class .NET 8 Linux agent foundation using Agent.Core for enrollment, durable queueing, acknowledgement-aware recovery, heartbeat and bounded inventory transport, with a least-privilege systemd unit and preflight-first plan/install/upgrade/validate/uninstall workflows.
 
 - Extracted a platform-neutral Agent.Core reliability library for the durable queue, v1 transport, acknowledgement/retry handling, deterministic identity, serialization, and configuration hashing while preserving the Windows agent collection/checkpoint semantics.

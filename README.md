@@ -5,6 +5,7 @@ Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoin
 ## Current capabilities
 
 - Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
+- Linux endpoint service with enrollment, heartbeat, durable queue delivery, and bounded read-only host/security-posture inventory snapshots; passive Linux event collection remains planned.
 - Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alerts/detections foundations, investigation graphs, and `soc-agent` persistence.
@@ -15,11 +16,10 @@ Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoin
 ## Architecture
 
 ```text
-Windows endpoint
-  -> WindowsAgent.exe
-  -> HTTPS/HTTP-in-lab ingestion API
-  -> PostgreSQL storage
-  -> Review API + web console + soc-agent workspace
+Windows endpoint -> WindowsAgent.exe --\
+                                      -> HTTPS/HTTP-in-lab ingestion API
+Linux endpoint   -> Linux agent -----/  -> PostgreSQL storage
+                                         -> Review API + web console + soc-agent workspace
 ```
 
 See [docs/architecture.md](docs/architecture.md) and the [documentation index](docs/index.md) for the full design.
@@ -104,6 +104,7 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Architecture](docs/architecture.md)
 - [API contract v1](docs/api.md) and [schema design](docs/schema.md)
 - [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
+- [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), and [security/privacy design](docs/linux-agent-security.md)
 - [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
 - [Web review console](docs/web.md) and [sanitized screenshot demo](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)

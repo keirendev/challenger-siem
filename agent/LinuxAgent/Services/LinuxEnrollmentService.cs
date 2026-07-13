@@ -1,8 +1,69 @@
-using System.Text.Json; using Challenger.Siem.Agent.Core.Transport; using Challenger.Siem.Contracts.V1; using Challenger.Siem.LinuxAgent.Config; using Challenger.Siem.LinuxAgent.State; using Microsoft.Extensions.Options;
+using System.Text.Json;
+using Challenger.Siem.Agent.Core.Transport;
+using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.State;
+using Microsoft.Extensions.Options;
+
 namespace Challenger.Siem.LinuxAgent.Services;
-public sealed class LinuxEnrollmentService(IOptions<LinuxAgentOptions> configured,SiemIngestClient client,LinuxStateStore state,ILogger<LinuxEnrollmentService> logger)
+
+public sealed class LinuxEnrollmentService(
+    IOptions<LinuxAgentOptions> configured,
+    SiemIngestClient client,
+    LinuxStateStore state,
+    ILogger<LinuxEnrollmentService> logger)
 {
- readonly LinuxAgentOptions o=configured.Value;
- public async Task EnsureAsync(string version,CancellationToken ct){if(!string.IsNullOrWhiteSpace(o.ApiToken))return;if(string.IsNullOrWhiteSpace(o.EnrollmentToken))throw new InvalidOperationException("An API token or enrollment token is required.");var r=await client.RegisterAsync(new AgentRegistrationRequest{AgentId=o.AgentId,Hostname=Environment.MachineName,OsVersion=Environment.OSVersion.VersionString,AgentVersion=version,Platform="linux"},o.EnrollmentToken,ct);if(r.AgentId!=o.AgentId)throw new InvalidOperationException("Registration response agent ID mismatch.");o.ApiToken=r.ApiToken;await PersistTokenAsync(ct);await state.WriteEnrollmentAsync(o.AgentId,ct);logger.LogInformation("Agent {AgentId} enrollment completed and credentials were persisted.",o.AgentId);}
- async Task PersistTokenAsync(CancellationToken ct){var path=Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG")??"/etc/challenger-siem-agent/agentsettings.json";var json=JsonSerializer.Serialize(new {Agent=new{o.AgentId,ServerBaseUrl=o.ServerBaseUrl?.ToString(),ApiToken=o.ApiToken,EnrollmentToken="",o.HeartbeatIntervalSeconds,o.InventoryIntervalSeconds,o.DrainBatchSize,o.Queue,o.State}},new JsonSerializerOptions{WriteIndented=true});var tmp=path+".tmp";await File.WriteAllTextAsync(tmp,json,ct);if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();File.SetUnixFileMode(tmp,UnixFileMode.UserRead|UnixFileMode.UserWrite);File.Move(tmp,path,true);}
+    private readonly LinuxAgentOptions options = configured.Value;
+    private readonly SemaphoreSlim enrollmentLock = new(1, 1);
+
+    public async Task EnsureAsync(string version, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(options.ApiToken)) return;
+        await enrollmentLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(options.ApiToken)) return;
+            if (string.IsNullOrWhiteSpace(options.EnrollmentToken)) throw new InvalidOperationException("An API token or enrollment token is required.");
+            var response = await client.RegisterAsync(new AgentRegistrationRequest
+            {
+                AgentId = options.AgentId,
+                Hostname = Environment.MachineName,
+                OsVersion = Environment.OSVersion.VersionString,
+                AgentVersion = version,
+                Platform = "linux"
+            }, options.EnrollmentToken, cancellationToken);
+            if (response.AgentId != options.AgentId) throw new InvalidOperationException("Registration response agent ID mismatch.");
+            options.ApiToken = response.ApiToken;
+            await PersistTokenAsync(cancellationToken);
+            await state.WriteEnrollmentAsync(options.AgentId, cancellationToken);
+            logger.LogInformation("Agent {AgentId} enrollment completed and credentials were persisted.", options.AgentId);
+        }
+        finally { enrollmentLock.Release(); }
+    }
+
+    private async Task PersistTokenAsync(CancellationToken cancellationToken)
+    {
+        var path = Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json";
+        var json = JsonSerializer.Serialize(new
+        {
+            Agent = new
+            {
+                options.AgentId,
+                ServerBaseUrl = options.ServerBaseUrl?.ToString(),
+                options.ApiToken,
+                EnrollmentToken = "",
+                options.HeartbeatIntervalSeconds,
+                options.InventoryIntervalSeconds,
+                options.DrainBatchSize,
+                options.Inventory,
+                options.Queue,
+                options.State
+            }
+        }, new JsonSerializerOptions { WriteIndented = true });
+        var temporary = path + ".tmp";
+        await File.WriteAllTextAsync(temporary, json, cancellationToken);
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.Move(temporary, path, overwrite: true);
+    }
 }
