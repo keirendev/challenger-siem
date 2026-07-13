@@ -237,14 +237,6 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
         return Results.ValidationProblem(validationErrors);
     }
 
-    if (RequestValidation.RequiresCrossPlatformStorage(request))
-    {
-        return Results.Problem(
-            title: "cross_platform_storage_pending",
-            detail: "The additive v1 Linux event contract is defined, but Linux event persistence requires the planned multi-platform storage migration.",
-            statusCode: StatusCodes.Status422UnprocessableEntity);
-    }
-
     var result = await events.StoreEventsAsync(request, cancellationToken);
     return Results.Ok(new IngestBatchResponse
     {
@@ -273,6 +265,21 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     var query = EventSearchQuery.FromQuery(context.Request.Query);
     var results = await events.SearchEventsAsync(query, cancellationToken);
     return Results.Ok(new EventSearchResponse { Events = results });
+});
+
+app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
+    HttpContext context,
+    EventRepository events,
+    TokenService tokens,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.ValidateReviewToken(context, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(await events.GetManagedStorageAccountingAsync(cancellationToken));
 });
 
 app.MapGet("/api/v1/source-health", async Task<IResult> (

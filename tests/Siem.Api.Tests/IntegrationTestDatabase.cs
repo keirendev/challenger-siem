@@ -17,11 +17,14 @@ public sealed class IntegrationTestDatabase : IAsyncLifetime
             return;
         }
 
-        var schemaPath = FindRepositoryFile("server/Siem.Api/Database/001_initial.sql");
-        var schemaSql = await File.ReadAllTextAsync(schemaPath);
+        var databaseDirectory = Path.GetDirectoryName(FindRepositoryFile("server/Siem.Api/Database/001_initial.sql"))!;
+        var migrations = Directory.GetFiles(databaseDirectory, "[0-9][0-9][0-9]_*.sql").Order(StringComparer.Ordinal).ToArray();
         await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
-        await using var command = dataSource.CreateCommand(schemaSql);
-        await command.ExecuteNonQueryAsync();
+        foreach (var migration in migrations)
+        {
+            await using var command = dataSource.CreateCommand(await File.ReadAllTextAsync(migration));
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     public Task DisposeAsync()

@@ -12,6 +12,8 @@ public sealed record StoreEventsResult(
     IReadOnlyList<Guid> AcceptedEventIds,
     IReadOnlyList<Guid> DuplicateEventIds);
 
+public sealed record ManagedStorageAccounting(long TableBytes, long IndexBytes, long TotalBytes, long EventRows, DateTimeOffset MeasuredAt);
+
 public sealed class EventRepository(NpgsqlDataSource dataSource)
 {
     public async Task<StoreEventsResult> StoreEventsAsync(IngestBatchRequest batch, CancellationToken cancellationToken)
@@ -34,6 +36,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     agent_id,
                     hostname,
                     source,
+                    platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
                     channel,
                     provider,
                     windows_event_id,
@@ -61,6 +64,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     @agent_id,
                     @hostname,
                     @source,
+                    @platform, @source_id, @event_code, @facility, @unit, @checkpoint_json, @deduplication_json, @data_handling_json,
                     @channel,
                     @provider,
                     @windows_event_id,
@@ -90,10 +94,18 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", envelope.AgentId);
             command.Parameters.AddWithValue("hostname", envelope.Hostname);
             command.Parameters.AddWithValue("source", envelope.Source);
-            command.Parameters.AddWithValue("channel", envelope.Channel!);
-            command.Parameters.AddWithValue("provider", envelope.Provider!);
-            command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId!.Value);
-            command.Parameters.AddWithValue("record_id", envelope.RecordId!.Value);
+            command.Parameters.AddWithValue("platform", DbValue(envelope.Platform));
+            command.Parameters.AddWithValue("source_id", DbValue(envelope.SourceId));
+            command.Parameters.AddWithValue("event_code", DbValue(envelope.EventCode));
+            command.Parameters.AddWithValue("facility", DbValue(envelope.Facility));
+            command.Parameters.AddWithValue("unit", DbValue(envelope.Unit));
+            Jsonb.Add(command, "checkpoint_json", envelope.Checkpoint);
+            Jsonb.Add(command, "deduplication_json", envelope.Deduplication);
+            Jsonb.Add(command, "data_handling_json", envelope.DataHandling);
+            command.Parameters.AddWithValue("channel", DbValue(envelope.Channel));
+            command.Parameters.AddWithValue("provider", DbValue(envelope.Provider));
+            command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId.HasValue ? envelope.WindowsEventId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("record_id", envelope.RecordId.HasValue ? envelope.RecordId.Value : DBNull.Value);
             command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
             Jsonb.Add(command, "host_timezone", envelope.HostTimezone);
             command.Parameters.AddWithValue("severity", envelope.Severity);
@@ -154,6 +166,11 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", query.AgentId);
         }
 
+        AddTextFilter(where, command, "source", "source", query.Source, exact: true);
+        AddTextFilter(where, command, "platform", "platform", query.Platform, exact: true);
+        AddTextFilter(where, command, "source_id", "source_id", query.SourceId, exact: true);
+        AddTextFilter(where, command, "event_code", "event_code", query.EventCode, exact: true);
+
         if (!string.IsNullOrWhiteSpace(query.Channel))
         {
             where.Add("channel = @channel");
@@ -203,6 +220,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 agent_id,
                 hostname,
                 source,
+                platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
                 channel,
                 provider,
                 windows_event_id,
@@ -246,6 +264,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 agent_id,
                 hostname,
                 source,
+                platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
                 channel,
                 provider,
                 windows_event_id,
@@ -281,10 +300,18 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
             Hostname = reader.GetString(reader.GetOrdinal("hostname")),
             Source = reader.GetString(reader.GetOrdinal("source")),
-            Channel = reader.GetString(reader.GetOrdinal("channel")),
-            Provider = reader.GetString(reader.GetOrdinal("provider")),
-            WindowsEventId = reader.GetInt32(reader.GetOrdinal("windows_event_id")),
-            RecordId = reader.GetInt64(reader.GetOrdinal("record_id")),
+            Platform = ReadNullableString(reader, "platform"),
+            SourceId = ReadNullableString(reader, "source_id"),
+            EventCode = ReadNullableString(reader, "event_code"),
+            Facility = ReadNullableString(reader, "facility"),
+            Unit = ReadNullableString(reader, "unit"),
+            Checkpoint = Jsonb.Read<SourceCheckpoint>(reader, "checkpoint_json"),
+            Deduplication = Jsonb.Read<EventDeduplicationMetadata>(reader, "deduplication_json"),
+            DataHandling = Jsonb.Read<DataHandlingMetadata>(reader, "data_handling_json"),
+            Channel = ReadNullableString(reader, "channel"),
+            Provider = ReadNullableString(reader, "provider"),
+            WindowsEventId = ReadNullableInt32(reader, "windows_event_id"),
+            RecordId = ReadNullableInt64(reader, "record_id"),
             EventTime = ReadDateTimeOffset(reader, "event_time"),
             HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
             IngestTime = ReadDateTimeOffset(reader, "ingest_time"),
@@ -294,6 +321,23 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             Raw = rawDocument.RootElement.Clone()
         };
     }
+
+    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select pg_relation_size('public.events'), pg_indexes_size('public.events'),
+                   pg_total_relation_size('public.events'), count(*) from events;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), DateTimeOffset.UtcNow);
+    }
+
+    private static string? ReadNullableString(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
+    private static int? ReadNullableInt32(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt32(reader.GetOrdinal(name));
+    private static long? ReadNullableInt64(NpgsqlDataReader reader, string name) => reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt64(reader.GetOrdinal(name));
 
     private static void AddTextFilter(List<string> where, NpgsqlCommand command, string column, string parameterName, string? value, bool exact)
     {

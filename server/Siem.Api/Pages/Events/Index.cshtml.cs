@@ -12,7 +12,7 @@ public sealed class IndexModel(
     IOptions<ReviewOptions> reviewOptions,
     ILogger<IndexModel> logger) : PageModel
 {
-    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
+    public EventSearchQuery Query { get; private set; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 100);
 
     [Microsoft.AspNetCore.Mvc.BindProperty(SupportsGet = true, Name = "page")]
     public int PageNumber { get; set; } = 1;
