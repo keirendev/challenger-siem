@@ -6,7 +6,7 @@ Primary audience: SIEM engineers, Linux agent engineers, detection engineers, op
 
 ## Purpose and current boundary
 
-This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented L1/L2 journal/inventory capability from planned advanced coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, bounded read-only host/security-posture inventory, one passive cursor-based system-journal reader, and an opt-in L2 logical security source pack. Linux Audit Framework, syslog-file, role, eBPF, and file-integrity collectors remain planned; server-generated Linux source-catalog overlays are implemented.
+This document defines the target Linux host visibility model for Challenger SIEM and distinguishes implemented L1/L2 journal/inventory capability from planned advanced coverage. Challenger SIEM remains Windows-first: the supported Linux agent/service provides enrollment, heartbeat, durable queueing, safe lifecycle packaging, bounded read-only host/security-posture inventory, one passive cursor-based system-journal reader, and an opt-in L2 logical security source pack. Linux Audit Framework, syslog-file, role, eBPF, and file-integrity collectors remain planned; server-generated Linux source-catalog overlays are implemented. The [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) defers audit and eBPF, selects only a future snapshot-based agent self-integrity design candidate, and does not ship or enable any audit/eBPF/file-integrity collector.
 
 Like the [Windows full-coverage specification](windows-host-full-coverage-spec.md), this specification treats collection, reliability, source health, operational verification, and detection prerequisites as one coverage problem. It differs where Linux distributions, init systems, audit frameworks, and role logs are heterogeneous. A host can report only the level whose mandatory applicable sources are healthy; unavailable or operator-disabled sources must be shown as gaps or approved exceptions, never silently treated as covered.
 
@@ -56,7 +56,7 @@ These sources require an explicit operator decision and cannot be prerequisites 
 - container runtime and orchestration audit sources;
 - targeted application audit plugins or structured logs.
 
-Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors.
+Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors. See the [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) for the current adopt/defer/reject decision; no optional advanced collector is enabled by that decision record.
 
 ### Unsupported or not applicable
 
