@@ -1,5 +1,6 @@
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Reliability;
+using Challenger.Siem.Agent.Core.Util;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -73,6 +74,38 @@ public sealed class AgentCoreReliabilityTests
         {
             foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(path + suffix);
         }
+    }
+
+    [Fact]
+    public void ResourceMetricsSamplerUsesNullCpuUntilBaselineThenReportsBoundedCpu()
+    {
+        var snapshots = new Queue<ResourceMetricSnapshot>(new[]
+        {
+            new ResourceMetricSnapshot(DateTimeOffset.Parse("2026-07-14T00:00:00Z"), TimeSpan.FromSeconds(1), 2, 1024, 512),
+            new ResourceMetricSnapshot(DateTimeOffset.Parse("2026-07-14T00:00:02Z"), TimeSpan.FromSeconds(2), 2, 2048, 1024)
+        });
+        var sampler = new ResourceMetricsSampler(() => snapshots.Dequeue());
+
+        var first = sampler.SampleNow();
+        var second = sampler.SampleNow();
+
+        Assert.Null(first.CpuPercent);
+        Assert.Equal("partial", first.Status);
+        Assert.Equal(25m, second.CpuPercent);
+        Assert.Equal("observed", second.Status);
+        Assert.Equal(2048, second.RssBytes);
+    }
+
+    [Fact]
+    public void ResourceMetricsSamplerReportsUnknownWhenCountersAreUnavailable()
+    {
+        var sampler = new ResourceMetricsSampler(() => throw new InvalidOperationException("synthetic unavailable"));
+
+        var sample = sampler.SampleNow();
+
+        Assert.Null(sample.CpuPercent);
+        Assert.Null(sample.RssBytes);
+        Assert.Equal("unknown", sample.Status);
     }
 
     [Theory]

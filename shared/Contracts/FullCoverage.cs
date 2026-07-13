@@ -720,6 +720,26 @@ public sealed record SourceTelemetryCoverage
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
 
+    [JsonPropertyName("lag_seconds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? LagSeconds { get; init; }
+
+    [JsonPropertyName("collected_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? CollectedCheckpoint { get; init; }
+
+    [JsonPropertyName("acknowledged_checkpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SourceCheckpoint? AcknowledgedCheckpoint { get; init; }
+
+    [JsonPropertyName("permission_denied_since")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? PermissionDeniedSince { get; init; }
+
+    [JsonPropertyName("recovered_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RecoveredAt { get; init; }
+
     [JsonPropertyName("silence_seconds")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? SilenceSeconds { get; init; }
@@ -739,6 +759,14 @@ public sealed record SourceTelemetryCoverage
     [JsonPropertyName("transitioned_at")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? TransitionedAt { get; init; }
+
+    [JsonPropertyName("dropped_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DroppedEvents { get; init; }
+
+    [JsonPropertyName("poison_events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? PoisonEvents { get; init; }
 
     [JsonPropertyName("source_version")]
     public string? SourceVersion { get; init; }

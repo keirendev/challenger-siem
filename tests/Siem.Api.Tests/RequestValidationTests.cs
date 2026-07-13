@@ -123,6 +123,7 @@ public sealed class RequestValidationTests
                 valid.SourceHealth[0] with
                 {
                     EventRatePerMinute = 1_000_001,
+                    LagSeconds = -1,
                     SilenceSeconds = -1,
                     GapCount = -1,
                     TransitionState = "full-log-body",
@@ -136,6 +137,7 @@ public sealed class RequestValidationTests
 
         Assert.Contains("resource_metrics.cpu_percent", errors.Keys);
         Assert.Contains("queue_metrics.pressure_state", errors.Keys);
+        Assert.Contains("source_health[0].lag_seconds", errors.Keys);
         Assert.Contains("source_health[0].transition_state", errors.Keys);
     }
 

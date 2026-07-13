@@ -17,6 +17,7 @@ alter table source_health add column if not exists poison_events bigint null;
 do $$ begin
     if not exists (select 1 from pg_constraint where conrelid = 'source_health'::regclass and conname = 'ck_source_health_observability_nonnegative') then
         alter table source_health add constraint ck_source_health_observability_nonnegative check (
+            (lag_seconds is null or lag_seconds >= 0) and
             (silence_seconds is null or silence_seconds >= 0) and
             (event_rate_per_minute is null or (event_rate_per_minute >= 0 and event_rate_per_minute <= 1000000)) and
             (gap_count is null or gap_count >= 0) and

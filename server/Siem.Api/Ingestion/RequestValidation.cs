@@ -964,6 +964,7 @@ public static class RequestValidation
         ValidateNonNegative(errors, $"{prefix}.newest_record_id", source.NewestRecordId);
         ValidateNonNegative(errors, $"{prefix}.log_size_bytes", source.LogSizeBytes);
         ValidateNonNegative(errors, $"{prefix}.retention_days", source.RetentionDays);
+        ValidateNonNegative(errors, $"{prefix}.lag_seconds", source.LagSeconds);
         ValidateNonNegative(errors, $"{prefix}.silence_seconds", source.SilenceSeconds);
         if (source.EventRatePerMinute is < 0 or > 1_000_000) Add(errors, $"{prefix}.event_rate_per_minute", "Event rate must be between zero and 1000000 per minute.");
         OptionalMaxLength(errors, $"{prefix}.error_code", source.ErrorCode, 128);

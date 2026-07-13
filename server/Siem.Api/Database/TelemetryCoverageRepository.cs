@@ -295,7 +295,7 @@ public sealed class TelemetryCoverageRepository(
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
-    private static SourceTelemetryCoverage ToSourceCoverage(
+    public static SourceTelemetryCoverage ToSourceCoverage(
         string agentId,
         SourceHealthReport source,
         DateTimeOffset lookbackStart,
@@ -325,11 +325,18 @@ public sealed class TelemetryCoverageRepository(
             LastEventTime = source.LastEventTime,
             ObservedAt = source.ObservedAt,
             HostTimezone = source.HostTimezone ?? fallbackTimezone,
+            LagSeconds = source.LagSeconds,
+            CollectedCheckpoint = source.CollectedCheckpoint,
+            AcknowledgedCheckpoint = source.AcknowledgedCheckpoint,
+            PermissionDeniedSince = source.PermissionDeniedSince,
+            RecoveredAt = source.RecoveredAt,
             SilenceSeconds = source.SilenceSeconds,
             EventRatePerMinute = source.EventRatePerMinute,
             GapCount = source.GapCount,
             TransitionState = source.TransitionState,
             TransitionedAt = source.TransitionedAt,
+            DroppedEvents = source.DroppedEvents,
+            PoisonEvents = source.PoisonEvents,
             SourceVersion = source.SourceVersion,
             ConfigHash = source.ConfigHash,
             Details = source.Details,

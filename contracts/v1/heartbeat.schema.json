@@ -212,7 +212,7 @@
         "acknowledged_checkpoint": { "$ref": "event-envelope.schema.json#/$defs/source_checkpoint" },
         "log_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "retention_days": { "type": ["integer", "null"], "minimum": 0 },
-        "lag_seconds": { "type": ["integer", "null"] },
+        "lag_seconds": { "type": ["integer", "null"], "minimum": 0 },
         "silence_seconds": { "type": ["integer", "null"], "minimum": 0 },
         "event_rate_per_minute": { "type": ["number", "null"], "minimum": 0, "maximum": 1000000 },
         "error_code": { "type": ["string", "null"], "maxLength": 128 },
