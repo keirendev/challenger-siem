@@ -108,7 +108,7 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Architecture](docs/architecture.md)
 - [API contract v1](docs/api.md) and [schema design](docs/schema.md)
 - [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
-- [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), and [security/privacy design](docs/linux-agent-security.md)
+- [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), [security/privacy design](docs/linux-agent-security.md), and [local-host validation runbook](docs/linux-local-host-validation.md)
 - [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
 - [Web console product specification](docs/web.md) and [sanitized screenshot/wireframe demo](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)

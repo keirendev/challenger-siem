@@ -29,6 +29,17 @@ Record sanitized evidence under ignored `.local/` only:
 - [ ] Security-channel access succeeds under the service account or missing-permission symptoms are documented without changing host policy.
 - [ ] API outage retry keeps events queued and a later live API run drains accepted/duplicate events.
 
+## Linux local-host rollout evidence
+
+Record live Linux evidence only under ignored `.local/` or approved target runtime paths, and publish only the sanitized aggregate template from [Linux local-host validation](linux-local-host-validation.md):
+
+- [ ] Read-only Linux preflight plan reviewed with no unauthorized host-policy mutation.
+- [ ] L1 24-hour soak is passed or explicitly blocked because no authorized systemd target/window was supplied.
+- [ ] L1+L2 seven-day soak is passed before L2 expansion, or explicitly blocked/deferred with no fabricated evidence.
+- [ ] API outage/restart, database restart, agent restart, journal rotation, permission-loss, and disk/queue-pressure recovery checks are passed, blocked for lack of approval, or not applicable with a sanitized reason.
+- [ ] L3 self-integrity remains disabled unless a separate exact approval and plan hash are recorded privately.
+- [ ] No raw host telemetry, generated settings, logs, queues, database dumps, screenshots, benchmark output, package lists, host identities, or private paths are tracked.
+
 ## Repository hygiene
 
 - [ ] `git status --short --ignored` shows `.local/` including `.local/release-gates/`, `.pi/`, `AGENTS.md`, `bin/`, `obj/`, and `dist/` only as ignored or absent.

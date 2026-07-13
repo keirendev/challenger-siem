@@ -18,6 +18,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1 plus opt-in journald L2 security families, planned advanced sources, performance SLOs, benchmarks, and rollout gates.
 - [Linux agent security and privacy design](linux-agent-security.md) - implemented structured journal/inventory controls, threat model, least-privilege boundaries, exclusions, and change approval.
 - [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - selection/defer report for optional audit, eBPF, and file-integrity telemetry; only the explicit-opt-in agent self-integrity snapshot is implemented, while audit/eBPF/broad live FIM remain deferred.
+- [Linux local-host validation runbook](linux-local-host-validation.md) - sanitized rollout validation, aggregate result template, L1/L2 soak gates, recovery drills, L3 guardrails, and live-soak blocker status.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
@@ -34,6 +35,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 ## Linux endpoint agent
 
 - [Linux agent](linux-agent.md) - L1/L2 journald source catalog, structured normalization, cursor/health semantics, configuration, systemd hardening, lifecycle workflows, and validation.
+- [Linux local-host validation runbook](linux-local-host-validation.md) - non-disruptive preflight, private-evidence handling, L1 24-hour and L1+L2 seven-day soak procedures, recovery checks, rollback, and sanitized aggregate reporting.
 - [Linux server-side detections](linux-detections.md) - authentication abuse, privilege escalation, SSH/process, service/timer, package/security-control, firewall, tamper/source-silence, and self-integrity alert rules.
 
 ## Windows endpoint agent
@@ -56,7 +58,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 - [Local development without Docker](development.md) - prerequisites, environment variables, schema, build/test, API run, optional WinRM, and smoke tests.
 - [Dependencies and ownership policy](dependencies.md) - approved components and optional tooling boundaries.
-- [MVP release readiness checklist](release-readiness.md) - required checks, Windows evidence, repository hygiene, and issue disposition.
+- [MVP release readiness checklist](release-readiness.md) - required checks, Windows/Linux evidence gates, repository hygiene, and issue disposition.
 - [Release gates](release-gates.md) - real-app PostgreSQL-backed browser, accessibility, security, and performance validation with ignored artifacts and cleanup.
 - [Milestone status](milestones.md) - implemented baseline and next milestone themes.
 - [Versioning](versioning.md) - SemVer policy, `VERSION`, changelog, and compatibility tracks.
