@@ -131,8 +131,9 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.Contains("Review cases", overview, StringComparison.Ordinal);
         Assert.DoesNotContain("incident", overview, StringComparison.OrdinalIgnoreCase);
 
-        Assert.Contains("--bg: #0e1522", css, StringComparison.Ordinal);
-        Assert.Contains("--brand: #8fa0f8", css, StringComparison.Ordinal);
+        Assert.Contains("--bg-primary: #171b22", css, StringComparison.Ordinal);
+        Assert.Contains("--accent-primary: #88c0d0", css, StringComparison.Ordinal);
+        Assert.Contains("--selection: #3b5268", css, StringComparison.Ordinal);
         Assert.Contains(".app-frame", css, StringComparison.Ordinal);
         Assert.Contains(".overview-grid", css, StringComparison.Ordinal);
         Assert.Contains("@media (max-width: 600px)", css, StringComparison.Ordinal);
