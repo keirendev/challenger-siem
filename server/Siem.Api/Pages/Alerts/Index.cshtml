@@ -68,7 +68,7 @@ else
                     <td><span class="badge danger">@alert.Severity</span></td>
                     <td>@alert.Confidence</td>
                     <td><span class="badge">@alert.Status</span></td>
-                    <td>@alert.RuleId v@alert.RuleVersion</td>
+                    <td>@alert.RuleId v@(alert.RuleVersion)</td>
                     <td>@(alert.Hostname ?? alert.AgentId ?? "—")</td>
                     <td><a asp-page="/Alerts/Detail" asp-route-alert_id="@alert.AlertId">Open</a></td>
                 </tr>

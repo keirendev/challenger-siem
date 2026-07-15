@@ -253,9 +253,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             && manifest.Applicability is not SourceApplicabilityStatuses.Unsupported
             and not SourceApplicabilityStatuses.NotApplicable;
         var effectiveStatus = DetermineStatus(manifest, enabled);
-        var sourceLatest = manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
+        DateTimeOffset? sourceLatest = manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
             ? latestEvent
-            : latestBySource.GetValueOrDefault(manifest.SourceId);
+            : latestBySource.TryGetValue(manifest.SourceId, out var observedLatest)
+                ? observedLatest
+                : null;
         var isJournalSource = manifest.SourceKind == TelemetrySourceKinds.LinuxJournal;
         var collected = isJournalSource ? Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime) : null;
         var acknowledged = isJournalSource ? Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime) : null;

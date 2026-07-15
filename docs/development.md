@@ -59,7 +59,7 @@ dotnet build Challenger.Siem.sln
 dotnet test Challenger.Siem.sln
 ```
 
-The repository-safety validator examines tracked and staged path names without reading files or scanning ignored `.local/` evidence. Keep Linux agent queues, state, generated settings, journal/audit exports, captures, databases, logs, traces, screenshots, and benchmark/soak output outside the work tree in restrictive OS locations, or under `.local/` for bounded developer evidence. Do not place runtime artifacts in a tracked fixture directory. Focused L2 checks are `dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj` and `dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2'`.
+The repository-safety validator examines indexed path names and a deliberately small set of high-confidence markers in indexed text without walking ignored `.local/` evidence or printing matched values. Keep Linux agent queues, state, generated settings, journal/audit exports, captures, databases, logs, traces, screenshots, and benchmark/soak output outside the work tree in restrictive OS locations, or under `.local/` for bounded developer evidence. Do not place runtime artifacts in a tracked fixture directory. Focused L2 checks are `dotnet test tests/LinuxAgent.Tests/LinuxAgent.Tests.csproj` and `dotnet test tests/Siem.Api.Tests/Siem.Api.Tests.csproj --filter 'FullyQualifiedName~LinuxL2'`.
 
 Public fixtures must be hand-authored and wholly synthetic. Files below any `fixtures/` directory use the `synthetic-` prefix (except `README.md`) and fake values such as `SYNTHETIC-LINUX-01`, `synthetic-user`, and documentation-only addresses. Never derive a fixture by sanitizing real journal, audit, endpoint, browser, or benchmark output. The L2 fixture set includes positive/negative records for each logical family plus ambiguity/bounds tests; it is not a journal export.
 
@@ -96,22 +96,25 @@ dotnet run --project server/Siem.Api
 
 The web review console is hosted by the API process at the API base URL. Open the base URL and log in with the bootstrapped operator username/password. Login creates an HTTP-only, strict-SameSite, revocable session cookie; credentials are not stored in browser local storage.
 
-Current foreground lab binding for Windows agents:
+For an explicitly approved isolated Windows lab listener:
 
 ```bash
 ./scripts/run-server-4444.sh
 ```
 
-This binds the API to `http://0.0.0.0:4444`. Windows agents on the libvirt/NAT host network should use:
+This binds the API to `http://0.0.0.0:4444`. Configure each Windows agent with the operator-approved address that reaches this listener:
 
 ```text
-http://192.168.122.1:4444
+http://<agent-reachable-server-address>:4444
 ```
 
 Prepare copy-ready Windows agent files, including a registered API token in `agentsettings.json`:
 
 ```bash
-./scripts/prepare-windows-agent-files.sh http://127.0.0.1:4444 http://192.168.122.1:4444 win11-test-001 WIN11-TEST "Windows 11"
+./scripts/prepare-windows-agent-files.sh \
+  http://127.0.0.1:4444 \
+  http://<agent-reachable-server-address>:4444 \
+  demo-agent-001 DEMO-WIN11 "Windows 11"
 ```
 
 Copy both files from `dist/windows-agent-copy/` to the Windows host and run `./WindowsAgent.exe` from that folder.
@@ -124,12 +127,7 @@ dotnet dev-certs https --trust
 
 ## Optional WinRM lab access
 
-Current authorized local lab topology:
-
-- Windows VM for WinRM/E2E validation: `192.168.122.240`
-- API callback URL from the VM to this host: `http://192.168.122.1:4444`
-
-Pi/coding-agent local files such as `.pi/` and `AGENTS.md` are intentionally ignored and are not versioned project artifacts. If the operator provides local WinRM helper tooling, it should read credentials from environment variables or ignored files. Copy the example env file and fill in lab-only values:
+Keep the authorized endpoint address, callback URL, username, and credential only in ignored local configuration. WinRM helper tooling should read credentials from environment variables or ignored files. Copy the placeholder-only example and fill in operator-approved lab values:
 
 ```bash
 mkdir -p .local
@@ -137,7 +135,7 @@ cp examples/winrm.env.example .local/winrm.env
 $EDITOR .local/winrm.env
 ```
 
-Test connectivity only with operator-authorized local tooling, without printing secrets. Use WinRM only against authorized lab hosts, and do not commit `.local/winrm.env`.
+Test connectivity only with operator-authorized tooling, without printing secrets. Use WinRM only against approved lab hosts, and do not commit `.local/winrm.env`.
 
 ## Documentation and PR checklist
 

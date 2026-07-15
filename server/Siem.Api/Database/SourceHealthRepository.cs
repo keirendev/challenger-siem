@@ -5,6 +5,15 @@ using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
 
+public sealed record BoundedSourceHealthCollectionState(int Returned, bool Truncated);
+
+public sealed record BoundedSourceHealthResult(
+    SourceHealthResponse Health,
+    int NestedLimit,
+    int ReturnedNestedRecords,
+    bool Truncated,
+    IReadOnlyDictionary<string, BoundedSourceHealthCollectionState> Collections);
+
 public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 {
     public Task<SourceHealthResponse> SearchAsync(string? agentId, CancellationToken cancellationToken) =>
@@ -13,8 +22,63 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     public async Task<SourceHealthResponse> SearchAsync(string? agentId, WindowsCoverageLevel targetLevel, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var summaries = await LoadSummariesAsync(connection, agentId, cancellationToken);
-        var sources = await LoadSourcesAsync(connection, agentId, cancellationToken);
+        var summaries = await LoadSummariesAsync(connection, agentId, 500, cancellationToken);
+        var sources = await LoadSourcesAsync(connection, agentId, 1000, cancellationToken);
+        (summaries, sources) = await MergeExpectedSourcesAsync(connection, agentId, targetLevel, summaries, sources, cancellationToken);
+
+        return new SourceHealthResponse
+        {
+            Summaries = summaries,
+            Sources = sources
+        };
+    }
+
+    public async Task<BoundedSourceHealthResult> SearchBoundedAsync(
+        string agentId,
+        WindowsCoverageLevel targetLevel,
+        int nestedLimit,
+        CancellationToken cancellationToken)
+    {
+        if (nestedLimit is < 1 or > 100)
+        {
+            throw new ArgumentException("Nested source-health record limit must be between 1 and 100.", nameof(nestedLimit));
+        }
+
+        var fetchLimit = nestedLimit + 1;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var summaries = await LoadSummariesAsync(connection, agentId, fetchLimit, cancellationToken);
+        var sources = await LoadSourcesAsync(connection, agentId, fetchLimit, cancellationToken);
+        (summaries, sources) = await MergeExpectedSourcesAsync(connection, agentId, targetLevel, summaries, sources, cancellationToken);
+
+        var summaryProbe = summaries.Take(fetchLimit).ToArray();
+        var sourceProbe = sources.Take(fetchLimit).ToArray();
+        var collections = new Dictionary<string, BoundedSourceHealthCollectionState>(StringComparer.Ordinal)
+        {
+            ["summaries"] = State(summaryProbe, nestedLimit),
+            ["sources"] = State(sourceProbe, nestedLimit)
+        };
+        var health = new SourceHealthResponse
+        {
+            Summaries = summaryProbe.Take(nestedLimit).ToArray(),
+            Sources = sourceProbe.Take(nestedLimit).ToArray()
+        };
+        var returned = collections.Values.Sum(item => item.Returned);
+        return new BoundedSourceHealthResult(
+            health,
+            nestedLimit,
+            returned,
+            collections.Values.Any(item => item.Truncated),
+            collections);
+    }
+
+    private static async Task<(IReadOnlyList<CoverageSummary> Summaries, IReadOnlyList<SourceHealthReport> Sources)> MergeExpectedSourcesAsync(
+        NpgsqlConnection connection,
+        string? agentId,
+        WindowsCoverageLevel targetLevel,
+        IReadOnlyList<CoverageSummary> summaries,
+        IReadOnlyList<SourceHealthReport> sources,
+        CancellationToken cancellationToken)
+    {
 
         if (!string.IsNullOrWhiteSpace(agentId) && summaries.Count > 0)
         {
@@ -29,16 +93,13 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 .ToArray();
         }
 
-        return new SourceHealthResponse
-        {
-            Summaries = summaries,
-            Sources = sources
-        };
+        return (summaries, sources);
     }
 
     private static async Task<IReadOnlyList<CoverageSummary>> LoadSummariesAsync(
         NpgsqlConnection connection,
         string? agentId,
+        int limit,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -130,7 +191,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", agentId);
         }
 
-        command.CommandText += " order by a.hostname asc, a.agent_id asc limit 500;";
+        command.CommandText += " order by a.hostname asc, a.agent_id asc limit @limit;";
+        command.Parameters.AddWithValue("limit", limit);
 
         var results = new List<CoverageSummary>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -166,6 +228,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     private static async Task<IReadOnlyList<SourceHealthReport>> LoadSourcesAsync(
         NpgsqlConnection connection,
         string? agentId,
+        int limit,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -225,7 +288,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", agentId);
         }
 
-        command.CommandText += " order by coverage_level asc, display_name asc limit 1000;";
+        command.CommandText += " order by coverage_level asc, display_name asc limit @limit;";
+        command.Parameters.AddWithValue("limit", limit);
 
         var results = new List<SourceHealthReport>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -284,6 +348,9 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 
         return results;
     }
+
+    private static BoundedSourceHealthCollectionState State<T>(IReadOnlyCollection<T> rows, int limit) =>
+        new(Math.Min(rows.Count, limit), rows.Count > limit);
 
     private static async Task<IReadOnlySet<string>> LoadActiveCoverageExceptionsAsync(
         NpgsqlConnection connection,

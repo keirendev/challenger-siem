@@ -85,7 +85,7 @@ For a one-off manual run, prefer exact IDs:
 ./scripts/cleanup-synthetic-data.sh --no-defaults --agent-id web-smoke-12345 --execute --confirm DELETE-SYNTHETIC-DATA
 ```
 
-Cleanup is scoped through allowlisted selectors and includes dependent rows for targeted agents: events, heartbeats, source health, inventory snapshots, coverage exceptions, ingestion errors, alerts/evidence, agent-linked investigation graphs/proposals/audit, `soc_agent_turns`, and `soc_agent_sessions`/`soc_agent_messages`. For older synthetic `soc-agent` chats without an agent context, use explicit session IDs or a narrow synthetic title prefix:
+Cleanup is scoped through allowlisted selectors and includes removable dependent rows for targeted agents: events, heartbeats, source health, inventory snapshots, coverage exceptions, ingestion errors, agent-linked investigation graphs/proposals/audit, `soc_agent_turns`, and `soc_agent_sessions`/`soc_agent_messages`. Append-only alert evidence and its alert are never deleted; when either exists, the referenced agent registration is retained in disabled state so immutable investigation history remains attributable. The dry-run reports these protected counts explicitly. For older synthetic `soc-agent` chats without an agent context, use explicit session IDs or a narrow synthetic title prefix:
 
 ```bash
 ./scripts/cleanup-synthetic-data.sh --no-defaults --soc-agent-session-id <synthetic-session-uuid>
@@ -220,7 +220,7 @@ Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/confi
 1. Start the API and sign in to the review console.
 2. Open `/soc-agent` and confirm the provider status pill or any inline provider notice.
 3. For the default `Local` provider, ask a bounded investigation question and follow citations back to review pages.
-4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is ChatGPT subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) using either Pi's `~/.pi/agent/auth.json` `openai-codex` entry after Pi `/login` for the ChatGPT Codex Responses backend, or a dedicated `SocAgent__SubscriptionAuthFilePath` for the OpenAI API path; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes the returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
+4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) with an explicit ignored `SocAgent__SubscriptionAuthFilePath` or the approved server-side connect flow; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
 ## 10. Retire stale lab agents safely
@@ -241,7 +241,7 @@ Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-
 ./scripts/publish-windows-agent.sh
 ./scripts/prepare-windows-agent-files.sh \
   http://127.0.0.1:4444 \
-  http://192.168.122.1:4444 \
+  http://<agent-reachable-server-address>:4444 \
   win11-test-001 \
   WIN11-TEST \
   "Windows 11"
@@ -283,11 +283,11 @@ Use `-RemoveData` only for disposable lab cleanup after explicit approval. Use `
 
 ## 13. Windows lab E2E validation
 
-Authorized current lab VM: `192.168.122.240`.
+Use only an operator-approved lab endpoint and record its address in ignored local configuration, never in tracked documentation.
 
 1. Start the API on this host with `./scripts/run-server-4444.sh`.
 2. Verify host health locally: `curl http://127.0.0.1:4444/health`.
-3. Verify VM-to-host health from Windows: `Invoke-RestMethod http://192.168.122.1:4444/health`.
+3. Verify endpoint-to-server health from Windows: `Invoke-RestMethod http://<agent-reachable-server-address>:4444/health`.
 4. Use a unique temporary agent ID and paths under `C:\Temp\ChallengerSIEM\issue-<number>\`.
 5. For bounded collection, set `Channels` to `["System"]`, leave optional channels empty, set `StartAtEndWhenNoState` to `false`, and use low poll/heartbeat intervals.
 6. Run `WindowsAgent.exe` as a temporary process long enough to heartbeat and ingest; stop only that temporary process if needed.

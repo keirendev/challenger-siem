@@ -45,6 +45,27 @@ reject_path() {
   expect_rejected "$repo" "$path"
 }
 
+reject_content() {
+  local path=$1
+  local content=$2
+  local expected_label=$3
+  local repo output="$temporary/content-output"
+  repo=$(new_repo)
+  mkdir -p "$repo/$(dirname "$path")"
+  printf '%s\n' "$content" >"$repo/$path"
+  git -C "$repo" add -- "$path"
+  if "$validator" "$repo" >"$output" 2>&1; then
+    printf 'expected prohibited synthetic content marker to be rejected: %s\n' "$path" >&2
+    exit 1
+  fi
+  grep -Fq -- "$path:" "$output" || { printf 'validator did not identify content path: %s\n' "$path" >&2; exit 1; }
+  grep -Fq -- "$expected_label" "$output" || { printf 'validator did not identify content rule: %s\n' "$expected_label" >&2; exit 1; }
+  if grep -Fq -- "$content" "$output"; then
+    printf 'validator disclosed matched content\n' >&2
+    exit 1
+  fi
+}
+
 # This fixture follows the documented public-fixture contract: a synthetic-
 # filename and minimal, deterministic, hand-authored fake identifiers.
 clean=$(new_repo)
@@ -55,7 +76,7 @@ printf '# Synthetic parser fixtures\n' >"$clean/tests/parsers/fixtures/README.md
 git -C "$clean" add tests/parsers/fixtures
 expect_clean "$clean"
 
-# The validator operates on index names only. Ignored and unreadable local
+# The validator operates on the index and never walks ignored paths. Ignored and unreadable local
 # evidence directories, including release-gate browser artifacts, must neither
 # affect validation nor be opened or traversed.
 mkdir -p "$clean/.local/autodev" "$clean/.local/release-gates/synthetic-run/browser-profile"
@@ -72,8 +93,14 @@ for path in \
   'agent/runtime/state/checkpoint.data' \
   'build/output/logs/agent.txt' \
   '.local/release-gates/synthetic-run/release-gates-report.jsonl' \
+  '.mcp/servers.json' \
   '.local/release-gates/synthetic-run/trace.har' \
-  '.local/release-gates/synthetic-run/browser-profile/cookies.txt'; do
+  '.local/release-gates/synthetic-run/browser-profile/cookies.txt' \
+  'mcp.local.json' \
+  'nested/mcp.client.local.json' \
+  'nested/mcp-credentials-production.json' \
+  'artifacts/results.trx' \
+  'artifacts/results.sarif'; do
   reject_path "$path"
 done
 
@@ -109,5 +136,20 @@ for path in \
   'tests/parsers/fixtures/synthetic-captured-session.pcap'; do
   reject_path "$path"
 done
+
+# High-confidence secret markers and public-copy leakage are rejected without
+# echoing matched values. String fragments keep the canaries out of this tracked
+# test file while producing the exact marker only inside the temporary repository.
+reject_content 'docs/public-guide.md' "-----BEGIN PRI""VATE KEY-----" 'private-key marker'
+reject_content 'docs/public-guide.md' "192.168.""122.10" 'operator-specific lab topology'
+reject_content 'docs/public-guide.md' "/home/""operator/private.txt" 'operator-specific home path'
+reject_content 'docs/public-guide.md' "~/"".pi/agent/auth.json" 'local automation path'
+
+# Documentation-only addresses, placeholders, and ignored local-evidence wording remain valid.
+safe_content=$(new_repo)
+mkdir -p "$safe_content/docs"
+printf '%s\n' 'Use 192.0.2.10 in examples and keep private evidence under .local/.' > "$safe_content/docs/public-guide.md"
+git -C "$safe_content" add docs/public-guide.md
+expect_clean "$safe_content"
 
 printf 'repository safety tests: passed\n'

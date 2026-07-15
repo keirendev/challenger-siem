@@ -21,7 +21,7 @@ Use semantic versioning: `MAJOR.MINOR.PATCH` with optional pre-release/build met
 
 Ask the operator before a major bump or whenever compatibility impact is unclear.
 
-## Pi agent workflow for project changes
+## Project change workflow
 
 1. Check the current version:
    ```bash

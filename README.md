@@ -10,6 +10,7 @@ Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoin
 - Agent registration with an enrollment token and per-agent API token authentication.
 - PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alert triage/case-management foundations, detections foundations, investigation graphs, `soc-agent` persistence, and managed telemetry retention with dry-run/status surfaces.
 - Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`, with bounded prerequisite-aware Linux server-side detection alerts.
+- Authenticated Streamable HTTP MCP access at `/mcp` for approved SIEM clients, with role-scoped read-only tools/resources and evidence-led prompts over events, alerts, assets, source health, coverage, inventory, detections, cases, graphs, and environment posture.
 - Role-protected Razor web console with an accessible Challenger SIEM design-system shell, Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration IA navigation, bounded structured global/event search with saved searches, cursor pagination, configurable columns, UTC timeline aggregation, safe entity/detail pivots, admin-gated audited export, agent inventory, host coverage/source health with telemetry completeness and detection prerequisite status, alert triage, case lifecycle workflows, detection rule management, bounded saved dashboards, admin operator/session/source/retention/capacity/audit review, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
 - Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
 
@@ -20,13 +21,14 @@ Windows endpoint -> WindowsAgent.exe --\
                                       -> HTTPS/HTTP-in-lab ingestion API
 Linux endpoint   -> Linux agent -----/  -> PostgreSQL storage
                                          -> Review API + web console + soc-agent workspace
+                                         -> authenticated MCP clients
 ```
 
 See [docs/architecture.md](docs/architecture.md) and the [documentation index](docs/index.md) for the full design.
 
 ## Public repository safety
 
-This repository is public. Do not commit tokens, passwords, connection strings, private keys, real agent settings, raw endpoint telemetry, Windows Event Log exports, queue/state databases, captures, dumps, screenshots with real host/user data, or local coding-agent files. Use synthetic examples and keep local validation artifacts under ignored `.local/` paths.
+This repository is public. Do not commit tokens, passwords, connection strings, private keys, real agent settings, raw endpoint telemetry, Windows Event Log exports, queue/state databases, captures, dumps, screenshots with real host/user data, or local automation state. Use synthetic examples and keep local validation artifacts under ignored `.local/` paths.
 
 ## Quickstart without Docker
 
@@ -72,13 +74,13 @@ Build/publish the standalone Windows agent:
 ./scripts/publish-windows-agent.sh
 ```
 
-For the authorized local WinRM validation VM, start the API on this host and prepare copy-ready agent files:
+For an operator-approved Windows lab, start the API and prepare copy-ready agent files with the URL that the endpoint can reach:
 
 ```bash
 ./scripts/run-server-4444.sh
 ./scripts/prepare-windows-agent-files.sh \
   http://127.0.0.1:4444 \
-  http://192.168.122.1:4444 \
+  http://<agent-reachable-server-address>:4444 \
   demo-agent-001 DEMO-WIN11 "Windows 11"
 ```
 
@@ -110,8 +112,9 @@ Start with [docs/index.md](docs/index.md). Key pages:
 - [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
 - [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), [security/privacy design](docs/linux-agent-security.md), and [local-host validation runbook](docs/linux-local-host-validation.md)
 - [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
-- [Web console product specification](docs/web.md) and [sanitized screenshot/wireframe demo](docs/web-console-demo.md)
+- [Web console product specification](docs/web.md) and [visual capture guide](docs/web-console-demo.md)
 - [soc-agent](docs/soc-agent.md)
+- [MCP server and client setup](docs/mcp.md)
 - [Runbooks](docs/runbooks.md) and [troubleshooting](docs/troubleshooting.md)
 - [Contributor guide](docs/contributors.md), [development](docs/development.md), [release gates](docs/release-gates.md), and [versioning](docs/versioning.md)
 

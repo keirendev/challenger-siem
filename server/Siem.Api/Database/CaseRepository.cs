@@ -5,6 +5,15 @@ using NpgsqlTypes;
 
 namespace Challenger.Siem.Api.Database;
 
+public sealed record BoundedCaseCollectionState(int Returned, bool Truncated);
+
+public sealed record BoundedCaseDetailResult(
+    CaseDetailRecord Case,
+    int NestedLimit,
+    int ReturnedNestedRecords,
+    bool Truncated,
+    IReadOnlyDictionary<string, BoundedCaseCollectionState> Collections);
+
 public sealed class CaseRepository(NpgsqlDataSource dataSource)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -36,14 +45,7 @@ public sealed class CaseRepository(NpgsqlDataSource dataSource)
     public async Task<CaseDetailRecord?> GetAsync(Guid caseId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        CaseDetailRecord? detail;
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = CaseDetailSql + " where c.case_id = @case_id;";
-            command.Parameters.AddWithValue("case_id", caseId);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            detail = await reader.ReadAsync(cancellationToken) ? ReadDetail(reader) : null;
-        }
+        var detail = await LoadDetailAsync(connection, caseId, cancellationToken);
         if (detail is null) return null;
         return detail with
         {
@@ -54,6 +56,51 @@ public sealed class CaseRepository(NpgsqlDataSource dataSource)
             Notes = await LoadNotesAsync(connection, caseId, cancellationToken),
             Activity = await LoadActivitiesAsync(connection, caseId, cancellationToken)
         };
+    }
+
+    public async Task<BoundedCaseDetailResult?> GetBoundedAsync(Guid caseId, int nestedLimit, CancellationToken cancellationToken)
+    {
+        if (nestedLimit is < 1 or > 100)
+        {
+            throw new ArgumentException("Nested case record limit must be between 1 and 100.", nameof(nestedLimit));
+        }
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var detail = await LoadDetailAsync(connection, caseId, cancellationToken);
+        if (detail is null) return null;
+
+        var fetchLimit = nestedLimit + 1;
+        var alerts = await LoadAlertsAsync(connection, caseId, cancellationToken, fetchLimit);
+        var entities = await LoadEntitiesAsync(connection, caseId, cancellationToken, fetchLimit);
+        var graphs = await LoadGraphsAsync(connection, caseId, cancellationToken, fetchLimit);
+        var evidence = await LoadEvidenceAsync(connection, caseId, cancellationToken, fetchLimit);
+        var notes = await LoadNotesAsync(connection, caseId, cancellationToken, fetchLimit);
+        var activity = await LoadActivitiesAsync(connection, caseId, cancellationToken, fetchLimit);
+        var collections = new Dictionary<string, BoundedCaseCollectionState>(StringComparer.Ordinal)
+        {
+            ["alerts"] = State(alerts, nestedLimit),
+            ["entities"] = State(entities, nestedLimit),
+            ["graphs"] = State(graphs, nestedLimit),
+            ["evidence"] = State(evidence, nestedLimit),
+            ["notes"] = State(notes, nestedLimit),
+            ["activity"] = State(activity, nestedLimit)
+        };
+        var bounded = detail with
+        {
+            Alerts = alerts.Take(nestedLimit).ToArray(),
+            Entities = entities.Take(nestedLimit).ToArray(),
+            Graphs = graphs.Take(nestedLimit).ToArray(),
+            Evidence = evidence.Take(nestedLimit).ToArray(),
+            Notes = notes.Take(nestedLimit).ToArray(),
+            Activity = activity.Take(nestedLimit).ToArray()
+        };
+        var returned = collections.Values.Sum(item => item.Returned);
+        return new BoundedCaseDetailResult(
+            bounded,
+            nestedLimit,
+            returned,
+            collections.Values.Any(item => item.Truncated),
+            collections);
     }
 
     public async Task<CaseDetailRecord> CreateAsync(CaseCreateRequest request, string actor, CancellationToken cancellationToken)
@@ -309,22 +356,31 @@ public sealed class CaseRepository(NpgsqlDataSource dataSource)
         CaseId = reader.GetGuid(reader.GetOrdinal("case_id")), CaseKey = reader.GetString(reader.GetOrdinal("case_key")), Title = reader.GetString(reader.GetOrdinal("title")), Description = ReadNullableString(reader, "description"), Owner = ReadNullableString(reader, "owner"), Severity = reader.GetString(reader.GetOrdinal("severity")), Priority = reader.GetString(reader.GetOrdinal("priority")), Status = reader.GetString(reader.GetOrdinal("status")), Disposition = ReadNullableString(reader, "disposition"), ClosureSummary = ReadNullableString(reader, "closure_summary"), ClosureCriteria = ReadNullableString(reader, "closure_criteria"), CoverageGapAcknowledged = reader.GetBoolean(reader.GetOrdinal("coverage_gap_acknowledged")), Version = reader.GetInt32(reader.GetOrdinal("version")), CreatedAt = ReadTime(reader, "created_at"), UpdatedAt = ReadTime(reader, "updated_at"), ClosedAt = ReadNullableTime(reader, "closed_at"), ReopenedAt = ReadNullableTime(reader, "reopened_at"), LastActivityAt = ReadTime(reader, "last_activity_at"), AlertCount = reader.GetInt32(reader.GetOrdinal("alert_count")), EvidenceCount = reader.GetInt32(reader.GetOrdinal("evidence_count"))
     };
 
-    private static async Task<IReadOnlyList<CaseAlertLinkRecord>> LoadAlertsAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<CaseDetailRecord?> LoadDetailAsync(NpgsqlConnection connection, Guid caseId, CancellationToken cancellationToken)
     {
-        await using var q = c.CreateCommand(); q.CommandText = "select a.alert_id, a.title, a.status, a.severity, ca.relationship from case_alerts ca join alerts a on a.alert_id=ca.alert_id where ca.case_id=@case_id order by ca.created_at desc;"; q.Parameters.AddWithValue("case_id", caseId);
+        await using var command = connection.CreateCommand();
+        command.CommandText = CaseDetailSql + " where c.case_id = @case_id;";
+        command.Parameters.AddWithValue("case_id", caseId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadDetail(reader) : null;
+    }
+
+    private static async Task<IReadOnlyList<CaseAlertLinkRecord>> LoadAlertsAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
+    {
+        await using var q = c.CreateCommand(); q.CommandText = "select a.alert_id, a.title, a.status, a.severity, ca.relationship from case_alerts ca join alerts a on a.alert_id=ca.alert_id where ca.case_id=@case_id order by ca.created_at desc"; q.Parameters.AddWithValue("case_id", caseId); AddOptionalLimit(q, limit);
         var rows = new List<CaseAlertLinkRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { AlertId = r.GetGuid(0), Title = r.GetString(1), Status = r.GetString(2), Severity = r.GetString(3), Relationship = r.GetString(4) }); return rows;
     }
-    private static async Task<IReadOnlyList<CaseEntityRecord>> LoadEntitiesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<IReadOnlyList<CaseEntityRecord>> LoadEntitiesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
     {
-        await using var q = c.CreateCommand(); q.CommandText = "select case_entity_id, entity_type, entity_value, relationship from case_entities where case_id=@case_id order by created_at desc;"; q.Parameters.AddWithValue("case_id", caseId);
+        await using var q = c.CreateCommand(); q.CommandText = "select case_entity_id, entity_type, entity_value, relationship from case_entities where case_id=@case_id order by created_at desc"; q.Parameters.AddWithValue("case_id", caseId); AddOptionalLimit(q, limit);
         var rows = new List<CaseEntityRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { CaseEntityId = r.GetGuid(0), EntityType = r.GetString(1), EntityValue = r.GetString(2), Relationship = r.GetString(3) }); return rows;
     }
-    private static async Task<IReadOnlyList<CaseGraphLinkRecord>> LoadGraphsAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<IReadOnlyList<CaseGraphLinkRecord>> LoadGraphsAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
     {
-        await using var q = c.CreateCommand(); q.CommandText = "select g.graph_id, g.title, g.status, cg.relationship from case_graphs cg join investigation_graphs g on g.graph_id=cg.graph_id where cg.case_id=@case_id order by cg.created_at desc;"; q.Parameters.AddWithValue("case_id", caseId);
+        await using var q = c.CreateCommand(); q.CommandText = "select g.graph_id, g.title, g.status, cg.relationship from case_graphs cg join investigation_graphs g on g.graph_id=cg.graph_id where cg.case_id=@case_id order by cg.created_at desc"; q.Parameters.AddWithValue("case_id", caseId); AddOptionalLimit(q, limit);
         var rows = new List<CaseGraphLinkRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { GraphId = r.GetGuid(0), Title = r.GetString(1), Status = r.GetString(2), Relationship = r.GetString(3) }); return rows;
     }
-    private static async Task<IReadOnlyList<CaseEvidenceRecord>> LoadEvidenceAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<IReadOnlyList<CaseEvidenceRecord>> LoadEvidenceAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
     {
         await using var q = c.CreateCommand(); q.CommandText = """
             select ce.case_evidence_id, ce.alert_id, ce.agent_id, ce.event_id, ce.event_time, ce.host_timezone, ce.evidence_kind, ce.summary,
@@ -332,19 +388,39 @@ public sealed class CaseRepository(NpgsqlDataSource dataSource)
             from case_evidence ce
             left join events e on e.agent_id=ce.agent_id and e.event_id=ce.event_id
             left join managed_retention_removed_events mre on mre.agent_id=ce.agent_id and mre.event_id=ce.event_id
-            where ce.case_id=@case_id order by ce.created_at desc;
-            """; q.Parameters.AddWithValue("case_id", caseId);
+            where ce.case_id=@case_id order by ce.created_at desc
+            """; q.Parameters.AddWithValue("case_id", caseId); AddOptionalLimit(q, limit);
         var rows = new List<CaseEvidenceRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { CaseEvidenceId = r.GetGuid(r.GetOrdinal("case_evidence_id")), AlertId = ReadNullableGuid(r, "alert_id"), AgentId = r.GetString(r.GetOrdinal("agent_id")), EventId = r.GetGuid(r.GetOrdinal("event_id")), EventTime = ReadNullableTime(r, "event_time"), HostTimezone = Jsonb.Read<HostTimezoneMetadata>(r, "host_timezone"), EvidenceKind = r.GetString(r.GetOrdinal("evidence_kind")), Summary = r.GetString(r.GetOrdinal("summary")), TelemetryRetentionState = r.GetString(r.GetOrdinal("telemetry_retention_state")) }); return rows;
     }
-    private static async Task<IReadOnlyList<CaseNoteRecord>> LoadNotesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<IReadOnlyList<CaseNoteRecord>> LoadNotesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
     {
-        await using var q = c.CreateCommand(); q.CommandText = "select note_id, created_at, created_by, body from case_notes where case_id=@case_id order by created_at desc limit 100;"; q.Parameters.AddWithValue("case_id", caseId);
+        await using var q = c.CreateCommand(); q.CommandText = "select note_id, created_at, created_by, body from case_notes where case_id=@case_id order by created_at desc"; q.Parameters.AddWithValue("case_id", caseId); AddRequiredLimit(q, limit ?? 100);
         var rows = new List<CaseNoteRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { NoteId = r.GetGuid(0), CreatedAt = ReadTime(r, "created_at"), CreatedBy = ReadNullableString(r, "created_by"), Body = r.GetString(3) }); return rows;
     }
-    private static async Task<IReadOnlyList<CaseActivityRecord>> LoadActivitiesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct)
+    private static async Task<IReadOnlyList<CaseActivityRecord>> LoadActivitiesAsync(NpgsqlConnection c, Guid caseId, CancellationToken ct, int? limit = null)
     {
-        await using var q = c.CreateCommand(); q.CommandText = "select activity_id, occurred_at, actor, action, from_status, to_status, summary from case_activities where case_id=@case_id order by occurred_at desc limit 100;"; q.Parameters.AddWithValue("case_id", caseId);
+        await using var q = c.CreateCommand(); q.CommandText = "select activity_id, occurred_at, actor, action, from_status, to_status, summary from case_activities where case_id=@case_id order by occurred_at desc"; q.Parameters.AddWithValue("case_id", caseId); AddRequiredLimit(q, limit ?? 100);
         var rows = new List<CaseActivityRecord>(); await using var r = await q.ExecuteReaderAsync(ct); while (await r.ReadAsync(ct)) rows.Add(new() { ActivityId = r.GetGuid(0), OccurredAt = ReadTime(r, "occurred_at"), Actor = ReadNullableString(r, "actor"), Action = r.GetString(r.GetOrdinal("action")), FromStatus = ReadNullableString(r, "from_status"), ToStatus = ReadNullableString(r, "to_status"), Summary = r.GetString(r.GetOrdinal("summary")) }); return rows;
+    }
+
+    private static BoundedCaseCollectionState State<T>(IReadOnlyCollection<T> rows, int limit) =>
+        new(Math.Min(rows.Count, limit), rows.Count > limit);
+
+    private static void AddOptionalLimit(NpgsqlCommand command, int? limit)
+    {
+        if (limit.HasValue)
+        {
+            AddRequiredLimit(command, limit.Value);
+            return;
+        }
+
+        command.CommandText += ";";
+    }
+
+    private static void AddRequiredLimit(NpgsqlCommand command, int limit)
+    {
+        command.CommandText += " limit @nested_limit;";
+        command.Parameters.AddWithValue("nested_limit", limit);
     }
 
     private static async Task<Guid?> FindCaseByIdempotencyAsync(NpgsqlConnection c, string key, CancellationToken ct)

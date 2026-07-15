@@ -70,7 +70,7 @@ public sealed class IndexModel(
         PageNumber = 1;
         var searchText = string.IsNullOrWhiteSpace(GlobalSearch) ? null : GlobalSearch.Trim();
         if (searchText?.Length > 160) searchText = searchText[..160];
-        Query = EventSearchQuery.Empty with { Keyword = searchText, Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
+        Query = EventSearchQuery.Empty with { Limit = reviewOptions.Value.NormalizedDefaultEventLimit };
         if (searchText is null)
         {
             StatusMessage = "Enter a host, agent, event code, source, or authorized keyword to search the bounded event index.";
@@ -78,9 +78,8 @@ public sealed class IndexModel(
             return Page();
         }
 
-        StatusMessage = "Global search is scoped to bounded event metadata and authorized keyword matching; sensitive terms are not repeated in page links.";
         await LoadSavedSearchesAsync(cancellationToken);
-        await LoadEventsAsync(cancellationToken);
+        await LoadGlobalSearchAsync(searchText, cancellationToken);
         return Page();
     }
 
@@ -199,6 +198,39 @@ public sealed class IndexModel(
         {
             logger.LogWarning(ex, "Event search could not be loaded.");
             ErrorMessage = "Event search is currently unavailable.";
+        }
+    }
+
+    private async Task LoadGlobalSearchAsync(string searchText, CancellationToken cancellationToken)
+    {
+        var role = OperatorAuthorization.Role(User) ?? OperatorRoles.Viewer;
+        var limit = Math.Clamp(reviewOptions.Value.NormalizedDefaultEventLimit, 1, EventSearchQuery.MaxLimit);
+
+        try
+        {
+            Events = await eventRepository.SearchGlobalEventsForOperatorAsync(searchText, limit, role, cancellationToken);
+            PageInfo = new EventSearchPageInfo
+            {
+                Limit = limit,
+                Returned = Events.Count,
+                HasNext = false
+            };
+            TimelineBuckets = Array.Empty<EventTimelineBucket>();
+            ResultScope = $"Global search scope: permitted metadata and role-authorized content; newest first; limit {limit}; role {role}.";
+            RedactionNotice = OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive)
+                ? "raw_omitted_sensitive_fields_redacted"
+                : "metadata_only_sensitive_filters_removed";
+            StatusMessage = Events.Count == 0
+                ? "No matching permitted event metadata or authorized content was found. The search term is not repeated in the URL or page links."
+                : "Global search is scoped to permitted event metadata and role-authorized content. The search term is not repeated in the URL or page links.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Bounded global event search could not be loaded.");
+            Events = Array.Empty<EventEnvelope>();
+            TimelineBuckets = Array.Empty<EventTimelineBucket>();
+            ResultScope = "Global search scope could not be loaded; no broad fallback query was executed.";
+            ErrorMessage = "Global event search is currently unavailable.";
         }
     }
 

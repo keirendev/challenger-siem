@@ -49,6 +49,15 @@ Run `./scripts/apply-schema.sh` again against the intended development database,
 - If login loops back to `/login`, clear the local test cookie jar/browser context and confirm the operator is enabled, unlocked, and the schema is current.
 - Do not put the operator API credential in URLs; use bearer headers for API calls and username/password fields for the browser.
 
+## MCP client cannot connect or discover capabilities
+
+- Use the exact Streamable HTTP path `/mcp`; the legacy HTTP+SSE transport is not enabled.
+- Send `Authorization: Bearer <operator-api-credential>`. Browser cookies, viewer credentials, enrollment tokens, and per-agent tokens are rejected.
+- Use an analyst, detection-engineer, or admin operator. Endpoint inventory item reads additionally require admin.
+- Confirm the client supports current MCP Streamable HTTP tool, resource, and prompt discovery.
+- Treat empty or truncated results as a reason to narrow filters and inspect source health/coverage, not as proof that no activity exists.
+- Keep client configuration, protocol responses, and captures under ignored `.local/` paths. See [MCP server and SIEM-agent integration](mcp.md) for exact setup and validation.
+
 ## Web smoke test fails
 
 Run:
@@ -87,10 +96,10 @@ Host-local event, source-health, coverage, audit-policy, and alert-evidence time
 If `/soc-agent` or `GET /api/v1/soc-agent/status` reports `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `plan_limited`, or `provider_error`:
 
 - Confirm `SocAgent__Provider=ChatGPT` (subscription OAuth) or `SocAgent__Provider=OpenAI` (API-key/delegated bearer) and `SocAgent__ExternalCallsEnabled=true` are set only in ignored local/server configuration.
-- For subscription OAuth mode, confirm `SocAgent__AuthMode=SubscriptionOAuth`. To reuse Pi login for the ChatGPT Codex Responses backend, point `SocAgent__SubscriptionAuthFilePath=~/.pi/agent/auth.json`, set `SocAgent__SubscriptionAuthFileProviderKey=openai-codex`, choose a plan-allowed model such as `SocAgent__Model=gpt-5.5`, and run Pi `/login` if the file is absent or expired. For dedicated subscription files, confirm `SocAgent__SubscriptionAuthFilePath` and `SocAgent__SubscriptionAuthFileProviderKey` point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository; the credential must declare the official OpenAI API audience, an allowlisted issuer when present, expiry, and the required model scope such as `model.request`. If web connect is enabled, also confirm `SocAgent__SubscriptionConnectEnabled=true`, an official `SocAgent__SubscriptionAuthorizationUrl`, an official `SocAgent__SubscriptionTokenEndpoint`, a server-side client ID, and a callback URI registered with the provider.
+- For subscription OAuth mode, confirm `SocAgent__AuthMode=SubscriptionOAuth` and that `SocAgent__SubscriptionAuthFilePath` plus its provider key point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository. The credential must declare the approved API audience, an allowlisted issuer when present, expiry, and the required model scope such as `model.request`. If web connect is enabled, also confirm `SocAgent__SubscriptionConnectEnabled=true`, official authorization/token endpoints, a server-side client ID, and a callback URI registered with the provider.
 - For API-key mode, confirm an ignored server-side key source such as `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY` exists without printing it.
 - For delegated auth-file mode, confirm `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and `SocAgent__AuthFileProviderKey` point to a supported placeholder-schema file under `.local/`, an ignored auth-file name, or an operator-managed secret path outside the repository.
-- Reconnect/replace the file if status is `expired` or `refresh_failed`; dedicated subscription OAuth refresh is attempted only for near-expiry tokens with an allowlisted official token endpoint, Pi `pi_auth_json` credentials are refreshed by Pi, and delegated API-bearer tokens are not refreshed automatically.
+- Reconnect or replace the file if status is `expired` or `refresh_failed`; subscription OAuth refresh is attempted only for near-expiry tokens with an allowlisted official token endpoint, and delegated API-bearer tokens are not refreshed automatically.
 - Treat `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, and `plan_limited` as fail-closed: do not use browser cookie exports, consumer website session files, passwords, ungranted scopes, plan-bypassing workarounds, or unreviewed endpoints.
 
 Never paste raw auth files, tokens, account IDs, email addresses, provider error bodies, or full local paths into issues, logs, screenshots, or PRs.
@@ -112,7 +121,7 @@ Coverage depends on heartbeat `source_health` reports plus the canonical expecte
 Checks that do not require destructive host actions:
 
 1. Confirm `agentsettings.json` sits next to `WindowsAgent.exe` or in the documented protected config path.
-2. Confirm `ServerBaseUrl` is reachable from the Windows host. For the authorized lab VM, use `http://192.168.122.1:4444`, not `127.0.0.1`.
+2. Confirm `ServerBaseUrl` is reachable from the Windows host. A remote endpoint must use the operator-approved server address, not its own `127.0.0.1`.
 3. Confirm the per-agent API token was generated by registration and has not been disabled by stale-agent retirement.
 4. Confirm queue and state paths are writable by the process/service account.
 5. Run bounded interactive validation before installing as a service when possible.
@@ -121,7 +130,7 @@ Checks that do not require destructive host actions:
 
 - Start the API on this host with `./scripts/run-server-4444.sh`; it listens on `http://0.0.0.0:4444` by default.
 - Health from the host: `curl http://127.0.0.1:4444/health`.
-- Health from the VM should target `http://192.168.122.1:4444/health`.
+- Health from the endpoint should target the configured agent-reachable server URL.
 - Do not change firewall/auth settings, reboot, clear event logs, uninstall services, or delete data without explicit operator approval.
 
 ## Managed telemetry retention does not remove expected rows
@@ -178,6 +187,6 @@ If an expected family remains `not_observed`, verify that its producer already j
 
 ## Linux local-host validation is blocked
 
-If a Linux rollout issue asks for L1/L2 soak evidence but no operator-authorized systemd target, time window, and exact allowed operations are documented, do not use SSH/WinRM, do not mutate a host, and do not invent evidence. Complete repository documentation/template work and publish the sanitized blocker from [Linux local-host validation](linux-local-host-validation.md#issue-status-blocker-for-this-repository-change).
+If a Linux rollout issue asks for L1/L2 soak evidence but no operator-authorized systemd target, time window, and exact allowed operations are documented, do not use SSH/WinRM, do not mutate a host, and do not invent evidence. Complete repository documentation/template work and publish the sanitized blocker described under [Linux live validation reporting](linux-local-host-validation.md#live-validation-reporting).
 
 If a target is authorized later, keep raw plan output, generated configuration, source-health responses, event samples, logs, screenshots, resource measurements, and recovery drill notes under ignored private evidence. Public status should use only the aggregate template and should mark outage/restart/database/journal/permission/pressure drills as `blocked` when the corresponding operation was not explicitly approved.

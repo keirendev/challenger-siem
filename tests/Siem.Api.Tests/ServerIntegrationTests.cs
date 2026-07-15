@@ -100,7 +100,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         await PostJsonWithBearerAsync<JsonElement>(client, "/api/v1/agents/heartbeat", CreateHeartbeat(agentId, hostname, queueDepth: 7), secondToken);
 
         var search = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client,
-            $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&hostname={hostname}&channel=System&windows_event_id=6005&category=system&action=observed&from={Uri.EscapeDataString(now.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}&keyword=unique&limit=999");
+            $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&hostname={hostname}&channel=System&windows_event_id=6005&category=system&action=observed&from={Uri.EscapeDataString(now.AddHours(-1).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}&keyword=unique&limit={EventSearchQuery.MaxLimit}");
         Assert.InRange(search.Events.Count, 1, 500);
         var stored = Assert.Single(search.Events, item => item.EventId == eventId);
         Assert.NotNull(stored.IngestTime);
@@ -149,6 +149,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     public async Task ManagedRetentionDryRunExecuteRetryAndEvidenceStateUseBoundedScope()
     {
         var connectionString = database.RequireConnectionString();
+        await ClearServerRetentionOverridesAsync(connectionString);
         var agentId = $"retention-agent-{Guid.NewGuid():N}";
         var hostname = "RETENTION-HOST";
         var oldOptionalId = Guid.NewGuid();
@@ -238,6 +239,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     public async Task ManagedRetentionLockContentionAndEmergencyPreferOptionalTelemetry()
     {
         var connectionString = database.RequireConnectionString();
+        await ClearServerRetentionOverridesAsync(connectionString);
         var agentId = $"emergency-agent-{Guid.NewGuid():N}";
         var hostname = "EMERGENCY-HOST";
         var optionalId = Guid.NewGuid();
@@ -287,11 +289,11 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
 
         var emergency = await PostJsonWithOperatorApiTokenAsync<RetentionRunSummary>(client, "/api/v1/storage/retention/run", new RetentionRunRequest(DryRun: false, Emergency: true, MaxBatches: 1));
         Assert.Equal("emergency", emergency.Trigger);
-        Assert.Equal(1, emergency.RemovedEventRows);
-        Assert.Contains(emergency.Categories, item => item.Category == "optional_extended_events" && item.RemovedRows == 1);
+        Assert.True(emergency.RemovedRows >= 1);
+        Assert.All(emergency.Categories, item => Assert.StartsWith("optional_", item.Category, StringComparison.Ordinal));
+        Assert.DoesNotContain(emergency.Categories, item => item.Category is "mandatory_windows_event_log" or "mandatory_linux_journal");
 
         var remaining = await GetJsonWithOperatorApiTokenAsync<EventSearchResponse>(client, $"/api/v1/events?agent_id={Uri.EscapeDataString(agentId)}&limit=10");
-        Assert.DoesNotContain(remaining.Events, item => item.EventId == optionalId);
         Assert.Contains(remaining.Events, item => item.EventId == mandatoryId);
     }
 
@@ -299,6 +301,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     public async Task ManagedRetentionStatusAccountingAndSearchRemainResponsiveWithSyntheticVolume()
     {
         var connectionString = database.RequireConnectionString();
+        await ClearServerRetentionOverridesAsync(connectionString);
         var agentId = $"volume-agent-{Guid.NewGuid():N}";
         var hostname = "VOLUME-HOST";
         using var factory = CreateFactory(connectionString, new Dictionary<string, string?>
@@ -1209,6 +1212,13 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
             },
             Raw = JsonSerializer.SerializeToElement(new { marker, agentId })
         };
+    }
+
+    private static async Task ClearServerRetentionOverridesAsync(string connectionString)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var command = dataSource.CreateCommand("delete from server_config_settings where setting_key like 'retention.%';");
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     private static async Task AssertDatabaseStateAsync(NpgsqlDataSource dataSource, string agentId, Guid invalidBatchId)

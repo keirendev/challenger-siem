@@ -27,7 +27,7 @@ DEFAULT_PREFIXES = ["web-smoke-"]
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Dry-run or delete allowlisted synthetic/test SIEM data without printing secrets, chat text, or raw telemetry."
+        description="Dry-run or delete allowlisted synthetic/test SIEM data without printing secrets, chat text, or raw telemetry. Immutable alert evidence is preserved."
     )
     parser.add_argument("--agent-id", action="append", default=[], help="Exact synthetic agent ID to include. May be repeated.")
     parser.add_argument("--agent-prefix", action="append", default=[], help="Tight synthetic agent ID prefix to include. May be repeated.")
@@ -147,13 +147,6 @@ where graph_id in (select graph_id from cleanup_target_graphs);
 delete from investigation_graphs
 where graph_id in (select graph_id from cleanup_target_graphs);
 
-delete from alert_evidence
-where agent_id in (select agent_id from cleanup_target_agents)
-   or alert_id in (select alert_id from alerts where agent_id in (select agent_id from cleanup_target_agents));
-
-delete from alerts
-where agent_id in (select agent_id from cleanup_target_agents);
-
 delete from events
 where agent_id in (select agent_id from cleanup_target_agents);
 
@@ -181,8 +174,16 @@ where session_id in (select session_id from cleanup_target_soc_sessions);
 delete from soc_agent_turns
 where id in (select id from cleanup_target_soc_turns);
 
-delete from agents
-where agent_id in (select agent_id from cleanup_target_agents);
+-- Alert evidence is append-only. Preserve alerts/evidence and retain their agent
+-- identity as a disabled registration instead of bypassing immutable-history guards.
+update agents a
+set status = 'disabled', updated_at = now()
+where a.agent_id in (select agent_id from cleanup_target_agents)
+  and exists (select 1 from alerts protected where protected.agent_id = a.agent_id);
+
+delete from agents a
+where a.agent_id in (select agent_id from cleanup_target_agents)
+  and not exists (select 1 from alerts protected where protected.agent_id = a.agent_id);
 """
     return f"""
 begin;
@@ -225,8 +226,8 @@ copy (
     union all select 6, 'investigation_graph_edges', count(*)::bigint from investigation_graph_edges where graph_id in (select graph_id from cleanup_target_graphs)
     union all select 7, 'investigation_graph_nodes', count(*)::bigint from investigation_graph_nodes where graph_id in (select graph_id from cleanup_target_graphs)
     union all select 8, 'investigation_graphs', count(*)::bigint from investigation_graphs where graph_id in (select graph_id from cleanup_target_graphs)
-    union all select 9, 'alert_evidence', count(*)::bigint from alert_evidence where agent_id in (select agent_id from cleanup_target_agents) or alert_id in (select alert_id from alerts where agent_id in (select agent_id from cleanup_target_agents))
-    union all select 10, 'alerts', count(*)::bigint from alerts where agent_id in (select agent_id from cleanup_target_agents)
+    union all select 9, 'protected_alert_evidence', count(*)::bigint from alert_evidence where agent_id in (select agent_id from cleanup_target_agents) or alert_id in (select alert_id from alerts where agent_id in (select agent_id from cleanup_target_agents))
+    union all select 10, 'protected_alerts', count(*)::bigint from alerts where agent_id in (select agent_id from cleanup_target_agents)
     union all select 11, 'events', count(*)::bigint from events where agent_id in (select agent_id from cleanup_target_agents)
     union all select 12, 'agent_heartbeats', count(*)::bigint from agent_heartbeats where agent_id in (select agent_id from cleanup_target_agents)
     union all select 13, 'source_health', count(*)::bigint from source_health where agent_id in (select agent_id from cleanup_target_agents)
@@ -237,6 +238,7 @@ copy (
     union all select 18, 'soc_agent_sessions', count(*)::bigint from soc_agent_sessions where session_id in (select session_id from cleanup_target_soc_sessions)
     union all select 19, 'soc_agent_turns', count(*)::bigint from soc_agent_turns where id in (select id from cleanup_target_soc_turns)
     union all select 20, 'agents', count(*)::bigint from agents where agent_id in (select agent_id from cleanup_target_agents)
+    union all select 21, 'agents_retained_for_alerts', count(*)::bigint from agents a where a.agent_id in (select agent_id from cleanup_target_agents) and exists (select 1 from alerts protected where protected.agent_id = a.agent_id)
     order by sort_order
 ) to stdout with csv header;
 
@@ -309,6 +311,7 @@ def main():
         table = row.get("table_name", "unknown")
         count = row.get("row_count", "0")
         print(f"{table}={count}")
+    print("append_only_alert_records_preserved=true")
     if not args.execute:
         print("dry_run_only=true")
         print(f"execute_requires=--execute --confirm {CONFIRM_PHRASE}")

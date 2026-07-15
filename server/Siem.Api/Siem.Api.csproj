@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../shared/Contracts/Challenger.Siem.Contracts.csproj" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.4.1" />
     <PackageReference Include="Npgsql" Version="8.0.5" />
   </ItemGroup>
 </Project>

@@ -5,6 +5,7 @@ using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
+using Challenger.Siem.Api.Mcp;
 using Challenger.Siem.Api.Platform;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Api.SocAgent;
@@ -31,6 +32,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 builder.Services.AddDataProtection();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<OperatorPasswordHasher>();
 builder.Services.AddSingleton(sp =>
@@ -79,6 +81,8 @@ builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<InvestigationGraphRepository>();
 builder.Services.AddScoped<ReviewRepository>();
+builder.Services.AddScoped<SiemMcpAccess>();
+builder.Services.AddScoped<SiemMcpTools>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
 builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
 builder.Services.AddOptions<ManagedRetentionOptions>()
@@ -86,6 +90,16 @@ builder.Services.AddOptions<ManagedRetentionOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<ManagedRetentionOptions>, ManagedRetentionOptionsValidator>();
 builder.Services.AddHostedService<ManagedRetentionHostedService>();
+builder.Services
+    .AddMcpServer()
+    .WithHttpTransport(options =>
+    {
+        options.Stateless = true;
+    })
+    .AddAuthorizationFilters()
+    .WithTools<SiemMcpTools>(SiemMcpJson.Options)
+    .WithResources<SiemMcpResources>()
+    .WithPrompts<SiemMcpPrompts>(SiemMcpJson.Options);
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");
@@ -176,6 +190,21 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {
+    if (context.Request.Path.StartsWithSegments("/mcp"))
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.Pragma = "no-cache";
+        var authorization = context.Request.Headers.Authorization.ToString();
+        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            || context.User.Identity?.IsAuthenticated != true)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await context.Response.WriteAsJsonAsync(new { error = "mcp_operator_bearer_required" });
+            return;
+        }
+    }
+
     if (context.Request.Path.StartsWithSegments("/api")
         && context.Request.Method is not ("GET" or "HEAD" or "OPTIONS")
         && context.User.Identity?.IsAuthenticated == true
@@ -614,7 +643,7 @@ app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
     }
 
     RetentionRunRequest request;
-    if (context.Request.ContentLength is null or 0)
+    if (context.Request.ContentLength == 0)
     {
         request = new RetentionRunRequest();
     }
@@ -1526,6 +1555,7 @@ app.MapPut("/api/v1/admin/sources", async Task<IResult> (
     }
 });
 
+app.MapMcp("/mcp").RequireAuthorization("analyst");
 app.MapRazorPages();
 
 app.Run();

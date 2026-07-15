@@ -2,7 +2,7 @@
 
 `soc-agent` is the SIEM-aware SOC analyst and detection-engineering chat workspace in Challenger SIEM.
 
-The current implementation is a safe local provider/tool harness with a persistent live web chat UI and optional ChatGPT/OpenAI-backed provider paths. ChatGPT subscription OAuth is the primary external setup path: Pi `openai-codex` credentials can call the ChatGPT Codex Responses backend used for subscription/Codex model access, while dedicated server-side OAuth/API-key credentials can call the OpenAI API Chat Completions path when they grant the required API audience and model-invocation scope. Server-side API keys and generic delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, streams live run/tool/progress events to the authenticated browser workspace, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side credentials configured outside source control. It does **not** automate ChatGPT web login, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
+The current implementation is a safe local provider/tool harness with a persistent live web chat UI and optional ChatGPT/OpenAI-backed provider paths. Subscription OAuth is the primary external setup path when an official server-side OAuth client or delegated credential file is available; server-side API keys and delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, streams live run/tool/progress events to the authenticated browser workspace, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side credentials configured outside source control. It does **not** automate consumer website login, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
 
 The original planning record is archived at `docs/archive/soc-agent-planning-record-implemented.md`.
 
@@ -62,9 +62,6 @@ Default configuration keeps all prompts and tool summaries local:
     "AuthFileProviderKey": "openai",
     "SubscriptionAuthFilePath": null,
     "SubscriptionAuthFileProviderKey": "chatgpt",
-    "SubscriptionUsePiAuthFile": true,
-    "SubscriptionPiAuthFilePath": "~/.pi/agent/auth.json",
-    "SubscriptionPiAuthFileProviderKey": "openai-codex",
     "SubscriptionRequiredScopes": "model.request",
     "SubscriptionTokenEndpoint": "https://auth.openai.com/oauth/token",
     "SubscriptionConnectEnabled": false,
@@ -95,17 +92,17 @@ Default configuration keeps all prompts and tool summaries local:
 }
 ```
 
-For ChatGPT/OpenAI-compatible use, configure provider credentials only server-side through ignored environment variables, ignored auth files, or a secret store. Subscription OAuth mode uses `SocAgent__Provider=ChatGPT`, `SocAgent__AuthMode=SubscriptionOAuth`, and either the default Pi agent auth-file fallback (`~/.pi/agent/auth.json` provider key `openai-codex`) or an explicit `SocAgent__SubscriptionAuthFilePath` plus optional `SocAgent__SubscriptionAuthFileProviderKey`/`SocAgent__SubscriptionRequiredScopes`/`SocAgent__SubscriptionTokenEndpoint`. Pi `openai-codex` mode sends bounded/redacted prompts to the configured ChatGPT Codex Responses URL (`https://chatgpt.com/backend-api/codex/responses`) and supports plan-allowed models such as `gpt-5.5`; dedicated subscription OAuth bundles, API keys, and delegated bearer files continue to use the official `https://api.openai.com/v1/chat/completions` endpoint. When an official authorization-code/PKCE app is available, set `SocAgent__SubscriptionConnectEnabled=true` with server-side `SocAgent__SubscriptionClientId`, optional `SocAgent__SubscriptionClientSecret`, and official `SocAgent__SubscriptionAuthorizationUrl` / `SocAgent__SubscriptionRedirectUri` settings so operators can start connect from `/soc-agent`. API-key mode accepts `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Delegated auth-file mode uses `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and optional `SocAgent__AuthFileProviderKey`/`SocAgent__AuthFileExpirySkewSeconds`. Do not put provider credentials in tracked `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output. Tests use injected fake providers or synthetic placeholder files rather than real credentials.
+For ChatGPT/OpenAI-compatible use, configure provider credentials only server-side through ignored environment variables, an explicit ignored auth file, or a secret store. Subscription OAuth mode uses `SocAgent__Provider=ChatGPT`, `SocAgent__AuthMode=SubscriptionOAuth`, and an explicit `SocAgent__SubscriptionAuthFilePath` plus optional provider-key, scope, and token-endpoint settings. When an official authorization-code/PKCE app is available, set `SocAgent__SubscriptionConnectEnabled=true` with the server-side client configuration so operators can start connect from `/soc-agent`. API-key mode accepts `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Delegated auth-file mode uses `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and optional `SocAgent__AuthFileProviderKey`/`SocAgent__AuthFileExpirySkewSeconds`. Do not put provider credentials in tracked `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output. Tests use injected fake providers or synthetic placeholder files rather than real credentials.
 
 Supported status values are `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, and `provider_error`. The status response may also include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`; those fields never contain provider tokens, account IDs, email addresses, raw auth-file contents, or full filesystem paths.
 
 ### Official provider-backed execution
 
-When `SocAgent:Provider=ChatGPT` or `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and a supported server-side credential path is configured, `soc-agent` keeps all SIEM data access on the server and sends only a bounded/redacted prompt to the configured provider endpoint. Pi `openai-codex` credentials use the ChatGPT Codex Responses backend; dedicated OAuth/API-key/delegated credentials use the OpenAI Chat Completions endpoint. The prompt is assembled from the deterministic local tool assessment, tool-run summaries, and citation URLs; raw event JSON, provider credentials, bearer tokens, and unbounded endpoint telemetry are not sent. Provider errors are mapped to operator-safe codes (`auth_failed`, `scope_missing`, `budget_limited`, `plan_limited`, `rate_limited`, or `provider_error`) without rendering raw provider responses.
+When `SocAgent:Provider=ChatGPT` or `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and a supported server-side credential path is configured, `soc-agent` keeps all SIEM data access on the server and sends only a bounded/redacted prompt to the configured official provider endpoint. The prompt is assembled from the deterministic local tool assessment, tool-run summaries, and citation URLs; raw event JSON, provider credentials, bearer tokens, and unbounded endpoint telemetry are not sent. Provider errors are mapped to operator-safe codes (`auth_failed`, `scope_missing`, `budget_limited`, `plan_limited`, `rate_limited`, or `provider_error`) without rendering raw provider responses.
 
 #### ChatGPT subscription OAuth mode
 
-Subscription OAuth mode is opt-in, fail-closed, and the primary external setup path shown in the web workspace. By default, when no explicit subscription auth-file path is configured, Challenger SIEM can read Pi's existing `~/.pi/agent/auth.json` `openai-codex` OAuth entry after a successful Pi `/login`; the status response reports `auth_mode=pi_auth_json`, `provider_path=pi_auth_json_openai_codex`, and `refresh_status=pi_managed` without exposing tokens or account identifiers. Pi-auth mode is left for Pi to refresh and uses the configured ChatGPT Codex Responses endpoint for plan-allowed models such as `gpt-5.5`. Explicit non-Pi subscription credential bundles must declare an official OpenAI API audience, an allowlisted official issuer, bearer token type, expiry, and the configured model-invocation scope (default `model.request`). If a dedicated bundle does not permit model invocation for this application, status becomes `unsupported_subscription_oauth` or `scope_missing`; Challenger SIEM does not use browser cookie/session replay or password-based auth.
+Subscription OAuth mode is opt-in, fail-closed, and the primary external setup path shown in the web workspace. Explicit subscription credential bundles must declare the approved API audience, an allowlisted official issuer, bearer token type, expiry, and the configured model-invocation scope (default `model.request`). If a bundle does not permit model invocation for this application, status becomes `unsupported_subscription_oauth` or `scope_missing`; Challenger SIEM does not use browser cookie/session replay or password-based auth.
 
 A placeholder-only subscription OAuth file looks like this; replace placeholders only in an ignored local file such as `.local/soc-agent/chatgpt-auth.json` or a secret-managed path outside the repository:
 
@@ -129,20 +126,7 @@ A placeholder-only subscription OAuth file looks like this; replace placeholders
 }
 ```
 
-To reuse an existing Pi login, run Pi `/login` first and configure only ignored/server-side settings like this (the Pi auth file remains outside this repository):
-
-```bash
-SocAgent__Provider=ChatGPT
-SocAgent__ProviderDisplayName="ChatGPT subscription OAuth"
-SocAgent__AuthMode=SubscriptionOAuth
-SocAgent__ExternalCallsEnabled=true
-SocAgent__SubscriptionAuthFilePath=~/.pi/agent/auth.json
-SocAgent__SubscriptionAuthFileProviderKey=openai-codex
-SocAgent__Model=gpt-5.5
-SocAgent__ChatGptCodexResponsesUrl=https://chatgpt.com/backend-api/codex/responses
-```
-
-Alternatively, configure a dedicated placeholder-schema file with ignored environment variables or another server-side configuration provider:
+Configure the placeholder-schema file with ignored environment variables or another server-side configuration provider:
 
 ```bash
 SocAgent__Provider=ChatGPT
@@ -154,7 +138,7 @@ SocAgent__SubscriptionAuthFileProviderKey=chatgpt
 SocAgent__SubscriptionRequiredScopes=model.request
 ```
 
-To let operators trigger the official authorization-code/PKCE flow from the web page, configure a dedicated non-Pi auth file plus the server-side OAuth client and callback. The callback writes only the minimal access/refresh-token bundle to `SocAgent__SubscriptionAuthFilePath`; it will not write to Pi's `~/.pi/agent/auth.json` or the `openai-codex` entry, and browser clients never receive tokens or raw auth-file content. Use provider-approved values only:
+To let operators trigger the official authorization-code/PKCE flow from the web page, configure a dedicated auth file plus the server-side OAuth client and callback. The callback writes only the minimal access/refresh-token bundle to `SocAgent__SubscriptionAuthFilePath`, and browser clients never receive tokens or raw auth-file content. Use provider-approved values only:
 
 ```bash
 SocAgent__SubscriptionConnectEnabled=true
@@ -169,7 +153,7 @@ SocAgent__SubscriptionIssuer=https://auth.openai.com/
 
 The connect start endpoint requires an authenticated SIEM operator session. The callback validates a protected OAuth state/PKCE correlation cookie and is allowed to complete even if the strict review-session cookie is not sent on the cross-site provider redirect. Authorization and token endpoints are allowlisted to official provider hosts and paths; unsupported URLs fail closed.
 
-The loader validates the configured provider key, credential type, bearer token type, expiry, official OpenAI API audience, official issuer host when present, required model scope, entitlement hints, and safe file location for non-Pi bundles. Pi `openai-codex` entries are recognized by their `access`, `refresh`, and `expires` fields, account identity is used only as a server-side request header, and credentials are treated as Pi-managed and never rewritten by Challenger SIEM. Files inside the repository are accepted only when they are under `.local/` or use ignored auth-file names such as `auth.json`, `auth.*.json`, or `*.auth.json`; operator-managed paths outside the repository are also allowed. When a near-expiry non-Pi token has refresh material and an allowlisted official token endpoint, the provider client refreshes it before a model request and atomically persists the updated ignored/secret-managed file. Refresh failures map to `refresh_failed` without exposing provider payloads.
+The loader validates the configured provider key, credential type, bearer token type, expiry, official API audience, official issuer host when present, required model scope, entitlement hints, and safe file location. Files inside the repository are accepted only when they are under `.local/` or use ignored auth-file names such as `auth.json`, `auth.*.json`, or `*.auth.json`; operator-managed paths outside the repository are also allowed. When a near-expiry token has refresh material and an allowlisted official token endpoint, the provider client refreshes it before a model request and atomically persists the updated ignored/secret-managed file. Refresh failures map to `refresh_failed` without exposing provider payloads.
 
 #### Delegated auth-file mode
 
@@ -240,7 +224,7 @@ These tables are not intended to duplicate full raw endpoint telemetry or store 
 
 Only official provider authentication paths are acceptable for external providers:
 
-1. **Primary external path:** Pi `openai-codex` ChatGPT subscription OAuth credentials for the ChatGPT Codex Responses backend, or an ignored/server-side ChatGPT subscription OAuth credential bundle that grants the OpenAI API audience and required model-invocation scope.
+1. **Primary external path:** an ignored/server-side subscription OAuth credential bundle that grants the approved API audience and required model-invocation scope.
 2. **Advanced production path:** server-side API-key credentials supplied by environment variables or a secret store.
 3. **Optional delegated API-bearer path:** an ignored server-side delegated auth file containing an official API bearer access token, or a future OAuth/OIDC/PKCE / Team/Enterprise connector flow that explicitly permits this application use case.
 4. **Blocked path:** automation of the consumer ChatGPT website, browser-cookie extraction, password capture, browser profile scraping, password/session replay, or unsupported auth-file exports.

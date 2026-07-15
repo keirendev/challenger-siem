@@ -8,7 +8,7 @@ namespace Challenger.Siem.Api.Pages.Alerts;
 
 public sealed class DetailModel(AlertRepository alerts, CaseRepository cases) : PageModel
 {
-    [BindProperty(SupportsGet = true, Name = "alert_id")]
+    [BindProperty]
     public Guid AlertId { get; set; }
 
     [BindProperty]

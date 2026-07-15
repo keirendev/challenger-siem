@@ -9,6 +9,56 @@ namespace Challenger.Siem.Api.Database;
 
 public sealed class AlertRepository(NpgsqlDataSource dataSource)
 {
+    public async Task<IReadOnlyList<AlertRecord>> SearchAlertsForRuleAsync(
+        string ruleId,
+        int ruleVersion,
+        int lookbackHours,
+        CancellationToken cancellationToken,
+        int limit = 500)
+    {
+        var boundedRuleId = BoundRequired(ruleId, 1, 160, "Rule ID");
+        if (ruleVersion < 1)
+        {
+            throw new ArgumentException("Rule version must be positive.", nameof(ruleVersion));
+        }
+
+        if (lookbackHours is < 1 or > 168)
+        {
+            throw new ArgumentException("Lookback hours must be between 1 and 168.", nameof(lookbackHours));
+        }
+
+        var boundedLimit = Math.Clamp(limit, 1, 500);
+        var to = DateTimeOffset.UtcNow;
+        var from = to.AddHours(-lookbackHours);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select alert_id, rule_id, rule_version, title, severity, confidence, status, owner, version, updated_at,
+                   acknowledged_at, triaged_at, suppressed_at, suppressed_until, suppression_reason, disposition,
+                   closed_at, closure_summary, reopened_at, last_activity_at, agent_id, hostname, created_at, summary, affected_entities
+            from alerts
+            where rule_id = @rule_id
+              and rule_version = @rule_version
+              and created_at >= @from
+              and created_at <= @to
+            order by created_at desc
+            limit @limit;
+            """;
+        command.Parameters.AddWithValue("rule_id", boundedRuleId);
+        command.Parameters.AddWithValue("rule_version", ruleVersion);
+        command.Parameters.AddWithValue("from", from.ToUniversalTime());
+        command.Parameters.AddWithValue("to", to.ToUniversalTime());
+        command.Parameters.AddWithValue("limit", boundedLimit);
+        var results = new List<AlertRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(ReadAlert(reader, Array.Empty<AlertEvidenceRecord>()));
+        }
+
+        return results;
+    }
+
     public async Task<IReadOnlyList<AlertRecord>> SearchAlertsAsync(string? status, CancellationToken cancellationToken, int limit = 500, int offset = 0)
     {
         var clampedLimit = Math.Clamp(limit, 1, 500);
@@ -492,7 +542,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("agent_id", envelope.AgentId);
             command.Parameters.AddWithValue("hostname", envelope.Hostname);
             command.Parameters.AddWithValue("summary", BuildAlertSummary(evaluation, evidenceIds.Count));
-            command.Parameters.AddWithValue("affected_entities", JsonSerializer.Serialize(BuildAffectedEntities(rule, envelope), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            Jsonb.Add(command, "affected_entities", BuildAffectedEntities(rule, envelope));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

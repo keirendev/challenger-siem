@@ -313,6 +313,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = SelectEventSql + """
+
             where agent_id = @agent_id
               and event_id = @event_id
             limit 1;
@@ -804,7 +805,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         }
         else
         {
-            where.Add($"{column} ilike @{parameterName} escape '\\\\'");
+            where.Add($"{column} ilike @{parameterName} escape '\\'");
             command.Parameters.AddWithValue(parameterName, $"%{EscapeLike(value.Trim())}%");
         }
     }

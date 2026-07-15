@@ -1,13 +1,13 @@
 # HTTPS/TLS deployment path
 
-Challenger SIEM treats HTTPS as required outside local development and the explicitly authorized lab callback path.
+Challenger SIEM treats HTTPS as required outside loopback development and explicitly approved isolated lab exceptions.
 
 ## Local development
 
 Acceptable local-only HTTP endpoints:
 
 - `http://127.0.0.1:<port>` for same-host smoke tests.
-- `http://192.168.122.1:4444` for the authorized Windows lab VM callback path documented in this repository.
+- `http://<agent-reachable-server-address>:<port>` only for an operator-approved isolated lab callback path.
 
 These HTTP endpoints are for development/lab validation only. They must not be used for production endpoint enrollment or telemetry.
 

@@ -2,95 +2,217 @@
 @model IndexModel
 @{
     ViewData["Title"] = "Overview";
+    var maxBucket = Model.Operations?.EventBuckets.Select(bucket => bucket.EventCount).DefaultIfEmpty(0).Max() ?? 0;
 }
 
 <partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", IsCurrent: true))' />
 
-<div class="page-header">
+<div class="page-header overview-header">
     <div>
-        <p class="page-kicker">Operations overview</p>
-        <h1>Overview</h1>
-        <p class="muted">Dashboard metrics for ingestion, endpoint health, queue pressure, source gaps, and managed telemetry capacity.</p>
+        <p class="page-kicker">Operations dashboard</p>
+        <h1>Security overview</h1>
+        <p class="muted">Current ingestion, alert, endpoint, source-coverage, and managed-storage signals from the SIEM environment.</p>
     </div>
     <div class="actions">
-        <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale">Review stale agents</a>
-        <a class="button" asp-page="/Events/Index">Review events</a>
+        @if (Model.CanUseCases)
+        {
+            <a class="button secondary" asp-page="/Cases/Index">Review cases</a>
+        }
+        <a class="button secondary" asp-page="/Alerts/Index">Review alerts</a>
+        <a class="button" asp-page="/Events/Index">Search events</a>
     </div>
 </div>
 
 @if (Model.ErrorMessage is not null)
 {
-    <partial name="_Notice" model='new NoticeModel("Overview unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
+    <partial name="_Notice" model='new NoticeModel("Overview partially unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
 }
 else if (Model.Summary.ActiveAgents == 0 && Model.Summary.RecentEventCount == 0)
 {
-    <partial name="_Notice" model='new NoticeModel("No telemetry yet", "No active agents or recent events are visible. Register a synthetic agent or review setup before treating this as a healthy quiet state.", "empty")' />
+    <partial name="_Notice" model='new NoticeModel("No telemetry yet", "No active agents or recent events are visible. Review setup and source coverage before treating this as a healthy quiet state.", "empty")' />
 }
 
-<partial name="_LifecycleStates" model='new LifecycleStatesModel("Overview lifecycle states", new[] { new LifecycleStateModel("loading", "Loading", "Metric skeletons preserve layout during refresh."), new LifecycleStateModel("degraded", "Degraded", "Stale agents, queue pressure, and storage warnings stay visible.", "warning"), new LifecycleStateModel("success", "Success", "Counts are bounded and link to the implemented review surfaces.", "ok") })' />
+<section class="overview-status" aria-label="Overview freshness and scope">
+    <div>
+        <span class="status-dot @FreshnessClass(Model.Operations?.FreshnessState)" aria-hidden="true"></span>
+        <strong>Telemetry @(Model.Operations?.FreshnessState ?? "unknown")</strong>
+        <span class="muted">latest ingest @TimeDisplay.FormatUtc(Model.Operations?.LatestIngestUtc, "yyyy-MM-dd HH:mm")</span>
+    </div>
+    <div class="overview-status-meta">
+        <span class="badge @(Model.Operations?.PartialData == true ? "warning" : "ok")">@(Model.Operations?.PartialData == true ? "partial data" : "bounded view current")</span>
+        <span class="pill">last @Model.DashboardWindowHours h</span>
+    </div>
+</section>
 
-<section class="metrics" aria-label="Dashboard metrics">
-    <article class="card">
-        <span class="metric-value">@Model.Summary.ActiveAgents</span>
-        <span class="metric-label">active agents</span>
+<section class="overview-kpis" aria-label="Key security operations metrics">
+    <article class="card kpi-card">
+        <div class="kpi-label"><span class="kpi-marker danger" aria-hidden="true"></span>Alerts created</div>
+        <strong class="kpi-value">@Model.RecentAlertCount</strong>
+        <p class="kpi-meta">within the last @Model.DashboardWindowHours hours</p>
     </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.RecentActiveAgents</span>
-        <span class="metric-label">recent active agents</span>
+    <article class="card kpi-card">
+        <div class="kpi-label"><span class="kpi-marker brand" aria-hidden="true"></span>Events ingested</div>
+        <strong class="kpi-value">@Model.Summary.RecentEventCount</strong>
+        <p class="kpi-meta">within the configured @Model.RecentEventWindowHours-hour review window</p>
     </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.StaleActiveAgents</span>
-        <span class="metric-label">stale active agents</span>
+    <article class="card kpi-card">
+        <div class="kpi-label"><span class="kpi-marker ok" aria-hidden="true"></span>Active agents</div>
+        <strong class="kpi-value">@Model.Summary.ActiveAgents</strong>
+        <p class="kpi-meta">@Model.Summary.RecentActiveAgents recent · @Model.Summary.StaleActiveAgents stale · @Model.Summary.RetiredAgents retired agents</p>
     </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.RetiredAgents</span>
-        <span class="metric-label">retired agents</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.HistoricalAgents</span>
-        <span class="metric-label">historical registrations</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.AgentsWithQueuedEvents</span>
-        <span class="metric-label">active agents with queued events</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.AgentsWithPressure</span>
-        <span class="metric-label">active agents with pressure/throttle</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.AgentsWithSourceGaps</span>
-        <span class="metric-label">active agents with source gaps/drops</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.AgentsWithDegradedSources</span>
-        <span class="metric-label">active agents with degraded sources</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.AgentsWithCapacityWarnings</span>
-        <span class="metric-label">active agents with queue capacity ≥70%</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@Model.Summary.RecentEventCount</span>
-        <span class="metric-label">events ingested in last @Model.RecentEventWindowHours h</span>
-    </article>
-    <article class="card">
-        <span class="metric-value">@TimeDisplay.FormatUtc(Model.Summary.LatestIngestTime, "yyyy-MM-dd HH:mm")</span>
-        <span class="metric-label">latest ingest time (UTC)</span>
+    <article class="card kpi-card">
+        <div class="kpi-label"><span class="kpi-marker warning" aria-hidden="true"></span>Coverage review</div>
+        <strong class="kpi-value">@Model.Summary.AgentsWithDegradedSources</strong>
+        <p class="kpi-meta">agents with degraded sources · @Model.Summary.AgentsWithSourceGaps with gaps or drops</p>
     </article>
 </section>
 
-<section class="card">
-    <h2>Health interpretation</h2>
-    <p>
-        Active agents are marked stale when they have not been seen for @Model.StaleAgentMinutes minutes.
-        Retired agents are disabled registrations hidden from default active views; their historical events and heartbeat data are preserved.
-        Non-zero queue depth, pressure, gap, and capacity counts are taken from latest heartbeat/source-health observations for active agents.
-    </p>
-    <p>
-        Managed telemetry storage state is <strong>@(Model.StorageAccounting?.WarningState ?? "unknown")</strong>
-        at @(Model.StorageAccounting?.UsedPercent.ToString("0.###") ?? "unknown")% of configured capacity.
-        Capacity warnings are textual and non-color-only: 70% warning, 85% warning, 95% critical, and 100% over capacity.
-        Retention lag: @(Model.StorageAccounting?.RetentionLagState ?? "unknown").
-    </p>
-</section>
+<div class="overview-grid">
+    <section class="card overview-panel volume-panel" aria-labelledby="event-volume-title">
+        <div class="panel-heading">
+            <div>
+                <p class="panel-kicker">Signal volume</p>
+                <h2 id="event-volume-title">Events by UTC hour</h2>
+            </div>
+            <a asp-page="/Dashboards/Index" asp-route-time_range_hours="@Model.DashboardWindowHours">Full dashboard</a>
+        </div>
+        @if (Model.Operations is null || Model.Operations.EventBuckets.Count == 0)
+        {
+            <div class="empty compact-empty"><strong>No event buckets in this window.</strong><p>Confirm ingest freshness and source coverage before treating the environment as quiet.</p></div>
+        }
+        else
+        {
+            <div class="overview-volume-list" role="list" aria-label="Latest event-volume buckets">
+            @foreach (var bucket in Model.Operations.EventBuckets.TakeLast(24))
+            {
+                <div class="overview-volume-row" role="listitem">
+                    <span class="mono">@TimeDisplay.FormatUtc(bucket.BucketUtc, "HH:mm")</span>
+                    <meter min="0" max="@(maxBucket <= 0 ? 1 : maxBucket)" value="@bucket.EventCount" aria-label="@bucket.EventCount events at @TimeDisplay.FormatUtc(bucket.BucketUtc, "yyyy-MM-dd HH:mm")">@bucket.EventCount</meter>
+                    <strong>@bucket.EventCount</strong>
+                </div>
+            }
+            </div>
+        }
+    </section>
+
+    <section class="card overview-panel" aria-labelledby="health-summary-title">
+        <div class="panel-heading">
+            <div>
+                <p class="panel-kicker">Collection posture</p>
+                <h2 id="health-summary-title">Source health</h2>
+            </div>
+            <a asp-page="/Agents/Index">Review assets</a>
+        </div>
+        @if (Model.Operations is null || Model.Operations.SourceHealthStates.Count == 0)
+        {
+            <p class="muted">No source-health observations are available.</p>
+        }
+        else
+        {
+            <ul class="status-count-list">
+            @foreach (var state in Model.Operations.SourceHealthStates)
+            {
+                <li><span><span class="status-dot @FreshnessClass(state.Key)" aria-hidden="true"></span>@state.Key.Replace('_', ' ')</span><strong>@state.Count</strong></li>
+            }
+            </ul>
+        }
+        <div class="storage-summary">
+            <span class="muted">Managed storage</span>
+            <strong>@(Model.StorageAccounting?.UsedPercent.ToString("0.###") ?? "unknown")%</strong>
+            <span class="badge @StorageClass(Model.StorageAccounting?.WarningState)">@(Model.StorageAccounting?.WarningState ?? "unknown")</span>
+            <span class="muted">retention lag: @(Model.StorageAccounting?.RetentionLagState ?? "unknown")</span>
+        </div>
+    </section>
+
+    <section class="card overview-panel alert-panel" aria-labelledby="recent-alerts-title">
+        <div class="panel-heading">
+            <div>
+                <p class="panel-kicker">Analyst queue</p>
+                <h2 id="recent-alerts-title">Recent alerts</h2>
+            </div>
+            <a asp-page="/Alerts/Index">Open alert queue</a>
+        </div>
+        @if (Model.RecentAlerts.Count == 0)
+        {
+            <div class="empty compact-empty"><strong>No recent alerts are visible.</strong><p>Review detection prerequisites and source health before treating this as no signal.</p></div>
+        }
+        else
+        {
+            <ol class="alert-queue">
+            @foreach (var alert in Model.RecentAlerts)
+            {
+                <li>
+                    <span class="badge @SeverityClass(alert.Severity)">@alert.Severity</span>
+                    <div class="alert-queue-main">
+                        <a asp-page="/Alerts/Detail" asp-route-alert_id="@alert.AlertId"><strong>@alert.Title</strong></a>
+                        <span class="muted mono">@alert.RuleId · @TimeDisplay.FormatUtc(alert.CreatedAt, "MM-dd HH:mm")</span>
+                    </div>
+                    <span class="badge @StatusClass(alert.Status)">@alert.Status</span>
+                </li>
+            }
+            </ol>
+        }
+    </section>
+
+    <section class="card overview-panel" aria-labelledby="alert-status-title">
+        <div class="panel-heading">
+            <div>
+                <p class="panel-kicker">Workflow state</p>
+                <h2 id="alert-status-title">Alert status</h2>
+            </div>
+        </div>
+        @if (Model.Operations is null || Model.Operations.AlertStatuses.Count == 0)
+        {
+            <p class="muted">No alert status counts are available in this window.</p>
+        }
+        else
+        {
+            <ul class="status-count-list">
+            @foreach (var state in Model.Operations.AlertStatuses)
+            {
+                <li><span class="badge @StatusClass(state.Key)">@state.Key</span><strong>@state.Count</strong></li>
+            }
+            </ul>
+        }
+        <div class="coverage-links">
+            <a asp-page="/Detections/Index">Detection coverage</a>
+            <a asp-page="/Agents/Index" asp-route-source_issue="missing">Missing sources</a>
+            <a asp-page="/About">Platform health</a>
+        </div>
+    </section>
+</div>
+
+@functions {
+    private static string SeverityClass(string? value) => value switch
+    {
+        "critical" or "high" => "danger",
+        "medium" => "warning",
+        "low" or "informational" => "neutral",
+        _ => "neutral"
+    };
+
+    private static string StatusClass(string? value) => value switch
+    {
+        "resolved" or "closed" or "contained" => "ok",
+        "suppressed" or "acknowledged" or "triaged" => "neutral",
+        "escalated" => "danger",
+        "investigating" or "new" => "warning",
+        _ => "neutral"
+    };
+
+    private static string FreshnessClass(string? value) => value switch
+    {
+        "fresh" or "healthy" or "success" => "ok",
+        "stale" or "degraded" or "missing" or "partial" => "warning",
+        "offline" or "error" or "permission_denied" => "danger",
+        _ => "neutral"
+    };
+
+    private static string StorageClass(string? value) => value switch
+    {
+        "normal" => "ok",
+        "warning_70" or "warning_85" => "warning",
+        "critical_95" or "over_capacity" => "danger",
+        _ => "neutral"
+    };
+}

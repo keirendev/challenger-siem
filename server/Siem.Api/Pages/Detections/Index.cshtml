@@ -72,7 +72,7 @@ else
                             <span class="badge @BadgeClass(item.EffectiveEnabled ? item.LifecycleState : "disabled")">@(item.EffectiveEnabled ? item.LifecycleState : "disabled")</span>
                             <span class="badge @SeverityClass(item.Rule.Severity)">@item.Rule.Severity</span>
                         </td>
-                        <td class="mono">v@item.Rule.Version<br /><span class="muted">settings @item.SettingsVersion</span></td>
+                        <td class="mono">v@(item.Rule.Version)<br /><span class="muted">settings @item.SettingsVersion</span></td>
                         <td class="compact-cell">
                             <div><strong>Category:</strong> @item.Rule.Category</div>
                             <div><strong>Confidence:</strong> @item.Rule.Confidence; @item.ConfidenceImpact</div>

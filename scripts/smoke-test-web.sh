@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -192,8 +193,8 @@ missing = [name for name, body in checks.items() if agent_id not in body]
 if missing:
     raise SystemExit(f'web smoke failed; marker missing from: {", ".join(missing)}')
 dashboard = Path('$DASHBOARD_HTML').read_text(encoding='utf-8')
-if 'Dashboard' not in dashboard or 'active agents' not in dashboard:
-    raise SystemExit('web smoke failed; dashboard did not render expected metrics')
+if 'Security overview' not in dashboard or 'Active agents' not in dashboard:
+    raise SystemExit('web smoke failed; overview did not render expected security metrics')
 soc_agent = Path('$SOC_AGENT_HTML').read_text(encoding='utf-8')
 if 'soc-agent workspace' not in soc_agent or 'Provider status' not in soc_agent:
     raise SystemExit('web smoke failed; soc-agent workspace did not render expected status')

@@ -73,8 +73,7 @@ Measured headless Chromium results:
 
 Limitations:
 
-- The assigned worktree did not contain a local `.local/dev.env` or configured PostgreSQL test database, so browser validation against the live Razor app was not safely configurable in this run. Existing WebApplicationFactory tests remain the real-app regression path, and PostgreSQL-backed tests run when a local test database is supplied.
-- Measurements are local, synthetic, and not a production performance benchmark. They are sufficient for architecture selection because the TypeScript preflight did not reach the comparison threshold.
+- Measurements are synthetic and environment-dependent, not a production performance benchmark. PostgreSQL-backed browser release gates remain the authoritative validation path for release candidates.
 
 ## Security, accessibility, and CSP implications
 
@@ -102,7 +101,7 @@ A superseded UI path may remain only until its replacement is fully selected and
 - The replacement has equivalent or better tests and browser validation using synthetic data.
 - Navigation, deep links, docs, and screenshots point to one active path.
 - No feature switch, compatibility route, duplicate theme, stale static bundle, generated artifact, lockfile, or unused dependency remains.
-- Repository safety checks show no `.local/`, `.pi/`, `AGENTS.md`, logs, traces, screenshots with private data, `dist/`, `bin/`, `obj/`, or dependency caches staged.
+- Repository safety checks show no local automation state, logs, traces, screenshots with private data, generated artifacts, or dependency caches staged.
 
 ## Consequences
 

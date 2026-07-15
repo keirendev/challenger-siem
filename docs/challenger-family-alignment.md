@@ -32,6 +32,4 @@ Challenger SIEM should not absorb the responsibilities of sibling products. XDR 
 
 ## Safety baseline
 
-The public-repository safety rules remain mandatory: do not commit secrets, tokens, connection strings, raw endpoint telemetry, event exports, queue/state databases, screenshots with real host/user data, local validation output, or Pi/coding-agent files.
-
-Local multi-repo maintainers may also have access to shared Challenger developer guidance. Tracked SIEM docs must remain understandable from this repository alone; local agent guidance may reference workspace-level instructions when available.
+The public-repository safety rules remain mandatory: do not commit secrets, tokens, connection strings, raw endpoint telemetry, event exports, queue/state databases, screenshots with real host/user data, local validation output, or local automation state. Tracked SIEM documentation must remain understandable from this repository alone.

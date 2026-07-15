@@ -231,7 +231,7 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         }
     }
 
-    private static async Task<InventorySourceResult> ReadFileAsync(InventorySourcePolicy policy, CancellationToken cancellationToken)
+    internal static async Task<InventorySourceResult> ReadFileAsync(InventorySourcePolicy policy, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var path = policy.FilePath!;
@@ -266,7 +266,7 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
                 return new(InventorySourceState.Malformed, "file_not_regular");
             }
             UnixFileMode? mode = (UnixFileMode)(metadata.Value.Mode & 0x0fff);
-            await using var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: true);
+            await using var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: false);
             if (policy.Kind == InventorySourceKind.FileMetadata && policy.Operation == LinuxInventoryOperation.AgentConfig)
                 return InventorySourceResult.Success(mode: mode, size: metadata.Value.Size, ownerId: metadata.Value.OwnerId);
             if (metadata.Value.Size > policy.MaxOutputBytes)

@@ -120,7 +120,7 @@
         <ul class="entity-list">
             @foreach (var saved in Model.SavedSearches)
             {
-                <li><strong>@saved.Name</strong> <span class="badge">@saved.Visibility v@saved.Version</span> <a asp-page="/Events/Index" asp-route-saved_search_id="@saved.SavedSearchId">Load</a> <form method="post" asp-page-handler="DeleteSavedSearch" asp-route-savedSearchId="@saved.SavedSearchId" class="inline-form"><button type="submit" class="secondary">Delete owned</button></form><div class="muted">Updated @TimeDisplay.FormatUtc(saved.UpdatedAt) by @(saved.CreatedBy ?? "operator")</div></li>
+                <li><strong>@saved.Name</strong> <span class="badge">@saved.Visibility v@(saved.Version)</span> <a asp-page="/Events/Index" asp-route-saved_search_id="@saved.SavedSearchId">Load</a> <form method="post" asp-page-handler="DeleteSavedSearch" asp-route-savedSearchId="@saved.SavedSearchId" class="inline-form"><button type="submit" class="secondary">Delete owned</button></form><div class="muted">Updated @TimeDisplay.FormatUtc(saved.UpdatedAt) by @(saved.CreatedBy ?? "operator")</div></li>
             }
         </ul>
     }
