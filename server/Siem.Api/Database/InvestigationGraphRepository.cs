@@ -5,6 +5,15 @@ using NpgsqlTypes;
 
 namespace Challenger.Siem.Api.Database;
 
+public sealed record BoundedInvestigationGraphCollectionState(int Returned, bool Truncated);
+
+public sealed record BoundedInvestigationGraphDetailResult(
+    InvestigationGraphDetail Detail,
+    int NestedLimit,
+    int ReturnedNestedRecords,
+    bool Truncated,
+    IReadOnlyDictionary<string, BoundedInvestigationGraphCollectionState> Collections);
+
 public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -99,10 +108,49 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var summary = await GetSummaryAsync(connection, graphId, cancellationToken);
         if (summary is null) return null;
-        var nodes = await GetNodesAsync(connection, graphId, cancellationToken);
-        var edges = await GetEdgesAsync(connection, graphId, cancellationToken);
-        var proposals = await GetProposalsAsync(connection, graphId, cancellationToken);
+        var nodes = await GetNodesAsync(connection, graphId, null, cancellationToken);
+        var edges = await GetEdgesAsync(connection, graphId, null, cancellationToken);
+        var proposals = await GetProposalsAsync(connection, graphId, 25, cancellationToken);
         return new InvestigationGraphDetail { Graph = summary, Nodes = nodes, Edges = edges, Proposals = proposals };
+    }
+
+    public async Task<BoundedInvestigationGraphDetailResult?> GetBoundedDetailAsync(
+        Guid graphId,
+        int nestedLimit,
+        CancellationToken cancellationToken)
+    {
+        if (nestedLimit is < 1 or > 100)
+        {
+            throw new ArgumentException("Nested investigation graph record limit must be between 1 and 100.", nameof(nestedLimit));
+        }
+
+        var fetchLimit = nestedLimit + 1;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var summary = await GetSummaryAsync(connection, graphId, cancellationToken);
+        if (summary is null) return null;
+        var nodes = await GetNodesAsync(connection, graphId, fetchLimit, cancellationToken);
+        var edges = await GetEdgesAsync(connection, graphId, fetchLimit, cancellationToken);
+        var proposals = await GetProposalsAsync(connection, graphId, fetchLimit, cancellationToken);
+        var collections = new Dictionary<string, BoundedInvestigationGraphCollectionState>(StringComparer.Ordinal)
+        {
+            ["nodes"] = State(nodes, nestedLimit),
+            ["edges"] = State(edges, nestedLimit),
+            ["proposals"] = State(proposals, nestedLimit)
+        };
+        var detail = new InvestigationGraphDetail
+        {
+            Graph = summary,
+            Nodes = nodes.Take(nestedLimit).ToArray(),
+            Edges = edges.Take(nestedLimit).ToArray(),
+            Proposals = proposals.Take(nestedLimit).ToArray()
+        };
+        var returned = collections.Values.Sum(item => item.Returned);
+        return new BoundedInvestigationGraphDetailResult(
+            detail,
+            nestedLimit,
+            returned,
+            collections.Values.Any(item => item.Truncated),
+            collections);
     }
 
     public async Task<InvestigationGraphSummary?> ArchiveAsync(Guid graphId, string? actor, CancellationToken cancellationToken)
@@ -229,37 +277,55 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
         return await reader.ReadAsync(cancellationToken) ? ReadSummary(reader) : null;
     }
 
-    private static async Task<IReadOnlyList<InvestigationGraphNode>> GetNodesAsync(NpgsqlConnection connection, Guid graphId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<InvestigationGraphNode>> GetNodesAsync(NpgsqlConnection connection, Guid graphId, int? limit, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "select node_id, node_type, label, reference_kind, reference_id, link_url, notes, metadata, x, y, status from investigation_graph_nodes where graph_id = @graph_id order by created_at asc;";
+        command.CommandText = "select node_id, node_type, label, reference_kind, reference_id, link_url, notes, metadata, x, y, status from investigation_graph_nodes where graph_id = @graph_id order by created_at asc";
         command.Parameters.AddWithValue("graph_id", graphId);
+        AddOptionalLimit(command, limit);
         var results = new List<InvestigationGraphNode>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(ReadNode(reader));
         return results;
     }
 
-    private static async Task<IReadOnlyList<InvestigationGraphEdge>> GetEdgesAsync(NpgsqlConnection connection, Guid graphId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<InvestigationGraphEdge>> GetEdgesAsync(NpgsqlConnection connection, Guid graphId, int? limit, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "select edge_id, source_node_id, target_node_id, edge_type, label, notes, metadata, status from investigation_graph_edges where graph_id = @graph_id order by created_at asc;";
+        command.CommandText = "select edge_id, source_node_id, target_node_id, edge_type, label, notes, metadata, status from investigation_graph_edges where graph_id = @graph_id order by created_at asc";
         command.Parameters.AddWithValue("graph_id", graphId);
+        AddOptionalLimit(command, limit);
         var results = new List<InvestigationGraphEdge>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(ReadEdge(reader));
         return results;
     }
 
-    private static async Task<IReadOnlyList<InvestigationGraphProposal>> GetProposalsAsync(NpgsqlConnection connection, Guid graphId, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<InvestigationGraphProposal>> GetProposalsAsync(NpgsqlConnection connection, Guid graphId, int limit, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "select proposal_id, graph_id, status, instruction, rationale, proposed_nodes, proposed_edges, created_by, approved_by, created_at, applied_at from investigation_graph_proposals where graph_id = @graph_id order by created_at desc limit 25;";
+        command.CommandText = "select proposal_id, graph_id, status, instruction, rationale, proposed_nodes, proposed_edges, created_by, approved_by, created_at, applied_at from investigation_graph_proposals where graph_id = @graph_id order by created_at desc limit @nested_limit;";
         command.Parameters.AddWithValue("graph_id", graphId);
+        command.Parameters.AddWithValue("nested_limit", limit);
         var results = new List<InvestigationGraphProposal>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(ReadProposal(reader));
         return results;
+    }
+
+    private static BoundedInvestigationGraphCollectionState State<T>(IReadOnlyCollection<T> rows, int limit) =>
+        new(Math.Min(rows.Count, limit), rows.Count > limit);
+
+    private static void AddOptionalLimit(NpgsqlCommand command, int? limit)
+    {
+        if (limit.HasValue)
+        {
+            command.CommandText += " limit @nested_limit;";
+            command.Parameters.AddWithValue("nested_limit", limit.Value);
+            return;
+        }
+
+        command.CommandText += ";";
     }
 
     private static async Task<InvestigationGraphNode> InsertNodeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid graphId, InvestigationGraphNodeRequest request, CancellationToken cancellationToken)

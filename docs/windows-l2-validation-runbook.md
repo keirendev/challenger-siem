@@ -5,7 +5,7 @@ Use only authorized lab hosts. Do not clear event logs, reboot, uninstall servic
 ## Preconditions
 
 - API listening on the host at `http://0.0.0.0:4444`.
-- Windows lab VM can reach `http://192.168.122.1:4444/health`.
+- Windows lab endpoint can reach `http://<agent-reachable-server-address>:4444/health`.
 - Temporary agent uses a unique agent ID and paths under `C:\Temp\ChallengerSIEM\issue-<n>\`.
 - Configure `Channels` to at least `Security`, `System`, and `Application`; include L2 optional channels when present.
 

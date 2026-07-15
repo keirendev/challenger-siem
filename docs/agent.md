@@ -116,13 +116,13 @@ Required fields:
 - `ApiToken`, `ProtectedApiToken`, **or** `Enrollment.EnrollmentToken`
 - at least one channel in `Channels`
 
-For the current lab server binding, set:
+For an operator-approved isolated lab HTTP listener, set the endpoint-reachable address explicitly:
 
 ```json
-"ServerBaseUrl": "http://192.168.122.1:4444"
+"ServerBaseUrl": "http://<agent-reachable-server-address>:4444"
 ```
 
-A ready-to-edit example is available at `examples/windows-agentsettings-192.168.122.1-4444.json`.
+A ready-to-edit synthetic example is available at `examples/windows-agentsettings.example.json`.
 
 Do not log or commit `ApiToken`, `ProtectedApiToken`, or `Enrollment.EnrollmentToken`.
 

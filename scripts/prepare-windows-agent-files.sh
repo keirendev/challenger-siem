@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -14,12 +15,17 @@ fi
 PROJECT_VERSION="$(./scripts/current-version.sh)"
 
 API_BASE_URL="${1:-${SIEM_PREPARE_API_BASE_URL:-http://127.0.0.1:4444}}"
-AGENT_SERVER_BASE_URL="${2:-${SIEM_PREPARE_AGENT_SERVER_BASE_URL:-http://192.168.122.1:4444}}"
-AGENT_ID="${3:-${SIEM_PREPARE_AGENT_ID:-win11-test-001}}"
-HOSTNAME="${4:-${SIEM_PREPARE_HOSTNAME:-WIN11-TEST}}"
+AGENT_SERVER_BASE_URL="${2:-${SIEM_PREPARE_AGENT_SERVER_BASE_URL:-}}"
+AGENT_ID="${3:-${SIEM_PREPARE_AGENT_ID:-demo-agent-001}}"
+HOSTNAME="${4:-${SIEM_PREPARE_HOSTNAME:-DEMO-WIN11}}"
 OS_VERSION="${5:-${SIEM_PREPARE_OS_VERSION:-Windows 11}}"
 AGENT_VERSION="${6:-${SIEM_PREPARE_AGENT_VERSION:-$PROJECT_VERSION}}"
 OUTPUT_DIR="${SIEM_PREPARE_OUTPUT_DIR:-dist/windows-agent-copy}"
+
+if [[ -z "$AGENT_SERVER_BASE_URL" ]]; then
+  echo "An agent-reachable server URL is required as argv[2] or SIEM_PREPARE_AGENT_SERVER_BASE_URL." >&2
+  exit 2
+fi
 
 ./scripts/publish-windows-agent.sh >/dev/null
 mkdir -p "$OUTPUT_DIR"
@@ -33,14 +39,16 @@ REQUEST_FILE="$(mktemp)"
 RESPONSE_FILE="$(mktemp)"
 trap 'rm -f "$REQUEST_FILE" "$RESPONSE_FILE"' EXIT
 
-python - <<PY > "$REQUEST_FILE"
+python3 - "$AGENT_ID" "$HOSTNAME" "$OS_VERSION" "$AGENT_VERSION" <<'PY' > "$REQUEST_FILE"
 import json
+import sys
+
 payload = {
-    "agent_id": "$AGENT_ID",
-    "hostname": "$HOSTNAME",
+    "agent_id": sys.argv[1],
+    "hostname": sys.argv[2],
     "machine_guid": None,
-    "os_version": "$OS_VERSION",
-    "agent_version": "$AGENT_VERSION",
+    "os_version": sys.argv[3],
+    "agent_version": sys.argv[4],
 }
 print(json.dumps(payload))
 PY
@@ -51,7 +59,7 @@ curl --silent --show-error --fail "$API_BASE_URL/api/v1/agents/register" \
   --data @"$REQUEST_FILE" \
   > "$RESPONSE_FILE"
 
-python - <<'PY' "$RESPONSE_FILE" "$OUTPUT_DIR/agentsettings.json" "$AGENT_SERVER_BASE_URL"
+python3 - <<'PY' "$RESPONSE_FILE" "$OUTPUT_DIR/agentsettings.json" "$AGENT_SERVER_BASE_URL"
 import json
 import sys
 from pathlib import Path
@@ -106,17 +114,17 @@ config = {
     }
 }
 output_path.write_text(json.dumps(config, indent=2), encoding='utf-8')
+output_path.chmod(0o600)
 PY
 
 cat <<EOF
 Prepared Windows agent files:
-  $ROOT_DIR/$OUTPUT_DIR/WindowsAgent.exe
-  $ROOT_DIR/$OUTPUT_DIR/agentsettings.json
-  $ROOT_DIR/$OUTPUT_DIR/Sysmon/challenger-siem-sysmon-l3.xml (when published)
+  $OUTPUT_DIR/WindowsAgent.exe
+  $OUTPUT_DIR/agentsettings.json
+  $OUTPUT_DIR/Sysmon/challenger-siem-sysmon-l3.xml (when published)
 
 Copy the executable, settings, and optional Sysmon profile together, then run:
   .\\WindowsAgent.exe
 
-The config points the agent at:
-  $AGENT_SERVER_BASE_URL
+The ignored private config contains the supplied agent-reachable server URL.
 EOF

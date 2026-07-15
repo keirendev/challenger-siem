@@ -23,7 +23,7 @@ Required components:
    Auth__EnrollmentToken='<long-random-enrollment-token>'
    ```
 
-4. Optional WinRM credentials in ignored local configuration when validating the authorized Windows lab VM.
+4. Optional WinRM credentials in ignored local configuration when validating an operator-approved Windows lab endpoint.
 
 Apply and validate the database schema:
 
@@ -92,13 +92,13 @@ The scripts register a synthetic agent, ingest a synthetic event, exercise the r
    ```bash
    ./scripts/prepare-windows-agent-files.sh \
      http://127.0.0.1:4444 \
-     http://192.168.122.1:4444 \
+     http://<agent-reachable-server-address>:4444 \
      demo-agent-001 DEMO-WIN11 "Windows 11"
    ```
 
 4. Copy `dist/windows-agent-copy/WindowsAgent.exe`, `dist/windows-agent-copy/agentsettings.json`, and the optional `dist/windows-agent-copy/Sysmon/` profile together to the Windows host. Do not print or commit `agentsettings.json`; it contains a per-agent API token.
 
-5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md), [windows-agent-installer.md](windows-agent-installer.md), and [runbooks.md](runbooks.md#11-windows-service-installstartstop).
+5. Run the executable interactively for bounded validation or install it as a service by following [agent.md](agent.md), [windows-agent-installer.md](windows-agent-installer.md), and [runbooks.md](runbooks.md#12-windows-service-installstartstop).
 
 ## Review console workflow
 
@@ -115,7 +115,7 @@ Common current operator path (aligned to the Overview/Search/Assets/Alerts/Cases
 9. Use **Administration** (admin only) for non-secret operator/session metadata, source review notes, retention/capacity effective settings, and audit history. Settings mutations are allowlisted server changes, require confirmations, and do not alter endpoint audit/firewall/authentication/kernel/service policy or L3 collection.
 10. Use **Health** for runtime/status metadata and **Audit policy** (admin) for drift/status views without secret values.
 
-The [sanitized web-console demo](web-console-demo.md) contains screenshot and wireframe examples generated from synthetic data.
+The [web-console visual capture guide](web-console-demo.md) records current screenshot status and the synthetic-data, inspection, and browser-validation gates for publishing replacements.
 
 ## Source health and coverage
 
@@ -135,13 +135,14 @@ Keep Linux generated configuration and credentials under `/etc/challenger-siem-a
 - Apply/validate schema after pulling changes: [schema.md](schema.md#applying-and-validating-postgresql).
 - Check local health: `curl http://127.0.0.1:<port>/health`.
 - Search events through `GET /api/v1/events` with the operator API credential; see [api.md](api.md#search-events).
+- Connect an approved read-only SIEM assistant through `/mcp` with a least-privileged operator API credential; see [MCP server and SIEM-agent integration](mcp.md).
 - Review managed telemetry storage with `/api/v1/storage/accounting`, `/api/v1/storage/retention/status`, Overview, and host detail. Treat 70% as warning, 85% as warning, 95% as critical, and 100% as over capacity; these states are labelled in text and not conveyed by color alone. Use retention dry-run first; execute only against the intended SIEM database. The default target is 30 days with a hard 100 GiB managed telemetry ceiling and deterministic emergency cleanup that removes optional telemetry before mandatory telemetry while preserving alert/evidence references.
 - Retire stale lab registrations through the deliberate web/API workflow when preserving telemetry; use scoped synthetic cleanup for smoke/lab rows and `./scripts/reset-test-environment.sh` only for a full fresh start in a disposable local test environment.
 - Follow [release-readiness.md](release-readiness.md) before tagging or publishing a release.
 
 ## Troubleshooting
 
-See [troubleshooting.md](troubleshooting.md) for common database, auth, schema, web login, smoke-test, Windows agent, WinRM, source-health, and screenshot issues.
+See [troubleshooting.md](troubleshooting.md) for common database, auth, schema, web login, MCP, smoke-test, Windows agent, WinRM, source-health, and screenshot issues.
 
 ## Linux endpoints
 

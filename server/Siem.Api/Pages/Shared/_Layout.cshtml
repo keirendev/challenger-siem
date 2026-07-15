@@ -4,7 +4,6 @@
     var operatorName = User.Identity?.Name ?? "operator";
     var operatorRole = OperatorAuthorization.Role(User) ?? "anonymous";
     var canUseAnalystWorkspaces = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageInvestigations);
-    var canManageDetections = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageDetections);
     var canManageOperators = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageOperators);
     bool IsActive(string page) => string.Equals(currentPage, page, StringComparison.OrdinalIgnoreCase)
         || currentPage.StartsWith(page + "/", StringComparison.OrdinalIgnoreCase);
@@ -21,72 +20,85 @@
 </head>
 <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="app-shell" role="banner">
-        <div class="shell-row shell-brand-row">
-            <a class="brand" asp-page="/Index" aria-label="Challenger SIEM overview">
+    <div class="app-frame">
+        <header class="app-shell" role="banner">
+            <a class="brand rail-brand" asp-page="/Index" aria-label="Challenger SIEM overview">
                 <span class="brand-mark" aria-hidden="true">◆</span>
-                <span>Challenger SIEM</span>
+                <span class="brand-copy"><strong>Challenger</strong><small>SIEM</small></span>
             </a>
+
             @if (User.Identity?.IsAuthenticated == true)
             {
-                <div class="operator-panel" aria-label="Current operator">
-                    <span class="operator-name">@operatorName</span>
-                    <span class="badge role" aria-label="Current role @operatorRole">@operatorRole</span>
+                <nav class="primary-nav" aria-label="Primary">
+                    <a class="nav-item @(IsActive("/Index") ? "active" : null)" aria-label="Overview" aria-current="@(IsActive("/Index") ? "page" : null)" asp-page="/Index"><span class="nav-glyph" aria-hidden="true">OV</span><span class="nav-label">Overview</span></a>
+                    <a class="nav-item @(IsActive("/Events") ? "active" : null)" aria-label="Search" aria-current="@(IsActive("/Events") ? "page" : null)" asp-page="/Events/Index"><span class="nav-glyph" aria-hidden="true">SE</span><span class="nav-label">Search</span></a>
+                    <a class="nav-item @(IsAnyActive("/Agents", "/AuditPolicy") ? "active" : null)" aria-label="Assets" aria-current="@(IsAnyActive("/Agents", "/AuditPolicy") ? "page" : null)" asp-page="/Agents/Index"><span class="nav-glyph" aria-hidden="true">AS</span><span class="nav-label">Assets</span></a>
+                    <a class="nav-item @(IsActive("/Alerts") ? "active" : null)" aria-label="Alerts" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index"><span class="nav-glyph" aria-hidden="true">AL</span><span class="nav-label">Alerts</span></a>
+                    @if (canUseAnalystWorkspaces)
+                    {
+                        <a class="nav-item @(IsActive("/Cases") ? "active" : null)" aria-label="Cases" aria-current="@(IsActive("/Cases") ? "page" : null)" asp-page="/Cases/Index"><span class="nav-glyph" aria-hidden="true">CA</span><span class="nav-label">Cases</span></a>
+                    }
+                    <a class="nav-item @(IsActive("/Detections") ? "active" : null)" aria-label="Detections" aria-current="@(IsActive("/Detections") ? "page" : null)" asp-page="/Detections/Index"><span class="nav-glyph" aria-hidden="true">DE</span><span class="nav-label">Detections</span></a>
+                    <a class="nav-item @(IsActive("/Dashboards") ? "active" : null)" aria-label="Dashboards" aria-current="@(IsActive("/Dashboards") ? "page" : null)" asp-page="/Dashboards/Index"><span class="nav-glyph" aria-hidden="true">DB</span><span class="nav-label">Dashboards</span></a>
+                    <a class="nav-item @(IsActive("/About") ? "active" : null)" aria-label="Health" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About"><span class="nav-glyph" aria-hidden="true">HE</span><span class="nav-label">Health</span></a>
+                    @if (canManageOperators)
+                    {
+                        <a class="nav-item @(IsActive("/Administration") ? "active" : null)" aria-label="Administration" aria-current="@(IsActive("/Administration") ? "page" : null)" asp-page="/Administration/Index"><span class="nav-glyph" aria-hidden="true">AD</span><span class="nav-label">Administration</span></a>
+                    }
+                </nav>
+
+                @if (canUseAnalystWorkspaces || canManageOperators)
+                {
+                    <nav class="secondary-nav" aria-label="Operator workspaces">
+                        <span class="rail-section-label">Workspaces</span>
+                        @if (canUseAnalystWorkspaces)
+                        {
+                            <a class="nav-item @(IsActive("/Graphs") ? "active" : null)" aria-label="Investigation graphs" aria-current="@(IsActive("/Graphs") ? "page" : null)" asp-page="/Graphs/Index"><span class="nav-glyph" aria-hidden="true">GR</span><span class="nav-label">Investigation graphs</span></a>
+                            <a class="nav-item @(IsActive("/SocAgent") ? "active" : null)" aria-label="soc-agent" aria-current="@(IsActive("/SocAgent") ? "page" : null)" asp-page="/SocAgent"><span class="nav-glyph analyst" aria-hidden="true">AI</span><span class="nav-label">soc-agent</span></a>
+                        }
+                        @if (canManageOperators)
+                        {
+                            <a class="nav-item @(IsActive("/AuditPolicy") ? "active" : null)" aria-label="Audit policy" aria-current="@(IsActive("/AuditPolicy") ? "page" : null)" asp-page="/AuditPolicy"><span class="nav-glyph" aria-hidden="true">AP</span><span class="nav-label">Audit policy</span></a>
+                        }
+                    </nav>
+                }
+
+                <div class="rail-footer">
+                    <div class="operator-panel" aria-label="Current operator">
+                        <span class="operator-name">@operatorName</span>
+                        <span class="badge role" aria-label="Current role @operatorRole">@operatorRole</span>
+                    </div>
                     <form class="logout" method="post" asp-page="/Logout">
-                        <button type="submit" class="button secondary small">Logout</button>
+                        <button type="submit" class="button secondary small">Sign out</button>
                     </form>
+                    <p class="rail-policy">Server authorization remains authoritative.</p>
                 </div>
             }
-        </div>
-        @if (User.Identity?.IsAuthenticated == true)
-        {
-            <div class="shell-row shell-search-row">
-                <form class="global-search" method="post" asp-page="/Events/Index" asp-page-handler="GlobalSearch" aria-label="Global search">
-                    <label for="global-search-input">Global search</label>
-                    <input id="global-search-input" name="GlobalSearch" maxlength="160" autocomplete="off" inputmode="search" placeholder="Event code, host, agent, or keyword" aria-describedby="global-search-help" />
-                    <button type="submit" class="button">Search</button>
-                    <span id="global-search-help" class="muted">Searches the current bounded event index; unified search is planned.</span>
-                </form>
-                <div class="system-strip" aria-label="System status summary">
-                    <a asp-page="/About"><span class="badge ok">API v1</span></a>
-                    <span class="badge neutral">contracts/v1</span>
-                    <a asp-page="/Agents/Index" asp-route-health="stale"><span class="badge warning">coverage review</span></a>
+        </header>
+
+        <div class="app-workspace">
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <div class="command-bar" role="region" aria-label="Console tools">
+                    <form class="global-search" method="post" asp-page="/Events/Index" asp-page-handler="GlobalSearch" aria-label="Global search">
+                        <label for="global-search-input">Global search</label>
+                        <input id="global-search-input" name="GlobalSearch" maxlength="160" autocomplete="off" inputmode="search" placeholder="Search events, hosts, agents, or event codes" aria-describedby="global-search-help" />
+                        <button type="submit" class="button">Search</button>
+                        <span id="global-search-help" class="visually-hidden">Searches permitted fields in the current bounded event index without placing the query in the URL.</span>
+                    </form>
+                    <div class="system-strip" aria-label="System status summary">
+                        <a asp-page="/About"><span class="badge ok">API v1</span></a>
+                        <span class="badge neutral">contracts/v1</span>
+                        <a asp-page="/Agents/Index" asp-route-health="stale"><span class="badge warning">coverage review</span></a>
+                    </div>
                 </div>
-            </div>
-            <nav class="primary-nav" aria-label="Primary">
-                <a class="nav-item @(IsActive("/Index") ? "active" : null)" aria-current="@(IsActive("/Index") ? "page" : null)" asp-page="/Index"><span aria-hidden="true">01</span> Overview</a>
-                <a class="nav-item @(IsActive("/Events") ? "active" : null)" aria-current="@(IsActive("/Events") ? "page" : null)" asp-page="/Events/Index"><span aria-hidden="true">02</span> Search</a>
-                <a class="nav-item @(IsAnyActive("/Agents", "/AuditPolicy") ? "active" : null)" aria-current="@(IsAnyActive("/Agents", "/AuditPolicy") ? "page" : null)" asp-page="/Agents/Index"><span aria-hidden="true">03</span> Assets</a>
-                <a class="nav-item @(IsActive("/Alerts") ? "active" : null)" aria-current="@(IsActive("/Alerts") ? "page" : null)" asp-page="/Alerts/Index"><span aria-hidden="true">04</span> Alerts</a>
-                @if (canUseAnalystWorkspaces)
-                {
-                    <a class="nav-item @(IsActive("/Cases") ? "active" : null)" aria-current="@(IsActive("/Cases") ? "page" : null)" asp-page="/Cases/Index"><span aria-hidden="true">05</span> Cases</a>
-                }
-                <a class="nav-item @(IsActive("/Detections") ? "active" : null)" aria-current="@(IsActive("/Detections") ? "page" : null)" asp-page="/Detections/Index"><span aria-hidden="true">06</span> Detections</a>
-                <a class="nav-item @(IsActive("/Dashboards") ? "active" : null)" aria-current="@(IsActive("/Dashboards") ? "page" : null)" asp-page="/Dashboards/Index"><span aria-hidden="true">07</span> Dashboards</a>
-                <a class="nav-item @(IsActive("/About") ? "active" : null)" aria-current="@(IsActive("/About") ? "page" : null)" asp-page="/About"><span aria-hidden="true">08</span> Health</a>
-                @if (canManageOperators)
-                {
-                    <a class="nav-item @(IsActive("/Administration") ? "active" : null)" aria-current="@(IsActive("/Administration") ? "page" : null)" asp-page="/Administration/Index"><span aria-hidden="true">09</span> Administration</a>
-                }
-            </nav>
-            <nav class="secondary-nav" aria-label="Implemented role-aware workspaces">
-                @if (canUseAnalystWorkspaces)
-                {
-                    <a class="@(IsActive("/Graphs") ? "active" : null)" aria-current="@(IsActive("/Graphs") ? "page" : null)" asp-page="/Graphs/Index">Investigation graphs</a>
-                    <a class="@(IsActive("/SocAgent") ? "active" : null)" aria-current="@(IsActive("/SocAgent") ? "page" : null)" asp-page="/SocAgent">soc-agent</a>
-                }
-                @if (canManageOperators)
-                {
-                    <a class="@(IsActive("/AuditPolicy") ? "active" : null)" aria-current="@(IsActive("/AuditPolicy") ? "page" : null)" asp-page="/AuditPolicy">Audit policy</a>
-                }
-                <span class="muted">UI hiding is not an authorization boundary; server policies remain authoritative.</span>
-            </nav>
-        }
-    </header>
-    <main id="main-content" class="@mainClass" tabindex="-1">
-        @RenderBody()
-    </main>
+            }
+
+            <main id="main-content" class="@mainClass" tabindex="-1">
+                @RenderBody()
+            </main>
+        </div>
+    </div>
     <script src="~/js/design-system.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>

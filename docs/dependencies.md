@@ -27,6 +27,7 @@ The project should remain open-source and custom-built.
 | xUnit.net | Unit test framework | Apache 2.0, open-source |
 | Microsoft.NET.Test.Sdk | .NET test runner integration | MIT, open-source |
 | Microsoft.AspNetCore.Mvc.Testing | ASP.NET Core web auth/session tests | MIT, open-source |
+| ModelContextProtocol.AspNetCore 1.4.1 | Stateless Streamable HTTP MCP server, tool/resource/prompt discovery, and ASP.NET Core authorization integration | Apache-2.0, open-source official .NET MCP SDK; direct dependency owned by the server project |
 | JsonSchema.Net | Deterministic draft 2020-12 contract-schema and golden-fixture validation in tests | MIT, open-source |
 | Microsoft.Playwright for .NET | Real-application browser release gates for Razor Pages, accessibility, security, and performance validation | Apache 2.0 Playwright project / Microsoft NuGet package; browser binaries are installed explicitly under ignored `.local/release-gates/ms-playwright/` and are not redistributed. |
 

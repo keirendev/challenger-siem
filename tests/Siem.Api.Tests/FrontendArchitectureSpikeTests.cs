@@ -96,9 +96,70 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.DoesNotContain("onclick=", eventDetail, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("innerHTML", designSystemJs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("innerHTML", socAgentJs, StringComparison.OrdinalIgnoreCase);
-        Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(css), 1, 38000);
+        Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(css), 1, 42000);
         Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(designSystemJs), 1, 6000);
         Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(socAgentJs), 1, 45000);
+    }
+
+    [Fact]
+    public void ChallengerOverviewUsesOwnedResponsiveRailAndBoundedRepositoryData()
+    {
+        var root = RepositoryRoot();
+        var layout = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Shared/_Layout.cshtml"));
+        var overview = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Index.cshtml"));
+        var overviewModel = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Index.cshtml.cs"));
+        var css = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/css/site.css"));
+
+        Assert.Contains("class=\"app-frame\"", layout, StringComparison.Ordinal);
+        Assert.Contains("class=\"app-shell\"", layout, StringComparison.Ordinal);
+        Assert.Contains("class=\"command-bar\"", layout, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"soc-agent\"", layout, StringComparison.Ordinal);
+        Assert.Contains("asp-page-handler=\"GlobalSearch\"", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("http://", layout, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("https://", layout, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("DashboardRepository dashboardRepository", overviewModel, StringComparison.Ordinal);
+        Assert.Contains("AlertRepository alertRepository", overviewModel, StringComparison.Ordinal);
+        Assert.Contains("AlertFieldPolicy.Apply", overviewModel, StringComparison.Ordinal);
+        Assert.Contains("GetAggregationsAsync", overviewModel, StringComparison.Ordinal);
+        Assert.Contains("SearchAlertsAsync", overviewModel, StringComparison.Ordinal);
+
+        Assert.Contains("Security overview", overview, StringComparison.Ordinal);
+        Assert.Contains("Recent alerts", overview, StringComparison.Ordinal);
+        Assert.Contains("Events by UTC hour", overview, StringComparison.Ordinal);
+        Assert.Contains("<meter", overview, StringComparison.Ordinal);
+        Assert.Contains("Review cases", overview, StringComparison.Ordinal);
+        Assert.DoesNotContain("incident", overview, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("--bg: #0e1522", css, StringComparison.Ordinal);
+        Assert.Contains("--brand: #8fa0f8", css, StringComparison.Ordinal);
+        Assert.Contains(".app-frame", css, StringComparison.Ordinal);
+        Assert.Contains(".overview-grid", css, StringComparison.Ordinal);
+        Assert.Contains("@media (max-width: 600px)", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AlertDetailPostsBindTheRenderedHiddenAlertIdentifier()
+    {
+        var root = RepositoryRoot();
+        var alertDetail = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/Alerts/Detail.cshtml"));
+        var css = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/css/site.css"));
+        var property = typeof(Challenger.Siem.Api.Pages.Alerts.DetailModel)
+            .GetProperty(nameof(Challenger.Siem.Api.Pages.Alerts.DetailModel.AlertId));
+        var binding = Assert.Single(property!.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.BindPropertyAttribute), inherit: true))
+            as Microsoft.AspNetCore.Mvc.BindPropertyAttribute;
+
+        Assert.NotNull(binding);
+        Assert.Null(binding!.Name);
+        Assert.False(binding.SupportsGet);
+        Assert.DoesNotContain("type=\"hidden\" asp-for=\"AlertId\"", alertDetail, StringComparison.Ordinal);
+        Assert.DoesNotContain("type=\"hidden\" asp-for=\"ExpectedVersion\"", alertDetail, StringComparison.Ordinal);
+        Assert.Contains("type=\"hidden\" name=\"AlertId\" value=\"@Model.AlertId\"", alertDetail, StringComparison.Ordinal);
+        Assert.Contains("type=\"hidden\" name=\"ExpectedVersion\" value=\"@Model.ExpectedVersion\"", alertDetail, StringComparison.Ordinal);
+        Assert.Contains(
+            "input[type=\"checkbox\"],\ninput[type=\"radio\"] {\n    width: auto;\n    flex: none;\n}",
+            css,
+            StringComparison.Ordinal);
     }
 
     [Fact]

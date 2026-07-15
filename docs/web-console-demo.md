@@ -1,6 +1,8 @@
-# Sanitized web-console demo
+# Web-console visual capture guide
 
-This page is a public-safe visual guide to the web review console. Every screenshot and text wireframe referenced by this page must be generated from synthetic demo data, not from real endpoint telemetry. The mature console information architecture, target page map, accessibility requirements, and sanitized text wireframes live in [web.md](web.md).
+This page defines the public-safe capture and validation contract for web-console visuals. The current console information architecture, page map, accessibility requirements, and text wireframes live in [web.md](web.md).
+
+No screenshot gallery is claimed as current for version 1.6.0. The prior captures predate the refreshed navigation rail and security overview, so they were removed. Replacement screenshots may be published only after the current real application passes synthetic browser E2E and every selected image is inspected under the rules below. Until then, tests and [web.md](web.md) are the authoritative description of implemented behavior.
 
 ## Screenshot and wireframe data contract
 
@@ -12,78 +14,6 @@ Tracked screenshots and documentation wireframes must satisfy all of these rules
 - Browser page screenshots only; crop or capture the page viewport so browser chrome, bookmarks, extension icons, OS menu bars, local account names, local paths, window titles with private text, and desktop notifications are absent.
 - Text wireframes must be hand-authored synthetic product examples. Do not paste real output and then sanitize it.
 - Raw API responses, cookie jars, Playwright traces, videos, temporary screenshots, browser caches, and logs stay under ignored `.local/` paths.
-
-The current gallery uses a synthetic agent similar to `issue-147-demo-agent` on `DEMO-WIN11` with a synthetic System event, source-health heartbeat, and investigation graph. Future gallery refreshes should align route captions with the role-aware Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration shell in [web.md](web.md#current-route-map) while clearly labelling disabled planned affordances and unimplemented IA wireframes as specification sketches rather than current UI.
-
-## Gallery
-
-### Login
-
-The login page is captured with empty username and password fields so no operator identity or credential is visible.
-
-![Operator login page with empty username and password fields](assets/web-console/login.png)
-
-### Overview
-
-The overview dashboard summarizes active/recent/stale/retired agents, queue observations, recent ingest volume, and lifecycle guidance without listing hostnames.
-
-![Dashboard metrics with synthetic development data](assets/web-console/dashboard.png)
-
-### Assets
-
-The assets inventory screenshot is filtered to the synthetic demo agent so no unrelated hostnames appear. Current captures should include the platform, freshness, coverage, source-issue, pressure, gap, and queue-capacity filters. If captured with a non-admin role, the admin-only cleanup action should appear as an authorization notice rather than a form.
-
-![Agent inventory filtered to a synthetic demo agent](assets/web-console/agents.png)
-
-### Host coverage and source health
-
-The current screenshot uses the synthetic Windows matrix. The same page is now platform-aware and, for synthetic Linux agents, also shows requirement/applicability; missing, unsupported, not-applicable, excepted, disabled, permission-denied, stale, throttled, gap, and error state guidance; queue/resource/source rate/lag/checkpoint and retention/capacity metrics; and bounded role-redacted inventory/posture changes without exposing telemetry.
-
-![Host coverage detail for a synthetic demo agent](assets/web-console/agent-detail.png)
-
-### Search
-
-Event search is filtered to the synthetic demo agent and unique marker. The current page also includes structured filters, active-scope labels, UTC timeline buckets, saved-search controls, column selection, cursor pagination, and admin-only export confirmation. The shell global-search affordance should be shown as scoped to bounded event search until unified search is implemented.
-
-![Event search results for a synthetic System event](assets/web-console/events.png)
-
-### Event detail
-
-The detail page shows normalized fields, ingest/checkpoint metadata, entity pivots, message text, and role-controlled raw JSON that were all generated from a synthetic payload.
-
-![Event detail page with synthetic normalized fields and raw JSON](assets/web-console/event-detail.png)
-
-### Alerts
-
-The alerts page currently demonstrates the alert review skeleton and empty-state behavior when no synthetic alerts match the selected filter.
-
-![Alerts review skeleton with empty-state handling](assets/web-console/alerts.png)
-
-### Investigation graphs
-
-The graph list and detail screenshots use a synthetic operator-managed graph with demo nodes and an edge.
-
-![Investigation graph list with synthetic graph](assets/web-console/graphs.png)
-
-![Investigation graph detail with synthetic nodes and relationship](assets/web-console/graph-detail.png)
-
-### soc-agent workspace
-
-The `soc-agent` screenshot should show the widened live workspace layout with the provider status pill, a synthetic agent context, Recent chats controls, sanitized live tool activity, and only synthetic assistant Markdown/output if a chat response is visible. Do not use real prompts or responses in public screenshots.
-
-![soc-agent workspace with local provider status and live tool activity](assets/web-console/soc-agent.png)
-
-### Audit policy
-
-The audit-policy page demonstrates empty-state handling when no synthetic audit snapshot has been reported.
-
-![Audit policy drift empty-state page](assets/web-console/audit-policy.png)
-
-### Health
-
-The Health/about page shows version, contract version, environment, database connectivity status, and safe lifecycle guidance without secret values.
-
-![System about page with non-sensitive runtime status](assets/web-console/about.png)
 
 ## Regenerating screenshots safely
 
@@ -98,7 +28,7 @@ Use this process whenever web UI changes make the screenshots stale:
    - Send a synthetic heartbeat/source-health payload.
    - Create a synthetic graph through the review API.
 5. Use Playwright or another headless browser to log in with a synthetic operator username/password, navigate the pages, and capture page screenshots. Keep raw traces/videos/temp captures under `.local/`.
-6. Filter data-bearing pages by the synthetic agent ID or unique issue marker.
+6. Filter data-bearing pages by a unique synthetic agent ID such as `demo-agent-001`.
 7. Inspect every selected PNG before staging or committing:
    - No token, cookie, connection string, API credential, enrollment token, per-agent token, provider credential, auth-file path, or generated agent setting.
    - No real hostname, username, IP address, event payload, browser profile, local path, lab telemetry, browser chrome, OS UI, desktop notification, extension icon, bookmark, or local account name.
@@ -107,9 +37,9 @@ Use this process whenever web UI changes make the screenshots stale:
 8. Save selected images under `docs/assets/web-console/` with stable descriptive names and update this page if routes, navigation labels, captions, or target IA wireframes change.
 9. Run a local markdown link/image check and browser E2E validation for the affected web paths. For docs-only IA changes, run link/safety checks and record the design-review evidence instead of regenerating screenshots.
 
-## Browser E2E coverage used for this gallery
+## Required browser E2E coverage before publishing a gallery
 
-The gallery was validated with a headless browser against the real redesigned app and covered:
+Before adding current screenshots, validate the real application with a headless browser and cover:
 
 - `/login` unauthenticated page and successful login redirect.
 - Dashboard `/`.
@@ -121,4 +51,4 @@ The gallery was validated with a headless browser against the real redesigned ap
 - Logout and unauthenticated redirect/denial behavior.
 - Responsive-width smoke coverage, visible focus behavior, active/disabled role-aware navigation state, forbidden-state behavior, global event-search POST behavior, CSP-compatible owned JavaScript loading, and lightweight CSS/page budget checks.
 
-See [web.md](web.md) for page behavior and [contributors.md](contributors.md#documentation-maintenance-checklist) for the screenshot maintenance checklist.
+Do not describe this gate as passed until the private synthetic run has completed. See [web.md](web.md) for page behavior and [contributors.md](contributors.md#documentation-maintenance-checklist) for the screenshot maintenance checklist.

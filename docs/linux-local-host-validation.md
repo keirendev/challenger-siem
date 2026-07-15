@@ -239,15 +239,11 @@ Generated configs/logs/queues/raw telemetry/screenshots/benchmarks tracked: no
 - Reason: <sanitized aggregate reason>
 ```
 
-## Issue-status blocker for this repository change
+## Live validation reporting
 
-No live Linux systemd target, maintenance window, or exact host operations are documented in this worktree. Therefore this change does **not** run SSH, WinRM, service commands, outage drills, database restarts, journal rotation, permission changes, pressure tests, L1 soak, L2 soak, or L3 collection. The live-soak execution remains a private operator blocker until an authorized target/window and exact operations are supplied.
+Run live validation only for an explicitly authorized target, time window, telemetry level, and operation list. A missing approval or a recovery drill that would change system, service, database, journal, permission, pressure, or host-policy state must be reported as `blocked` or `not run`; never infer a pass from unit, smoke, or synthetic checks.
 
-Repository completion for the documentation slice is satisfied by publishing this sanitized runbook/template, cross-linking it from the docs set, preserving `/api/v1` and `contracts/v1`, and validating repository safety without private evidence.
-
-## Versioning decision
-
-This runbook is docs-only validation guidance. It introduces no runtime behavior, API route, schema contract, agent configuration default, package artifact, generated settings, or host-policy mutation. Per [versioning.md](versioning.md), no `VERSION` bump and no new API/contract version are required. The changelog may record the operator-visible documentation addition under `Unreleased` without changing the project version.
+Private evidence remains operator-held and untracked. Public release notes, issues, and pull requests may contain only the sanitized aggregate template above, without target identity, local paths, command transcripts, raw telemetry, credentials, generated settings, screenshots, or detailed host state.
 
 ## Related documentation
 

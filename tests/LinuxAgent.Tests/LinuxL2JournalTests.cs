@@ -267,6 +267,23 @@ public sealed class LinuxL2JournalTests
     }
 
     [Fact]
+    public async Task RuntimeReportsNullLastEventTimeForUnobservedSources()
+    {
+        using var temporary = new TemporaryState();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.Journal.DeclaredRoles = ["ssh_server"];
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
+        await runtime.InitializeAsync("1.1.0-test", "synthetic-config", default);
+
+        var ssh = Assert.Single(runtime.Snapshot().Health, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+
+        Assert.Null(ssh.LastEventTime);
+        Assert.Null(ssh.LagSeconds);
+        Assert.Null(ssh.SilenceSeconds);
+    }
+
+    [Fact]
     public void RepresentativeL2NormalizationBenchmarkIsBounded()
     {
         var fixtures = FixtureCases().Select(item => item.GetProperty("positive").GetRawText()).ToArray();

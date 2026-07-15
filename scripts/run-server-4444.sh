@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -16,6 +17,6 @@ export ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Development}"
 export ASPNETCORE_URLS="${ASPNETCORE_URLS:-http://0.0.0.0:4444}"
 
 echo "Starting Challenger SIEM API on ${ASPNETCORE_URLS}"
-echo "Windows agents should use ServerBaseUrl: http://192.168.122.1:4444"
+echo "Configure agents with an operator-approved URL that reaches this listener."
 
 dotnet run --project server/Siem.Api --no-launch-profile

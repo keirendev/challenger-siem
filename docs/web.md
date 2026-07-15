@@ -4,7 +4,7 @@ The Challenger SIEM web console is the operator-facing review surface for the in
 
 Current implementation status is called out explicitly. Target sections describe the product contract future Razor Pages or API work must satisfy; they do not claim unimplemented pages or workflows exist today.
 
-For public-safe visual examples, see the [sanitized web-console demo](web-console-demo.md). Demo screenshots, wireframes, seed data, and examples must use synthetic data only.
+For public-safe capture requirements and current screenshot status, see the [web-console visual capture guide](web-console-demo.md). Screenshots, wireframes, seed data, and examples must use synthetic data only.
 
 The selected frontend architecture is enhanced ASP.NET Core/Razor Pages in the existing API process. The measured [frontend architecture ADR](frontend-architecture-adr.md) rejects a separate TypeScript frontend for current high-density search/timeline work because it does not justify the added build, auth/session/CSRF/CSP, protected-field authorization, testing, dependency, and operational cost. Future web work should evolve the active Razor pages in place unless a new ADR passes the documented gates.
 
@@ -17,7 +17,7 @@ Implemented today in the ASP.NET Core API process:
 - Database-backed operator identities, revocable cookie sessions, operator API credentials, antiforgery-protected Razor forms, and role enforcement described in [auth.md](auth.md).
 - Role-aware server-side field policy for events and alerts: admin receives full event raw payload; non-admin roles receive omitted raw payload and redacted sensitive event/alert context.
 - Bounded list pagination and page-size limits for current list pages.
-- A local, no-CDN Challenger SIEM design-system shell with skip link, landmarks, breadcrumbs, role-aware IA navigation, current operator/role/session affordances, bounded global event-search POST, CSP-compatible same-origin CSS/JavaScript, responsive tables, notices, badges, tabs, pagination, empty/error/degraded/unauthorized states, and current navigation.
+- A local, no-CDN Challenger SIEM design-system shell with skip link, landmarks, breadcrumbs, a responsive role-aware navigation rail, command bar, current operator/role/session affordances, bounded global event-search POST, CSP-compatible same-origin CSS/JavaScript, responsive tables, notices, badges, tabs, pagination, and explicit empty/error/degraded/unauthorized states.
 
 Not implemented today and therefore specified as future approved work only:
 
@@ -43,7 +43,7 @@ The mature console should use these top-level sections. Current implemented rout
 | Overview | Start triage, understand current posture, resume work | `/` | Alert/coverage/ingest health summary, assigned cases, high-risk assets, recent signal volume, storage capacity, stale/degraded source notices | Current dashboard subset implemented |
 | Search | Find and pivot across events, alerts, entities, and evidence | `/events`, `/events/detail` | Unified event/entity/timeline search with saved filters, field dictionary, retention labels, redaction notices, and query-cost feedback | Event search implemented; unified search future |
 | Assets | Review hosts, agents, source coverage, inventory, and entity posture | `/agents`, `/agents/detail`, `/audit-policy` | Asset inventory, host coverage, source matrix, queue/pressure, inventory snapshots, role packs, audit-policy drift | Agent/source-health subset implemented |
-| Alerts | Review detection outputs and promote to cases | `/alerts`, `/alerts/detail` | Alert queue, grouping, suppression context, evidence timeline, owner/status transitions, related assets/entities/cases | Review skeleton implemented; triage future |
+| Alerts | Review detection outputs and promote to cases | `/alerts`, `/alerts/detail` | Alert queue, grouping, suppression context, evidence timeline, owner/status transitions, related assets/entities/cases | Alert review and triage implemented; advanced grouping/correlation remains future |
 | Cases | Manage investigations through audited closure | `/cases`, `/cases/detail` | Case queue, assignments, notes, evidence links, related alerts/entities/graphs, severity/status, closure reason, audit trail | Implemented case lifecycle foundation |
 | Detections | Review and engineer detection content | `/detections`, `/api/v1/detections/rules` | Rule catalog, prerequisites, coverage, versions, validation/test metadata, tuning/suppression notes, response guidance, and detection-engineer/admin metadata mutations | Implemented metadata management; arbitrary rule code/backtesting remains out of scope |
 | Dashboards | Monitor saved operating views | `/dashboards`, overview cards on `/` | Bounded server-side event/alert/source-health aggregations, freshness/partial state, accessible chart/table alternatives, saved owner/visibility/version layouts | Implemented bounded dashboards; raw telemetry widgets remain out of scope |
@@ -57,7 +57,7 @@ Navigation order must prioritize active analyst flow: **Overview → Search → 
 | Current page | Role access | Purpose | Notes |
 | --- | --- | --- | --- |
 | `/login` | anonymous | Operator username/password sign-in | Empty fields in public screenshots only. |
-| `/` | authenticated | Overview dashboard metrics | Active/recent/stale/retired agents, ingest volume, queue observations, lifecycle-state guidance. |
+| `/` | authenticated | Security operations overview | Freshness/partial-data state, bounded alert and ingest KPIs, hourly UTC event volume, recent role-filtered alerts, alert workflow counts, source health, agent/gap posture, and managed-storage state. |
 | `/agents` | authenticated view; cleanup admin-only | Assets inventory and non-destructive stale-agent retirement | Filters include platform, registration status/freshness, coverage level, source issue, queue pressure/throttle, gap/drop, and queue-capacity state. Cleanup requires admin permission and checkbox confirmation; non-admins see an authorization notice rather than the action. |
 | `/agents/detail` | authenticated | Asset host coverage/source-health detail | Platform-aware Windows/Linux source matrix, queue/resource/source rate/lag/checkpoint/retention/capacity metrics, explicit missing/unsupported/not-applicable/excepted/disabled/permission-denied/stale/throttled/gap/error states, bounded role-redacted inventory/posture changes, and guidance-only remediation. |
 | `/events` | authenticated | Search / event search | Bounded structured filters, cursor pagination, configurable columns, UTC timeline buckets, saved searches, entity/detail pivots, and admin-only confirmation-gated CSV export. Viewer searches are server-limited to metadata; analysts/detection engineers can use sensitive filters but responses remain redacted unless admin. Shell global search posts here without adding the query to the browser URL. |
@@ -126,8 +126,11 @@ Every protected-field display must include one of these explicit semantics: **sh
 | Managed retention run | current API | Admin/operator-management credential; dry-run first; execute mode bounded and advisory-locked; no arbitrary data deletion. Future UI needs confirmation phrase for execute/emergency modes. |
 | Graph create/update/node/edge/archive/proposal/apply | current | Analyst+ permission, antiforgery/API bearer. Proposal apply requires explicit approval; metadata update uses expected version for conflict handling. Mature UI should add confirmation for archive. |
 | `soc-agent` chat send/cancel/delete/connect | current | Analyst+ permission; chat deletion checkbox; active-run delete returns conflict; provider connect uses server-side OAuth state/PKCE when enabled. |
-| Alert triage/case transition/detection activation/export/response | future | Proposal/preview first, role permission, CSRF-safe mutation, confirmation for destructive/high-risk actions, optimistic concurrency, audit record, bounded result summary. |
-| Case closure | future | Analyst+ or configured closer permission, closure reason, final status, evidence completeness warning, coverage gaps acknowledged, immutable audit trail. |
+| Alert triage and case lifecycle | current | Analyst+ permission, antiforgery, optimistic concurrency, audit, and explicit confirmation for suppression and closure; evidence links are preserved. |
+| Detection metadata enablement/settings | current | Detection-engineer/admin permission, confirmation phrase, expected-version conflict handling, audit, and built-in rule logic only. |
+| Event CSV export | current | Admin permission, explicit confirmation, bounded scope, audit, role filtering, and spreadsheet-injection protection. |
+| Case closure | current | Analyst+ permission, disposition and summary, coverage-gap acknowledgement, explicit confirmation, optimistic concurrency, and immutable audit trail. |
+| Automated response and arbitrary detection logic editing/backtesting | future | Proposal/preview first, least-privilege review, explicit confirmation, validation evidence, rollback plan, audit record, and bounded result summary. |
 
 All unsafe Razor forms require antiforgery. Unsafe `/api` methods must require bearer operator credentials and reject cookie-only authentication to avoid CSRF.
 
@@ -177,7 +180,7 @@ Use `critical`, `high`, `medium`, `low`, and `informational` for alert/case seve
 4. **Detection evaluates** accepted, non-duplicate events only. Alert evidence stores exact event IDs and rule version. Missing/degraded prerequisites lower confidence or suppress evaluation explicitly.
 5. **Alert queue shows** severity, confidence, affected assets/entities, coverage warnings, evidence retention state, owner, status, and first/last seen.
 6. **Analyst pivots** from alert to event detail, asset coverage, related entity timeline, graph context, and `soc-agent` summaries. Pivots preserve filters and show breadcrumb context.
-7. **Case is opened** from one or more alerts (future). Case creation copies bounded metadata and links evidence; raw payload remains linked and role-protected.
+7. **Case is opened** from one or more alerts. The implemented workflow creates bounded case metadata and links alert/evidence identity; raw payload remains linked and role-protected.
 8. **Investigation proceeds** with notes, graph relationships, tasks, timeline, detection/source-health context, and optional `soc-agent` proposal-only assistance.
 9. **Closure requires** final status, disposition, owner, coverage-gap acknowledgement, retained evidence links, no unresolved critical confirmations, and audited closure summary.
 10. **Audit trail records** actor, action, target, outcome, request ID, timestamp, and bounded non-secret metadata. It never records credentials, raw telemetry, command lines, account values, paths, or network values.
@@ -208,7 +211,7 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 - Inventory and posture snapshots must be bounded, time-labelled, role-redacted for non-admins, and displayed as partial evidence rather than complete host truth.
 - Admin stale-agent retirement is non-destructive, confirmation-gated, success/error noticed, and preserves telemetry. No asset or detail UI action mutates host policy.
 
-### 4. Alert-to-case workflow (target)
+### 4. Alert-to-case workflow (current plus target)
 
 - Alert detail shows rule version, severity, confidence, prerequisites, evidence, related entities, source-health gaps, and retention state.
 - Analyst actions: acknowledge, assign owner, change status, link/create case, suppress with reason, mark duplicate/false-positive via disposition, and add case notes.
@@ -217,11 +220,11 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 - Conflict state: stale alert/case version requires reload and displays both attempted and current status.
 - Destructive-risk state: suppression, bulk close, or evidence export requires clear scope, confirmation, and audit.
 
-### 5. Detection workflow (target)
+### 5. Detection workflow (current plus target)
 
 - Detection catalog groups rules by tactic, platform, source prerequisites, coverage level, severity, confidence, and validation status.
 - Rule detail shows version history, required fields, correlation window, suppression keys, false-positive notes, response guidance, coverage impact, and synthetic test fixtures.
-- Draft/edit/backtest/activate are future detection-engineer/admin actions with explicit review, optimistic concurrency, validation evidence, and audit.
+- Detection-engineer/admin operators can update built-in rule enablement, lifecycle, validation status, tuning notes, and suppression notes with explicit confirmation, optimistic concurrency, and audit. Arbitrary rule-logic editing and backtesting remain future work.
 - Missing prerequisite telemetry must be shown before activation and in every alert created by the rule.
 
 ### 6. Health and recovery workflow (current plus target)
@@ -238,11 +241,11 @@ DEMO-WIN11 -> Security 4625 -> user: synthetic-user -> alert auth.bruteforce.dem
 | Page family | Loading | Empty | Error | Unauthorized/forbidden | Stale/degraded/partial | Confirmation/destructive | Success/conflict/offline |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Overview | Metric skeletons; last refresh placeholder | No active alerts/agents with setup links | Safe API/schema/db message | Login/forbidden notice | Stale agents, storage thresholds, source gaps | None today; future bulk actions confirm | Refresh success timestamp; partial cards marked |
-| Search | Filter/result skeleton | Active filters + coverage hints | Query failed without SQL/connection detail | Login/forbidden | Redacted/retention/source-gap labels | Future export confirms scope | Pagination success; offline retry for live updates |
+| Search | Filter/result skeleton | Active filters + coverage hints | Query failed without SQL/connection detail | Login/forbidden | Redacted/retention/source-gap labels | Admin export confirms bounded scope | Pagination/export success; offline retry for live updates |
 | Assets | Table/source matrix skeleton | No agents or no filter matches | Inventory/source-health unavailable | Login/forbidden | Stale/offline/degraded/denied/unsupported/excepted rows | Stale retirement admin checkbox | Retirement success; schema/error retry |
-| Alerts | Queue skeleton | No alerts for filter | Alert schema/load failure | Login/forbidden | Low confidence, missing evidence, retention labels | Future triage/suppress/bulk actions confirm | Future version conflict on status changes |
+| Alerts | Queue skeleton | No alerts for filter | Alert schema/load failure | Login/forbidden | Low confidence, missing evidence, retention labels | Suppress/close confirm; bulk actions remain future | Triage success; expected-version conflict; reopen path |
 | Cases | Queue/timeline skeleton | No cases or no assignments | Case load failure | Login/forbidden | Missing evidence/source gaps | Closure/delete/export confirmations | Version conflict; closure success; reopen path |
-| Detections | Catalog skeleton | No rules or no filter matches | Rule/backtest load failure | Login/forbidden | Missing prerequisites/test failures | Activation/deactivation confirmations | Version conflict; validation success/failure |
+| Detections | Catalog skeleton | No rules or no filter matches | Rule catalog/settings load failure | Login/forbidden | Missing prerequisites/test failures | Metadata enablement/settings confirmation | Version conflict; validation/settings success/failure |
 | Dashboards | Widget skeletons | No widgets/saved views | Widget source failed | Login/forbidden | Partial widgets; stale refresh | Edit/delete confirmations | Save conflict; refresh success |
 | Health | Health-card skeleton | No data yet after setup | Health source failed | Login/forbidden | Stale/degraded/partial/offline | Retention execute/emergency confirms | Recovery success; lock conflict for retention |
 | Administration | Form/table skeletons | No operators/policies beyond bootstrap | Mutation/load failure | Admin-only forbidden | Disabled/locked/expired states | Credential/role/retention confirmations | Success shown once; conflict/validation errors |
@@ -359,8 +362,8 @@ Evidence
 - Event 3af457f2... on DEMO-LNX-02, telemetry_retention_state: telemetry_retained
 - Source linux-ssh status: degraded, silence 600s
 
-Actions (future): [Acknowledge] [Assign] [Create case] [Suppress]
-Create case dialog requires title, owner, severity, linked evidence, and coverage-gap acknowledgement.
+Actions (current): [Acknowledge] [Assign] [Create case] [Suppress] [Close/reopen]
+The current create-case form accepts title and priority and links the source alert. Richer owner/severity/evidence-completeness controls remain target work.
 ```
 
 ### Case closure
@@ -368,12 +371,11 @@ Create case dialog requires title, owner, severity, linked evidence, and coverag
 ```text
 H1 Case CASE-DEMO-0007     status: investigating     owner: analyst-01
 Timeline: alert -> event pivots -> graph notes -> decision
-Closure checklist (future)
-[ ] All high/critical alerts dispositioned
-[ ] Evidence links retained or retention state acknowledged
-[ ] Source gaps reviewed
-[ ] Closure reason selected
-[ ] Summary contains no raw secrets or unbounded telemetry
+Closure controls (current foundation)
+[ ] Disposition and summary supplied
+[ ] Coverage gaps/retention limits acknowledged
+[ ] Explicit audited closure confirmed
+[ ] Optional closure criteria recorded
 [Close case]
 ```
 
@@ -387,7 +389,7 @@ Filters: [Platform linux] [Tactic credential-access] [Status active] [Coverage d
 | process.suspicious-command.demo | high     | sysmon/security     | future draft   | Open |
 
 Rule detail shows prerequisites, fields, suppression keys, false-positive notes, and response guidance.
-Activation/editing remains future detection-engineer/admin workflow.
+Detection-engineer/admin operators can update built-in rule enablement and lifecycle/validation/tuning/suppression metadata. Arbitrary rule-logic editing and backtesting remain future work.
 ```
 
 ## Accessibility requirements (WCAG 2.2 AA)
@@ -512,7 +514,7 @@ Manual path:
 
 When a change affects Razor Pages, web auth/session/CSRF/cookies, review-console routes or view models, web smoke scripts, `docs/web.md`, `docs/web-console-demo.md`, or user-visible browser behavior:
 
-- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright, pi_browser, or equivalent browser validation for visual/interactive changes. For release readiness, use `./scripts/release-gates.sh run` so validation uses PostgreSQL-backed synthetic data rather than mocked page-only HTML.
+- Run browser E2E against the real app when implementation changes occur; curl/API/HTML checks can supplement but do not replace Playwright or equivalent browser validation for visual/interactive changes. For release readiness, use `./scripts/release-gates.sh run` so validation uses PostgreSQL-backed synthetic data rather than mocked page-only HTML.
 - For docs-only IA/specification updates, perform a design review against this document, [challenger-family-alignment.md](challenger-family-alignment.md), [auth.md](auth.md), [api.md](api.md), [schema.md](schema.md), current Razor Pages/API source, and synthetic representative data.
 - Update the [web-console demo](web-console-demo.md) text or screenshots if page layout, navigation, filters, wireframes, or visible data expectations change.
 - Regenerate screenshots only from synthetic data and inspect them for tokens, cookies, connection strings, real host/user identifiers, private lab telemetry, browser profile names, browser/OS chrome, local paths, window titles with private data, and raw API responses before staging.

@@ -6,7 +6,7 @@ Endpoint agents and human operators never share credentials or authentication co
 
 - `X-Enrollment-Token` is used only to register an endpoint.
 - Per-agent bearer tokens are issued at registration, stored hashed by the server, and authorize only that agent's ingest, heartbeat, and inventory routes.
-- Operators authenticate with a database identity and password for the browser, or a separately rotated operator API credential for review API automation. Operator credentials cannot call agent transport routes and agent credentials cannot call operator routes.
+- Operators authenticate with a database identity and password for the browser, or a separately rotated operator API credential for review API and MCP automation. Operator credentials cannot call agent transport routes and agent credentials cannot call operator or MCP routes.
 
 ## Operator roles
 
@@ -21,6 +21,8 @@ Roles are exact, single-valued assignments:
 | Agent retirement, operator management, storage accounting, full raw fields | no | no | no | yes |
 
 Authorization is checked in endpoint/Razor handlers and mutation boundaries. Event repositories apply field policy before API or Razor serialization: non-admin responses omit raw payloads and redact event text, command lines, account names/identifiers, paths/registry data, and network addresses/ports. UI visibility is not an authorization control.
+
+The `/mcp` Streamable HTTP endpoint additionally requires a bearer-authenticated operator with sensitive-review permission, so viewer credentials and browser cookies are insufficient. Its first contract is read-only, while endpoint inventory items remain admin-only. See [MCP server and SIEM-agent integration](mcp.md) for the exact tools, resources, prompts, bounds, and security-audit behavior.
 
 ## Credential and session security
 
@@ -47,6 +49,8 @@ SIEM_OPERATOR_PASSWORD='<private-new-password>' ./scripts/operator-account.sh re
 ```
 
 Rotate an API credential locally with `./scripts/operator-account.sh rotate-api-token --username local-admin`, or call `POST /api/v1/operators/me/api-token/rotate` while authenticated. The credential is shown once, all browser sessions are revoked, and it must be moved directly into an external secret store or ignored local environment. There is no review-token configuration, hidden fallback, default account, or production bootstrap endpoint.
+
+The same operator API credential may authenticate an approved MCP client, but it must not be embedded in a tracked MCP configuration file. Prefer a client secret store or an ignored local environment/configuration file and use the least-privileged analyst role unless an admin-only inventory review is required.
 
 ## Immutable security audit
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -231,10 +232,10 @@ PY
 }
 
 seed_api_data() {
-  python3 - "$RUN_ID" "$AGENT_ID" "$HOSTNAME" "$EVENT_COUNT" > "$ARTIFACT_DIR/registration.json" <<'PY'
+  python3 - "$RUN_ID" "$AGENT_ID" "$HOSTNAME" "$EVENT_COUNT" "$PROJECT_VERSION" > "$ARTIFACT_DIR/registration.json" <<'PY'
 import json, sys
-run, agent, host, count = sys.argv[1:5]
-print(json.dumps({"agent_id": agent, "hostname": host, "machine_guid": f"synthetic-{run}", "os_version": "Synthetic Windows 11", "agent_version": "1.5.0", "platform": "windows"}))
+run, agent, host, count, version = sys.argv[1:6]
+print(json.dumps({"agent_id": agent, "hostname": host, "machine_guid": f"synthetic-{run}", "os_version": "Synthetic Windows 11", "agent_version": version, "platform": "windows"}))
 PY
   curl --silent --fail "$BASE_URL/api/v1/agents/register" \
     -H "X-Enrollment-Token: $ENROLLMENT_TOKEN" \
@@ -299,16 +300,16 @@ PY
     -H 'Content-Type: application/json' \
     --data @"$ARTIFACT_DIR/ingest.json" > "$ARTIFACT_DIR/ingest.response.json"
 
-  python3 - "$AGENT_ID" "$HOSTNAME" > "$ARTIFACT_DIR/heartbeat.json" <<'PY'
+  python3 - "$AGENT_ID" "$HOSTNAME" "$PROJECT_VERSION" > "$ARTIFACT_DIR/heartbeat.json" <<'PY'
 import json, sys
 from datetime import datetime, timezone, timedelta
-agent, host = sys.argv[1:3]
+agent, host, version = sys.argv[1:4]
 now = datetime.now(timezone.utc).replace(microsecond=0)
 def t(delta=0): return (now - timedelta(minutes=delta)).isoformat().replace('+00:00','Z')
 print(json.dumps({
   "agent_id": agent,
   "hostname": host,
-  "agent_version": "1.5.0",
+  "agent_version": version,
   "os": "Synthetic Windows 11",
   "last_event_time": t(1),
   "queue_depth": 3,
@@ -501,6 +502,7 @@ run_release_gates() {
   ENROLLMENT_TOKEN="enroll-${RUN_ID}-not-secret"
   AGENT_ID="release-gate-${RUN_ID}"
   HOSTNAME="SYNTHETIC-RG-HOST"
+  PROJECT_VERSION="$(./scripts/current-version.sh)"
   ADMIN_USERNAME="rg-admin-${RUN_ID}"
   VIEWER_USERNAME="rg-viewer-${RUN_ID}"
   ANALYST_USERNAME="rg-analyst-${RUN_ID}"

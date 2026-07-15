@@ -58,6 +58,7 @@ public sealed class LinuxEnrollmentService(
                 options.DrainBatchSize,
                 options.Inventory,
                 options.Journal,
+                options.SelfIntegrity,
                 options.Queue,
                 options.State
             }

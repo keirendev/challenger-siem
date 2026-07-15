@@ -25,6 +25,9 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         Assert.Contains("target_agents=1", dryRun, StringComparison.Ordinal);
         Assert.Contains("soc_agent_messages=1", dryRun, StringComparison.Ordinal);
         Assert.Contains("investigation_graphs=1", dryRun, StringComparison.Ordinal);
+        Assert.Contains("protected_alert_evidence=1", dryRun, StringComparison.Ordinal);
+        Assert.Contains("protected_alerts=1", dryRun, StringComparison.Ordinal);
+        Assert.Contains("append_only_alert_records_preserved=true", dryRun, StringComparison.Ordinal);
         Assert.DoesNotContain("synthetic message", dryRun, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CLEANUP-SCRIPT-TARGET", dryRun, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", targetAgentId));
@@ -45,7 +48,8 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         Assert.Contains("target_soc_agent_sessions=1", execute, StringComparison.Ordinal);
         Assert.Contains("target_investigation_graphs=1", execute, StringComparison.Ordinal);
 
-        Assert.Equal(0, await CountByTextAsync(dataSource, "agents", "agent_id", targetAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", targetAgentId));
+        Assert.Equal("disabled", await ReadAgentStatusAsync(dataSource, targetAgentId));
         Assert.Equal(0, await CountByTextAsync(dataSource, "events", "agent_id", targetAgentId));
         Assert.Equal(0, await CountByTextAsync(dataSource, "agent_heartbeats", "agent_id", targetAgentId));
         Assert.Equal(0, await CountByTextAsync(dataSource, "source_health", "agent_id", targetAgentId));
@@ -60,6 +64,8 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_edges", "graph_id", target.GraphId.ToString()));
         Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_proposals", "graph_id", target.GraphId.ToString()));
         Assert.Equal(0, await CountByTextAsync(dataSource, "investigation_graph_audit", "graph_id", target.GraphId.ToString()));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "alerts", "agent_id", targetAgentId));
+        Assert.Equal(1, await CountByTextAsync(dataSource, "alert_evidence", "agent_id", targetAgentId));
 
         Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", keepAgentId));
         Assert.Equal(1, await CountByTextAsync(dataSource, "events", "agent_id", keepAgentId));
@@ -89,7 +95,8 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
             "--execute",
             "--confirm",
             "DELETE-SYNTHETIC-DATA");
-        Assert.Contains("target_agents=0", secondRun, StringComparison.Ordinal);
+        Assert.Contains("target_agents=1", secondRun, StringComparison.Ordinal);
+        Assert.Contains("agents_retained_for_alerts=1", secondRun, StringComparison.Ordinal);
         Assert.Equal(1, await CountByTextAsync(dataSource, "agents", "agent_id", keepAgentId));
     }
 
@@ -203,6 +210,13 @@ public sealed class SyntheticDataCleanupScriptTests(IntegrationTestDatabase data
         await using var command = dataSource.CreateCommand($"select count(*) from {tableName} where {columnName}::text = @value;");
         command.Parameters.AddWithValue("value", value);
         return Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+    }
+
+    private static async Task<string?> ReadAgentStatusAsync(NpgsqlDataSource dataSource, string agentId)
+    {
+        await using var command = dataSource.CreateCommand("select status from agents where agent_id = @agent_id;");
+        command.Parameters.AddWithValue("agent_id", agentId);
+        return Convert.ToString(await command.ExecuteScalarAsync(CancellationToken.None));
     }
 
     private static async Task<string> RunCleanupAsync(string connectionString, params string[] arguments)

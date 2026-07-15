@@ -211,6 +211,7 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         var hostname = "SYNTHETIC-LINUX-DETECT";
         await InsertLinuxAgentAsync(dataSource, agentId, hostname);
         await StoreHealthyHeartbeatAsync(dataSource, agentId, hostname, LinuxTelemetrySourceIds.Ssh);
+        await EnableDetectionRuleAsync(dataSource, "auth.bruteforce.linux", 1);
 
         var now = DateTimeOffset.UtcNow;
         var events = Enumerable.Range(0, 5)
@@ -221,7 +222,11 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
                 "failure",
                 now.AddMinutes(-index),
                 sourceIp: "192.0.2.10",
-                targetUser: "synthetic-user"))
+                targetUser: "synthetic-user") with
+            {
+                AgentId = agentId,
+                Hostname = hostname
+            })
             .ToArray();
         var batch = new IngestBatchRequest { AgentId = agentId, BatchId = Guid.NewGuid(), SentAt = now, Events = events };
         var eventRepository = new EventRepository(dataSource);
@@ -389,6 +394,23 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         command.Parameters.AddWithValue("hostname", hostname);
         command.Parameters.AddWithValue("host_id", $"{agentId}-host");
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task EnableDetectionRuleAsync(NpgsqlDataSource dataSource, string ruleId, int version)
+    {
+        await using var command = dataSource.CreateCommand("""
+            insert into detection_rule_management(rule_id, version, enabled, lifecycle_state, validation_status, tuning_notes, suppression_notes, settings_version)
+            values(@rule_id, @version, true, 'active', 'synthetic_passed', '', '', 1)
+            on conflict(rule_id, version) do update
+            set enabled = true,
+                lifecycle_state = 'active',
+                validation_status = 'synthetic_passed',
+                updated_at = now(),
+                settings_version = detection_rule_management.settings_version + 1;
+            """);
+        command.Parameters.AddWithValue("rule_id", ruleId);
+        command.Parameters.AddWithValue("version", version);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     private static async Task StoreHealthyHeartbeatAsync(NpgsqlDataSource dataSource, string agentId, string hostname, string sourceId)

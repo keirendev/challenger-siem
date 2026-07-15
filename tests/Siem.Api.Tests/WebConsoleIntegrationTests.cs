@@ -93,8 +93,10 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Detections", dashboard, StringComparison.Ordinal);
         Assert.Contains("Dashboards", dashboard, StringComparison.Ordinal);
         Assert.Contains("Administration", dashboard, StringComparison.Ordinal);
-        Assert.Contains("aria-disabled=\"true\"", dashboard, StringComparison.Ordinal);
-        Assert.Contains("active agents", dashboard, StringComparison.Ordinal);
+        Assert.Contains("class=\"app-frame\"", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Security overview", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Recent alerts", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Active agents", dashboard, StringComparison.Ordinal);
         Assert.Contains("retired agents", dashboard, StringComparison.Ordinal);
 
         var agents = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(agentId)}");
@@ -127,7 +129,7 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         var events = await GetHtmlAsync(client, $"/events?agent_id={Uri.EscapeDataString(agentId)}&keyword={Uri.EscapeDataString(agentId)}&category=system&limit=10");
         Assert.Contains(agentId, events, StringComparison.Ordinal);
         Assert.Contains("Event results", events, StringComparison.Ordinal);
-        Assert.Contains("Agent:", events, StringComparison.Ordinal);
+        Assert.Contains("agent_id:", events, StringComparison.Ordinal);
         Assert.Contains("WebSmokeProvider", events, StringComparison.Ordinal);
         Assert.Contains("Host time (Pacific Standard Time", events, StringComparison.Ordinal);
 

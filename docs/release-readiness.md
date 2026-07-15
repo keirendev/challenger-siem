@@ -11,6 +11,7 @@ Use this checklist before closing the parent MVP specification issue.
 - [ ] PostgreSQL schema validation passes: `./scripts/validate-schema.sh`.
 - [ ] Fake API smoke passes: `./scripts/smoke-test-server.sh`.
 - [ ] Web console smoke passes: `./scripts/smoke-test-web.sh`.
+- [ ] MCP tests cover bearer-only analyst authorization, discovery, role redaction, admin-only inventory, bounded/proposal-only behavior, and secret-safe audit metadata; see [mcp.md](mcp.md#validation).
 - [ ] Real-app browser/accessibility/security/performance release gates pass against disposable PostgreSQL synthetic data: `./scripts/release-gates.sh install-browsers` then `./scripts/release-gates.sh run`.
 - [ ] Release-gate cleanup is either completed with `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES` or intentionally deferred with the owned state path recorded locally.
 - [ ] Frontend architecture remains consistent with [the Razor-selected ADR](frontend-architecture-adr.md): no rejected prototype, npm toolchain, lockfile, generated static bundle, external CDN/analytics/font dependency, or parallel UI route is included.
@@ -22,7 +23,7 @@ Use this checklist before closing the parent MVP specification issue.
 Record sanitized evidence under ignored `.local/` only:
 
 - [ ] API health from Linux host (`http://127.0.0.1:4444/health`).
-- [ ] API health from authorized Windows VM (`http://192.168.122.1:4444/health`).
+- [ ] API health from the operator-approved Windows lab endpoint at its configured callback URL.
 - [ ] Temporary agent process starts and exits/stops cleanly.
 - [ ] At least one real `System` or `Application` event is ingested and searchable for the unique test agent.
 - [ ] Optional channels are absent/skipped without crashing, or documented if present.
@@ -42,11 +43,12 @@ Record live Linux evidence only under ignored `.local/` or approved target runti
 
 ## Repository hygiene
 
-- [ ] `git status --short --ignored` shows `.local/` including `.local/release-gates/`, `.pi/`, `AGENTS.md`, `bin/`, `obj/`, and `dist/` only as ignored or absent.
+- [ ] `git status --short --ignored` shows local automation state, `.local/` including `.local/release-gates/`, `bin/`, `obj/`, and `dist/` only as ignored or absent.
 - [ ] `git diff --cached --name-status` contains only intended tracked project files.
 - [ ] No secrets, generated agent settings, raw telemetry, logs, dumps, captures, or WinRM credentials are staged.
 - [ ] `VERSION` and `CHANGELOG.md` follow `docs/versioning.md`.
 - [ ] `/api/v1` and `contracts/v1` compatibility is preserved, or a deliberate new version exists.
+- [ ] Tracked MCP client examples contain placeholders only; protocol captures, responses, and credentials remain under ignored `.local/` paths.
 
 ## Child issue disposition
 

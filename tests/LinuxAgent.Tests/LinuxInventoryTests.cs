@@ -45,6 +45,42 @@ public sealed class LinuxInventoryTests
     }
 
     [Fact]
+    public async Task FileSourceReadsSyntheticRegularFileFromSynchronousNativeHandle()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-linux-inventory-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "synthetic-os-release");
+        const string content = "ID=synthetic\nVERSION_ID=1.0\n";
+        await File.WriteAllTextAsync(path, content);
+
+        try
+        {
+            var policy = new InventorySourcePolicy(
+                LinuxInventoryOperation.OsReleaseEtc,
+                InventorySourceKind.File,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                path,
+                TimeSpan.FromSeconds(5),
+                16 * 1024,
+                new HashSet<int>());
+
+            var result = await LinuxInventorySource.ReadFileAsync(policy, default);
+
+            Assert.Equal(InventorySourceState.Success, result.State);
+            Assert.Equal(content, result.Content);
+            Assert.Equal(content.Length, result.FileSize);
+            Assert.False(result.Truncated);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CollectsEveryRequestedCategoryFromSyntheticSources()
     {
         var source = CompleteSource();

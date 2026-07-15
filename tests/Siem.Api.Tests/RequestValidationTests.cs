@@ -3,6 +3,10 @@ using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.State;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Challenger.Siem.Api.Tests;
@@ -179,6 +183,64 @@ public sealed class RequestValidationTests
         Assert.Contains("queue_metrics.pressure_state", errors.Keys);
         Assert.Contains("source_health[0].lag_seconds", errors.Keys);
         Assert.Contains("source_health[0].transition_state", errors.Keys);
+    }
+
+    [Fact]
+    public async Task ValidateHeartbeatAcceptsUnobservedLinuxSourcesWithNullLastEventTime()
+    {
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "challenger-heartbeat-validation-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporaryRoot);
+        try
+        {
+            var statePath = Path.Combine(temporaryRoot, "state.json");
+            var options = new LinuxAgentOptions
+            {
+                AgentId = "linux-synthetic-validation-001",
+                ApiToken = "fake-test-token",
+                ServerBaseUrl = new Uri("https://siem.synthetic"),
+                Journal = new JournalOptions
+                {
+                    TargetCoverageLevel = WindowsCoverageLevel.L2,
+                    DeclaredRoles = ["ssh_server"]
+                },
+                Queue = new QueueOptions { Path = Path.Combine(temporaryRoot, "queue.sqlite") },
+                State = new StateOptions { Path = statePath }
+            };
+            var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(statePath), TimeProvider.System);
+            await runtime.InitializeAsync("1.6.0-test", "synthetic-config", default);
+            var snapshot = runtime.Snapshot();
+            var ssh = Assert.Single(snapshot.Health, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+            Assert.Null(ssh.LastEventTime);
+
+            var heartbeat = new HeartbeatRequest
+            {
+                AgentId = options.AgentId,
+                Hostname = "linux-synthetic",
+                AgentVersion = "1.6.0-test",
+                Os = "Synthetic Linux",
+                Platform = TelemetryPlatforms.Linux,
+                HostId = "synthetic-host-id",
+                LastEventTime = null,
+                QueueDepth = 0,
+                QueueMetrics = new QueueSloMetrics
+                {
+                    QueueDepth = 0,
+                    PoisonDepth = 0,
+                    MaxSizeMb = 1,
+                    WarningSizePercent = 70
+                },
+                SourceManifest = snapshot.Manifest,
+                SourceHealth = snapshot.Health
+            };
+
+            var errors = RequestValidation.ValidateHeartbeat(heartbeat);
+
+            Assert.Empty(errors);
+        }
+        finally
+        {
+            Directory.Delete(temporaryRoot, recursive: true);
+        }
     }
 
     [Fact]

@@ -93,11 +93,18 @@ public sealed class AlertCaseLifecycleTests(IntegrationTestDatabase database)
 
         var alertHtml = await client.GetStringAsync($"/alerts/detail?alert_id={alertId}");
         var token = ExtractRequestVerificationToken(alertHtml);
-        using (var ack = await client.PostAsync($"/alerts/detail?handler=Acknowledge&alert_id={alertId}", new FormUrlEncodedContent(new Dictionary<string, string>
+        using (var ack = await client.PostAsync("/alerts/detail?handler=Acknowledge", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["AlertId"] = alertId.ToString(), ["ExpectedVersion"] = "1", ["__RequestVerificationToken"] = token
         })))
+        {
             Assert.Equal(HttpStatusCode.Redirect, ack.StatusCode);
+            Assert.NotNull(ack.Headers.Location);
+            var acknowledgementRedirect = new Uri(new Uri("https://siem.invalid"), ack.Headers.Location!);
+            var redirectedAlertId = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(acknowledgementRedirect.Query)["alert_id"].FirstOrDefault();
+            Assert.True(Guid.TryParse(redirectedAlertId, out var parsedAlertId));
+            Assert.Equal(alertId, parsedAlertId);
+        }
 
         var acknowledged = await new AlertRepository(dataSource).GetAlertAsync(alertId, CancellationToken.None);
         Assert.Equal("acknowledged", acknowledged!.Status);
@@ -110,7 +117,8 @@ public sealed class AlertCaseLifecycleTests(IntegrationTestDatabase database)
         }));
         Assert.Equal(HttpStatusCode.Redirect, createCase.StatusCode);
         Assert.NotNull(createCase.Headers.Location);
-        var caseIdText = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(createCase.Headers.Location!.Query)["case_id"].FirstOrDefault();
+        var absoluteRedirect = new Uri(new Uri("https://siem.invalid"), createCase.Headers.Location!);
+        var caseIdText = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(absoluteRedirect.Query)["case_id"].FirstOrDefault();
         Assert.True(Guid.TryParse(caseIdText, out var caseId));
 
         var detail = await new CaseRepository(dataSource).GetAsync(caseId, CancellationToken.None);
@@ -150,8 +158,15 @@ public sealed class AlertCaseLifecycleTests(IntegrationTestDatabase database)
         using (var viewerDenied = await PostJsonWithBearerAsync(client, $"/api/v1/alerts/{alertId}/acknowledge", viewerToken, new { expected_version = 1, idempotency_key = "viewer-denied-1" }))
             Assert.Equal(HttpStatusCode.Forbidden, viewerDenied.StatusCode);
 
+        using (var unauthenticatedClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false }))
+        {
+            using var unauthenticated = await unauthenticatedClient.PostAsJsonAsync($"/api/v1/alerts/{alertId}/acknowledge", new { expected_version = 1, idempotency_key = "unauthenticated-1" });
+            Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.StatusCode);
+        }
+
         using (var cookieClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true }))
         {
+            await LoginAsync(cookieClient, $"case-a-{suffix}", "Synthetic-CaseUser1!");
             using var csrfBlocked = await cookieClient.PostAsJsonAsync($"/api/v1/alerts/{alertId}/acknowledge", new { expected_version = 1, idempotency_key = "cookie-block-1" });
             Assert.Equal(HttpStatusCode.BadRequest, csrfBlocked.StatusCode);
         }

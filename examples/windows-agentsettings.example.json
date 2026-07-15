@@ -1,11 +1,11 @@
 {
   "Agent": {
-    "AgentId": "win11-test-001",
-    "ServerBaseUrl": "http://192.168.122.1:4444",
-    "ApiToken": "CHANGE-ME-FROM-REGISTRATION",
+    "AgentId": "demo-agent-001",
+    "ServerBaseUrl": "https://siem.example.invalid",
+    "ApiToken": "<replace-with-private-agent-token>",
     "Enrollment": {
       "Enabled": false,
-      "EnrollmentToken": "CHANGE-ME-ONLY-FOR-FIRST-RUN-ENROLLMENT",
+      "EnrollmentToken": "<replace-only-for-first-run-enrollment>",
       "MachineGuid": null
     },
     "Channels": [

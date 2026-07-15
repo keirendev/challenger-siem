@@ -10,6 +10,7 @@ Linux Endpoint   -> Custom Linux Agent -----> HTTPS Log Ingestion Server
   -> PostgreSQL Event Storage
   -> Search / Review API
   -> Web Review Console
+  -> Authenticated read-only MCP
 ```
 
 ## MVP scope
@@ -36,15 +37,22 @@ Event ingestion
   -> store structured fields and raw JSON
 
 Search/review API
-  -> validate review API token
+  -> validate operator API credential
   -> apply filters
   -> return normalized event envelopes
 
 Web review console
-  -> validate operator API credential on login
-  -> issue HTTP-only operator session cookie
+  -> validate operator identity and password on login
+  -> issue revocable HTTP-only operator session cookie
   -> query PostgreSQL-backed repositories
   -> render dashboard, agent inventory, event search, event detail, and about pages
+
+MCP review
+  -> require Streamable HTTP operator bearer authentication
+  -> enforce analyst-or-higher role and existing field policy
+  -> expose bounded read-only tools/resources and evidence-led prompts
+  -> return citations, truncation/redaction metadata, and untrusted-evidence markers
+  -> append secret-safe per-tool security-audit metadata
 ```
 
 ## Agent flow
@@ -111,7 +119,8 @@ The additive v1 contract represents typed Linux journal, audit, inventory-diff, 
 - Registration returns a per-agent API token.
 - Agent API tokens are stored hashed server-side.
 - Review/search API uses a separate operator API credential for the MVP.
-- Web review login uses the same operator API credential and stores only an HTTP-only session cookie in the browser.
+- Web review login uses an operator username/password and stores only a revocable HTTP-only session cookie in the browser.
+- MCP uses an operator API credential, requires analyst-or-higher access, and exposes no mutating capability; detection guidance is proposal-only.
 - Secrets must not be logged or committed.
 
 

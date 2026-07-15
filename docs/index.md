@@ -18,7 +18,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1 plus opt-in journald L2 security families, planned advanced sources, performance SLOs, benchmarks, and rollout gates.
 - [Linux agent security and privacy design](linux-agent-security.md) - implemented structured journal/inventory controls, threat model, least-privilege boundaries, exclusions, and change approval.
 - [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - selection/defer report for optional audit, eBPF, and file-integrity telemetry; only the explicit-opt-in agent self-integrity snapshot is implemented, while audit/eBPF/broad live FIM remain deferred.
-- [Linux local-host validation runbook](linux-local-host-validation.md) - sanitized rollout validation, aggregate result template, L1/L2 soak gates, recovery drills, L3 guardrails, and live-soak blocker status.
+- [Linux local-host validation runbook](linux-local-host-validation.md) - sanitized rollout validation, aggregate result template, L1/L2 soak gates, authorization-aware recovery drills, L3 guardrails, and public reporting rules.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
@@ -26,6 +26,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 ## Server, APIs, and contracts
 
 - [API contract v1](api.md) - registration, heartbeat, ingest, review search, source-health, telemetry coverage validation, inventory, alerts/detections, graphs, capabilities, and `soc-agent` routes.
+- [MCP server and SIEM-agent integration](mcp.md) - authenticated Streamable HTTP transport, read-only tools/resources, evidence-led prompts, redaction, audit, client setup, and validation.
 - [Linux server-side detections](linux-detections.md) - bounded prerequisite-aware Linux rule metadata, execution, suppression, evidence, and response guidance.
 - [JSON Schema contracts](../contracts/v1/) - external v1 payload schemas.
 - [C# shared contracts](../shared/Contracts/) - in-process contract models used by the agent, server, and tests.
@@ -50,7 +51,7 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 - [Web console product specification](web.md) - current routes, mature IA/page map, role-aware workflows, lifecycle states, sensitive-field rules, accessibility, responsive behavior, and smoke path.
 - [Frontend architecture ADR](frontend-architecture-adr.md) - measured high-density search/timeline spike selecting enhanced ASP.NET Core/Razor Pages as the single active frontend architecture.
-- [Sanitized web-console demo](web-console-demo.md) - screenshot/wireframe gallery, synthetic data rules, leakage inspection, and regeneration checklist.
+- [Web-console visual capture guide](web-console-demo.md) - current screenshot status, synthetic-data rules, leakage inspection, regeneration checklist, and required browser coverage.
 - [Operator runbooks](runbooks.md) - database setup, smoke tests, graph/`soc-agent` use, stale-agent retirement, packaging, and Windows lab E2E.
 - [soc-agent](soc-agent.md) - live workspace, local/external provider model, tools, persistence, citations, and mutation policy.
 

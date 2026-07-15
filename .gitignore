@@ -8,7 +8,7 @@ TestResults/
 coverage/
 dist/
 
-# Local configuration, secrets, and coding-agent state
+# Local configuration, secrets, and automation state
 *.Development.local.json
 *.Production.local.json
 appsettings.*.local.json
@@ -42,8 +42,12 @@ id_rsa*
 id_ed25519*
 .local/
 .pi/
+.mcp/
 AGENTS.md
 secrets.json
+mcp.local.json
+mcp.*.local.json
+mcp-credentials*.json
 
 # Private client/agent collections and exported endpoint data
 collections/
@@ -87,6 +91,8 @@ traces/
 *.dump
 *.trace
 *.diag
+*.trx
+*.sarif
 *.zip
 *.7z
 *.tar
