@@ -122,7 +122,7 @@ Every protected-field display must include one of these explicit semantics: **sh
 | --- | --- | --- |
 | Operator login/logout, failed access, API access, credential/account mutation | current | Security audit entry without secrets; no credential echo. |
 | Create operator, change password, rotate API credential | current | Admin/self authorization as applicable; credentials shown once; sessions revoked. |
-| Retire stale active agents | current | Admin permission, antiforgery, checkbox confirmation, success/empty/error notice; preserves telemetry. |
+| Retire stale active agents | compatibility handler only | Not rendered on the Assets page; the existing admin-authorized, antiforgery-protected handler remains for compatibility and preserves telemetry. |
 | Managed retention run | current API | Admin/operator-management credential; dry-run first; execute mode bounded and advisory-locked; no arbitrary data deletion. Future UI needs confirmation phrase for execute/emergency modes. |
 | Graph create/update/node/edge/archive/proposal/apply | current | Analyst+ permission, antiforgery/API bearer. Proposal apply requires explicit approval; metadata update uses expected version for conflict handling. Mature UI should add confirmation for archive. |
 | `soc-agent` chat send/cancel/delete/connect | current | Analyst+ permission; chat deletion checkbox; active-run delete returns conflict; provider connect uses server-side OAuth state/PKCE when enabled. |
@@ -463,7 +463,7 @@ The console treats agent registration lifecycle as metadata:
 - `stale` is a computed health state for active agents whose `last_seen` is older than `Review:StaleAgentMinutes`.
 - `disabled` registrations are retired records. Agent-token authentication rejects them and default active views hide them, but their row and historical telemetry remain.
 
-The current `/agents` stale-agent cleanup panel previews active candidates older than the stale cutoff and requires admin permission plus confirmation before setting those registrations to `disabled`. It does not delete events, heartbeats, source-health rows, inventory snapshots, alerts, or evidence. Re-enrollment can return an endpoint to `active` through normal registration with a fresh per-agent token.
+The `/agents` page does not render stale-agent cleanup controls. Its status filter still distinguishes active from retired/disabled registrations. The existing admin-authorized, antiforgery-protected retirement handler remains for compatibility; when invoked by an existing client it preserves events, heartbeats, source-health rows, inventory snapshots, alerts, and evidence. Re-enrollment can return an endpoint to `active` through normal registration with a fresh per-agent token.
 
 ## Review settings
 

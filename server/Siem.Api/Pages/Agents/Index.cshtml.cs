@@ -69,11 +69,7 @@ public sealed class IndexModel(
 
     public int LastResultNumber => ((PageNumber - 1) * PageSize) + Agents.Count;
 
-    public StaleAgentCleanupPreview CleanupPreview { get; private set; } = StaleAgentCleanupPreview.Empty;
-
     public string? ErrorMessage { get; private set; }
-
-    public int StaleAgentMinutes => Math.Clamp(reviewOptions.Value.StaleAgentMinutes, 1, 24 * 60);
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
@@ -182,10 +178,6 @@ public sealed class IndexModel(
         try
         {
             var options = reviewOptions.Value;
-            CleanupPreview = await reviewRepository.GetStaleAgentCleanupPreviewAsync(
-                options.StaleAgentAfter,
-                CleanupSampleLimit,
-                cancellationToken);
             var loadedAgents = await reviewRepository.SearchAgentsAsync(
                 new AgentInventoryQuery(Hostname, AgentId, Health, Status, Platform, ParseCoverage(Coverage), SourceIssue, Pressure, Gap, Capacity),
                 options.StaleAgentAfter,

@@ -341,7 +341,9 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains(recentAgentId, defaultInventory, StringComparison.Ordinal);
         Assert.Contains(staleAgentId, defaultInventory, StringComparison.Ordinal);
         Assert.DoesNotContain(disabledAgentId, defaultInventory, StringComparison.Ordinal);
-        Assert.Contains("Eligible active agents", defaultInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("Stale-agent cleanup", defaultInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("Eligible active agents", defaultInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("Retire stale active agents", defaultInventory, StringComparison.Ordinal);
 
         var disabledInventory = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(prefix)}&status=disabled");
         Assert.Contains(disabledAgentId, disabledInventory, StringComparison.Ordinal);

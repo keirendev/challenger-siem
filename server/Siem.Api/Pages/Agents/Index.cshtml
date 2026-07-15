@@ -2,8 +2,6 @@
 @model Agents.IndexModel
 @{
     ViewData["Title"] = "Assets";
-    var cleanupCandidateCount = Model.CleanupPreview.CandidateCount;
-    var canManageAgents = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(User), OperatorPermission.ManageAgents);
 }
 
 <partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("Assets", IsCurrent: true))' />
@@ -12,7 +10,7 @@
     <div>
         <p class="page-kicker">Endpoint operations</p>
         <h1>Assets</h1>
-        <p class="muted">Find unhealthy endpoints, inspect source coverage, and retire stale lab registrations without deleting telemetry.</p>
+        <p class="muted">Find unhealthy endpoints, inspect source coverage, and review active or retired registrations.</p>
     </div>
 </div>
 
@@ -126,74 +124,6 @@
         <a class="button secondary" asp-page="/Agents/Index">Clear</a>
     </div>
 </form>
-
-@if (canManageAgents)
-{
-<section class="card cleanup-panel confirmation-panel" aria-labelledby="cleanup-title">
-    <div class="page-header">
-        <div>
-            <p class="page-kicker">Lifecycle guardrail</p>
-            <h2 id="cleanup-title">Stale-agent cleanup</h2>
-        </div>
-        <span class="badge @(cleanupCandidateCount == 0 ? "ok" : "warning")">@cleanupCandidateCount eligible</span>
-    </div>
-    <p>
-        Cleanup retires stale <strong>active</strong> registrations by setting their status to <code>disabled</code>.
-        It does not delete agent rows, events, heartbeats, source health, inventory snapshots, alerts, or evidence.
-        A re-enrolled endpoint can return to active status through the normal enrollment flow.
-    </p>
-    <dl class="detail-grid">
-        <dt>Stale cutoff</dt>
-        <dd>Last seen more than @Model.StaleAgentMinutes minutes ago</dd>
-        <dt>Eligible active agents</dt>
-        <dd>@cleanupCandidateCount</dd>
-        <dt>Sample candidates</dt>
-        <dd>
-            @if (Model.CleanupPreview.SampleAgentIds.Count == 0)
-            {
-                <span class="muted">None</span>
-            }
-            else
-            {
-                <span>@string.Join(", ", Model.CleanupPreview.SampleAgentIds)</span>
-            }
-        </dd>
-    </dl>
-    <form method="post" asp-page-handler="CleanupStale" class="cleanup-form">
-        <input type="hidden" name="hostname" value="@Model.Hostname" />
-        <input type="hidden" name="agent_id" value="@Model.AgentId" />
-        <input type="hidden" name="health" value="@Model.Health" />
-        <input type="hidden" name="status" value="@Model.Status" />
-        <input type="hidden" name="platform" value="@Model.Platform" />
-        <input type="hidden" name="coverage" value="@Model.Coverage" />
-        <input type="hidden" name="source_issue" value="@Model.SourceIssue" />
-        <input type="hidden" name="pressure" value="@Model.Pressure" />
-        <input type="hidden" name="gap" value="@Model.Gap" />
-        <input type="hidden" name="capacity" value="@Model.Capacity" />
-        <input type="hidden" name="page" value="@Model.PageNumber" />
-        <label class="inline-check">
-            <input type="checkbox" asp-for="ConfirmCleanup" value="true" required />
-            I understand this only retires stale active registrations and preserves telemetry.
-        </label>
-        <div class="actions">
-            @if (cleanupCandidateCount == 0)
-            {
-                <button type="submit" class="danger" disabled>Retire stale active agents</button>
-            }
-            else
-            {
-                <button type="submit" class="danger">Retire stale active agents</button>
-            }
-            <a class="button secondary" asp-page="/Agents/Index" asp-route-health="stale" asp-route-status="active">Review stale active agents</a>
-            <a class="button secondary" asp-page="/Agents/Index" asp-route-status="disabled">Review retired agents</a>
-        </div>
-    </form>
-</section>
-}
-else
-{
-    <partial name="_Notice" model='new NoticeModel("Admin-only lifecycle action", "Stale-agent retirement is hidden for this role. The server still authorizes the cleanup handler, and telemetry is never deleted by this action.", "unauthorized")' />
-}
 
 <section class="table-card" aria-labelledby="agents-results-title">
     <div class="table-title">

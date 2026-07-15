@@ -164,7 +164,7 @@ Do not point retention at non-disposable test databases during validation unless
 
 Use the full reset workflow only when you want a clean, empty Challenger SIEM test environment. Choose the least destructive path:
 
-1. Retire stale active agents in the web UI when you want to keep historical telemetry.
+1. Use the Assets status and freshness filters to review stale or retired registrations without changing them.
 2. Use `./scripts/cleanup-synthetic-data.sh` for allowlisted smoke/lab records.
 3. Use `./scripts/reset-test-environment.sh` only for an operator-owned disposable local database and ignored local artifacts.
 
@@ -223,17 +223,16 @@ Do not use this runbook for endpoint-side cleanup. Windows lab queue/state/confi
 4. If an external ChatGPT/OpenAI provider is selected, confirm `ExternalCallsEnabled` and server-side credentials were configured outside source control before sending sensitive prompts. The primary setup path is subscription OAuth (`SocAgent__AuthMode=SubscriptionOAuth`) with an explicit ignored `SocAgent__SubscriptionAuthFilePath` or the approved server-side connect flow; API-key and delegated API-bearer modes are advanced alternatives. Auth files must stay in `.local/`, an ignored auth-file name, or an operator-managed secret path. If interactive connect is enabled, start it only from the compact `/soc-agent` provider notice; the server uses state/PKCE and writes returned tokens to the configured server-side auth file without rendering them in the browser. If setup is missing, expired, scope-missing, plan-limited, unsupported, refresh-failed, budget-exhausted, or the provider returns an error, use only the setup/connect action shown by the page and the local fallback when enabled. Do not paste provider passwords, API keys, browser cookies, raw auth files, or session tokens into Challenger SIEM.
 5. Keep chat prompts and screenshots that contain real host/user data under ignored local paths only.
 
-## 10. Retire stale lab agents safely
+## 10. Review stale and retired lab agents
 
-Use the web console instead of destructive database deletes when old smoke-test or lab registrations inflate inventory counts:
+The Assets page intentionally does not render stale-agent cleanup controls. Use it to review registration state without mutation:
 
 1. Start the API and sign in to the review console.
-2. Open `/agents` and review the stale-agent cleanup panel. The preview only counts `active` registrations with `last_seen` older than `Review:StaleAgentMinutes`.
-3. Optionally click **Review stale active agents** to inspect candidates.
-4. Confirm the non-destructive cleanup checkbox and click **Retire stale active agents**.
-5. Use the **Retired / disabled** status filter to verify retired registrations. Historical events, heartbeats, source-health rows, inventory snapshots, alerts, and evidence are preserved.
+2. Open `/agents` and select **Stale** under **Freshness** to inspect inactive active registrations.
+3. Select **Retired / disabled** under **Registration status** to review registrations retired by an existing compatible client or prior workflow.
+4. Preserve historical events, heartbeats, source-health rows, inventory snapshots, alerts, and evidence.
 
-Do not hard-delete agent rows or telemetry for local cleanup. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
+Do not hard-delete agent rows or telemetry for local cleanup. Use `./scripts/cleanup-synthetic-data.sh` only for allowlisted synthetic records. A deliberately re-enrolled endpoint returns to `active` through the normal enrollment flow and receives a new per-agent token.
 
 ## 11. Prepare Windows agent package
 
