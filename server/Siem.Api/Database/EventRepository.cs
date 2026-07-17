@@ -146,12 +146,12 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             normalizedParameter.Value = envelope.Normalized is null ? DBNull.Value : JsonSerializer.Serialize(envelope.Normalized, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             command.Parameters.AddWithValue("user_name", DbValue(envelope.Normalized?.UserName));
             command.Parameters.AddWithValue("target_user_name", DbValue(envelope.Normalized?.TargetUserName));
-            command.Parameters.AddWithValue("process_image", DbValue(envelope.Normalized?.ProcessImage));
-            command.Parameters.AddWithValue("process_command_line", DbValue(Truncate(envelope.Normalized?.ProcessCommandLine, 4096)));
-            command.Parameters.AddWithValue("source_ip", DbValue(envelope.Normalized?.SourceIp));
-            command.Parameters.AddWithValue("destination_ip", DbValue(envelope.Normalized?.DestinationIp));
+            command.Parameters.AddWithValue("process_image", DbValue(envelope.Normalized?.ProcessImage ?? envelope.Normalized?.Process?.Executable));
+            command.Parameters.AddWithValue("process_command_line", DbValue(Truncate(envelope.Normalized?.ProcessCommandLine ?? envelope.Normalized?.Process?.CommandLine, 4096)));
+            command.Parameters.AddWithValue("source_ip", DbValue(envelope.Normalized?.SourceIp ?? envelope.Normalized?.Network?.SourceIp));
+            command.Parameters.AddWithValue("destination_ip", DbValue(envelope.Normalized?.DestinationIp ?? envelope.Normalized?.Network?.DestinationIp));
             command.Parameters.AddWithValue("service_name", DbValue(envelope.Normalized?.ServiceName));
-            command.Parameters.AddWithValue("file_path", DbValue(envelope.Normalized?.FilePath));
+            command.Parameters.AddWithValue("file_path", DbValue(envelope.Normalized?.FilePath ?? envelope.Normalized?.File?.Path));
             command.Parameters.AddWithValue("registry_key", DbValue(envelope.Normalized?.RegistryKey));
 
             var result = await command.ExecuteScalarAsync(cancellationToken);
@@ -325,7 +325,41 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return await reader.ReadAsync(cancellationToken) ? ReadEventEnvelope(reader) : null;
     }
 
-    public async Task<IReadOnlyList<SavedEventSearchRecord>> ListSavedSearchesAsync(Guid operatorId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<EventEnvelope>> LoadStoredEventsAsync(
+        string agentId,
+        IEnumerable<Guid> eventIds,
+        CancellationToken cancellationToken)
+    {
+        var boundedIds = eventIds.Distinct().Take(ContractLimits.MaxIngestEventsPerBatch).ToArray();
+        if (boundedIds.Length == 0)
+        {
+            return Array.Empty<EventEnvelope>();
+        }
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = SelectEventSql + """
+
+            where agent_id = @agent_id
+              and event_id = any(@event_ids)
+            order by event_time asc, id asc
+            limit @max_events;
+            """;
+        command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("event_ids", boundedIds);
+        command.Parameters.AddWithValue("max_events", ContractLimits.MaxIngestEventsPerBatch);
+
+        var stored = new List<EventEnvelope>(boundedIds.Length);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            stored.Add(ReadEventEnvelope(reader));
+        }
+
+        return stored;
+    }
+
+    public async Task<IReadOnlyList<SavedEventSearchRecord>> ListSavedSearchesAsync(Guid operatorId, string role, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -341,12 +375,12 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(ReadSavedSearch(reader));
+            results.Add(ApplySavedSearchRolePolicy(ReadSavedSearch(reader), role));
         }
         return results;
     }
 
-    public async Task<SavedEventSearchRecord?> GetSavedSearchAsync(Guid id, Guid operatorId, bool canUseShared, CancellationToken cancellationToken)
+    public async Task<SavedEventSearchRecord?> GetSavedSearchAsync(Guid id, Guid operatorId, bool canUseShared, string role, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -360,7 +394,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("operator_id", operatorId);
         command.Parameters.AddWithValue("can_shared", canUseShared);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? ReadSavedSearch(reader) : null;
+        return await reader.ReadAsync(cancellationToken)
+            ? ApplySavedSearchRolePolicy(ReadSavedSearch(reader), role)
+            : null;
     }
 
     public async Task<SavedEventSearchRecord> SaveSearchAsync(SavedEventSearchRequest request, Guid operatorId, string username, bool canShare, CancellationToken cancellationToken, Guid? existingId = null)
@@ -505,15 +541,15 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         AddTextFilter(where, command, "event_action", "action", query.Action, exact: true);
         AddTextFilter(where, command, "normalized_json->>'outcome'", "outcome", query.Outcome, exact: true);
         AddTextFilter(where, command, "user_name", "user_name", query.UserName, exact: false);
-        AddTextFilter(where, command, "process_image", "process_image", query.ProcessImage, exact: false);
-        AddTextFilter(where, command, "process_command_line", "process_command_line", query.ProcessCommandLine, exact: false);
-        AddTextFilter(where, command, "source_ip", "source_ip", query.SourceIp, exact: true);
-        AddTextFilter(where, command, "destination_ip", "destination_ip", query.DestinationIp, exact: true);
-        AddTextFilter(where, command, "normalized_json->>'source_port'", "source_port", query.SourcePort, exact: true);
-        AddTextFilter(where, command, "normalized_json->>'destination_port'", "destination_port", query.DestinationPort, exact: true);
-        AddTextFilter(where, command, "normalized_json->>'protocol'", "protocol", query.Protocol, exact: true);
+        AddFallbackTextFilter(where, command, "process_image", "normalized_json->'process'->>'executable'", "process_image", query.ProcessImage, exact: false);
+        AddFallbackTextFilter(where, command, "process_command_line", "normalized_json->'process'->>'command_line'", "process_command_line", query.ProcessCommandLine, exact: false);
+        AddFallbackTextFilter(where, command, "source_ip", "normalized_json->'network'->>'source_ip'", "source_ip", query.SourceIp, exact: true);
+        AddFallbackTextFilter(where, command, "destination_ip", "normalized_json->'network'->>'destination_ip'", "destination_ip", query.DestinationIp, exact: true);
+        AddFallbackTextFilter(where, command, "normalized_json->>'source_port'", "normalized_json->'network'->>'source_port'", "source_port", query.SourcePort, exact: true);
+        AddFallbackTextFilter(where, command, "normalized_json->>'destination_port'", "normalized_json->'network'->>'destination_port'", "destination_port", query.DestinationPort, exact: true);
+        AddFallbackTextFilter(where, command, "normalized_json->>'protocol'", "normalized_json->'network'->>'protocol'", "protocol", query.Protocol, exact: true);
         AddTextFilter(where, command, "service_name", "service_name", query.ServiceName, exact: false);
-        AddTextFilter(where, command, "file_path", "file_path", query.FilePath, exact: false);
+        AddFallbackTextFilter(where, command, "file_path", "normalized_json->'file'->>'path'", "file_path", query.FilePath, exact: false);
         AddTextFilter(where, command, "registry_key", "registry_key", query.RegistryKey, exact: false);
         AddTextFilter(where, command, "normalized_json->>'package_name'", "package_name", query.PackageName, exact: true);
 
@@ -630,6 +666,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             CreatedBy = ReadNullableString(reader, "owner_username")
         };
     }
+
+    private static SavedEventSearchRecord ApplySavedSearchRolePolicy(SavedEventSearchRecord saved, string role) =>
+        saved with { Query = EventSearchQuery.SavedQueryForRole(saved.Query, role) };
 
     private static string TimeCsv(DateTimeOffset? value) => value?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
 
@@ -806,6 +845,32 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         else
         {
             where.Add($"{column} ilike @{parameterName} escape '\\'");
+            command.Parameters.AddWithValue(parameterName, $"%{EscapeLike(value.Trim())}%");
+        }
+    }
+
+    private static void AddFallbackTextFilter(
+        List<string> where,
+        NpgsqlCommand command,
+        string indexedExpression,
+        string legacyFallbackExpression,
+        string parameterName,
+        string? value,
+        bool exact)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (exact)
+        {
+            where.Add($"({indexedExpression} = @{parameterName} or ({indexedExpression} is null and {legacyFallbackExpression} = @{parameterName}))");
+            command.Parameters.AddWithValue(parameterName, value.Trim());
+        }
+        else
+        {
+            where.Add($"({indexedExpression} ilike @{parameterName} escape '\\' or ({indexedExpression} is null and {legacyFallbackExpression} ilike @{parameterName} escape '\\'))");
             command.Parameters.AddWithValue(parameterName, $"%{EscapeLike(value.Trim())}%");
         }
     }

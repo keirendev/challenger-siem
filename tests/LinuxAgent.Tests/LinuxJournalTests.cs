@@ -18,6 +18,70 @@ namespace Challenger.Siem.LinuxAgent.Tests;
 public sealed class LinuxJournalTests
 {
     [Fact]
+    public void JournalProcessArgumentsKeepBothScopesFixedAndBounded()
+    {
+        var system = LinuxJournalProcessSource.BuildReadStartInfo(
+            "/usr/bin/journalctl", false, null, 500);
+        var systemArguments = system.ArgumentList.ToArray();
+        Assert.Contains("--system", systemArguments);
+        Assert.Equal(1, systemArguments.Count(value => value == "--system"));
+        Assert.Contains("--lines=500", systemArguments);
+        Assert.DoesNotContain(systemArguments, value => value.StartsWith("--after-cursor=", StringComparison.Ordinal));
+
+        var accessible = LinuxJournalProcessSource.BuildReadStartInfo(
+            "/usr/bin/journalctl", true, "s=synthetic;i=42;b=fake", 500);
+        var accessibleArguments = accessible.ArgumentList.ToArray();
+        Assert.DoesNotContain("--system", accessibleArguments);
+        Assert.DoesNotContain("--user", accessibleArguments);
+        Assert.DoesNotContain("--merge", accessibleArguments);
+        Assert.Contains("--after-cursor=s=synthetic;i=42;b=fake", accessibleArguments);
+        Assert.DoesNotContain(accessibleArguments, value => value.StartsWith("--lines=", StringComparison.Ordinal));
+        Assert.All(accessibleArguments, value =>
+        {
+            Assert.DoesNotContain("--directory", value, StringComparison.Ordinal);
+            Assert.DoesNotContain("--file", value, StringComparison.Ordinal);
+            Assert.DoesNotContain("--root", value, StringComparison.Ordinal);
+            Assert.DoesNotContain("--namespace", value, StringComparison.Ordinal);
+        });
+        Assert.False(accessible.UseShellExecute);
+        Assert.True(accessible.RedirectStandardOutput);
+        Assert.True(accessible.RedirectStandardError);
+        Assert.Equal(["LANG", "LC_ALL"], accessible.Environment.Keys.Order(StringComparer.Ordinal).ToArray());
+
+        var probe = LinuxJournalProcessSource.BuildSystemVisibilityProbeStartInfo("/usr/bin/journalctl");
+        Assert.Contains("--system", probe.ArgumentList);
+        Assert.Contains("--output-fields=__CURSOR", probe.ArgumentList);
+        Assert.Contains("--lines=1", probe.ArgumentList);
+        Assert.DoesNotContain("--quiet", probe.ArgumentList);
+
+        Assert.Equal(
+            SystemJournalVisibility.PermissionDenied,
+            LinuxJournalProcessSource.ClassifySystemVisibilityProbe(
+                1,
+                string.Empty,
+                "No journal files were opened due to insufficient permissions."));
+        Assert.Equal(
+            SystemJournalVisibility.PermissionDenied,
+            LinuxJournalProcessSource.ClassifySystemVisibilityProbe(
+                0,
+                "{\"__CURSOR\":\"s=fake\"}",
+                "Hint: You are currently not seeing messages from other users."));
+        Assert.Equal(
+            SystemJournalVisibility.Verified,
+            LinuxJournalProcessSource.ClassifySystemVisibilityProbe(
+                0,
+                "{\"__CURSOR\":\"s=fake\"}",
+                string.Empty));
+        Assert.Equal(
+            SystemJournalVisibility.Unknown,
+            LinuxJournalProcessSource.ClassifySystemVisibilityProbe(0, string.Empty, string.Empty));
+        Assert.True(LinuxJournalProcessSource.DiagnosticIndicatesDefinitePermissionDenial(
+            "No journal files were opened due to insufficient permissions."));
+        Assert.False(LinuxJournalProcessSource.DiagnosticIndicatesDefinitePermissionDenial(
+            "Hint: You are currently not seeing messages from other users."));
+    }
+
+    [Fact]
     public void NormalizationIsBoundedRedactedClassifiedAndServerCompatible()
     {
         var records = FixtureRecords();
@@ -146,6 +210,138 @@ public sealed class LinuxJournalTests
         var failing = new ThrowingQueue();
         await Assert.ThrowsAsync<IOException>(() => Service(failureOptions, new FakeSource(new(JournalReadStatus.Success, [FixtureRecords()[0]])), failureRuntime, failing).CollectOnceAsync(null, default));
         Assert.Null((await failureState.ReadJournalAsync(default)).CollectedCursor);
+    }
+
+    [Fact]
+    public async Task AccessibleScopePreservesCursorAndInvalidCursorResetSurvivesRestart()
+    {
+        using var temporary = new TemporaryPaths();
+        var initialOptions = TestOptions(temporary.Queue, temporary.State);
+        var initialState = new LinuxStateStore(temporary.State);
+        var initialRuntime = Runtime(initialOptions, initialState);
+        await initialRuntime.InitializeAsync("test", "config", default);
+        Assert.True(new LinuxJournalNormalizer().TryNormalize(
+            FixtureRecords()[0], initialOptions, DateTimeOffset.UtcNow, out var record, out _));
+        await initialRuntime.RecordCollectedAsync(record!, default);
+        var originalCursor = initialRuntime.CollectedCursor;
+        Assert.NotNull(originalCursor);
+
+        var expandedOptions = TestOptions(temporary.Queue, temporary.State);
+        expandedOptions.Journal.IncludeAccessibleUserJournals = true;
+        var expandedRuntime = Runtime(expandedOptions, new LinuxStateStore(temporary.State));
+        await expandedRuntime.InitializeAsync("test", "config", default);
+        Assert.Equal(originalCursor, expandedRuntime.CollectedCursor);
+        Assert.Equal("pending_expansion", L1Health(expandedRuntime).Details["scope_transition"]);
+
+        var queue = CreateQueue(temporary.Queue);
+        await queue.InitializeAsync(default);
+        var invalid = new JournalReadResult(
+            JournalReadStatus.InvalidCursor,
+            Array.Empty<string>(),
+            JournalGapKind.InvalidCursor,
+            "journal_cursor_invalid",
+            SystemJournalVisibility.Verified);
+        var resumed = await Service(expandedOptions, new FakeSource(invalid), expandedRuntime, queue)
+            .CollectOnceAsync(originalCursor, default);
+        Assert.Null(resumed);
+        var resetState = await new LinuxStateStore(temporary.State).ReadJournalAsync(default);
+        Assert.Null(resetState.CollectedCursor);
+        Assert.Null(resetState.CollectedEventTime);
+        Assert.Equal(LinuxJournalScopes.AllAccessibleLocal, resetState.ConfiguredScope);
+        Assert.True(resetState.ActiveGap);
+
+        var restarted = Runtime(expandedOptions, new LinuxStateStore(temporary.State));
+        await restarted.InitializeAsync("test", "config", default);
+        Assert.Null(restarted.CollectedCursor);
+        Assert.True(L1Health(restarted).GapDetected);
+        Assert.Equal("invalid_cursor", L1Health(restarted).Details["gap_state"]);
+    }
+
+    [Fact]
+    public async Task Pre19StateKeepsExpansionPendingUntilAReadSucceeds()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.IncludeAccessibleUserJournals = true;
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+
+        await runtime.InitializeAsync("test", "config", default);
+        Assert.Equal("pending_expansion", L1Health(runtime).Details["scope_transition"]);
+        Assert.Null((await state.ReadJournalAsync(default)).ConfiguredScope);
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.Success,
+            Array.Empty<string>(),
+            SystemJournalVisibility: SystemJournalVisibility.Verified));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+        Assert.Equal(LinuxJournalScopes.AllAccessibleLocal, (await state.ReadJournalAsync(default)).ConfiguredScope);
+    }
+
+    [Fact]
+    public async Task ScopeContractionClearsEvidenceThatMayHaveComeFromUserJournals()
+    {
+        using var temporary = new TemporaryPaths();
+        var state = new LinuxStateStore(temporary.State);
+        var observedAt = DateTimeOffset.UtcNow;
+        await state.WriteCollectedJournalAsync(
+            "s=broad;i=1;b=fake",
+            observedAt,
+            default,
+            LinuxTelemetrySourceIds.Privilege,
+            "privilege_escalation",
+            configuredScope: LinuxJournalScopes.AllAccessibleLocal);
+
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        Assert.Equal("pending_contraction", L1Health(runtime).Details["scope_transition"]);
+        Assert.Equal(
+            SourceHealthStatuses.Missing,
+            Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.Privilege).Status);
+
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var persisted = await state.ReadJournalAsync(default);
+        Assert.DoesNotContain(LinuxTelemetrySourceIds.Privilege, persisted.ObservedSourceIds ?? Array.Empty<string>());
+        Assert.False((persisted.ObservedFamilies ?? new Dictionary<string, IReadOnlyList<string>>())
+            .ContainsKey(LinuxTelemetrySourceIds.Privilege));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.Privilege).Status);
+    }
+
+    [Fact]
+    public async Task AccessibleScopeCannotHideMissingSystemJournalVisibility()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.IncludeAccessibleUserJournals = true;
+        var runtime = Runtime(options, new LinuxStateStore(temporary.State));
+        await runtime.InitializeAsync("test", "config", default);
+        Assert.True(new LinuxJournalNormalizer().TryNormalize(
+            FixtureRecords()[0], options, DateTimeOffset.UtcNow, out var record, out _));
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.Success,
+            [FixtureRecords()[0]],
+            SystemJournalVisibility: SystemJournalVisibility.PermissionDenied));
+        await runtime.RecordCollectedAsync(record!, default);
+
+        var denied = L1Health(runtime);
+        Assert.Equal(SourceHealthStatuses.PermissionDenied, denied.Status);
+        Assert.Equal("system_journal_permission_denied", denied.ErrorCode);
+        Assert.Equal(LinuxJournalScopes.AllAccessibleLocal, denied.Details["configured_journal_scope"]);
+        Assert.Equal("permission_denied", denied.Details["system_journal_visibility"]);
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.Success,
+            Array.Empty<string>(),
+            SystemJournalVisibility: SystemJournalVisibility.Verified));
+        var recovered = L1Health(runtime);
+        Assert.Equal(SourceHealthStatuses.Healthy, recovered.Status);
+        Assert.Equal("verified", recovered.Details["system_journal_visibility"]);
     }
 
     [Theory]

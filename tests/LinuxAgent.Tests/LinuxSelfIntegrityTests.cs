@@ -132,11 +132,11 @@ public sealed class LinuxSelfIntegrityTests
     }
 
     [Fact]
-    public void DependenciesDocumentationNamesImplementedSelfIntegrityCollector()
+    public void DependenciesDocumentationNamesImplementedSnapshotCollectors()
     {
         var text = File.ReadAllText(FindRepositoryFile("docs", "dependencies.md"));
 
-        Assert.Contains("implements only the disabled-by-default explicit-opt-in snapshot-based agent self-integrity collector", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("implements disabled-by-default explicit-opt-in snapshot collectors for agent self-integrity and passive process/socket/host-behaviour evidence", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("documentation-only spike", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Adopted as design only", text, StringComparison.OrdinalIgnoreCase);
     }

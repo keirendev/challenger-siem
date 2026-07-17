@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Coverage;
+using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Contracts.V1;
 using Npgsql;
 
@@ -76,20 +77,26 @@ public sealed class TelemetryCoverageRepository(
                 .ToArray();
             var inventory = await LoadInventoryStatusesAsync(agent.AgentId, platform, lookbackStart, cancellationToken);
             var inventoryByType = inventory.ToDictionary(item => item.SnapshotType, StringComparer.OrdinalIgnoreCase);
-            var detectionPrerequisites = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
-                ? Array.Empty<DetectionPrerequisiteTelemetryStatus>()
-                : TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(rules, sourceCoverage, inventoryByType, targetLevel);
+            var linuxPlatform = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase);
+            var platformRules = rules
+                .Where(rule => DetectionRuleCatalog.IsLinuxRule(rule.RuleId) == linuxPlatform)
+                .ToArray();
+            var detectionPrerequisites = TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
+                platformRules,
+                sourceCoverage,
+                inventoryByType,
+                targetLevel);
             var alertStatusCounts = await LoadAlertStatusCountsAsync(agent.AgentId, lookbackStart, cancellationToken);
             var newAlertCount = alertStatusCounts.GetValueOrDefault(AlertStatuses.New);
             var activeGraphCount = await CountActiveGraphsAsync(agent.AgentId, cancellationToken);
-            var expectedSourceCount = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
+            var expectedSourceCount = linuxPlatform
                 ? LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel).Count
                 : WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel).Count;
             var reportedSourceCount = CountReportedSources(sources);
             var sourceStatusCounts = sourceCoverage
                 .GroupBy(source => source.Status, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-            var gaps = BuildGaps(summary, recentEventCount, expectedSourceCount, reportedSourceCount, inventory, detectionPrerequisites);
+            var gaps = BuildGaps(summary, recentEventCount, expectedSourceCount, reportedSourceCount, sourceCoverage, inventory, detectionPrerequisites);
             var pressureState = AgentPressureState(summary.QueueMetrics, sourceCoverage);
             var capacityState = CapacityState(summary.QueueMetrics?.UsedPercent);
 
@@ -451,6 +458,7 @@ public sealed class TelemetryCoverageRepository(
         int recentEventCount,
         int expectedSourceCount,
         int reportedSourceCount,
+        IReadOnlyList<SourceTelemetryCoverage> sources,
         IReadOnlyList<InventoryTelemetryStatus> inventory,
         IReadOnlyList<DetectionPrerequisiteTelemetryStatus> detectionPrerequisites)
     {
@@ -493,6 +501,47 @@ public sealed class TelemetryCoverageRepository(
         if (recentEventCount == 0)
         {
             gaps.Add("No recent normalized events were observed for this agent in the validation lookback.");
+        }
+
+        if (string.Equals(summary.Platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
+            && summary.TargetLevel == WindowsCoverageLevel.L4
+            && summary.CurrentLevel < WindowsCoverageLevel.L4)
+        {
+            var unresolvedRoles = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+                && source.Requirement == SourceRequirementKinds.RoleSpecific
+                && source.Applicability is not SourceApplicabilityStatuses.Applicable and not SourceApplicabilityStatuses.NotApplicable);
+            if (unresolvedRoles > 0)
+            {
+                gaps.Add($"{unresolvedRoles} L4 role-pack applicability decision(s) are unresolved; unknown roles cannot satisfy L4.");
+            }
+
+            var unavailableRoles = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+                && source.Requirement == SourceRequirementKinds.RoleSpecific
+                && source.Applicability == SourceApplicabilityStatuses.Applicable
+                && (!source.Enabled || !string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase)));
+            if (unavailableRoles > 0)
+            {
+                gaps.Add($"{unavailableRoles} applicable L4 role pack(s) are not enabled, fresh, and healthy.");
+            }
+
+            var unavailableMandatory = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+                && source.Requirement == SourceRequirementKinds.Mandatory
+                && (!source.Enabled
+                    || source.Applicability != SourceApplicabilityStatuses.Applicable
+                    || !string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase)));
+            if (unavailableMandatory > 0)
+            {
+                gaps.Add($"{unavailableMandatory} mandatory L4 posture/performance source(s) lack exact healthy current evidence.");
+            }
+
+            var exceptedLower = sources.Count(source => source.CoverageLevel < WindowsCoverageLevel.L4
+                && (source.Requirement == SourceRequirementKinds.Mandatory
+                    || (source.Requirement == SourceRequirementKinds.RoleSpecific && source.Applicability == SourceApplicabilityStatuses.Applicable))
+                && string.Equals(source.Status, SourceHealthStatuses.Excepted, StringComparison.OrdinalIgnoreCase));
+            if (exceptedLower > 0)
+            {
+                gaps.Add($"{exceptedLower} lower-level prerequisite source(s) are excepted; exceptions cannot satisfy strict L4 coverage.");
+            }
         }
 
         var missingInventory = inventory.Count(item => string.Equals(item.Status, SourceHealthStatuses.Missing, StringComparison.OrdinalIgnoreCase));
@@ -538,15 +587,26 @@ public sealed class TelemetryCoverageRepository(
         _ => "normal"
     };
 
-    private static bool HasSourceGap(SourceTelemetryCoverage source) => source.GapCount.GetValueOrDefault() > 0
-        || source.DroppedEvents.GetValueOrDefault() > 0
-        || source.Details.ContainsKey("gap_state");
+    private static bool HasSourceGap(SourceTelemetryCoverage source) => source.HasCheckpointGap;
 
     private static bool HasSourceGap(SourceHealthReport source) => source.GapDetected
         || source.BookmarkGapDetected
-        || source.GapCount.GetValueOrDefault() > 0
-        || source.DroppedEvents.GetValueOrDefault() > 0
-        || source.Details.ContainsKey("gap_state");
+        || source.ClearedDetected
+        || DetailsSignalActiveGap(source.Details)
+        || (!SourceHealthRules.IsSuccessfulPollingSource(source.SourceId)
+            && (source.GapCount.GetValueOrDefault() > 0
+                || source.DroppedEvents.GetValueOrDefault() > 0));
+
+    private static bool DetailsSignalActiveGap(IReadOnlyDictionary<string, string> details) =>
+        DetailIsActive(details, "active_gap")
+        || DetailIsActive(details, "active_bookmark_gap")
+        || (details.TryGetValue("gap_state", out var gapState)
+            && gapState is not null
+            && !new[] { "none", "recovered", "recovered_or_none", "cleared", "healthy" }.Contains(gapState, StringComparer.OrdinalIgnoreCase));
+
+    private static bool DetailIsActive(IReadOnlyDictionary<string, string> details, string key) =>
+        details.TryGetValue(key, out var value)
+        && new[] { "present", "true", "active", "detected" }.Contains(value, StringComparer.OrdinalIgnoreCase);
 
     private static bool IsSourceThrottled(SourceTelemetryCoverage source) => string.Equals(source.TransitionState, HealthTransitionStates.Degraded, StringComparison.OrdinalIgnoreCase)
         || (source.Details.TryGetValue("throttle_state", out var throttleState) && string.Equals(throttleState, "throttled", StringComparison.OrdinalIgnoreCase));
@@ -566,6 +626,7 @@ public sealed class TelemetryCoverageRepository(
         SourceHealthStatuses.Degraded when IsSourceThrottled(source) => "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
         SourceHealthStatuses.Degraded => "Source is degraded or applicability is uncertain; treat telemetry as partial.",
         SourceHealthStatuses.Error => "Collector error, gap, or clear condition requires safe diagnostics; do not clear logs from the console.",
+        _ when recentCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "Source reports a current successful bounded polling observation; no new event was required for readiness.",
         _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
         _ => "Recent source evidence is present."
     };
@@ -580,6 +641,13 @@ public sealed class TelemetryCoverageRepository(
         if (!IsReportedByAgent(source))
         {
             return "Expected source has not been reported by the agent source-health heartbeat.";
+        }
+
+        if (string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase)
+            && recentCount == 0
+            && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId))
+        {
+            return "Source health is healthy and a current successful polling observation is available; the source was quiet in the lookback.";
         }
 
         if (string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase) && recentCount == 0)

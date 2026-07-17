@@ -59,6 +59,8 @@ public sealed class LinuxEnrollmentService(
                 options.Inventory,
                 options.Journal,
                 options.SelfIntegrity,
+                options.PassiveTelemetry,
+                options.L4Telemetry,
                 options.Queue,
                 options.State
             }

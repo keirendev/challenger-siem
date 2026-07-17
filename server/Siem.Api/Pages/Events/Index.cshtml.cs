@@ -156,7 +156,12 @@ public sealed class IndexModel(
         if (!SavedSearchId.HasValue) return;
         var operatorId = OperatorAuthentication.OperatorId(User);
         if (!operatorId.HasValue) return;
-        var saved = await eventRepository.GetSavedSearchAsync(SavedSearchId.Value, operatorId.Value, canUseShared: true, cancellationToken);
+        var saved = await eventRepository.GetSavedSearchAsync(
+            SavedSearchId.Value,
+            operatorId.Value,
+            canUseShared: true,
+            OperatorAuthorization.Role(User)!,
+            cancellationToken);
         if (saved is null)
         {
             ErrorMessage = "Saved search was not found or is not visible to this operator.";
@@ -169,7 +174,9 @@ public sealed class IndexModel(
     private async Task LoadSavedSearchesAsync(CancellationToken cancellationToken)
     {
         var operatorId = OperatorAuthentication.OperatorId(User);
-        SavedSearches = operatorId.HasValue ? await eventRepository.ListSavedSearchesAsync(operatorId.Value, cancellationToken) : Array.Empty<SavedEventSearchRecord>();
+        SavedSearches = operatorId.HasValue
+            ? await eventRepository.ListSavedSearchesAsync(operatorId.Value, OperatorAuthorization.Role(User)!, cancellationToken)
+            : Array.Empty<SavedEventSearchRecord>();
     }
 
     private async Task LoadEventsAsync(CancellationToken cancellationToken)

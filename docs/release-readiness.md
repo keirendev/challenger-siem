@@ -16,6 +16,7 @@ Use this checklist before closing the parent MVP specification issue.
 - [ ] Release-gate cleanup is either completed with `./scripts/release-gates.sh cleanup --state .local/release-gates/<run-id>/state.env --confirm DELETE-RELEASE-GATE-RESOURCES` or intentionally deferred with the owned state path recorded locally.
 - [ ] Frontend architecture remains consistent with [the Razor-selected ADR](frontend-architecture-adr.md): no rejected prototype, npm toolchain, lockfile, generated static bundle, external CDN/analytics/font dependency, or parallel UI route is included.
 - [ ] Windows agent publish succeeds: `./scripts/publish-windows-agent.sh`.
+- [ ] Linux x86-64 and ARM64 portable installer bundles publish from non-symlink absent/empty destinations with `./scripts/publish-linux-agent.sh linux-x64 <ignored-output>` and `./scripts/publish-linux-agent.sh linux-arm64 <ignored-output>`; output is mode 0700, repository-local paths are below ignored `dist/` or `.local/`, and each bundle contains only the self-contained compressed single executable within the enforced 64 MiB cap, lifecycle helper, unit, and placeholder-only synthetic configuration reference.
 - [ ] Copy-ready bundle generation succeeds with an ignored generated settings file.
 
 ## Windows lab evidence
@@ -37,9 +38,13 @@ Record live Linux evidence only under ignored `.local/` or approved target runti
 - [ ] Read-only Linux preflight plan reviewed with no unauthorized host-policy mutation.
 - [ ] L1 24-hour soak is passed or explicitly blocked because no authorized systemd target/window was supplied.
 - [ ] L1+L2 seven-day soak is passed before L2 expansion, or explicitly blocked/deferred with no fabricated evidence.
+- [ ] `IncludeAccessibleUserJournals` remains false unless its high-sensitivity scope, expected volume, existing service-identity visibility, agent-only restart, cursor/gap behavior, plan-hash invalidation, and rollback were explicitly reviewed; post-activation health proves system visibility independently and does not claim historical backfill or scope-only event evidence.
 - [ ] API outage/restart, database restart, agent restart, journal rotation, permission-loss, and disk/queue-pressure recovery checks are passed, blocked for lack of approval, or not applicable with a sanitized reason.
-- [ ] L3 self-integrity remains disabled unless a separate exact approval and plan hash are recorded privately.
+- [ ] L3 self-integrity and passive process/network/behaviour packs remain disabled unless separate exact approvals and matching plan hashes are recorded privately.
+- [ ] L4 remains disabled unless supported roles resolve and the exact private candidate posture baseline and resulting plan hashes are reviewed and match.
+- [ ] Strict L4 is not claimed from synthetic tests or a short rolling window; the private VM canary, no-exception source matrix, role workload/quiet behavior, broader per-collector/outage/recovery benchmark, and rollback evidence have passed.
 - [ ] No raw host telemetry, generated settings, logs, queues, database dumps, screenshots, benchmark output, package lists, host identities, or private paths are tracked.
+- [ ] Published Linux bundles and real mode-0600 agent configurations remain private and ignored; no synthetic-reference configuration is mistaken for deployable credentials.
 
 ## Repository hygiene
 

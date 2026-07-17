@@ -15,10 +15,12 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 - [Architecture](architecture.md) - pipeline, agent/server flow, reliability, and security decisions.
 - [Schema design](schema.md) - PostgreSQL tables, indexes, and schema application/validation.
 - [Windows host full-coverage SIEM specification](windows-host-full-coverage-spec.md) - target coverage model and implementation status.
-- [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1 plus opt-in journald L2 security families, planned advanced sources, performance SLOs, benchmarks, and rollout gates.
-- [Linux agent security and privacy design](linux-agent-security.md) - implemented structured journal/inventory controls, threat model, least-privilege boundaries, exclusions, and change approval.
-- [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - selection/defer report for optional audit, eBPF, and file-integrity telemetry; only the explicit-opt-in agent self-integrity snapshot is implemented, while audit/eBPF/broad live FIM remain deferred.
-- [Linux local-host validation runbook](linux-local-host-validation.md) - sanitized rollout validation, aggregate result template, L1/L2 soak gates, authorization-aware recovery drills, L3 guardrails, and public reporting rules.
+- [Linux host coverage specification](linux-host-coverage-spec.md) - implemented L1/L2 including default system-only and opt-in all-accessible-local journal scope, approval-gated L3/L4 sources, performance SLOs, benchmarks, and rollout gates.
+- [Linux agent security and privacy design](linux-agent-security.md) - implemented structured journal/inventory controls, journal-scope privacy, threat model, least-privilege boundaries, exclusions, and change approval.
+- [Linux L3 telemetry ADR](linux-l3-telemetry-adr.md) - adoption boundaries for approval-gated self-integrity and passive procfs snapshots, with audit/eBPF/broad live FIM still deferred.
+- [Linux passive process, network, and behaviour telemetry](linux-passive-telemetry.md) - approval-gated procfs process/socket snapshots, host-pressure samples, privacy/resource bounds, reliability semantics, and rollout gates.
+- [Linux L4 full-target coverage](linux-l4-coverage.md) - strict policy-posture, rolling-SLO, declared-role journal-pack, approval, and private-VM validation boundary.
+- [Linux local-host validation runbook](linux-local-host-validation.md) - sanitized rollout validation, aggregate result template, L1-L4 soak gates, authorization-aware recovery drills, and public reporting rules.
 - [Specification gap foundations](spec-gap-foundations.md) - implemented SPEC-GAP foundation catalog.
 - [Windows role source-pack designs](windows-role-packs.md) - role-specific source packs and validation ideas.
 - [Security hardening roadmap](security-hardening-roadmap.md) - future RBAC, redaction, mTLS, and tamper-hardening work.
@@ -35,9 +37,11 @@ This directory is the canonical, versioned documentation set for Challenger SIEM
 
 ## Linux endpoint agent
 
-- [Linux agent](linux-agent.md) - L1/L2 journald source catalog, structured normalization, cursor/health semantics, configuration, systemd hardening, lifecycle workflows, and validation.
-- [Linux local-host validation runbook](linux-local-host-validation.md) - non-disruptive preflight, private-evidence handling, L1 24-hour and L1+L2 seven-day soak procedures, recovery checks, rollback, and sanitized aggregate reporting.
-- [Linux server-side detections](linux-detections.md) - authentication abuse, privilege escalation, SSH/process, service/timer, package/security-control, firewall, tamper/source-silence, and self-integrity alert rules.
+- [Linux agent](linux-agent.md) - L1-L4 source catalog, bounded journal scopes, structured normalization, cursor/health semantics, configuration, systemd hardening, lifecycle workflows, and validation.
+- [Linux passive process, network, and behaviour telemetry](linux-passive-telemetry.md) - optional L3 procfs visibility with no audit-rule, eBPF, packet-capture, or host-policy mutation.
+- [Linux L4 full-target coverage](linux-l4-coverage.md) - disabled-by-default posture drift, rolling performance SLOs, and six role-specific journal packs.
+- [Linux local-host validation runbook](linux-local-host-validation.md) - non-disruptive preflight, private-evidence handling, staged L1-L4 soak procedures, recovery checks, rollback, and sanitized aggregate reporting.
+- [Linux server-side detections](linux-detections.md) - authentication abuse, privilege escalation, process/listener/host-pressure, service/timer, package/security-control, firewall, tamper/source-silence, and self-integrity alert rules.
 
 ## Windows endpoint agent
 

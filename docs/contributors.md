@@ -8,7 +8,7 @@ This guide summarizes how to make safe, reviewable project changes. It complemen
 - Prefer C#/.NET for the Windows agent and ASP.NET Core for server/API/web work unless requirements change.
 - Keep `/api/v1` and `contracts/v1/` backward compatible unless the change deliberately introduces a new versioned contract.
 - Treat reliability and security behavior as core functionality: durable queueing, retry/backoff, deduplication, bookmark/state tracking, token handling, and secret-safe logging.
-- Treat implemented Linux L1/inventory and opt-in journald L2 as passive, bounded capabilities. Further work must conform to the [Linux coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md), including the L1 default, benchmark/soak gates, privacy exclusions, and plan-bound approval for host-policy changes.
+- Treat implemented Linux L1/inventory, opt-in journald L2, the disabled-by-default all-accessible-local journal scope, and disabled-by-default snapshot L3 packs as bounded capabilities. Further work must conform to the [Linux coverage specification](linux-host-coverage-spec.md) and [Linux agent security design](linux-agent-security.md), including the system-only/L1 defaults, journal-scope and other privacy exclusions, benchmark/soak gates, and plan-bound approval for L3 collection or host-policy changes.
 - This repository is public. Never commit secrets, real endpoint telemetry, local agent settings, browser cookies, raw event exports, logs, dumps, generated `bin/`, `obj/`, `dist/`, ignored validation artifacts, or local automation state.
 
 ## Local workflow
@@ -59,7 +59,7 @@ Answer this checklist for every pull request and update docs in the same change 
 - Did agent configuration, queue/state behavior, channel coverage, service install assumptions, or Windows permissions change?
 - Do [agent.md](agent.md), [agent-config.md](agent-config.md), validation runbooks, or install/uninstall scripts need updates?
 - Does the Windows lab validation path or callback address change?
-- Does planned Linux work change source levels, privileges, privacy exclusions, performance SLOs, benchmark/soak gates, or rollback behavior in [linux-host-coverage-spec.md](linux-host-coverage-spec.md) or [linux-agent-security.md](linux-agent-security.md)?
+- Does Linux work change source levels, role resolution, plan/baseline approvals, strict L4 semantics, privileges, privacy exclusions, rolling/per-collector SLOs, benchmark/soak gates, or rollback behavior in [linux-host-coverage-spec.md](linux-host-coverage-spec.md), [linux-l4-coverage.md](linux-l4-coverage.md), or [linux-agent-security.md](linux-agent-security.md)?
 
 ### Web console and screenshots
 

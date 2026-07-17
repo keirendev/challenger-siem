@@ -194,6 +194,220 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
+    public void LinuxCoverageAdvancesToL3OnlyWithApplicableHealthyL3Evidence()
+    {
+        var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
+        var reports = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L3)
+            .Select(entry => Report(entry, now))
+            .ToArray();
+        var unavailableL3 = reports
+            .Select(report => report.CoverageLevel == WindowsCoverageLevel.L3
+                ? report with
+                {
+                    Applicability = SourceApplicabilityStatuses.Unknown,
+                    Status = SourceHealthStatuses.Disabled,
+                    Enabled = false,
+                    LastEventTime = null
+                }
+                : report)
+            .ToArray();
+
+        Assert.Equal(
+            WindowsCoverageLevel.L2,
+            TelemetryCoverageEvaluator.CalculateCurrentLevel(
+                unavailableL3,
+                WindowsCoverageLevel.L3,
+                TelemetryPlatforms.Linux));
+
+        var healthyL3 = reports
+            .Select(report => report.CoverageLevel == WindowsCoverageLevel.L3
+                ? report with
+                {
+                    Applicability = SourceApplicabilityStatuses.Applicable,
+                    ApplicabilityReason = null,
+                    Status = SourceHealthStatuses.Healthy,
+                    Enabled = true,
+                    LastEventTime = now
+                }
+                : report)
+            .ToArray();
+
+        Assert.Equal(
+            WindowsCoverageLevel.L3,
+            TelemetryCoverageEvaluator.CalculateCurrentLevel(
+                healthyL3,
+                WindowsCoverageLevel.L3,
+                TelemetryPlatforms.Linux));
+        Assert.Equal(
+            WindowsCoverageLevel.L3,
+            TelemetryCoverageEvaluator.CalculateCurrentLevel(
+                healthyL3,
+                WindowsCoverageLevel.L4,
+                TelemetryPlatforms.Linux));
+    }
+
+    [Fact]
+    public void AgentCoverageReviewExplainsLinuxL3AndPlatformApplicableDetections()
+    {
+        var markup = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Pages", "Agents", "Detail.cshtml"));
+        Assert.Contains("explicit-opt-in L3 sources", markup, StringComparison.Ordinal);
+        Assert.Contains("healthy applicable evidence exists at that level", markup, StringComparison.Ordinal);
+        Assert.Contains("Windows or Linux built-in detection rules", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("Executable built-ins remain Windows-focused", markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PassivePollingFreshnessUsesRecentObservedScanAfterAnEstablishedBaseline()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+
+        foreach (var entry in LinuxTelemetrySourceCatalog.L3Passive)
+        {
+            var report = HealthyPassiveReport(entry, now) with
+            {
+                LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
+                ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+                EventFamilyStatuses = entry.EventFamilies
+                    .Select((family, index) => new
+                    {
+                        Family = family,
+                        Status = index == 0
+                            ? SourceEvidenceStatuses.Observed
+                            : SourceEvidenceStatuses.NotObserved
+                    })
+                    .ToDictionary(item => item.Family, item => item.Status, StringComparer.Ordinal)
+            };
+
+            Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(report, now));
+        }
+    }
+
+    [Fact]
+    public void PassivePollingFreshnessRequiresARecentAgentReportedObservation()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+
+        foreach (var entry in LinuxTelemetrySourceCatalog.L3Passive)
+        {
+            var report = HealthyPassiveReport(entry, now) with
+            {
+                LastEventTime = now,
+                ObservedAt = now.Subtract(TimeSpan.FromDays(2))
+            };
+            Assert.Equal(SourceHealthStatuses.Stale, SourceHealthRules.EffectiveStatus(report, now));
+            Assert.Equal(SourceHealthStatuses.Stale, SourceHealthRules.EffectiveStatus(report with { ObservedAt = null }, now));
+            Assert.Equal(
+                SourceHealthStatuses.Stale,
+                SourceHealthRules.EffectiveStatus(report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1) }, now));
+            Assert.Equal(
+                SourceHealthStatuses.Healthy,
+                SourceHealthRules.EffectiveStatus(report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter) }, now));
+        }
+    }
+
+    [Fact]
+    public void PassivePollingFreshnessRejectsFutureObservationsAndHonorsIdentityCaseDefensively()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L3Passive.First();
+        var report = HealthyPassiveReport(entry, now) with
+        {
+            SourceId = entry.SourceId.ToUpperInvariant(),
+            ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew).AddSeconds(1)
+        };
+
+        Assert.Equal(SourceHealthStatuses.Degraded, SourceHealthRules.EffectiveStatus(report, now));
+        Assert.Equal(
+            SourceHealthStatuses.Healthy,
+            SourceHealthRules.EffectiveStatus(report with { ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew) }, now));
+    }
+
+    [Fact]
+    public void PassivePollingSuccessfulEmptyScanAndRecoveredHistoricalGapRemainHealthy()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+
+        foreach (var entry in LinuxTelemetrySourceCatalog.L3Passive)
+        {
+            var report = HealthyPassiveReport(entry, now) with
+            {
+                LastEventTime = null,
+                ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+                GapCount = 3,
+                GapDetected = false,
+                BookmarkGapDetected = false,
+                EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                    family => family,
+                    _ => SourceEvidenceStatuses.NotObserved,
+                    StringComparer.Ordinal)
+            };
+
+            Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(report, now));
+            Assert.Equal(
+                SourceHealthStatuses.Error,
+                SourceHealthRules.EffectiveStatus(report with { GapDetected = true }, now));
+        }
+    }
+
+    [Fact]
+    public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+        var windows = new SourceHealthReport
+        {
+            SourceId = "security",
+            Platform = TelemetryPlatforms.Windows,
+            SourceKind = TelemetrySourceKinds.WindowsEventLog,
+            DisplayName = "Windows Security",
+            Channel = "Security",
+            CoverageLevel = WindowsCoverageLevel.L2,
+            Status = SourceHealthStatuses.Healthy,
+            Required = true,
+            Requirement = SourceRequirementKinds.Mandatory,
+            Enabled = true,
+            LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
+            ObservedAt = now
+        };
+
+        Assert.Equal(SourceHealthStatuses.Stale, SourceHealthRules.EffectiveStatus(windows, now));
+
+        var linuxJournal = Report(LinuxTelemetrySourceCatalog.L1.Single(), now) with
+        {
+            LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
+            ObservedAt = now
+        };
+        Assert.Equal(SourceHealthStatuses.Stale, SourceHealthRules.EffectiveStatus(linuxJournal, now));
+    }
+
+    [Fact]
+    public void SqlCoverageSummariesRequireTheCanonicalLinuxL3PassiveSet()
+    {
+        var sourceHealth = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "SourceHealthRepository.cs"));
+        var review = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Review", "ReviewRepository.cs"));
+        foreach (var implementation in new[] { sourceHealth, review })
+        {
+            Assert.Contains("LinuxTelemetrySourceCatalog.L3Passive", implementation, StringComparison.Ordinal);
+            Assert.Contains("linux_l3_required_source_ids", implementation, StringComparison.Ordinal);
+            Assert.Contains("linux_l3_required_source_count", implementation, StringComparison.Ordinal);
+            Assert.Contains("count(distinct lower(source_id))", implementation, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Contains("l3_canonical_covered_sources", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("l3_canonical_present_sources", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("l3_canonical_attempted_sources", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("health_with_expected", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("@linux_l3_required_source_count - l3_canonical_present_sources", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("target_scoped_health", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("@target_level = 'L2' and sh.coverage_level in ('L1', 'L2')", sourceHealth, StringComparison.Ordinal);
+        Assert.Contains("linux_l3_canonical_covered_sources", review, StringComparison.Ordinal);
+        Assert.Contains("in_coverage_status_scope", review, StringComparison.Ordinal);
+        Assert.Contains("from source_health attempted_l3", review, StringComparison.Ordinal);
+        Assert.Contains("attempted_l3.enabled or attempted_l3.applicability = 'applicable'", review, StringComparison.Ordinal);
+        Assert.Contains("@linux_l3_required_source_count", review, StringComparison.Ordinal);
+        Assert.Contains("count(distinct lower(source_id))", review, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("greatest(", review, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PortableRequirementAndEvidenceMetadataValidateAdditively()
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
@@ -399,4 +613,23 @@ public sealed class LinuxL2CoverageTests
             Details = new Dictionary<string, string>()
         };
     }
+
+    private static SourceHealthReport HealthyPassiveReport(SourceManifestEntry entry, DateTimeOffset now) =>
+        Report(entry, now) with
+        {
+            Applicability = SourceApplicabilityStatuses.Applicable,
+            ApplicabilityReason = null,
+            Status = SourceHealthStatuses.Healthy,
+            Enabled = true,
+            LastEventTime = now,
+            ObservedAt = now,
+            PrerequisiteStatuses = entry.Prerequisites.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.Satisfied,
+                StringComparer.Ordinal),
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.Observed,
+                StringComparer.Ordinal)
+        };
 }

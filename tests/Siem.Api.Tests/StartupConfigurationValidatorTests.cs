@@ -38,4 +38,24 @@ public sealed class StartupConfigurationValidatorTests
 
         StartupConfigurationValidator.ValidateRequiredConfiguration(configuration);
     }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("501")]
+    [InlineData("not-an-integer")]
+    public void ValidateRequiredConfigurationRejectsUnsafeIngestBatchBounds(string configuredValue)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Database=challenger_siem;Username=siem;Password=redacted",
+                ["Auth:EnrollmentToken"] = "enrollment-token",
+                ["Ingestion:MaxEventsPerBatch"] = configuredValue
+            })
+            .Build();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => StartupConfigurationValidator.ValidateRequiredConfiguration(configuration));
+        Assert.Contains("Ingestion:MaxEventsPerBatch", exception.Message, StringComparison.Ordinal);
+    }
 }

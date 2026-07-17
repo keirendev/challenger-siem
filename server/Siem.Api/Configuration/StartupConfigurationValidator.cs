@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Challenger.Siem.Contracts.V1;
 
 namespace Challenger.Siem.Api.Configuration;
 
@@ -18,6 +19,7 @@ public static class StartupConfigurationValidator
 
         if (missing.Length == 0)
         {
+            ValidateIngestionBounds(configuration);
             return;
         }
 
@@ -25,6 +27,21 @@ public static class StartupConfigurationValidator
             "Missing required Challenger SIEM configuration: "
             + string.Join(", ", missing)
             + ". Set these values with environment variables or an ignored local settings file. Secret values are intentionally not shown.");
+    }
+
+    private static void ValidateIngestionBounds(IConfiguration configuration)
+    {
+        var configured = configuration["Ingestion:MaxEventsPerBatch"];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return;
+        }
+
+        if (!int.TryParse(configured, out var value) || value is < 1 or > ContractLimits.MaxIngestEventsPerBatch)
+        {
+            throw new InvalidOperationException(
+                $"Invalid Challenger SIEM configuration: Ingestion:MaxEventsPerBatch must be between 1 and {ContractLimits.MaxIngestEventsPerBatch}. The configured value is intentionally not shown.");
+        }
     }
 
     private static string? ReadValue(IConfiguration configuration, string key)

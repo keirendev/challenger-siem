@@ -30,6 +30,11 @@ public sealed class LinuxEnrollmentTests
             AgentId = "synthetic-linux-enrollment",
             ServerBaseUrl = new Uri("https://siem.example.invalid"),
             EnrollmentToken = "synthetic-enrollment-token",
+            Journal = new JournalOptions
+            {
+                IncludeAccessibleUserJournals = true,
+                TargetCoverageLevel = WindowsCoverageLevel.L3
+            },
             SelfIntegrity = new SelfIntegrityOptions
             {
                 Enabled = false,
@@ -41,6 +46,41 @@ public sealed class LinuxEnrollmentTests
                 MaxEventsPerScan = 9,
                 CleanupStateOnDisable = true,
                 StatePath = Path.Combine(root, "self-integrity-state.json")
+            },
+            PassiveTelemetry = new PassiveTelemetryOptions
+            {
+                Enabled = false,
+                ApprovedPlanHash = $"sha256:{new string('b', 64)}",
+                StartupDelaySeconds = 8,
+                ProcessPollIntervalSeconds = 18,
+                NetworkPollIntervalSeconds = 19,
+                HostMetricsIntervalSeconds = 61,
+                ScanTimeoutSeconds = 6,
+                QueuePauseDepth = 5432,
+                MaxProcessesPerScan = 1234,
+                MaxSocketsPerScan = 2345,
+                MaxEventsPerScan = 345,
+                MaxProcessReadBytesPerScan = 2 * 1024 * 1024,
+                MaxNetworkReadBytesPerScan = 512 * 1024,
+                MaxCommandLineBytes = 2048,
+                MaxRawEventBytes = 8192,
+                CleanupStateOnDisable = true,
+                StatePath = Path.Combine(root, "passive-state.json")
+            },
+            L4Telemetry = new L4TelemetryOptions
+            {
+                Enabled = false,
+                ApprovedPlanHash = $"sha256:{new string('c', 64)}",
+                ApprovedBaselineHash = $"sha256:{new string('d', 64)}",
+                StartupDelaySeconds = 9,
+                PostureIntervalSeconds = 3600,
+                SloSampleIntervalSeconds = 120,
+                SloWindowMinutes = 20,
+                ScanTimeoutSeconds = 12,
+                QueuePauseDepth = 3210,
+                MaxEventsPerScan = 42,
+                CleanupStateOnDisable = true,
+                StatePath = Path.Combine(root, "l4-state.json")
             },
             State = new StateOptions { Path = statePath },
             Queue = new QueueOptions { Path = Path.Combine(root, "queue.sqlite") }
@@ -73,7 +113,32 @@ public sealed class LinuxEnrollmentTests
             Assert.Equal(9, persisted.GetProperty("MaxEventsPerScan").GetInt32());
             Assert.True(persisted.GetProperty("CleanupStateOnDisable").GetBoolean());
             Assert.Equal(options.SelfIntegrity.StatePath, persisted.GetProperty("StatePath").GetString());
+            var passive = document.RootElement.GetProperty("Agent").GetProperty("PassiveTelemetry");
+            Assert.False(passive.GetProperty("Enabled").GetBoolean());
+            Assert.Equal(options.PassiveTelemetry.ApprovedPlanHash, passive.GetProperty("ApprovedPlanHash").GetString());
+            Assert.Equal(18, passive.GetProperty("ProcessPollIntervalSeconds").GetInt32());
+            Assert.Equal(19, passive.GetProperty("NetworkPollIntervalSeconds").GetInt32());
+            Assert.Equal(61, passive.GetProperty("HostMetricsIntervalSeconds").GetInt32());
+            Assert.Equal(1234, passive.GetProperty("MaxProcessesPerScan").GetInt32());
+            Assert.Equal(2345, passive.GetProperty("MaxSocketsPerScan").GetInt32());
+            Assert.True(passive.GetProperty("CleanupStateOnDisable").GetBoolean());
+            Assert.Equal(options.PassiveTelemetry.StatePath, passive.GetProperty("StatePath").GetString());
+            var l4 = document.RootElement.GetProperty("Agent").GetProperty("L4Telemetry");
+            Assert.False(l4.GetProperty("Enabled").GetBoolean());
+            Assert.Equal(options.L4Telemetry.ApprovedPlanHash, l4.GetProperty("ApprovedPlanHash").GetString());
+            Assert.Equal(options.L4Telemetry.ApprovedBaselineHash, l4.GetProperty("ApprovedBaselineHash").GetString());
+            Assert.Equal(3600, l4.GetProperty("PostureIntervalSeconds").GetInt32());
+            Assert.Equal(120, l4.GetProperty("SloSampleIntervalSeconds").GetInt32());
+            Assert.Equal(20, l4.GetProperty("SloWindowMinutes").GetInt32());
+            Assert.Equal(3210, l4.GetProperty("QueuePauseDepth").GetInt32());
+            Assert.Equal(42, l4.GetProperty("MaxEventsPerScan").GetInt32());
+            Assert.True(l4.GetProperty("CleanupStateOnDisable").GetBoolean());
+            Assert.Equal(options.L4Telemetry.StatePath, l4.GetProperty("StatePath").GetString());
+            var journal = document.RootElement.GetProperty("Agent").GetProperty("Journal");
+            Assert.True(journal.GetProperty("IncludeAccessibleUserJournals").GetBoolean());
+            Assert.Equal(WindowsCoverageLevel.L3.ToString(), journal.GetProperty("TargetCoverageLevel").GetString());
             Assert.Equal(string.Empty, document.RootElement.GetProperty("Agent").GetProperty("EnrollmentToken").GetString());
+            Assert.DoesNotContain("synthetic-enrollment-token", await File.ReadAllTextAsync(configPath), StringComparison.Ordinal);
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(configPath));
         }
         finally

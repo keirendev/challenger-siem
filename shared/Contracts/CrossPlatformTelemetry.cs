@@ -253,6 +253,7 @@ public static class DeterministicEventIdentity
 
 public static class ContractLimits
 {
+    public const int MaxIngestEventsPerBatch = 500;
     public const int RawPayloadMaxUtf8Bytes = 65_536;
     public const int MaxSourceEntries = 100;
     public const int MaxMetadataEntries = 64;

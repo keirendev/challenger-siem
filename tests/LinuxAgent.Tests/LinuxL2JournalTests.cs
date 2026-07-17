@@ -79,11 +79,18 @@ public sealed class LinuxL2JournalTests
     public void JournalConfigurationDefaultsToL1AndBoundsL2Roles()
     {
         var options = TestOptions(WindowsCoverageLevel.L1);
+        Assert.False(options.Journal.IncludeAccessibleUserJournals);
+        Assert.True(options.HasValidJournalBounds());
+        options.Journal.IncludeAccessibleUserJournals = true;
         Assert.True(options.HasValidJournalBounds());
         options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
         options.Journal.DeclaredRoles = ["ssh_server", "bastion"];
         Assert.True(options.HasValidJournalBounds());
         options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L3;
+        Assert.True(options.HasValidJournalBounds());
+        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L4;
+        Assert.True(options.HasValidJournalBounds());
+        options.Journal.DeclaredRoles = [];
         Assert.False(options.HasValidJournalBounds());
         options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
         options.Journal.DeclaredRoles = ["invalid role"];
@@ -230,7 +237,9 @@ public sealed class LinuxL2JournalTests
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
         await runtime.InitializeAsync("1.1.0-test", "synthetic-config", default);
         var l1Snapshot = runtime.Snapshot();
-        Assert.Equal(LinuxTelemetrySourceCatalog.All.Count(item => item.SourceId != LinuxTelemetrySourceIds.AgentSelfIntegrity), l1Snapshot.Manifest.Count);
+        Assert.Equal(
+            LinuxTelemetrySourceCatalog.All.Count(item => item.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit),
+            l1Snapshot.Manifest.Count);
         Assert.All(l1Snapshot.Health.Where(item => item.CoverageLevel == WindowsCoverageLevel.L2 && item.SourceId != LinuxTelemetrySourceIds.AuditFramework),
             item => Assert.Equal(SourceHealthStatuses.Disabled, item.Status));
         Assert.Equal(SourceHealthStatuses.Unsupported,
@@ -259,7 +268,9 @@ public sealed class LinuxL2JournalTests
         Assert.All(denied.PrerequisiteStatuses!.Values, value => Assert.Equal(SourceEvidenceStatuses.PermissionDenied, value));
 
         options.Journal.DeclaredRoles = ["general_server"];
-        var unrelatedRoleRuntime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
+        using var unrelatedState = new TemporaryState();
+        options.State.Path = unrelatedState.Path;
+        var unrelatedRoleRuntime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(unrelatedState.Path), TimeProvider.System);
         await unrelatedRoleRuntime.InitializeAsync("1.1.0-test", "synthetic-config", default);
         var notApplicable = Assert.Single(unrelatedRoleRuntime.Snapshot().Health, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
         Assert.Equal(SourceHealthStatuses.NotApplicable, notApplicable.Status);

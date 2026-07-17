@@ -50,9 +50,11 @@ public sealed record EventSearchQuery
         "event_time", "host", "agent_id", "platform", "source", "provider", "code", "severity", "outcome", "category", "action", "user", "process", "service", "file", "network", "message", "ingest_time", "pivots"
     };
 
-    private static readonly HashSet<string> ProtectedFilterNames = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> ProtectedFilterNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "keyword", "user_name", "process_image", "process_command_line", "source_ip", "destination_ip", "network_ip", "service_name", "file_path", "registry_key", "package_name", "entity_value"
+        "keyword", "user_name", "process_image", "process_command_line", "source_ip", "destination_ip", "network_ip",
+        "source_port", "destination_port", "protocol", "service_name", "file_path", "registry_key", "package_name",
+        "entity_type", "entity_value"
     };
 
     public string? Hostname { get; init; }
@@ -188,6 +190,20 @@ public sealed record EventSearchQuery
             EntityType = null,
             EntityValue = null
         };
+    }
+
+    public static IReadOnlyDictionary<string, string> SavedQueryForRole(
+        IReadOnlyDictionary<string, string> query,
+        string role)
+    {
+        if (Challenger.Siem.Api.Auth.OperatorAuthorization.HasPermission(role, Challenger.Siem.Api.Auth.OperatorPermission.ReviewSensitive))
+        {
+            return new Dictionary<string, string>(query, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return query
+            .Where(item => !ProtectedFilterNames.Contains(item.Key))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<EventSearchFilterSummary> ActiveFilterSummaries()

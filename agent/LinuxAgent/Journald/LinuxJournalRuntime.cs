@@ -1,13 +1,19 @@
 using System.Globalization;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Services;
+using Challenger.Siem.LinuxAgent.L4;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Journal;
 
-public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, LinuxStateStore state, TimeProvider timeProvider)
+public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, LinuxStateStore state, TimeProvider timeProvider) : ILinuxAcknowledgementObserver
 {
+    private static readonly IReadOnlySet<string> AcknowledgedSourceIds = LinuxTelemetrySourceCatalog.All
+        .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
+        .Select(entry => entry.SourceId)
+        .ToHashSet(StringComparer.Ordinal);
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly object sync = new();
     private readonly Dictionary<string, DateTimeOffset> latestBySource = new(StringComparer.Ordinal);
@@ -25,6 +31,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     private string transitionState = HealthTransitionStates.Unknown;
     private string sourceState = "starting";
     private string gapState = "none";
+    private long cumulativeGapCount;
     private long duplicateCount;
     private long reorderedCount;
     private long malformedCount;
@@ -32,12 +39,26 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     private long collectedCount;
     private DateTimeOffset? firstCollectedAt;
     private DateTimeOffset? latestEvent;
+    private DateTimeOffset? lastSuccessfulReadAt;
+    private DateTimeOffset? lastPersistedSuccessfulReadAt;
     private string version = "0.0.0";
     private string configHash = string.Empty;
+    private SystemJournalVisibility systemJournalVisibility = SystemJournalVisibility.Unknown;
+    private string scopeTransition = "steady";
+    private bool clearObservedEvidenceOnScopeApply;
 
     public async Task InitializeAsync(string sourceVersion, string sourceConfigHash, CancellationToken cancellationToken)
     {
         var loaded = await state.ReadJournalAsync(cancellationToken);
+        var configuredScope = LinuxJournalScopes.Configured(options.Journal);
+        var priorScope = loaded.ConfiguredScope ?? LinuxJournalScopes.SystemOnly;
+        scopeTransition = string.Equals(priorScope, configuredScope, StringComparison.Ordinal)
+            ? "steady"
+            : configuredScope == LinuxJournalScopes.AllAccessibleLocal
+                ? "pending_expansion"
+                : "pending_contraction";
+        clearObservedEvidenceOnScopeApply = priorScope == LinuxJournalScopes.AllAccessibleLocal
+            && configuredScope == LinuxJournalScopes.SystemOnly;
         lock (sync)
         {
             checkpoint = loaded;
@@ -49,6 +70,54 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 latestBySource[LinuxTelemetrySourceIds.JournalL1] = loaded.CollectedEventTime.Value;
             }
             sourceState = loaded.CollectedCursor is null ? "empty" : "restarted";
+            lastSuccessfulReadAt = loaded.LastSuccessfulReadAt;
+            lastPersistedSuccessfulReadAt = loaded.LastSuccessfulReadAt;
+            gap = loaded.ActiveGap;
+            gapState = string.IsNullOrWhiteSpace(loaded.GapState) ? "none" : loaded.GapState;
+            cumulativeGapCount = Math.Max(0, loaded.CumulativeGapCount);
+            foreach (var sourceId in loaded.ObservedSourceIds ?? Array.Empty<string>()) observedSources.Add(sourceId);
+            foreach (var pair in loaded.ObservedFamilies ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal))
+                observedFamilies[pair.Key] = pair.Value.ToHashSet(StringComparer.Ordinal);
+        }
+    }
+
+    public async Task PersistInvalidCursorResetAsync(CancellationToken cancellationToken)
+    {
+        string configuredScope;
+        bool activeGap;
+        string currentGapState;
+        long currentGapCount;
+        bool clearObservedEvidence;
+        lock (sync)
+        {
+            configuredScope = LinuxJournalScopes.Configured(options.Journal);
+            activeGap = gap;
+            currentGapState = gapState;
+            currentGapCount = cumulativeGapCount;
+            clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+        }
+        await state.ResetCollectedJournalCursorAsync(
+            configuredScope,
+            activeGap,
+            currentGapState,
+            currentGapCount,
+            clearObservedEvidence,
+            cancellationToken);
+        lock (sync)
+        {
+            if (clearObservedEvidence) ClearObservedEvidence();
+            checkpoint = checkpoint with
+            {
+                CollectedCursor = null,
+                CollectedEventTime = null,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : checkpoint.ObservedFamilies,
+                ConfiguredScope = configuredScope
+            };
+            clearObservedEvidenceOnScopeApply = false;
+            scopeTransition = "reset";
         }
     }
 
@@ -57,10 +126,34 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 
     public async Task RecordCollectedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken)
     {
-        await state.WriteCollectedJournalAsync(record.Cursor, record.Envelope.EventTime, cancellationToken);
+        bool clearObservedEvidence;
+        lock (sync) clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+        await state.WriteCollectedJournalAsync(
+            record.Cursor,
+            record.Envelope.EventTime,
+            cancellationToken,
+            record.Envelope.SourceId,
+            record.EventFamily,
+            record.AdditionalEvidence,
+            gap,
+            gapState,
+            cumulativeGapCount,
+            LinuxJournalScopes.Configured(options.Journal),
+            clearObservedEvidence);
         lock (sync)
         {
-            checkpoint = checkpoint with { CollectedCursor = record.Cursor, CollectedEventTime = record.Envelope.EventTime };
+            if (clearObservedEvidence) ClearObservedEvidence();
+            checkpoint = checkpoint with
+            {
+                CollectedCursor = record.Cursor,
+                CollectedEventTime = record.Envelope.EventTime,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : checkpoint.ObservedFamilies,
+                ConfiguredScope = LinuxJournalScopes.Configured(options.Journal)
+            };
+            clearObservedEvidenceOnScopeApply = false;
             if (latestEvent is null || record.Envelope.EventTime > latestEvent)
             {
                 latestEvent = record.Envelope.EventTime;
@@ -77,6 +170,16 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 observedFamilies[record.Envelope.SourceId!] = families;
             }
             families.Add(record.EventFamily);
+            foreach (var evidence in record.AdditionalEvidence ?? Array.Empty<JournalSourceEvidence>())
+            {
+                observedSources.Add(evidence.SourceId);
+                if (!observedFamilies.TryGetValue(evidence.SourceId, out var additionalFamilies))
+                    observedFamilies[evidence.SourceId] = additionalFamilies = new(StringComparer.Ordinal);
+                additionalFamilies.Add(evidence.EventFamily);
+                if (!latestBySource.TryGetValue(evidence.SourceId, out var additionalLatest)
+                    || record.Envelope.EventTime > additionalLatest)
+                    latestBySource[evidence.SourceId] = record.Envelope.EventTime;
+            }
             collectedCount++;
             firstCollectedAt ??= DateTimeOffset.UtcNow;
             if (status is not SourceHealthStatuses.Healthy)
@@ -88,7 +191,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             status = SourceHealthStatuses.Healthy;
             errorCode = null;
             sourceState = "collecting";
-            permissionDenied = false;
+            permissionDenied = options.Journal.IncludeAccessibleUserJournals
+                && systemJournalVisibility == SystemJournalVisibility.PermissionDenied;
         }
     }
 
@@ -111,12 +215,42 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         }
     }
 
+    public bool HandlesSource(string? sourceId) => sourceId is not null && AcknowledgedSourceIds.Contains(sourceId);
+
+    public void RecordAcknowledgementFailure(IReadOnlyCollection<EventEnvelope> events)
+    {
+        if (!events.Any(item => HandlesSource(item.SourceId))) return;
+        lock (sync)
+        {
+            if (!gap || gapState != "acknowledgement_state_write_failed") cumulativeGapCount++;
+            gap = true;
+            gapState = "acknowledgement_state_write_failed";
+            status = SourceHealthStatuses.Error;
+            errorCode = "journal_acknowledgement_state_write_failed";
+            transitionedAt = timeProvider.GetUtcNow();
+            transitionState = HealthTransitionStates.Degraded;
+        }
+    }
+
     public void RecordReadResult(JournalReadResult result)
     {
         lock (sync)
         {
             throttled = false;
-            permissionDenied = result.Status == JournalReadStatus.PermissionDenied;
+            var observedSystemVisibility = options.Journal.IncludeAccessibleUserJournals
+                ? result.SystemJournalVisibility
+                : result.Status switch
+                {
+                    JournalReadStatus.Success or JournalReadStatus.InvalidCursor => SystemJournalVisibility.Verified,
+                    JournalReadStatus.PermissionDenied => SystemJournalVisibility.PermissionDenied,
+                    JournalReadStatus.Unavailable => SystemJournalVisibility.Unavailable,
+                    JournalReadStatus.Error => SystemJournalVisibility.Error,
+                    _ => SystemJournalVisibility.Unknown
+                };
+            if (observedSystemVisibility != SystemJournalVisibility.Unknown)
+                systemJournalVisibility = observedSystemVisibility;
+            permissionDenied = result.Status == JournalReadStatus.PermissionDenied
+                || systemJournalVisibility == SystemJournalVisibility.PermissionDenied;
             if (permissionDenied && permissionDeniedSince is null)
             {
                 permissionDeniedSince = DateTimeOffset.UtcNow;
@@ -126,22 +260,35 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             gap |= result.GapKind != JournalGapKind.None || result.Status == JournalReadStatus.InvalidCursor;
             if (result.GapKind != JournalGapKind.None)
             {
+                if (!gap || gapState != ToGapState(result.GapKind)) cumulativeGapCount++;
+                gap = true;
                 gapState = ToGapState(result.GapKind);
                 status = SourceHealthStatuses.Stale;
                 errorCode = $"journal_{gapState}_gap";
             }
             if (result.Status == JournalReadStatus.Success)
             {
+                lastSuccessfulReadAt = timeProvider.GetUtcNow();
+                if (scopeTransition is "pending_expansion" or "pending_contraction" or "reset")
+                    scopeTransition = "recovered";
+                if (gap && checkpoint.CollectedCursor is not null && result.GapKind == JournalGapKind.None)
+                {
+                    gap = false;
+                    gapState = "none";
+                    recoveredAt = timeProvider.GetUtcNow();
+                    transitionedAt = recoveredAt;
+                    transitionState = HealthTransitionStates.Recovered;
+                }
+                if (!gap && !permissionDenied && permissionDeniedSince.HasValue)
+                {
+                    recoveredAt = DateTimeOffset.UtcNow;
+                    transitionedAt = recoveredAt;
+                    transitionState = HealthTransitionStates.Recovered;
+                    permissionDeniedSince = null;
+                }
                 if (result.Records.Count == 0)
                 {
                     sourceState = checkpoint.CollectedCursor is null ? "empty" : "idle";
-                    if (!gap && permissionDeniedSince.HasValue)
-                    {
-                        recoveredAt = DateTimeOffset.UtcNow;
-                        transitionedAt = recoveredAt;
-                        transitionState = HealthTransitionStates.Recovered;
-                        permissionDeniedSince = null;
-                    }
                     if (!gap)
                     {
                         status = checkpoint.CollectedCursor is null ? SourceHealthStatuses.Missing : SourceHealthStatuses.Healthy;
@@ -174,11 +321,58 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         }
     }
 
+    public async Task RecordSuccessfulReadObservationAsync(CancellationToken cancellationToken)
+    {
+        var observedAt = timeProvider.GetUtcNow();
+        bool activeGap;
+        string currentGapState;
+        long gapCount;
+        string configuredScope;
+        bool clearObservedEvidence;
+        lock (sync)
+        {
+            lastSuccessfulReadAt = observedAt;
+            configuredScope = LinuxJournalScopes.Configured(options.Journal);
+            clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+            if (lastPersistedSuccessfulReadAt.HasValue
+                && observedAt - lastPersistedSuccessfulReadAt.Value < TimeSpan.FromMinutes(1)
+                && string.Equals(checkpoint.ConfiguredScope, configuredScope, StringComparison.Ordinal)
+                && !clearObservedEvidence) return;
+            lastPersistedSuccessfulReadAt = observedAt;
+            activeGap = gap;
+            currentGapState = gapState;
+            gapCount = cumulativeGapCount;
+        }
+        await state.WriteJournalReadObservationAsync(
+            observedAt,
+            activeGap,
+            currentGapState,
+            gapCount,
+            configuredScope,
+            clearObservedEvidence,
+            cancellationToken);
+        lock (sync)
+        {
+            if (clearObservedEvidence) ClearObservedEvidence();
+            checkpoint = checkpoint with
+            {
+                LastSuccessfulReadAt = observedAt,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : checkpoint.ObservedFamilies,
+                ConfiguredScope = configuredScope
+            };
+            clearObservedEvidenceOnScopeApply = false;
+        }
+    }
+
     public void RecordMalformed(string code)
     {
         lock (sync)
         {
             malformedCount++;
+            cumulativeGapCount++;
             gap = true;
             gapState = "malformed_record";
             transitionedAt = DateTimeOffset.UtcNow;
@@ -196,6 +390,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         lock (sync)
         {
             reorderedCount++;
+            cumulativeGapCount++;
             gap = true;
             gapState = "reordered_input";
             transitionedAt = DateTimeOffset.UtcNow;
@@ -207,6 +402,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     {
         lock (sync)
         {
+            if (!gap || gapState != stateValue) cumulativeGapCount++;
             gap = true;
             gapState = stateValue;
             transitionedAt = DateTimeOffset.UtcNow;
@@ -238,7 +434,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                     targetLevel,
                     options.Journal.DeclaredRoles,
                     observedSources)
-                .Where(entry => entry.SourceId != LinuxTelemetrySourceIds.AgentSelfIntegrity)
+                .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
                 .ToArray();
             var health = manifest.Select(BuildHealth).ToArray();
             return new(manifest, health, throttled, checkpoint.CollectedCursor, checkpoint.AcknowledgedCursor);
@@ -252,6 +448,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         var enabled = options.Journal.Enabled && inConfiguredLevel
             && manifest.Applicability is not SourceApplicabilityStatuses.Unsupported
             and not SourceApplicabilityStatuses.NotApplicable;
+        if (manifest.CoverageLevel == WindowsCoverageLevel.L4
+            && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
+        {
+            enabled &= LinuxL4TelemetryCollector.IsConfigurationApproved(options);
+        }
         var effectiveStatus = DetermineStatus(manifest, enabled);
         DateTimeOffset? sourceLatest = manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
             ? latestEvent
@@ -280,7 +481,10 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ApplicableRoles = manifest.ApplicableRoles,
             Enabled = enabled,
             LastEventTime = sourceLatest,
-            ObservedAt = now,
+            ObservedAt = manifest.CoverageLevel == WindowsCoverageLevel.L4
+                && manifest.Requirement == SourceRequirementKinds.RoleSpecific
+                    ? lastSuccessfulReadAt
+                    : now,
             CollectedCheckpoint = collected,
             AcknowledgedCheckpoint = acknowledged,
             LagSeconds = sourceLatest.HasValue ? Math.Max(0, (long)(now - sourceLatest.Value).TotalSeconds) : null,
@@ -290,7 +494,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ErrorMessage = ErrorFor(manifest, effectiveStatus),
             GapDetected = isJournalSource && gap,
             BookmarkGapDetected = isJournalSource && gap,
-            GapCount = gap ? Math.Max(1, malformedCount + reorderedCount) : 0,
+            GapCount = cumulativeGapCount,
             PermissionDeniedSince = permissionDenied ? permissionDeniedSince : null,
             RecoveredAt = recoveredAt,
             TransitionState = transitionState,
@@ -315,6 +519,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 ["binary_or_invalid_text_records"] = binaryOrInvalidTextCount.ToString(CultureInfo.InvariantCulture),
                 ["configuration_state"] = enabled ? "enabled" : "disabled",
                 ["configured_coverage_level"] = options.Journal.TargetCoverageLevel.ToString(),
+                ["configured_journal_scope"] = LinuxJournalScopes.Configured(options.Journal),
+                ["system_journal_visibility"] = VisibilityDetail(systemJournalVisibility),
+                ["scope_transition"] = scopeTransition,
                 ["collector_version"] = version
             }
         };
@@ -348,6 +555,18 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         if (gap && status is (SourceHealthStatuses.Healthy or SourceHealthStatuses.Stale or SourceHealthStatuses.Degraded))
         {
             return SourceHealthStatuses.Error;
+        }
+        if (options.Journal.IncludeAccessibleUserJournals)
+        {
+            var visibilityStatus = systemJournalVisibility switch
+            {
+                SystemJournalVisibility.Verified => SourceHealthStatuses.Healthy,
+                SystemJournalVisibility.PermissionDenied => SourceHealthStatuses.PermissionDenied,
+                SystemJournalVisibility.Unavailable => SourceHealthStatuses.Missing,
+                SystemJournalVisibility.Error => SourceHealthStatuses.Error,
+                _ => SourceHealthStatuses.Missing
+            };
+            if (visibilityStatus != SourceHealthStatuses.Healthy) return visibilityStatus;
         }
         if (manifest.Applicability == SourceApplicabilityStatuses.Unknown)
         {
@@ -383,6 +602,23 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         {
             return "source_above_configured_level";
         }
+        if (effectiveStatus == SourceHealthStatuses.Disabled
+            && manifest.CoverageLevel == WindowsCoverageLevel.L4
+            && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
+        {
+            return "l4_approval_hash_missing_or_mismatch";
+        }
+        if (options.Journal.IncludeAccessibleUserJournals
+            && systemJournalVisibility != SystemJournalVisibility.Verified)
+        {
+            return systemJournalVisibility switch
+            {
+                SystemJournalVisibility.PermissionDenied => "system_journal_permission_denied",
+                SystemJournalVisibility.Unavailable => "system_journal_unavailable",
+                SystemJournalVisibility.Error => "system_journal_visibility_check_failed",
+                _ => "system_journal_visibility_unknown"
+            };
+        }
         if (effectiveStatus == SourceHealthStatuses.Error && errorCode is null && gapState != "none")
         {
             return $"journal_{gapState}_gap";
@@ -398,6 +634,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var prerequisite in manifest.Prerequisites)
         {
+            if (prerequisite is "systemd_journal_available" or "systemd_journal_readable")
+            {
+                values[prerequisite] = SystemVisibilityEvidence(enabled, effectiveStatus);
+                continue;
+            }
             values[prerequisite] = effectiveStatus switch
             {
                 SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
@@ -408,11 +649,55 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
                 _ when !enabled => SourceEvidenceStatuses.Disabled,
                 _ when prerequisite is "systemd_journal_available" or "systemd_journal_readable" => SourceEvidenceStatuses.Satisfied,
+                _ when prerequisite.StartsWith("declared_role_", StringComparison.Ordinal)
+                    && manifest.Applicability == SourceApplicabilityStatuses.Applicable => SourceEvidenceStatuses.Satisfied,
                 _ when observedSources.Contains(manifest.SourceId) => SourceEvidenceStatuses.Satisfied,
                 _ => SourceEvidenceStatuses.Unknown
             };
         }
         return values;
+    }
+
+    private string SystemVisibilityEvidence(bool enabled, string effectiveStatus)
+    {
+        if (effectiveStatus == SourceHealthStatuses.Unsupported) return SourceEvidenceStatuses.Unsupported;
+        if (effectiveStatus == SourceHealthStatuses.NotApplicable) return SourceEvidenceStatuses.NotApplicable;
+        if (!enabled || effectiveStatus == SourceHealthStatuses.Disabled) return SourceEvidenceStatuses.Disabled;
+        if (!options.Journal.IncludeAccessibleUserJournals)
+        {
+            return effectiveStatus switch
+            {
+                SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+                SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
+                SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
+                _ => SourceEvidenceStatuses.Satisfied
+            };
+        }
+        return systemJournalVisibility switch
+        {
+            SystemJournalVisibility.Verified => SourceEvidenceStatuses.Satisfied,
+            SystemJournalVisibility.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+            SystemJournalVisibility.Unavailable => SourceEvidenceStatuses.Missing,
+            SystemJournalVisibility.Error => SourceEvidenceStatuses.Degraded,
+            _ => SourceEvidenceStatuses.Unknown
+        };
+    }
+
+    private static string VisibilityDetail(SystemJournalVisibility value) => value switch
+    {
+        SystemJournalVisibility.Verified => "verified",
+        SystemJournalVisibility.PermissionDenied => "permission_denied",
+        SystemJournalVisibility.Unavailable => "unavailable",
+        SystemJournalVisibility.Error => "error",
+        _ => "unknown"
+    };
+
+    private void ClearObservedEvidence()
+    {
+        observedSources.Clear();
+        observedFamilies.Clear();
+        latestBySource.Clear();
+        if (latestEvent.HasValue) latestBySource[LinuxTelemetrySourceIds.JournalL1] = latestEvent.Value;
     }
 
     private IReadOnlyDictionary<string, string> BuildEventFamilyStatuses(

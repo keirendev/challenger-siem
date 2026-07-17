@@ -53,7 +53,11 @@ public sealed class LinuxJournalService(
 
         var result = await source.ReadAsync(cursor, options.Journal.MaxRecordsPerPoll, options.Journal.MaxInputRecordBytes, cancellationToken);
         runtime.RecordReadResult(result);
-        if (result.Status == JournalReadStatus.InvalidCursor) return null;
+        if (result.Status == JournalReadStatus.InvalidCursor)
+        {
+            await runtime.PersistInvalidCursorResetAsync(cancellationToken);
+            return null;
+        }
         if (result.Status != JournalReadStatus.Success) return cursor;
         if (cursor is null && result.Records.Count >= options.Journal.MaxRecordsPerPoll)
             runtime.RecordGap("bounded_history_window");
@@ -85,6 +89,7 @@ public sealed class LinuxJournalService(
             await runtime.RecordCollectedAsync(record, cancellationToken);
             cursor = record.Cursor;
         }
+        await runtime.RecordSuccessfulReadObservationAsync(cancellationToken);
         return cursor;
     }
 }

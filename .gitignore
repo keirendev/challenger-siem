@@ -106,6 +106,9 @@ linux-agent.generated.*
 generated-linux-agent*/
 linux-agent-runtime/
 linux-runtime/
+passive-telemetry-state*.json
+self-integrity-state*.json
+l4-telemetry-state*.json
 run/challenger-siem/
 var/lib/challenger-siem/
 var/log/challenger-siem/

@@ -3,8 +3,10 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.L4;
 
 namespace Challenger.Siem.LinuxAgent.Journal;
 
@@ -130,14 +132,6 @@ public sealed partial class LinuxJournalNormalizer
             }
             raw["__REALTIME_TIMESTAMP"] = microseconds.ToString(CultureInfo.InvariantCulture);
 
-            var rawElement = JsonSerializer.SerializeToElement(raw);
-            var rawSize = JsonSerializer.SerializeToUtf8Bytes(rawElement).Length;
-            if (rawSize > ContractLimits.RawPayloadMaxUtf8Bytes)
-            {
-                errorCode = "journal_normalized_raw_oversized";
-                return false;
-            }
-
             var message = GetRaw(raw, "MESSAGE");
             bootId = GetRaw(raw, "_BOOT_ID");
             var transport = GetRaw(raw, "_TRANSPORT");
@@ -145,12 +139,12 @@ public sealed partial class LinuxJournalNormalizer
             var identifier = FirstBounded(raw, 255, "SYSLOG_IDENTIFIER", "_COMM");
             var facility = FirstBounded(raw, 128, "SYSLOG_FACILITY");
             var messageId = FirstBounded(raw, 128, "MESSAGE_ID");
-            LinuxJournalClassification? classification = null;
+            LinuxJournalClassification? l2Classification = null;
             if (options.Journal.TargetCoverageLevel >= WindowsCoverageLevel.L2)
             {
                 try
                 {
-                    classification = ClassifyL2(raw, message, transport, unit, identifier, facility, messageId);
+                    l2Classification = ClassifyL2(raw, message, transport, unit, identifier, facility, messageId);
                 }
                 catch (RegexMatchTimeoutException)
                 {
@@ -158,7 +152,35 @@ public sealed partial class LinuxJournalNormalizer
                     return false;
                 }
             }
-            classification ??= ClassifyL1(transport, unit, identifier, facility, messageId);
+            var roleClassification = LinuxL4TelemetryCollector.IsConfigurationApproved(options)
+                ? ClassifyL4Role(raw, unit, identifier, messageId, options.Journal.DeclaredRoles)
+                : null;
+            var classification = roleClassification ?? l2Classification ?? ClassifyL1(transport, unit, identifier, facility, messageId);
+            IReadOnlyList<JournalSourceEvidence> additionalEvidence = roleClassification is not null
+                && l2Classification is not null
+                && !string.Equals(roleClassification.SourceId, l2Classification.SourceId, StringComparison.Ordinal)
+                    ? [new(l2Classification.SourceId, l2Classification.EventFamily)]
+                    : Array.Empty<JournalSourceEvidence>();
+
+            var l4RoleSource = IsL4RoleSource(classification.SourceId);
+            if (l4RoleSource)
+            {
+                if (raw.ContainsKey("MESSAGE"))
+                {
+                    raw["MESSAGE"] = "<role-application-message-redacted>";
+                    redacted.Add("raw.MESSAGE");
+                }
+                if (raw.Remove("_CMDLINE")) redacted.Add("raw._CMDLINE");
+                message = $"Linux {classification.Category} journal event.";
+            }
+
+            var rawElement = JsonSerializer.SerializeToElement(raw);
+            var rawSize = JsonSerializer.SerializeToUtf8Bytes(rawElement).Length;
+            if (rawSize > ContractLimits.RawPayloadMaxUtf8Bytes)
+            {
+                errorCode = "journal_normalized_raw_oversized";
+                return false;
+            }
 
             var processId = FirstBounded(raw, 64, "_PID");
             var processImage = FirstBounded(raw, 2048, "_EXE", "_COMM");
@@ -189,8 +211,13 @@ public sealed partial class LinuxJournalNormalizer
                 ["linux.evidence"] = classification.UsedMessageEvidence ? "structured_and_bounded_message" : "structured",
                 ["linux.source_pack"] = classification.SourceId == LinuxTelemetrySourceIds.JournalL1
                     ? LinuxTelemetrySourceCatalog.L1PackId
-                    : LinuxTelemetrySourceCatalog.L2PackId
+                    : l4RoleSource ? LinuxTelemetrySourceCatalog.L4RolePackId : LinuxTelemetrySourceCatalog.L2PackId
             };
+            if (additionalEvidence.Count > 0)
+            {
+                labels["linux.secondary_source_id"] = additionalEvidence[0].SourceId;
+                labels["linux.secondary_event_family"] = additionalEvidence[0].EventFamily;
+            }
             var normalizedFields = new NormalizedEventFields
             {
                 Category = classification.Category,
@@ -268,7 +295,8 @@ public sealed partial class LinuxJournalNormalizer
                 bootId!,
                 microseconds,
                 binaryOrInvalidText,
-                classification.EventFamily);
+                classification.EventFamily,
+                additionalEvidence);
             errorCode = string.Empty;
             return true;
         }
@@ -518,6 +546,108 @@ public sealed partial class LinuxJournalNormalizer
         }
         return new(LinuxTelemetrySourceIds.JournalL1, "system", "system", null, null);
     }
+
+    private static LinuxJournalClassification? ClassifyL4Role(
+        IReadOnlyDictionary<string, object?> raw,
+        string? unit,
+        string? identifier,
+        string? messageId,
+        IReadOnlyCollection<string> declaredRoles)
+    {
+        var source = (identifier ?? string.Empty).ToLowerInvariant();
+        var unitValue = (unit ?? string.Empty).ToLowerInvariant();
+        var action = NormalizeAction(GetRaw(raw, "ACTION"))
+            ?? PamAction(GetRaw(raw, "PAM_TYPE").ToLowerInvariant())
+            ?? SystemdAction(messageId)
+            ?? "role_event";
+        var outcome = NormalizeOutcome(GetRaw(raw, "RESULT"));
+
+        if (declaredRoles.Contains("web_server", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "nginx", "apache2", "httpd", "caddy"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleWeb, "web_server", "web", action, outcome, unit);
+        if (declaredRoles.Contains("database_server", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "postgres", "postgresql", "mysqld", "mysql", "mariadb", "mariadbd"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleDatabase, "database_server", "database", action, outcome, unit);
+        if (declaredRoles.Contains("dns_server", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "named", "bind9", "unbound", "pdns", "powerdns"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleDns, "dns_server", "dns", action, outcome, unit);
+        if (declaredRoles.Contains("file_server", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "smbd", "nmbd", "samba", "nfsd", "nfs-server", "rpc-mountd", "rpc.mountd"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleFileServer, "file_server", "file", action, outcome, unit);
+        if (declaredRoles.Contains("container_host", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "docker", "dockerd", "containerd", "crio", "cri-o", "podman"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleContainer, "container_host", "container",
+                ContainerLifecycleAction(GetRaw(raw, "ACTION"), messageId, action), outcome, unit);
+        if (declaredRoles.Contains("identity_server", StringComparer.Ordinal)
+            && MatchesRoleIdentity(source, unitValue, "sssd", "krb5kdc", "slapd", "ipa", "dirsrv"))
+            return RoleClassification(LinuxTelemetrySourceIds.RoleIdentity, "identity_server", "identity", action, outcome, unit);
+        return null;
+    }
+
+    private static LinuxJournalClassification RoleClassification(
+        string sourceId,
+        string category,
+        string familyPrefix,
+        string action,
+        string? outcome,
+        string? unit)
+    {
+        action = action switch
+        {
+            "start" => "service_start",
+            "stop" => "service_stop",
+            "reload" => "service_reload",
+            "failure" => "service_failure",
+            _ => action
+        };
+        var supportsAuthenticationFamily = sourceId is LinuxTelemetrySourceIds.RoleDatabase
+            or LinuxTelemetrySourceIds.RoleFileServer
+            or LinuxTelemetrySourceIds.RoleIdentity;
+        var family = sourceId == LinuxTelemetrySourceIds.RoleContainer
+            && action is "container_create" or "container_start" or "container_stop" or "container_destroy"
+            ? "container_lifecycle"
+            : action is "service_start" or "service_stop" or "service_reload" or "service_failure"
+            ? $"{familyPrefix}_service"
+            : supportsAuthenticationFamily
+                && (action.Contains("auth", StringComparison.Ordinal)
+                    || action.Contains("login", StringComparison.Ordinal)
+                    || action is "session_start" or "session_end")
+                ? $"{familyPrefix}_authentication"
+                : $"{familyPrefix}_security";
+        return new(sourceId, family, category, action, outcome, ServiceName: unit);
+    }
+
+    private static string ContainerLifecycleAction(string rawAction, string? messageId, string fallback)
+    {
+        if (SystemdAction(messageId) is not null) return fallback;
+        return rawAction.Trim().ToLowerInvariant() switch
+        {
+            "create" or "created" or "container_create" => "container_create",
+            "start" or "started" or "container_start" => "container_start",
+            "stop" or "stopped" or "container_stop" => "container_stop",
+            "destroy" or "destroyed" or "delete" or "deleted" or "container_destroy" => "container_destroy",
+            _ => fallback
+        };
+    }
+
+    private static bool MatchesRoleIdentity(string source, string unit, params string[] identities)
+    {
+        foreach (var identity in identities)
+        {
+            if (source == identity
+                || unit == $"{identity}.service"
+                || unit.StartsWith($"{identity}@", StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsL4RoleSource(string sourceId) => sourceId is
+        LinuxTelemetrySourceIds.RoleWeb or
+        LinuxTelemetrySourceIds.RoleDatabase or
+        LinuxTelemetrySourceIds.RoleDns or
+        LinuxTelemetrySourceIds.RoleFileServer or
+        LinuxTelemetrySourceIds.RoleContainer or
+        LinuxTelemetrySourceIds.RoleIdentity;
 
     private static bool TryClassifyTamper(
         string source,
@@ -1063,16 +1193,9 @@ public sealed partial class LinuxJournalNormalizer
 
     private static bool TryRedactSecrets(string value, out string redacted)
     {
-        try
-        {
-            redacted = SecretPattern().Replace(value, "$1=<redacted>");
-            return true;
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            redacted = string.Empty;
-            return false;
-        }
+        var result = TelemetryTextSanitizer.SanitizeAndRedact(value, Math.Max(1, value.Length));
+        redacted = result.Value;
+        return !result.Dropped;
     }
 
     private static string Sanitize(string value, int maxChars, out bool truncated, out bool invalidText)
@@ -1113,9 +1236,6 @@ public sealed partial class LinuxJournalNormalizer
 
     [GeneratedRegex("^(?<verb>Started|Starting|Stopped|Stopping|Reloaded|Failed)(?: to start)?\\s+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, 50)]
     private static partial Regex ServicePattern();
-
-    [GeneratedRegex("(?i)\\b(password|passwd|token|authorization|cookie|connection_string)\\s*[:=]\\s*[^\\s;,]+", RegexOptions.CultureInvariant, 100)]
-    private static partial Regex SecretPattern();
 
     private sealed record LinuxJournalClassification(
         string SourceId,

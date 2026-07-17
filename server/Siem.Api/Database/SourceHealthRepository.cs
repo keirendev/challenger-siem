@@ -16,13 +16,44 @@ public sealed record BoundedSourceHealthResult(
 
 public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 {
+    private static readonly string[] LinuxL1MandatorySourceIds = LinuxTelemetrySourceCatalog.L1
+        .Where(source => source.Requirement == SourceRequirementKinds.Mandatory)
+        .Select(source => source.SourceId)
+        .ToArray();
+
+    private static readonly string[] LinuxL2MandatorySourceIds = LinuxTelemetrySourceCatalog.L2Security
+        .Where(source => source.Requirement == SourceRequirementKinds.Mandatory)
+        .Select(source => source.SourceId)
+        .ToArray();
+
+    private static readonly string[] LinuxL2RoleSourceIds = LinuxTelemetrySourceCatalog.L2Security
+        .Where(source => source.Requirement == SourceRequirementKinds.RoleSpecific)
+        .Select(source => source.SourceId)
+        .ToArray();
+
+    private static readonly string[] LinuxL4MandatorySourceIds =
+    [
+        LinuxTelemetrySourceIds.PolicyPostureDrift,
+        LinuxTelemetrySourceIds.AgentPerformanceSlo
+    ];
+
+    private static readonly string[] LinuxL4RoleSourceIds =
+    [
+        LinuxTelemetrySourceIds.RoleWeb,
+        LinuxTelemetrySourceIds.RoleDatabase,
+        LinuxTelemetrySourceIds.RoleDns,
+        LinuxTelemetrySourceIds.RoleFileServer,
+        LinuxTelemetrySourceIds.RoleContainer,
+        LinuxTelemetrySourceIds.RoleIdentity
+    ];
+
     public Task<SourceHealthResponse> SearchAsync(string? agentId, CancellationToken cancellationToken) =>
         SearchAsync(agentId, WindowsCoverageLevel.L2, cancellationToken);
 
     public async Task<SourceHealthResponse> SearchAsync(string? agentId, WindowsCoverageLevel targetLevel, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var summaries = await LoadSummariesAsync(connection, agentId, 500, cancellationToken);
+        var summaries = await LoadSummariesAsync(connection, agentId, targetLevel, 500, cancellationToken);
         var sources = await LoadSourcesAsync(connection, agentId, 1000, cancellationToken);
         (summaries, sources) = await MergeExpectedSourcesAsync(connection, agentId, targetLevel, summaries, sources, cancellationToken);
 
@@ -46,7 +77,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 
         var fetchLimit = nestedLimit + 1;
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var summaries = await LoadSummariesAsync(connection, agentId, fetchLimit, cancellationToken);
+        var summaries = await LoadSummariesAsync(connection, agentId, targetLevel, fetchLimit, cancellationToken);
         var sources = await LoadSourcesAsync(connection, agentId, fetchLimit, cancellationToken);
         (summaries, sources) = await MergeExpectedSourcesAsync(connection, agentId, targetLevel, summaries, sources, cancellationToken);
 
@@ -99,6 +130,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     private static async Task<IReadOnlyList<CoverageSummary>> LoadSummariesAsync(
         NpgsqlConnection connection,
         string? agentId,
+        WindowsCoverageLevel targetLevel,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -113,27 +145,102 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     resource_metrics
                 from agent_heartbeats
                 order by agent_id, heartbeat_time desc
+            ), target_scoped_health as (
+                select
+                    sh.*,
+                    case
+                        when sh.status = 'healthy'
+                             and lower(sh.source_id) = any(@linux_performance_polling_source_ids)
+                             and sh.observed_at > @future_observation_cutoff then 'degraded'
+                        when sh.status = 'healthy'
+                             and lower(sh.source_id) = any(@linux_performance_polling_source_ids)
+                             and (sh.observed_at is null or sh.observed_at < @performance_source_health_stale_cutoff) then 'stale'
+                        when sh.status = 'healthy'
+                             and lower(sh.source_id) = any(@linux_two_hour_polling_source_ids)
+                             and sh.observed_at > @future_observation_cutoff then 'degraded'
+                        when sh.status = 'healthy'
+                             and lower(sh.source_id) = any(@linux_two_hour_polling_source_ids)
+                             and (sh.observed_at is null or sh.observed_at < @passive_source_health_stale_cutoff) then 'stale'
+                        when sh.status = 'healthy'
+                             and not (lower(sh.source_id) = any(@linux_all_polling_source_ids))
+                             and sh.coverage_level in ('L2', 'L3', 'L4')
+                             and (sh.requirement_kind = 'mandatory' or (sh.requirement_kind = 'role_specific' and sh.applicability = 'applicable') or (sh.requirement_kind is null and sh.required_source))
+                             and sh.last_event_time is not null
+                             and sh.last_event_time < @source_health_stale_cutoff then 'stale'
+                        else sh.status
+                    end as effective_status
+                from source_health sh
+                left join agents scoped_agent on scoped_agent.agent_id = sh.agent_id
+                where coalesce(scoped_agent.platform, sh.platform, 'windows') <> 'linux'
+                   or @target_level = 'L4'
+                   or (@target_level = 'L3' and sh.coverage_level in ('L1', 'L2', 'L3'))
+                   or (@target_level = 'L2' and sh.coverage_level in ('L1', 'L2'))
+                   or (@target_level = 'L1' and sh.coverage_level = 'L1')
             ), health as (
                 select
                     agent_id,
-                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status in ('missing', 'disabled'))::int as missing_mandatory_sources,
-                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status = 'permission_denied')::int as mandatory_permission_denied_sources,
-                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and status = 'unsupported')::int as mandatory_unsupported_sources,
-                    count(*) filter (where status = 'stale')::int as stale_sources,
-                    count(*) filter (where status = 'error')::int as error_sources,
-                    count(*) filter (where status = 'degraded')::int as degraded_sources,
-                    count(*) filter (where status = 'permission_denied')::int as permission_denied_sources,
-                    count(*) filter (where status = 'unsupported')::int as unsupported_sources,
-                    count(*) filter (where status = 'excepted')::int as excepted_sources,
-                    count(*) filter (where status = 'not_applicable')::int as not_applicable_sources,
-                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)))::int as l1_mandatory_sources,
-                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l1_covered_mandatory_sources,
-                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)))::int as l2_mandatory_sources,
-                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind is null and required_source)) and status in ('healthy', 'excepted'))::int as l2_covered_mandatory_sources,
-                    count(*) filter (where status = 'healthy')::int as healthy_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status in ('missing', 'disabled'))::int as reported_missing_mandatory_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'permission_denied')::int as mandatory_permission_denied_sources,
+                    count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'unsupported')::int as mandatory_unsupported_sources,
+                    count(*) filter (where effective_status = 'stale')::int as stale_sources,
+                    count(*) filter (where effective_status = 'error')::int as error_sources,
+                    count(*) filter (where effective_status = 'degraded')::int as degraded_sources,
+                    count(*) filter (where effective_status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (where effective_status = 'unsupported')::int as unsupported_sources,
+                    count(*) filter (where effective_status = 'excepted')::int as excepted_sources,
+                    count(*) filter (where effective_status = 'not_applicable')::int as not_applicable_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)))::int as l1_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and effective_status in ('healthy', 'excepted'))::int as l1_covered_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)))::int as l2_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and effective_status in ('healthy', 'excepted'))::int as l2_covered_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L3' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)))::int as l3_mandatory_sources,
+                    count(*) filter (where coverage_level = 'L3' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and effective_status in ('healthy', 'excepted'))::int as l3_covered_mandatory_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids) and coverage_level = 'L3' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status in ('healthy', 'excepted'))::int as l3_canonical_covered_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids))::int as l3_canonical_present_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids) and (enabled or applicability = 'applicable') and coalesce(applicability, 'applicable') not in ('not_applicable', 'unsupported'))::int as l3_canonical_attempted_sources,
+                    count(*) filter (where coverage_level = 'L3' and enabled and coalesce(applicability, 'applicable') not in ('not_applicable', 'unsupported'))::int as l3_applicable_sources,
+                    count(*) filter (where coverage_level = 'L3' and enabled and coalesce(applicability, 'applicable') not in ('not_applicable', 'unsupported') and effective_status in ('healthy', 'excepted'))::int as l3_covered_applicable_sources,
+                    count(*) filter (where coverage_level = 'L1' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l1_strict_healthy_sources,
+                    count(*) filter (where coverage_level = 'L2' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l2_strict_healthy_sources,
+                    count(*) filter (where coverage_level = 'L3' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l3_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l1_mandatory_source_ids) and coverage_level = 'L1' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l1_canonical_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_mandatory_source_ids) and coverage_level = 'L2' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l2_canonical_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable')::int as l2_role_applicable_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as l2_role_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids) and coverage_level = 'L3' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l3_canonical_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_mandatory_source_ids))::int as l4_canonical_present_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_mandatory_source_ids) and coverage_level = 'L4' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l4_canonical_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_mandatory_source_ids) and (enabled or applicability = 'applicable'))::int as l4_canonical_attempted_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids))::int as l4_role_present_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability in ('applicable', 'not_applicable'))::int as l4_role_resolved_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability = 'applicable')::int as l4_role_applicable_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as l4_role_healthy_sources,
+                    count(*) filter (where effective_status = 'healthy')::int as healthy_sources,
                     max(platform) as platform
-                from source_health
+                from target_scoped_health
                 group by agent_id
+            ), health_with_expected as (
+                select
+                    health.*,
+                    (
+                        reported_missing_mandatory_sources
+                        + case
+                            when @target_level in ('L3', 'L4')
+                                 and platform = 'linux'
+                                 and l3_canonical_attempted_sources > 0
+                                then greatest(@linux_l3_required_source_count - l3_canonical_present_sources, 0)
+                            else 0
+                          end
+                        + case
+                            when @target_level = 'L4'
+                                 and platform = 'linux'
+                                 and l4_canonical_attempted_sources > 0
+                                then greatest(@linux_l4_mandatory_source_count - l4_canonical_present_sources, 0)
+                                   + greatest(@linux_l4_role_source_count - l4_role_present_sources, 0)
+                            else 0
+                          end
+                    )::int as missing_mandatory_sources
+                from health
             )
             select
                 a.agent_id,
@@ -154,19 +261,49 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 lh.heartbeat_time as last_heartbeat_time,
                 case
                     when a.last_seen is null then 'L0'
-                    when coalesce(a.platform, h.platform) = 'linux'
+                    when @target_level = 'L4'
+                         and coalesce(a.platform, h.platform) = 'linux'
+                         and @linux_l4_mandatory_source_count = 2
+                         and @linux_l4_role_source_count > 0
+                         and @linux_l1_mandatory_source_count > 0
+                         and coalesce(h.l1_canonical_strict_healthy_sources, 0) = @linux_l1_mandatory_source_count
+                         and @linux_l2_mandatory_source_count > 0
+                         and coalesce(h.l2_canonical_strict_healthy_sources, 0) = @linux_l2_mandatory_source_count
+                         and coalesce(h.l2_role_strict_healthy_sources, 0) = coalesce(h.l2_role_applicable_sources, 0)
+                         and @linux_l3_required_source_count > 0
+                         and coalesce(h.l3_canonical_strict_healthy_sources, 0) = @linux_l3_required_source_count
+                         and coalesce(h.l4_canonical_healthy_sources, 0) = @linux_l4_mandatory_source_count
+                         and coalesce(h.l4_role_resolved_sources, 0) = @linux_l4_role_source_count
+                         and coalesce(h.l4_role_healthy_sources, 0) = coalesce(h.l4_role_applicable_sources, 0) then 'L4'
+                    when @target_level in ('L3', 'L4')
+                         and coalesce(a.platform, h.platform) = 'linux'
+                         and @linux_l3_required_source_count > 0
+                         and coalesce(h.l1_mandatory_sources, 0) > 0
+                         and h.l1_mandatory_sources = h.l1_covered_mandatory_sources
+                         and coalesce(h.l2_mandatory_sources, 0) > 0
+                         and h.l2_mandatory_sources = h.l2_covered_mandatory_sources
+                         and coalesce(h.l3_mandatory_sources, 0) >= @linux_l3_required_source_count
+                         and coalesce(h.l3_mandatory_sources, 0) = coalesce(h.l3_covered_mandatory_sources, 0)
+                         and coalesce(h.l3_canonical_covered_sources, 0) = @linux_l3_required_source_count
+                         and coalesce(h.l3_applicable_sources, 0) > 0
+                         and coalesce(h.l3_covered_applicable_sources, 0) > 0 then 'L3'
+                    when @target_level in ('L2', 'L3', 'L4')
+                         and coalesce(a.platform, h.platform) = 'linux'
                          and coalesce(h.l1_mandatory_sources, 0) > 0
                          and h.l1_mandatory_sources = h.l1_covered_mandatory_sources
                          and coalesce(h.l2_mandatory_sources, 0) > 0
                          and h.l2_mandatory_sources = h.l2_covered_mandatory_sources then 'L2'
-                    when coalesce(a.platform, h.platform) = 'linux'
+                    when @target_level in ('L1', 'L2', 'L3', 'L4')
+                         and coalesce(a.platform, h.platform) = 'linux'
                          and coalesce(h.l1_mandatory_sources, 0) > 0
                          and h.l1_mandatory_sources = h.l1_covered_mandatory_sources then 'L1'
-                    when coalesce(a.platform, h.platform) <> 'linux'
+                    when @target_level in ('L2', 'L3', 'L4')
+                         and coalesce(a.platform, h.platform) <> 'linux'
                          and coalesce(h.missing_mandatory_sources, 0) = 0
                          and coalesce(h.error_sources, 0) = 0
                          and coalesce(h.healthy_sources, 0) >= 12 then 'L2'
-                    when coalesce(a.platform, h.platform) <> 'linux'
+                    when @target_level in ('L1', 'L2', 'L3', 'L4')
+                         and coalesce(a.platform, h.platform) <> 'linux'
                          and coalesce(h.healthy_sources, 0) >= 1 then 'L1'
                     else 'L0'
                 end as current_level,
@@ -182,7 +319,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     else 'healthy'
                 end as overall_status
             from agents a
-            left join health h on h.agent_id = a.agent_id
+            left join health_with_expected h on h.agent_id = a.agent_id
             left join latest_heartbeat lh on lh.agent_id = a.agent_id
             """;
         if (!string.IsNullOrWhiteSpace(agentId))
@@ -192,6 +329,36 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
         }
 
         command.CommandText += " order by a.hostname asc, a.agent_id asc limit @limit;";
+        var linuxL3RequiredSourceIds = LinuxTelemetrySourceCatalog.L3Passive
+            .Where(source => source.Requirement == SourceRequirementKinds.Mandatory)
+            .Select(source => source.SourceId)
+            .ToArray();
+        command.Parameters.AddWithValue("linux_l3_required_source_ids", linuxL3RequiredSourceIds);
+        command.Parameters.AddWithValue("linux_l3_required_source_count", linuxL3RequiredSourceIds.Length);
+        command.Parameters.AddWithValue("linux_l1_mandatory_source_ids", LinuxL1MandatorySourceIds);
+        command.Parameters.AddWithValue("linux_l1_mandatory_source_count", LinuxL1MandatorySourceIds.Length);
+        command.Parameters.AddWithValue("linux_l2_mandatory_source_ids", LinuxL2MandatorySourceIds);
+        command.Parameters.AddWithValue("linux_l2_mandatory_source_count", LinuxL2MandatorySourceIds.Length);
+        command.Parameters.AddWithValue("linux_l2_role_source_ids", LinuxL2RoleSourceIds);
+        command.Parameters.AddWithValue("linux_l4_mandatory_source_ids", LinuxL4MandatorySourceIds);
+        command.Parameters.AddWithValue("linux_l4_mandatory_source_count", LinuxL4MandatorySourceIds.Length);
+        command.Parameters.AddWithValue("linux_l4_role_source_ids", LinuxL4RoleSourceIds);
+        command.Parameters.AddWithValue("linux_l4_role_source_count", LinuxL4RoleSourceIds.Length);
+        var twoHourPollingSourceIds = SourceHealthRules.TwoHourPollingSourceIds
+            .Concat(LinuxL4RoleSourceIds)
+            .Append(LinuxL4MandatorySourceIds[0])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var performancePollingSourceIds = SourceHealthRules.PerformanceSloSourceIds.ToArray();
+        command.Parameters.AddWithValue("linux_two_hour_polling_source_ids", twoHourPollingSourceIds);
+        command.Parameters.AddWithValue("linux_performance_polling_source_ids", performancePollingSourceIds);
+        command.Parameters.AddWithValue("linux_all_polling_source_ids", twoHourPollingSourceIds.Concat(performancePollingSourceIds).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        var now = DateTimeOffset.UtcNow;
+        command.Parameters.AddWithValue("source_health_stale_cutoff", now.Subtract(SourceHealthRules.DefaultStaleAfter));
+        command.Parameters.AddWithValue("passive_source_health_stale_cutoff", now.Subtract(SourceHealthRules.PassivePollingStaleAfter));
+        command.Parameters.AddWithValue("performance_source_health_stale_cutoff", now.Subtract(SourceHealthRules.PerformanceSloStaleAfter));
+        command.Parameters.AddWithValue("future_observation_cutoff", now.Add(SourceHealthRules.MaximumFutureObservationSkew));
+        command.Parameters.AddWithValue("target_level", targetLevel.ToString());
         command.Parameters.AddWithValue("limit", limit);
 
         var results = new List<CoverageSummary>();
@@ -203,7 +370,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
                 Hostname = reader.GetString(reader.GetOrdinal("hostname")),
                 Platform = ReadNullableString(reader, "platform"),
-                TargetLevel = WindowsCoverageLevel.L2,
+                TargetLevel = targetLevel,
                 CurrentLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_level"))),
                 OverallStatus = reader.GetString(reader.GetOrdinal("overall_status")),
                 MissingMandatorySources = reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
@@ -292,10 +459,11 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("limit", limit);
 
         var results = new List<SourceHealthReport>();
+        var evaluatedAt = DateTimeOffset.UtcNow;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new SourceHealthReport
+            var report = new SourceHealthReport
             {
                 SourceId = reader.GetString(reader.GetOrdinal("source_id")),
                 DisplayName = reader.GetString(reader.GetOrdinal("display_name")),
@@ -343,7 +511,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 CollectedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "collected_checkpoint"),
                 AcknowledgedCheckpoint = Jsonb.Read<SourceCheckpoint>(reader, "acknowledged_checkpoint"),
                 Details = ReadStringDictionary(reader, "details")
-            });
+            };
+            results.Add(report with { Status = SourceHealthRules.EffectiveStatus(report, evaluatedAt) });
         }
 
         return results;
