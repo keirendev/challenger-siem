@@ -47,4 +47,5 @@ public sealed record SocAgentChatTurn(
     SocAgentChatMessageDto UserMessage,
     SocAgentAskRequest AskRequest,
     SocAgentProviderStatusResponse ProviderStatus,
+    SocAgentExecutionSelection Selection,
     string OperatorRole);

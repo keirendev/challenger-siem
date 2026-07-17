@@ -2,7 +2,7 @@
 
 `soc-agent` is the SIEM-aware SOC analyst and detection-engineering chat workspace in Challenger SIEM.
 
-The current implementation is a safe local provider/tool harness with a persistent live web chat UI and optional ChatGPT/OpenAI-backed provider paths. Subscription OAuth is the primary external setup path when an official server-side OAuth client or delegated credential file is available; server-side API keys and delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, streams live run/tool/progress events to the authenticated browser workspace, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. External model calls are disabled by default and require server-side credentials configured outside source control. It does **not** automate consumer website login, ask operators for provider passwords/cookies/tokens in the browser, activate detections, change configuration, delete data, or edit source code.
+The current implementation is a safe local provider/tool harness with a persistent live web chat UI and optional ChatGPT/OpenAI-backed provider paths. The primary ChatGPT setup path is the official Codex app-server account and device-code API, running with a SIEM-only `CODEX_HOME`; explicit subscription OAuth files, server-side API keys, and delegated API bearer files remain advanced alternatives. It runs server-side SIEM tools, streams live run/tool/progress events to the authenticated browser workspace, returns bounded answers with citations, stores bounded chat/session metadata, and preserves a backwards-compatible one-shot API. Operators can select only server-allowlisted models and reasoning efforts for each chat. External model calls remain disabled by default and require an explicit provider/auth-mode configuration outside source control. The page does **not** scrape or automate consumer website login, ask operators for provider passwords/cookies/tokens, reuse a developer's global Codex or Pi credentials, activate detections, change configuration outside this bounded credential workflow, delete telemetry, or edit source code.
 
 The original planning record is archived at `docs/archive/soc-agent-planning-record-implemented.md`.
 
@@ -30,16 +30,18 @@ Operator-credential APIs:
 
 The `/soc-agent` page shows:
 
-- a widened single-page operator workspace where the browser is the primary vertical scroll surface, with a left recent-session rail, wider center thread, sticky page-level composer, and a right rail focused on live tool activity;
-- compact provider/model/auth status in the title pill, plus a small inline notice/connect action only when external-provider setup, auth, budget/rate, or provider-error state needs operator attention;
-- ChatGPT subscription OAuth as the primary external setup path, with API-key/delegated bearer setup documented as advanced alternatives instead of occupying persistent right-rail space;
-- bounded chat history, confirmation-gated per-session deletion controls in the Recent chats rail, and a message thread with plain-text operator bubbles plus safe Markdown-rendered `soc-agent` bubbles;
-- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, immediate optimistic operator bubbles, a pending assistant/progress placeholder that updates Markdown safely as response deltas arrive, a non-editable agent-context chip, scheduled thread-end-sentinel auto-follow scrolling that keeps new chat content above the sticky composer, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
-- live tool activity cards with running/ok states, bounded row counts/summaries, wrapping for long tool names such as `external_model_provider`, and final citation links back to SIEM review pages;
+- a clean two-pane workspace with compact recent chats on the left and a dominant conversation on the right; on narrow screens the conversation comes first and history follows it;
+- compact provider status in the title area and an authenticated Settings dialog for safe ChatGPT connection status, allowed-model details, and Codex-managed subscription login;
+- an admin-only, explicit-confirmation ChatGPT device-login action backed by the official Codex app-server account APIs; it permits one bounded active attempt with cancel and expiry and affects only the SIEM's isolated Codex account state;
+- advanced, explicit server-mediated subscription OAuth-file connect/reconnect when separately enabled, plus confirmation-gated disconnect that can remove only the configured dedicated SIEM credential entry; delegated credentials remain server-managed and are never modified by that action;
+- bounded chat history, confirmation-gated per-session deletion controls, and a message thread with plain-text operator bubbles plus safe Markdown-rendered `soc-agent` bubbles;
+- no-reload message sending with Enter/Ctrl+Enter/Cmd+Enter-to-send, Shift+Enter-newline, immediate optimistic operator bubbles, a pending assistant/progress placeholder that updates Markdown safely as response deltas arrive, a non-editable agent-context chip, internal transcript auto-follow that preserves the operator's reading position, auto-grow character counting, active run state, reconnect/offline banners, and cancellation;
+- server-allowlisted model and reasoning-effort selectors in the composer; local models disable the effort selector, and an unsupported model/effort pair fails validation rather than being forwarded;
+- a deliberately quiet primary workspace: live tool events update only the pending response state, detailed tool activity stays out of the chat UI, and citation links remain available on final responses for evidence review;
 - loading, empty, running, cancelled, error, reconnect, provider-unavailable, and local-fallback states;
 - a mutation-safety reminder.
 
-When an external provider is selected but no supported server-side auth/setup is configured, budget is exhausted, or the provider returns a safe mapped error, the UI fails closed for external calls and uses the configured local fallback only when `SocAgent:FallbackToLocalWhenUnavailable=true`. Assistant output supports a narrow Markdown subset for headings, paragraphs/line breaks, unordered and ordered lists, bold/italic emphasis, inline code, fenced code blocks, blockquotes, and links. Links are active only when they resolve to same-origin SIEM paths or `http`/`https` URLs without embedded credentials; `javascript:`, `data:`, protocol-relative, malformed, image/embed, and raw HTML/script content remains inert text or unlinked text. Operator messages are deliberately plain text. The page never asks for ChatGPT passwords, browser cookies, API keys, or session tokens.
+When an external provider is selected but no supported server-side auth/setup is configured, budget is exhausted, or the provider returns a safe mapped error, the UI fails closed for external calls and uses the configured local fallback only when `SocAgent:FallbackToLocalWhenUnavailable=true`. The selected execution preference remains attached to the chat session, while each assistant message records the provider, model, and reasoning effort that actually produced it; a local fallback therefore records its local model and no reasoning effort without silently changing the session preference. Assistant output supports a narrow Markdown subset for headings, paragraphs/line breaks, unordered and ordered lists, bold/italic emphasis, inline code, fenced code blocks, blockquotes, and links. Links are active only when they resolve to same-origin SIEM paths or `http`/`https` URLs without embedded credentials; `javascript:`, `data:`, protocol-relative, malformed, image/embed, and raw HTML/script content remains inert text or unlinked text. Operator messages are deliberately plain text. The page never asks for ChatGPT passwords, browser cookies, API keys, or session tokens.
 
 ## Provider model and configuration
 
@@ -53,15 +55,28 @@ Default configuration keeps all prompts and tool summaries local:
     "ProviderDisplayName": "Local soc-agent",
     "AuthMode": "Local",
     "Model": "soc-agent-local-v1",
+    "ReasoningEffort": "medium",
+    "ReasoningEfforts": ["low", "medium", "high"],
+    "ModelOptions": [],
     "FallbackToLocalWhenUnavailable": true,
     "ExternalCallsEnabled": false,
-    "PreferredExternalAuthMode": "SubscriptionOAuth",
+    "PreferredExternalAuthMode": "CodexAppServer",
     "ProviderSetupUrl": "https://platform.openai.com/api-keys",
     "SubscriptionProviderSetupUrl": "https://help.openai.com/",
     "AuthFilePath": null,
     "AuthFileProviderKey": "openai",
     "SubscriptionAuthFilePath": null,
     "SubscriptionAuthFileProviderKey": "chatgpt",
+    "CodexAppServer": {
+      "Enabled": true,
+      "ExecutablePath": null,
+      "StateDirectory": ".local/soc-agent/codex",
+      "WorkingDirectory": ".local/soc-agent/codex/workspace",
+      "StartupTimeoutSeconds": 15,
+      "RequestTimeoutSeconds": 45,
+      "LoginTimeoutSeconds": 900,
+      "MaxJsonLineBytes": 1048576
+    },
     "SubscriptionRequiredScopes": "model.request",
     "SubscriptionTokenEndpoint": "https://auth.openai.com/oauth/token",
     "SubscriptionConnectEnabled": false,
@@ -92,17 +107,67 @@ Default configuration keeps all prompts and tool summaries local:
 }
 ```
 
-For ChatGPT/OpenAI-compatible use, configure provider credentials only server-side through ignored environment variables, an explicit ignored auth file, or a secret store. Subscription OAuth mode uses `SocAgent__Provider=ChatGPT`, `SocAgent__AuthMode=SubscriptionOAuth`, and an explicit `SocAgent__SubscriptionAuthFilePath` plus optional provider-key, scope, and token-endpoint settings. When an official authorization-code/PKCE app is available, set `SocAgent__SubscriptionConnectEnabled=true` with the server-side client configuration so operators can start connect from `/soc-agent`. API-key mode accepts `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`. Delegated auth-file mode uses `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and optional `SocAgent__AuthFileProviderKey`/`SocAgent__AuthFileExpirySkewSeconds`. Do not put provider credentials in tracked `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output. Tests use injected fake providers or synthetic placeholder files rather than real credentials.
+`CodexAppServer.Enabled` defaults to `true`, but the overall provider still defaults to `Local` with external calls disabled. To opt into the primary ChatGPT path, set `SocAgent__Provider=ChatGPT`, `SocAgent__AuthMode=CodexAppServer`, and `SocAgent__ExternalCallsEnabled=true` in ignored server configuration, then have an administrator complete the fresh device login in Settings. The server resolves the official `codex` executable from `SocAgent__CodexAppServer__ExecutablePath`, its service `PATH`, or the service account's `~/.local/bin/codex`, in that order. It never discovers or invokes Pi.
+
+The app-server process receives an isolated `CODEX_HOME` rooted at `SocAgent:CodexAppServer:StateDirectory` (default `.local/soc-agent/codex`) and is forced to use the file credential store there. Relative paths are normalized beneath the repository's `.local/` directory, traversal is rejected, and existing linked/reparse-point ancestors are not followed. It does not use the service account's global Codex credential/configuration state such as `~/.codex/auth.json` or `config.toml`, any Pi credential state, or an arbitrary auth file. The resolved executable may legitimately be a symlink into the official package tree under `~/.codex/packages`; those package files are not credential state. Existing global Codex/Pi credentials and legacy SIEM auth files are not copied or migrated; first use requires a fresh SIEM-managed login. If the isolated login or executable is unavailable, the Codex path fails closed and may use only the configured local response fallback. It does not implicitly fall back to another auth file.
+
+This release enables the native broker only on non-Windows SIEM servers, where it can enforce owner-only directory and credential-file modes. A Windows endpoint agent remains fully supported, but a SIEM API process hosted on Windows reports this optional provider path as unavailable until an owner-only Windows DACL can be set and verified; it never accepts inherited ACLs as sufficient.
+
+Advanced alternatives must be selected explicitly. Subscription OAuth-file mode uses `SocAgent__AuthMode=SubscriptionOAuth` with an explicit `SocAgent__SubscriptionAuthFilePath` and optional provider-key, scope, and token-endpoint settings. When an approved authorization-code/PKCE client is available, `SocAgent__SubscriptionConnectEnabled=true` enables its dedicated connect/reconnect workflow. API-key mode accepts `SocAgent__OpenAiApiKey`, `OpenAI__ApiKey`, or `OPENAI_API_KEY`; delegated auth-file mode uses `SocAgent__AuthMode=DelegatedFile`, `SocAgent__AuthFilePath`, and optional `SocAgent__AuthFileProviderKey`/`SocAgent__AuthFileExpirySkewSeconds`. Do not put provider credentials in tracked `appsettings.json`, browser local storage, prompts, logs, issue comments, or PR output. Tests use injected fake providers or synthetic placeholder files rather than real credentials.
+
+`ModelOptions` is the server-owned allowlist displayed by the web composer and returned by provider status. Each entry has a model ID, optional display name, allowed reasoning efforts, and an optional default effort. At most 20 valid unique model IDs and seven supported effort names per entry are exposed. The configured `Model` is added to the allowlist when it is not already present, using `ReasoningEfforts` and `ReasoningEffort` as its defaults. Local-provider status always advertises no reasoning efforts because local deterministic execution does not invoke a reasoning model.
+
+Example external-model allowlist, with model IDs chosen by the operator for the configured official provider:
+
+```json
+{
+  "SocAgent": {
+    "Model": "approved-reasoning-model",
+    "ReasoningEffort": "medium",
+    "ReasoningEfforts": ["low", "medium", "high"],
+    "ModelOptions": [
+      {
+        "Model": "approved-reasoning-model",
+        "DisplayName": "Approved reasoning model",
+        "ReasoningEfforts": ["low", "medium", "high"],
+        "DefaultReasoningEffort": "medium"
+      },
+      {
+        "Model": "approved-fast-model",
+        "DisplayName": "Approved fast model",
+        "ReasoningEfforts": ["low", "medium"],
+        "DefaultReasoningEffort": "low"
+      }
+    ]
+  }
+}
+```
+
+Model IDs and effort names are configuration, not arbitrary browser input: the server resolves every one-shot, session, message, and live-run selection against the current status allowlist before persisting or calling a provider. Invalid model/effort combinations return a validation response. Existing clients may omit both additive fields and receive the configured defaults; an existing chat reuses its persisted preference when a later request omits them and the pair remains allowed.
 
 Supported status values are `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, and `provider_error`. The status response may also include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`; those fields never contain provider tokens, account IDs, email addresses, raw auth-file contents, or full filesystem paths.
 
 ### Official provider-backed execution
 
-When `SocAgent:Provider=ChatGPT` or `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and a supported server-side credential path is configured, `soc-agent` keeps all SIEM data access on the server and sends only a bounded/redacted prompt to the configured official provider endpoint. The prompt is assembled from the deterministic local tool assessment, tool-run summaries, and citation URLs; raw event JSON, provider credentials, bearer tokens, and unbounded endpoint telemetry are not sent. Provider errors are mapped to operator-safe codes (`auth_failed`, `scope_missing`, `budget_limited`, `plan_limited`, `rate_limited`, or `provider_error`) without rendering raw provider responses.
+When `SocAgent:Provider=ChatGPT` or `SocAgent:Provider=OpenAI`, `SocAgent:ExternalCallsEnabled=true`, and a supported server-side authentication source is configured, `soc-agent` keeps all SIEM data access on the server and sends only a bounded/redacted prompt to the configured official provider endpoint. The prompt is assembled from the deterministic local tool assessment, tool-run summaries, and citation URLs; raw event JSON, provider credentials, bearer tokens, and unbounded endpoint telemetry are not sent. Provider errors are mapped to operator-safe codes (`auth_failed`, `scope_missing`, `budget_limited`, `plan_limited`, `rate_limited`, or `provider_error`) without rendering raw provider responses.
 
-#### ChatGPT subscription OAuth mode
+#### Codex app-server managed ChatGPT login
 
-Subscription OAuth mode is opt-in, fail-closed, and the primary external setup path shown in the web workspace. Explicit subscription credential bundles must declare the approved API audience, an allowlisted official issuer, bearer token type, expiry, and the configured model-invocation scope (default `model.request`). If a bundle does not permit model invocation for this application, status becomes `unsupported_subscription_oauth` or `scope_missing`; Challenger SIEM does not use browser cookie/session replay or password-based auth.
+The SIEM starts the official `codex app-server` as a supervised stdio child process and uses its token-free `account/read`, `account/login/start` with `chatgptDeviceCode`, `account/login/cancel`, and account/login notifications. Codex owns token persistence and refresh in the isolated state directory. The SIEM login controller and browser do not receive OAuth access or refresh tokens from those APIs.
+
+Settings offers start and cancel only to an administrator. Only one bounded login attempt may be active, and the server expires it after `LoginTimeoutSeconds`. The only provider-supplied login artifacts sent to the browser are the exact allowlisted `https://auth.openai.com/codex/device` verification URL and the short-lived user code. It never receives tokens, raw app-server messages, credential-file contents or paths, executable/command details, process IDs, account identifiers, email addresses, or raw provider errors. Analysts and detection engineers can review safe connection status but cannot start or cancel the shared SIEM login.
+
+The app-server account APIs deliberately do not export bearer tokens. For current model execution, Challenger SIEM uses a narrow compatibility adapter that reads only the minimum credential fields from the isolated `CODEX_HOME/auth.json` just in time for the existing bounded, redacted, no-tools request to `https://chatgpt.com/backend-api/codex/responses`. The credential is not returned to the browser or copied to another store. This direct request boundary remains because an app-server turn is a coding-agent execution surface and cannot guarantee tool-free model execution; `soc-agent` must not grant the external model filesystem, shell, MCP, or other tools.
+
+The native request boundary accepts only that exact HTTPS endpoint with no user information, custom port, query, fragment, or redirect. It caps cumulative response bytes and event-line size, bounds retained answer text, and requires a successful terminal response event; truncated, incomplete, failed, malformed, or oversized streams fail closed with an operator-safe error.
+
+Disabling `CodexAppServer`, failing executable validation, or missing isolated account state never triggers a search of global Codex credentials/configuration such as `~/.codex/auth.json` or `config.toml`, Pi credential state, or legacy credential locations. Re-enabling the integration does not migrate those credentials: complete a fresh login into the isolated SIEM state directory.
+
+#### Explicit subscription OAuth-file mode (advanced)
+
+Subscription OAuth-file mode is opt-in and fail-closed. Its path must be a regular, non-linked dedicated credential file with no linked or reparse-point ancestor; global Codex or Pi credential-state directories and the reserved `openai-codex` provider entry are rejected rather than reused. Explicit subscription credential bundles must declare the approved API audience, an allowlisted official issuer, bearer token type, expiry, and the configured model-invocation scope (default `model.request`). Interactive start and callback processing are bound to the initiating administrator browser session, provider token responses are byte-bounded, and supported nested credential shapes are preserved during refresh. If a bundle does not permit model invocation for this application, status becomes `unsupported_subscription_oauth` or `scope_missing`; Challenger SIEM does not use browser cookie/session replay or password-based auth.
+
+The Settings dialog shows only operator-safe status such as provider/auth mode, credential-source category, expiry, refresh/scope/entitlement state, and whether bounded/redacted SIEM context may leave the local server. Dedicated connect and reconnect use the authenticated authorization-code/PKCE flow and write the credential bundle only to the explicitly configured server-side path. Dedicated disconnect is offered only for a safe SIEM credential target, requires explicit confirmation, removes only the configured `providers` entry, preserves other JSON entries, and rewrites atomically. Delegated bearer files and externally managed login files cannot be deleted or disconnected from this page. None of these settings render a token, password, account ID, email address, raw auth-file content, or full filesystem path.
 
 A placeholder-only subscription OAuth file looks like this; replace placeholders only in an ignored local file such as `.local/soc-agent/chatgpt-auth.json` or a secret-managed path outside the repository:
 
@@ -211,23 +276,23 @@ Responses include tool-run summaries and citations back to review pages such as 
 
 `soc-agent` stores bounded one-shot turn metadata in `soc_agent_turns` and chat metadata in `soc_agent_sessions` / `soc_agent_messages`:
 
-- provider and model name;
+- provider, model name, and optional reasoning effort actually used;
 - bounded operator and assistant text with basic secret-pattern redaction;
 - tool-run summaries;
 - citations;
 - optional context agent/event identifiers;
 - timestamps and session status.
 
-These tables are not intended to duplicate full raw endpoint telemetry or store provider credentials/provider payloads. Explicit operator deletion of a chat session removes the `soc_agent_sessions` row and associated `soc_agent_messages` rows through `on delete cascade`; independent one-shot `soc_agent_turns` audit rows are retained unless a separate synthetic-data cleanup/runbook action targets them.
+Session rows also retain the currently selected provider/model/reasoning preference so the composer can continue a chat consistently. These tables are not intended to duplicate full raw endpoint telemetry or store provider credentials/provider payloads. Explicit operator deletion of a chat session removes the `soc_agent_sessions` row and associated `soc_agent_messages` rows through `on delete cascade`; independent one-shot `soc_agent_turns` audit rows are retained unless a separate synthetic-data cleanup/runbook action targets them.
 
 ## Safety and provider-auth guardrails
 
 Only official provider authentication paths are acceptable for external providers:
 
-1. **Primary external path:** an ignored/server-side subscription OAuth credential bundle that grants the approved API audience and required model-invocation scope.
-2. **Advanced production path:** server-side API-key credentials supplied by environment variables or a secret store.
-3. **Optional delegated API-bearer path:** an ignored server-side delegated auth file containing an official API bearer access token, or a future OAuth/OIDC/PKCE / Team/Enterprise connector flow that explicitly permits this application use case.
-4. **Blocked path:** automation of the consumer ChatGPT website, browser-cookie extraction, password capture, browser profile scraping, password/session replay, or unsupported auth-file exports.
+1. **Primary external path:** the official Codex app-server account/device-code flow with its isolated SIEM-only `CODEX_HOME` and a fresh login.
+2. **Advanced explicit OAuth-file path:** an ignored/server-side subscription OAuth credential bundle that grants the approved API audience and required model-invocation scope.
+3. **Advanced API credential paths:** a server-side API key from environment/secret storage, or an explicit ignored delegated API-bearer file authorized for this application.
+4. **Blocked paths:** implicit discovery or migration from global Codex credential/configuration state such as `~/.codex/auth.json` or `config.toml`, Pi credentials, consumer ChatGPT website automation, browser-cookie extraction, password capture, browser profile scraping, password/session replay, or unsupported auth-file exports.
 
 Provider credentials must never be committed, rendered into browser local storage, logged, copied into prompts, or included in tool-call transcripts.
 

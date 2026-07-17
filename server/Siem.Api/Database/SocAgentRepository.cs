@@ -19,11 +19,12 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into soc_agent_turns (provider, model, question, answer, tool_runs, citations, context_agent_id, context_event_id)
-            values (@provider, @model, @question, @answer, @tool_runs, @citations, @context_agent_id, @context_event_id);
+            insert into soc_agent_turns (provider, model, reasoning_effort, question, answer, tool_runs, citations, context_agent_id, context_event_id)
+            values (@provider, @model, @reasoning_effort, @question, @answer, @tool_runs, @citations, @context_agent_id, @context_event_id);
             """;
         command.Parameters.AddWithValue("provider", response.Provider);
         command.Parameters.AddWithValue("model", response.Model);
+        command.Parameters.AddWithValue("reasoning_effort", string.IsNullOrWhiteSpace(response.ReasoningEffort) ? (object)DBNull.Value : response.ReasoningEffort);
         command.Parameters.AddWithValue("question", Truncate(Redact(request.Question), 4000));
         command.Parameters.AddWithValue("answer", Truncate(Redact(response.Answer), 20000));
         AddJsonb(command, "tool_runs", response.ToolRuns);
@@ -37,6 +38,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         string title,
         string provider,
         string model,
+        string? reasoningEffort,
         string? contextAgentId,
         Guid? contextEventId,
         CancellationToken cancellationToken)
@@ -44,13 +46,14 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into soc_agent_sessions (session_id, title, provider, model, status, context_agent_id, context_event_id)
-            values (@session_id, @title, @provider, @model, 'open', @context_agent_id, @context_event_id)
+            insert into soc_agent_sessions (session_id, title, provider, model, reasoning_effort, status, context_agent_id, context_event_id)
+            values (@session_id, @title, @provider, @model, @reasoning_effort, 'open', @context_agent_id, @context_event_id)
             returning
                 session_id,
                 title,
                 provider,
                 model,
+                reasoning_effort,
                 status,
                 context_agent_id,
                 context_event_id,
@@ -62,6 +65,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("title", Truncate(Redact(title), 160));
         command.Parameters.AddWithValue("provider", provider);
         command.Parameters.AddWithValue("model", model);
+        command.Parameters.AddWithValue("reasoning_effort", string.IsNullOrWhiteSpace(reasoningEffort) ? (object)DBNull.Value : reasoningEffort);
         command.Parameters.AddWithValue("context_agent_id", string.IsNullOrWhiteSpace(contextAgentId) ? (object)DBNull.Value : contextAgentId.Trim());
         command.Parameters.AddWithValue("context_event_id", contextEventId.HasValue ? contextEventId.Value : (object)DBNull.Value);
 
@@ -121,6 +125,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
                 content,
                 provider,
                 model,
+                reasoning_effort,
                 tool_runs,
                 citations,
                 error_code,
@@ -158,9 +163,13 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         string content,
         string? provider,
         string? model,
+        string? reasoningEffort,
         IReadOnlyList<SocAgentToolRunSummary> toolRuns,
         IReadOnlyList<SocAgentCitation> citations,
         string? errorCode,
+        string? sessionProvider,
+        string? sessionModel,
+        string? sessionReasoningEffort,
         CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -171,8 +180,8 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
         {
             command.Transaction = transaction;
             command.CommandText = """
-                insert into soc_agent_messages (session_id, role, content, provider, model, tool_runs, citations, error_code)
-                values (@session_id, @role, @content, @provider, @model, @tool_runs, @citations, @error_code)
+                insert into soc_agent_messages (session_id, role, content, provider, model, reasoning_effort, tool_runs, citations, error_code)
+                values (@session_id, @role, @content, @provider, @model, @reasoning_effort, @tool_runs, @citations, @error_code)
                 returning
                     id,
                     session_id,
@@ -180,6 +189,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
                     content,
                     provider,
                     model,
+                    reasoning_effort,
                     tool_runs,
                     citations,
                     error_code,
@@ -190,6 +200,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("content", Truncate(Redact(content), 20000));
             command.Parameters.AddWithValue("provider", string.IsNullOrWhiteSpace(provider) ? (object)DBNull.Value : provider);
             command.Parameters.AddWithValue("model", string.IsNullOrWhiteSpace(model) ? (object)DBNull.Value : model);
+            command.Parameters.AddWithValue("reasoning_effort", string.IsNullOrWhiteSpace(reasoningEffort) ? (object)DBNull.Value : reasoningEffort);
             AddJsonb(command, "tool_runs", toolRuns);
             AddJsonb(command, "citations", citations);
             command.Parameters.AddWithValue("error_code", string.IsNullOrWhiteSpace(errorCode) ? (object)DBNull.Value : errorCode);
@@ -209,11 +220,18 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
             update.CommandText = """
                 update soc_agent_sessions
                 set updated_at = now(),
-                    status = case when @error_code_present then 'error' else 'open' end
+                    status = case when @error_code_present then 'error' else 'open' end,
+                    provider = case when @preference_present then @session_provider else provider end,
+                    model = case when @preference_present then @session_model else model end,
+                    reasoning_effort = case when @preference_present then @session_reasoning_effort else reasoning_effort end
                 where session_id = @session_id;
                 """;
             update.Parameters.AddWithValue("session_id", sessionId);
             update.Parameters.AddWithValue("error_code_present", !string.IsNullOrWhiteSpace(errorCode));
+            update.Parameters.AddWithValue("preference_present", !string.IsNullOrWhiteSpace(sessionProvider) && !string.IsNullOrWhiteSpace(sessionModel));
+            update.Parameters.AddWithValue("session_provider", string.IsNullOrWhiteSpace(sessionProvider) ? (object)DBNull.Value : sessionProvider);
+            update.Parameters.AddWithValue("session_model", string.IsNullOrWhiteSpace(sessionModel) ? (object)DBNull.Value : sessionModel);
+            update.Parameters.AddWithValue("session_reasoning_effort", string.IsNullOrWhiteSpace(sessionReasoningEffort) ? (object)DBNull.Value : sessionReasoningEffort);
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -227,6 +245,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
             s.title,
             s.provider,
             s.model,
+            s.reasoning_effort,
             s.status,
             s.context_agent_id,
             s.context_event_id,
@@ -249,6 +268,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
             Title = reader.GetString(reader.GetOrdinal("title")),
             Provider = reader.GetString(reader.GetOrdinal("provider")),
             Model = reader.GetString(reader.GetOrdinal("model")),
+            ReasoningEffort = ReadNullableString(reader, "reasoning_effort"),
             Status = reader.GetString(reader.GetOrdinal("status")),
             ContextAgentId = ReadNullableString(reader, "context_agent_id"),
             ContextEventId = ReadNullableGuid(reader, "context_event_id"),
@@ -268,6 +288,7 @@ public sealed class SocAgentRepository(NpgsqlDataSource dataSource)
             Content = reader.GetString(reader.GetOrdinal("content")),
             Provider = ReadNullableString(reader, "provider"),
             Model = ReadNullableString(reader, "model"),
+            ReasoningEffort = ReadNullableString(reader, "reasoning_effort"),
             ToolRuns = ReadJsonList<SocAgentToolRunSummary>(reader, "tool_runs"),
             Citations = ReadJsonList<SocAgentCitation>(reader, "citations"),
             ErrorCode = ReadNullableString(reader, "error_code"),

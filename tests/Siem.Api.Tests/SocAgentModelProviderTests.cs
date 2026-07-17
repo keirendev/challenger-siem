@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.Extensions.Configuration;
@@ -38,6 +39,74 @@ public sealed class SocAgentModelProviderTests
         Assert.Equal(new Uri("https://api.openai.com/v1/chat/completions"), RecordingHandler.LastRequestUri);
         Assert.Equal("Bearer", RecordingHandler.LastAuthorizationScheme);
         Assert.DoesNotContain("fake-openai-api-key-for-tests", RecordingHandler.LastRequestBody, StringComparison.Ordinal);
+        using var requestBody = JsonDocument.Parse(RecordingHandler.LastRequestBody);
+        Assert.Equal("gpt-test", requestBody.RootElement.GetProperty("model").GetString());
+        Assert.Equal(0.2d, requestBody.RootElement.GetProperty("temperature").GetDouble());
+        Assert.Equal(1200, requestBody.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.False(requestBody.RootElement.TryGetProperty("reasoning_effort", out _));
+        Assert.False(requestBody.RootElement.TryGetProperty("max_completion_tokens", out _));
+        Assert.Null(result.ReasoningEffort);
+    }
+
+    [Fact]
+    public async Task OpenAiChatCompletionsUsesSelectedModelAndTopLevelReasoningEffort()
+    {
+        using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            {
+              "choices": [
+                { "message": { "content": "Reasoned provider answer" } }
+              ]
+            }
+            """)
+        }));
+        var provider = CreateProvider(httpClient);
+
+        var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse { Status = "connected", Provider = "OpenAI", Model = "gpt-default" },
+            "bounded prompt",
+            2000,
+            "gpt-selected",
+            "high"), CancellationToken.None);
+
+        Assert.Equal("gpt-selected", result.Model);
+        Assert.Equal("high", result.ReasoningEffort);
+        using var requestBody = JsonDocument.Parse(RecordingHandler.LastRequestBody);
+        Assert.Equal("gpt-selected", requestBody.RootElement.GetProperty("model").GetString());
+        Assert.Equal("high", requestBody.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal(1200, requestBody.RootElement.GetProperty("max_completion_tokens").GetInt32());
+        Assert.False(requestBody.RootElement.TryGetProperty("temperature", out _));
+        Assert.False(requestBody.RootElement.TryGetProperty("max_tokens", out _));
+    }
+
+    [Fact]
+    public async Task OpenAiChatCompletionsRejectsOversizedJsonBeforeParsing()
+    {
+        const string privateTail = "synthetic-private-provider-tail";
+        var oversizedAnswer = new string('a', (2 * 1024 * 1024) + 1) + privateTail;
+        var responseBody = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new { message = new { content = oversizedAnswer } }
+            }
+        });
+        using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody)
+        }));
+        var provider = CreateProvider(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(new SocAgentModelProviderRequest(
+                new SocAgentProviderStatusResponse { Status = "connected", Provider = "OpenAI", Model = "gpt-test" },
+                "bounded prompt",
+                2000), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Contains("safety limit", exception.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(privateTail, exception.OperatorSafeMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -75,17 +144,16 @@ public sealed class SocAgentModelProviderTests
     }
 
     [Fact]
-    public async Task OpenAiProviderUsesPiOpenAiCodexAuthJsonAccessTokenWithoutRefreshOrBodyLeak()
+    public async Task OpenAiProviderUsesCodexCredentialBrokerForBoundedChatGptResponsesWithoutSecretLeak()
     {
-        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
-            "synthetic-pi-provider-token",
-            "synthetic-pi-refresh-token",
-            DateTimeOffset.UtcNow.AddMinutes(1)));
+        var credentialBroker = new FakeCodexCredentialBroker(
+            "synthetic-codex-provider-token",
+            "acct_synthetic_codex");
         SequencedHandler.Calls.Clear();
         using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("""
-            data: {"type":"response.output_text.delta","delta":"Pi auth provider answer with Bearer abc123"}
+            data: {"type":"response.output_text.delta","delta":"Codex managed answer with Bearer abc123 and token=should-not-render"}
             data: {"type":"response.completed"}
             data: [DONE]
 
@@ -94,12 +162,10 @@ public sealed class SocAgentModelProviderTests
         var provider = CreateProvider(httpClient, new SocAgentOptions
         {
             Provider = "ChatGPT",
-            AuthMode = "SubscriptionOAuth",
+            AuthMode = "CodexAppServer",
             ExternalCallsEnabled = true,
-            SubscriptionAuthFilePath = authFile.FilePath,
-            SubscriptionAuthFileProviderKey = "openai-codex",
             AuthFileExpirySkewSeconds = 300
-        });
+        }, credentialBroker, new SocAgentCodexAppServerOptions { Enabled = true });
 
         var result = await provider.CompleteAsync(new SocAgentModelProviderRequest(
             new SocAgentProviderStatusResponse
@@ -107,22 +173,222 @@ public sealed class SocAgentModelProviderTests
                 Status = "connected",
                 Provider = "ChatGPT",
                 Model = "gpt-test",
-                AuthMode = "pi_auth_json",
-                AuthFileMode = "pi_auth_json",
-                ProviderPath = "pi_auth_json_openai_codex"
+                AuthMode = "codex_app_server",
+                ProviderPath = "codex_app_server"
             },
             "bounded prompt",
-            2000), CancellationToken.None);
+            2000,
+            "gpt-reasoning-test",
+            "high"), CancellationToken.None);
 
-        Assert.Equal("Pi auth provider answer with Bearer <redacted>", result.Answer);
+        Assert.Equal("Codex managed answer with Bearer <redacted> and token=<redacted>", result.Answer);
+        Assert.Equal("gpt-reasoning-test", result.Model);
+        Assert.Equal("high", result.ReasoningEffort);
+        Assert.Equal(1, credentialBroker.CallCount);
         Assert.Single(SequencedHandler.Calls);
         Assert.Equal(new Uri("https://chatgpt.com/backend-api/codex/responses"), SequencedHandler.Calls[0].Uri);
         Assert.Equal("Bearer", SequencedHandler.Calls[0].AuthorizationScheme);
-        Assert.Equal("synthetic-pi-provider-token", SequencedHandler.Calls[0].AuthorizationParameter);
-        Assert.Contains("\"model\":\"gpt-test\"", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+        Assert.Equal("synthetic-codex-provider-token", SequencedHandler.Calls[0].AuthorizationParameter);
+        Assert.Equal("acct_synthetic_codex", SequencedHandler.Calls[0].ChatGptAccountId);
+        using var requestBody = JsonDocument.Parse(SequencedHandler.Calls[0].Body);
+        Assert.Equal("gpt-reasoning-test", requestBody.RootElement.GetProperty("model").GetString());
+        Assert.Equal("high", requestBody.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.False(requestBody.RootElement.TryGetProperty("reasoning_effort", out _));
+        Assert.False(requestBody.RootElement.TryGetProperty("max_output_tokens", out _));
+        Assert.False(requestBody.RootElement.GetProperty("store").GetBoolean());
+        Assert.Equal(0, requestBody.RootElement.GetProperty("tools").GetArrayLength());
+        Assert.Equal("auto", requestBody.RootElement.GetProperty("tool_choice").GetString());
+        Assert.False(requestBody.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.Equal("reasoning.encrypted_content", requestBody.RootElement.GetProperty("include")[0].GetString());
+        Assert.Equal("challenger-siem-soc-agent", requestBody.RootElement.GetProperty("prompt_cache_key").GetString());
+        Assert.Equal("low", requestBody.RootElement.GetProperty("text").GetProperty("verbosity").GetString());
+        Assert.False(requestBody.RootElement.TryGetProperty("client_metadata", out _));
+        Assert.Equal("bounded prompt", requestBody.RootElement
+            .GetProperty("input")[0]
+            .GetProperty("content")[0]
+            .GetProperty("text")
+            .GetString());
         Assert.Contains("\"stream\":true", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
-        Assert.DoesNotContain("synthetic-pi-provider-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
-        Assert.DoesNotContain("synthetic-pi-refresh-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-codex-provider-token", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("acct_synthetic_codex", SequencedHandler.Calls[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CodexResponsesOmitsReasoningWhenNoEffortIsSelected()
+    {
+        SequencedHandler.Calls.Clear();
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Concise answer\"}\n"
+                + "data: {\"type\":\"response.completed\"}\n")
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var result = await provider.CompleteAsync(CodexRequest(), CancellationToken.None);
+
+        Assert.Equal("Concise answer", result.Answer);
+        Assert.Null(result.ReasoningEffort);
+        Assert.Single(SequencedHandler.Calls);
+        using var requestBody = JsonDocument.Parse(SequencedHandler.Calls[0].Body);
+        Assert.False(requestBody.RootElement.TryGetProperty("reasoning", out _));
+        Assert.False(requestBody.RootElement.TryGetProperty("max_output_tokens", out _));
+        Assert.Equal("auto", requestBody.RootElement.GetProperty("tool_choice").GetString());
+        Assert.False(requestBody.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("https://chatgpt.com:444/backend-api/codex/responses")]
+    [InlineData("https://operator@chatgpt.com/backend-api/codex/responses")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses?route=other")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses#fragment")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses/")]
+    public async Task CodexResponsesRejectsAnyNonExactProviderUri(string configuredUrl)
+    {
+        SequencedHandler.Calls.Clear();
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("data: {\"type\":\"response.completed\"}\n")
+        }));
+        var provider = CreateCodexProvider(httpClient, configuredUrl);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(CodexRequest(), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Empty(SequencedHandler.Calls);
+    }
+
+    [Fact]
+    public async Task CodexResponsesRejectsATruncatedStreamWithoutSuccessfulTerminalEvent()
+    {
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial answer\"}\n\ndata: [DONE]\n")
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(CodexRequest(), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Contains("before successful completion", exception.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("partial answer", exception.OperatorSafeMessage, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("response.failed")]
+    [InlineData("response.incomplete")]
+    [InlineData("error")]
+    public async Task CodexResponsesRejectsExplicitFailureTerminalEvents(string eventType)
+    {
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"data: {{\"type\":\"{eventType}\",\"error\":\"synthetic private provider detail\"}}\n")
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(CodexRequest(), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.DoesNotContain("synthetic private provider detail", exception.OperatorSafeMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CodexResponsesRejectsAnOversizedEventLine()
+    {
+        var oversizedLine = "data: " + new string('x', (128 * 1024) + 1) + "\n";
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(oversizedLine)
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(CodexRequest(), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Contains("oversized event", exception.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CodexResponsesRejectsAnOversizedCumulativeStream()
+    {
+        var stream = new System.Text.StringBuilder();
+        var ignoredLine = ": " + new string('x', 32 * 1024) + "\n";
+        var ignoredLineBytes = System.Text.Encoding.UTF8.GetByteCount(ignoredLine);
+        var totalBytes = 0;
+        while (totalBytes <= (2 * 1024 * 1024))
+        {
+            stream.Append(ignoredLine);
+            totalBytes += ignoredLineBytes;
+        }
+
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(stream.ToString())
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(CodexRequest(), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Contains("stream exceeded", exception.OperatorSafeMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CodexResponsesBoundsAccumulatedAnswerWhileStillRequiringCompletion()
+    {
+        var responseBody = $"data: {{\"type\":\"response.output_text.delta\",\"delta\":\"{new string('a', 200)}\"}}\n"
+            + "data: {\"type\":\"response.completed\"}\n";
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody)
+        }));
+        var provider = CreateCodexProvider(httpClient);
+
+        var result = await provider.CompleteAsync(CodexRequest(maxResultCharacters: 32), CancellationToken.None);
+
+        Assert.Equal(32, result.Answer.Length);
+        Assert.Equal(new string('a', 32), result.Answer);
+    }
+
+    [Fact]
+    public async Task CodexAppServerModeFailsClosedWithoutFallingBackToAnotherCredentialSource()
+    {
+        var credentialBroker = new FakeCodexCredentialBroker(
+            "synthetic-codex-provider-token",
+            "acct_synthetic_codex");
+        SequencedHandler.Calls.Clear();
+        using var httpClient = new HttpClient(new SequencedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)));
+        var provider = CreateProvider(httpClient, new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "CodexAppServer",
+            ExternalCallsEnabled = true,
+            OpenAiApiKey = "synthetic-api-key-that-must-not-be-used",
+            SubscriptionAuthFilePath = "/synthetic/path/that/must/not/be-read"
+        }, credentialBroker, new SocAgentCodexAppServerOptions { Enabled = false });
+
+        var exception = await Assert.ThrowsAsync<SocAgentModelProviderException>(() =>
+            provider.CompleteAsync(new SocAgentModelProviderRequest(
+                new SocAgentProviderStatusResponse
+                {
+                    Status = "provider_error",
+                    Provider = "ChatGPT",
+                    Model = "gpt-test",
+                    AuthMode = "codex_app_server",
+                    ProviderPath = "codex_app_server"
+                },
+                "bounded prompt",
+                2000), CancellationToken.None));
+
+        Assert.Equal("provider_error", exception.ErrorCode);
+        Assert.Equal(0, credentialBroker.CallCount);
+        Assert.Empty(SequencedHandler.Calls);
+        Assert.DoesNotContain("synthetic-api-key", exception.OperatorSafeMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("/synthetic/path", exception.OperatorSafeMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -258,20 +524,6 @@ public sealed class SocAgentModelProviderTests
         """;
     }
 
-    private static string PiOpenAiCodexAuthJson(string accessToken, string refreshToken, DateTimeOffset expiresAt)
-    {
-        return $$"""
-        {
-          "openai-codex": {
-            "type": "oauth",
-            "access": "{{accessToken}}",
-            "refresh": "{{refreshToken}}",
-            "expires": {{expiresAt.ToUnixTimeMilliseconds()}}
-          }
-        }
-        """;
-    }
-
     private static string ValidSubscriptionAuthJson(string accessToken, DateTimeOffset expiresAt, string? refreshToken = null)
     {
         var refreshLine = refreshToken is null ? string.Empty : $",\n        \"refresh_token\": \"{refreshToken}\"";
@@ -295,7 +547,11 @@ public sealed class SocAgentModelProviderTests
         """;
     }
 
-    private static OpenAiSocAgentModelProvider CreateProvider(HttpClient httpClient, SocAgentOptions? options = null)
+    private static OpenAiSocAgentModelProvider CreateProvider(
+        HttpClient httpClient,
+        SocAgentOptions? options = null,
+        ISocAgentCodexCredentialBroker? codexCredentialBroker = null,
+        SocAgentCodexAppServerOptions? codexOptions = null)
     {
         options ??= new SocAgentOptions
         {
@@ -309,7 +565,54 @@ public sealed class SocAgentModelProviderTests
             httpClient,
             Options.Create(options),
             configuration,
-            NullLogger<OpenAiSocAgentModelProvider>.Instance);
+            NullLogger<OpenAiSocAgentModelProvider>.Instance,
+            codexCredentialBroker,
+            codexOptions is null ? null : Options.Create(codexOptions));
+    }
+
+    private static OpenAiSocAgentModelProvider CreateCodexProvider(
+        HttpClient httpClient,
+        string? responsesUrl = null)
+    {
+        return CreateProvider(
+            httpClient,
+            new SocAgentOptions
+            {
+                Provider = "ChatGPT",
+                AuthMode = "CodexAppServer",
+                ExternalCallsEnabled = true,
+                ChatGptCodexResponsesUrl = responsesUrl ?? "https://chatgpt.com/backend-api/codex/responses",
+                MaxRetries = 0
+            },
+            new FakeCodexCredentialBroker("synthetic-codex-provider-token", "acct_synthetic_codex"),
+            new SocAgentCodexAppServerOptions { Enabled = true });
+    }
+
+    private static SocAgentModelProviderRequest CodexRequest(int maxResultCharacters = 2000)
+    {
+        return new SocAgentModelProviderRequest(
+            new SocAgentProviderStatusResponse
+            {
+                Status = "connected",
+                Provider = "ChatGPT",
+                Model = "gpt-test",
+                AuthMode = "codex_app_server",
+                ProviderPath = "codex_app_server"
+            },
+            "bounded prompt",
+            maxResultCharacters);
+    }
+
+    private sealed class FakeCodexCredentialBroker(string accessToken, string? accountId)
+        : ISocAgentCodexCredentialBroker
+    {
+        public int CallCount { get; private set; }
+
+        public Task<SocAgentCodexCredential> GetCredentialAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(new SocAgentCodexCredential(accessToken, accountId));
+        }
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> responseFactory) : HttpMessageHandler
@@ -340,12 +643,23 @@ public sealed class SocAgentModelProviderTests
             var body = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            Calls.Add(new RecordedCall(request.RequestUri, request.Headers.Authorization?.Scheme, request.Headers.Authorization?.Parameter, body));
+            request.Headers.TryGetValues("chatgpt-account-id", out var accountIds);
+            Calls.Add(new RecordedCall(
+                request.RequestUri,
+                request.Headers.Authorization?.Scheme,
+                request.Headers.Authorization?.Parameter,
+                accountIds?.SingleOrDefault(),
+                body));
             return responseFactory(request);
         }
     }
 
-    private sealed record RecordedCall(Uri? Uri, string? AuthorizationScheme, string? AuthorizationParameter, string Body);
+    private sealed record RecordedCall(
+        Uri? Uri,
+        string? AuthorizationScheme,
+        string? AuthorizationParameter,
+        string? ChatGptAccountId,
+        string Body);
 
     private sealed class SyntheticAuthFile : IDisposable
     {

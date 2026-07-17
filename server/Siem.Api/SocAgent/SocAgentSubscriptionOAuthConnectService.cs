@@ -1,7 +1,10 @@
+using System.Buffers;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Database;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
@@ -10,6 +13,12 @@ namespace Challenger.Siem.Api.SocAgent;
 
 public sealed record SocAgentSubscriptionOAuthConnectResult(
     bool Succeeded,
+    string Status,
+    string OperatorSafeMessage);
+
+public sealed record SocAgentSubscriptionOAuthDisconnectResult(
+    bool Succeeded,
+    bool Removed,
     string Status,
     string OperatorSafeMessage);
 
@@ -22,14 +31,28 @@ public sealed class SocAgentSubscriptionOAuthConnectException(
     public string OperatorSafeMessage { get; } = operatorSafeMessage;
 }
 
+public interface ISocAgentOAuthOperatorSessionValidator
+{
+    Task<OperatorSession?> ValidateAsync(string sessionToken, CancellationToken cancellationToken);
+}
+
+internal sealed class SocAgentOAuthOperatorSessionValidator(OperatorRepository operators)
+    : ISocAgentOAuthOperatorSessionValidator
+{
+    public Task<OperatorSession?> ValidateAsync(string sessionToken, CancellationToken cancellationToken) =>
+        operators.ValidateSessionAsync(sessionToken, cancellationToken);
+}
+
 public sealed class SocAgentSubscriptionOAuthConnectService(
     HttpClient httpClient,
     IOptions<SocAgentOptions> options,
     IConfiguration configuration,
     IDataProtectionProvider dataProtectionProvider,
+    ISocAgentOAuthOperatorSessionValidator operatorSessions,
     ILogger<SocAgentSubscriptionOAuthConnectService> logger)
 {
     private const string CorrelationCookieName = ".ChallengerSiem.SocAgentOAuth";
+    private const int MaxTokenResponseBytes = 256 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly HashSet<string> AllowedAuthorizationHosts = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -56,8 +79,37 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             && TryResolveSafeAuthFilePath(out _, out _, out _);
     }
 
+    public bool CanDisconnectDedicatedCredential()
+    {
+        if (!IsSubscriptionOAuth(options.AuthMode)
+            || !TryResolveSafeAuthFilePath(out var authFilePath, out var providerKey, out _)
+            || !File.Exists(authFilePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var rootObject = JsonNode.Parse(File.ReadAllText(authFilePath)) as JsonObject;
+            if (rootObject?["providers"] is not JsonObject providers)
+            {
+                return false;
+            }
+
+            var configuredEntry = providers.FirstOrDefault(item =>
+                item.Key.Equals(providerKey, StringComparison.OrdinalIgnoreCase));
+            return configuredEntry.Value is JsonObject entry && IsDedicatedSubscriptionEntry(entry);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
     public Uri CreateAuthorizationUri(HttpContext context, string? returnUrl = null)
     {
+        var initiator = RequireInitiatingAdminSession(context);
+
         if (!options.SubscriptionConnectEnabled)
         {
             throw new SocAgentSubscriptionOAuthConnectException(
@@ -102,7 +154,9 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             codeVerifier,
             ReturnUrl: SafeReturnUrl(returnUrl) ?? "/soc-agent",
             IssuedAt: DateTimeOffset.UtcNow,
-            RedirectUri: redirectUri);
+            RedirectUri: redirectUri,
+            InitiatorOperatorId: initiator.OperatorId,
+            InitiatorSessionToken: initiator.SessionToken);
         var protectedValue = protector.Protect(JsonSerializer.Serialize(correlation, JsonOptions));
         context.Response.Cookies.Append(CorrelationCookieName, protectedValue, CreateCorrelationCookieOptions(context));
 
@@ -127,6 +181,35 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
 
     public async Task<SocAgentSubscriptionOAuthConnectResult> CompleteAsync(HttpContext context, CancellationToken cancellationToken)
     {
+        var state = context.Request.Query["state"].FirstOrDefault();
+        var correlation = ReadAndClearCorrelationCookie(context);
+        if (correlation is null
+            || string.IsNullOrWhiteSpace(state)
+            || !FixedTimeEquals(correlation.State, state))
+        {
+            return new SocAgentSubscriptionOAuthConnectResult(
+                false,
+                "auth_required",
+                "The ChatGPT subscription OAuth state check failed. Start a new connection from the soc-agent page.");
+        }
+
+        if (!await IsValidInitiatingAdminSessionAsync(context, correlation, cancellationToken))
+        {
+            return new SocAgentSubscriptionOAuthConnectResult(
+                false,
+                "auth_required",
+                "The ChatGPT subscription OAuth connection is no longer associated with the initiating admin session. Start a new connection from the soc-agent page.");
+        }
+
+        var lifetime = TimeSpan.FromMinutes(Math.Clamp(options.SubscriptionStateLifetimeMinutes, 1, 60));
+        if (correlation.IssuedAt.Add(lifetime) < DateTimeOffset.UtcNow)
+        {
+            return new SocAgentSubscriptionOAuthConnectResult(
+                false,
+                "expired",
+                "The ChatGPT subscription OAuth connection attempt expired. Start a new connection from the soc-agent page.");
+        }
+
         var providerError = context.Request.Query["error"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(providerError))
         {
@@ -138,31 +221,12 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         }
 
         var code = context.Request.Query["code"].FirstOrDefault();
-        var state = context.Request.Query["state"].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
+        if (string.IsNullOrWhiteSpace(code))
         {
             return new SocAgentSubscriptionOAuthConnectResult(
                 false,
                 "auth_required",
                 "The ChatGPT subscription OAuth callback did not include the required authorization response.");
-        }
-
-        var correlation = ReadAndClearCorrelationCookie(context);
-        if (correlation is null || !FixedTimeEquals(correlation.State, state))
-        {
-            return new SocAgentSubscriptionOAuthConnectResult(
-                false,
-                "auth_required",
-                "The ChatGPT subscription OAuth state check failed. Start a new connection from the soc-agent page.");
-        }
-
-        var lifetime = TimeSpan.FromMinutes(Math.Clamp(options.SubscriptionStateLifetimeMinutes, 1, 60));
-        if (correlation.IssuedAt.Add(lifetime) < DateTimeOffset.UtcNow)
-        {
-            return new SocAgentSubscriptionOAuthConnectResult(
-                false,
-                "expired",
-                "The ChatGPT subscription OAuth connection attempt expired. Start a new connection from the soc-agent page.");
         }
 
         if (!TryResolveSafeAuthFilePath(out var authFilePath, out var providerKey, out var pathError))
@@ -186,6 +250,130 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             true,
             "connected",
             "ChatGPT subscription OAuth connected. Credentials were stored server-side and were not exposed to the browser.");
+    }
+
+    public Task<SocAgentSubscriptionOAuthDisconnectResult> DisconnectAsync(
+        bool confirmed,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!confirmed)
+        {
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "confirmation_required",
+                message: "Confirm ChatGPT subscription OAuth disconnect before removing the dedicated server-side credential entry.");
+        }
+
+        if (!IsSubscriptionOAuth(options.AuthMode))
+        {
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "provider_error",
+                message: "ChatGPT subscription OAuth disconnect is unavailable because subscription OAuth mode is not configured. No credential entries were modified.");
+        }
+
+        if (!TryResolveSafeAuthFilePath(out var authFilePath, out var providerKey, out _))
+        {
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "provider_error",
+                message: "ChatGPT subscription OAuth disconnect requires a dedicated allowed SIEM credential target. Shared Codex-managed credentials were not modified.");
+        }
+
+        if (!File.Exists(authFilePath))
+        {
+            return DisconnectResult(
+                succeeded: true,
+                removed: false,
+                status: "not_connected",
+                message: "ChatGPT subscription OAuth is already disconnected for the dedicated SIEM credential entry.");
+        }
+
+        JsonObject rootObject;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rootObject = JsonNode.Parse(File.ReadAllText(authFilePath)) as JsonObject
+                ?? throw new JsonException("The subscription OAuth credential root must be a JSON object.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            logger.LogWarning("The dedicated ChatGPT subscription OAuth credential file could not be read safely during disconnect.");
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "provider_error",
+                message: "The dedicated ChatGPT subscription OAuth credential file could not be read safely. No credential entries were modified.");
+        }
+
+        var providersNode = rootObject["providers"];
+        if (providersNode is null)
+        {
+            return DisconnectResult(
+                succeeded: true,
+                removed: false,
+                status: "not_connected",
+                message: "ChatGPT subscription OAuth is already disconnected for the dedicated SIEM credential entry.");
+        }
+
+        if (providersNode is not JsonObject providers)
+        {
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "provider_error",
+                message: "The dedicated ChatGPT subscription OAuth credential file has an unsupported providers structure. No credential entries were modified.");
+        }
+
+        var configuredEntry = providers.FirstOrDefault(item =>
+            item.Key.Equals(providerKey, StringComparison.OrdinalIgnoreCase));
+        if (configuredEntry.Key is null)
+        {
+            return DisconnectResult(
+                succeeded: true,
+                removed: false,
+                status: "not_connected",
+                message: "ChatGPT subscription OAuth is already disconnected for the dedicated SIEM credential entry.");
+        }
+
+        if (configuredEntry.Value is not JsonObject entry || !IsDedicatedSubscriptionEntry(entry))
+        {
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "unsupported_subscription_oauth",
+                message: "The configured credential entry is not a dedicated ChatGPT subscription OAuth entry. Shared or unsupported credentials were not modified.");
+        }
+
+        providers.Remove(configuredEntry.Key);
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            WriteAuthFileAtomically(
+                authFilePath,
+                rootObject,
+                "The ChatGPT subscription OAuth credential file could not be updated atomically during disconnect. No credential contents were exposed.");
+        }
+        catch (SocAgentSubscriptionOAuthConnectException)
+        {
+            logger.LogWarning("The dedicated ChatGPT subscription OAuth credential entry could not be removed atomically.");
+            return DisconnectResult(
+                succeeded: false,
+                removed: false,
+                status: "provider_error",
+                message: "ChatGPT subscription OAuth could not be disconnected safely. No credential contents were exposed.");
+        }
+
+        logger.LogInformation("ChatGPT subscription OAuth disconnected by removing only the dedicated SIEM credential entry.");
+        return DisconnectResult(
+            succeeded: true,
+            removed: true,
+            status: "disconnected",
+            message: "ChatGPT subscription OAuth disconnected. Only the dedicated SIEM credential entry was removed; other credential data was preserved.");
     }
 
     public string CompleteReturnUrl(SocAgentSubscriptionOAuthConnectResult result)
@@ -258,18 +446,7 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        JsonDocument document;
-        try
-        {
-            document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        }
-        catch (JsonException ex)
-        {
-            throw new SocAgentSubscriptionOAuthConnectException(
-                "provider_error",
-                "The ChatGPT subscription OAuth token response could not be parsed safely.",
-                ex);
-        }
+        var document = await ParseTokenResponseAsync(stream, cancellationToken);
 
         using (document)
         {
@@ -311,12 +488,70 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         }
     }
 
+    private static async Task<JsonDocument> ParseTokenResponseAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        var readBuffer = ArrayPool<byte>.Shared.Rent(8192);
+        var responseBuffer = new ArrayBufferWriter<byte>();
+        try
+        {
+            while (true)
+            {
+                var bytesRead = await stream.ReadAsync(
+                    readBuffer.AsMemory(0, readBuffer.Length),
+                    cancellationToken);
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                if (responseBuffer.WrittenCount > MaxTokenResponseBytes - bytesRead)
+                {
+                    throw new SocAgentSubscriptionOAuthConnectException(
+                        "provider_error",
+                        "The ChatGPT subscription OAuth token response exceeded its safety limit.");
+                }
+
+                responseBuffer.Write(readBuffer.AsSpan(0, bytesRead));
+            }
+
+            return JsonDocument.Parse(responseBuffer.WrittenMemory);
+        }
+        catch (JsonException ex)
+        {
+            throw new SocAgentSubscriptionOAuthConnectException(
+                "provider_error",
+                "The ChatGPT subscription OAuth token response could not be parsed safely.",
+                ex);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(readBuffer);
+            ArrayPool<byte>.Shared.Return(readBuffer);
+        }
+    }
+
     private void PersistCredential(string authFilePath, string providerKey, TokenExchangeResult token, Uri tokenEndpoint)
     {
+        if (!SocAgentSubscriptionOAuthCredentialLoader.HasSafeCredentialFileAncestors(authFilePath))
+        {
+            throw new SocAgentSubscriptionOAuthConnectException(
+                "provider_error",
+                "The ChatGPT subscription OAuth credential path became unsafe before it could be updated.");
+        }
+
         var directory = Path.GetDirectoryName(authFilePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
+        }
+
+        if (!SocAgentSubscriptionOAuthCredentialLoader.HasSafeCredentialFileAncestors(authFilePath))
+        {
+            throw new SocAgentSubscriptionOAuthConnectException(
+                "provider_error",
+                "The ChatGPT subscription OAuth credential path became unsafe before it could be updated.");
         }
 
         JsonObject rootObject;
@@ -366,6 +601,24 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         }
 
         providers[providerKey] = entry;
+        WriteAuthFileAtomically(
+            authFilePath,
+            rootObject,
+            "The ChatGPT subscription OAuth auth file could not be updated atomically. No provider secrets were exposed to the browser.");
+    }
+
+    private static void WriteAuthFileAtomically(
+        string authFilePath,
+        JsonObject rootObject,
+        string operatorSafeFailureMessage)
+    {
+        if (!SocAgentSubscriptionOAuthCredentialLoader.HasSafeCredentialFileAncestors(authFilePath))
+        {
+            throw new SocAgentSubscriptionOAuthConnectException(
+                "provider_error",
+                operatorSafeFailureMessage);
+        }
+
         var tempPath = Path.Combine(
             Path.GetDirectoryName(authFilePath) ?? Directory.GetCurrentDirectory(),
             $".{Path.GetFileName(authFilePath)}.{Guid.NewGuid():N}.tmp");
@@ -373,15 +626,27 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         {
             File.WriteAllText(tempPath, rootObject.ToJsonString(JsonOptions));
             TryRestrictFileMode(tempPath);
+            if (!SocAgentSubscriptionOAuthCredentialLoader.HasSafeCredentialFileAncestors(authFilePath))
+            {
+                throw new SocAgentSubscriptionOAuthConnectException(
+                    "provider_error",
+                    operatorSafeFailureMessage);
+            }
+
             File.Move(tempPath, authFilePath, overwrite: true);
             TryRestrictFileMode(authFilePath);
+        }
+        catch (SocAgentSubscriptionOAuthConnectException)
+        {
+            TryDeleteTempFile(tempPath);
+            throw;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             TryDeleteTempFile(tempPath);
             throw new SocAgentSubscriptionOAuthConnectException(
                 "provider_error",
-                "The ChatGPT subscription OAuth auth file could not be updated atomically. No provider secrets were exposed to the browser.",
+                operatorSafeFailureMessage,
                 ex);
         }
     }
@@ -405,6 +670,69 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         {
             return null;
         }
+    }
+
+    private static OAuthInitiator RequireInitiatingAdminSession(HttpContext context)
+    {
+        var operatorId = OperatorAuthentication.OperatorId(context.User);
+        var sessionToken = context.User.FindFirst(OperatorAuthentication.SessionTokenClaim)?.Value;
+        if (context.User.Identity?.IsAuthenticated != true
+            || !string.Equals(OperatorAuthorization.Role(context.User), OperatorRoles.Admin, StringComparison.Ordinal)
+            || !operatorId.HasValue
+            || string.IsNullOrWhiteSpace(sessionToken)
+            || sessionToken.Length > 512)
+        {
+            throw new SocAgentSubscriptionOAuthConnectException(
+                "auth_required",
+                "ChatGPT subscription OAuth connect requires an authenticated admin browser session.");
+        }
+
+        return new OAuthInitiator(operatorId.Value, sessionToken);
+    }
+
+    private async Task<bool> IsValidInitiatingAdminSessionAsync(
+        HttpContext context,
+        OAuthCorrelationState correlation,
+        CancellationToken cancellationToken)
+    {
+        if (correlation.InitiatorOperatorId == Guid.Empty
+            || string.IsNullOrWhiteSpace(correlation.InitiatorSessionToken)
+            || correlation.InitiatorSessionToken.Length > 512)
+        {
+            return false;
+        }
+
+        OperatorSession? session;
+        try
+        {
+            session = await operatorSessions.ValidateAsync(correlation.InitiatorSessionToken, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("The initiating admin session could not be validated during the ChatGPT subscription OAuth callback.");
+            return false;
+        }
+
+        if (session is null
+            || session.Operator.OperatorId != correlation.InitiatorOperatorId
+            || !string.Equals(session.Operator.Role, OperatorRoles.Admin, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // The operator cookie is SameSite=Strict, so an official cross-site OAuth callback may
+        // arrive without it. When a principal is present, require it to be the exact initiating
+        // browser session as an additional defense against account switching mid-flow.
+        if (context.User.Identity?.IsAuthenticated != true)
+        {
+            return true;
+        }
+
+        var currentOperatorId = OperatorAuthentication.OperatorId(context.User);
+        var currentSessionToken = context.User.FindFirst(OperatorAuthentication.SessionTokenClaim)?.Value;
+        return currentOperatorId == correlation.InitiatorOperatorId
+            && !string.IsNullOrWhiteSpace(currentSessionToken)
+            && FixedTimeEquals(correlation.InitiatorSessionToken, currentSessionToken);
     }
 
     private CookieOptions CreateCorrelationCookieOptions(HttpContext context)
@@ -552,10 +880,42 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             return false;
         }
 
-        if (IsPiAuthConnectTarget(fullPath, providerKey))
+        if (IsReservedCodexCredentialTarget(providerKey))
         {
-            errorMessage = "ChatGPT subscription OAuth connect will not write to Pi's auth.json or the openai-codex provider entry. Run Pi /login to refresh Pi credentials, or configure a dedicated ignored SocAgent:SubscriptionAuthFilePath for web connect.";
+            errorMessage = "ChatGPT subscription OAuth connect will not write to the reserved Codex-managed provider entry. Use the SIEM-managed ChatGPT login, or configure a dedicated ignored SocAgent:SubscriptionAuthFilePath for the advanced OAuth-file flow.";
             return false;
+        }
+
+        if (IsGlobalManagedCredentialPath(fullPath))
+        {
+            errorMessage = "ChatGPT subscription OAuth connect will not read or write global Codex or Pi credential state. Configure a dedicated ignored SocAgent:SubscriptionAuthFilePath for the advanced OAuth-file flow.";
+            return false;
+        }
+
+        if (!SocAgentSubscriptionOAuthCredentialLoader.HasSafeCredentialFileAncestors(fullPath))
+        {
+            errorMessage = "ChatGPT subscription OAuth connect requires a credential path with no linked or reparse-point directory ancestors.";
+            return false;
+        }
+
+        if (File.Exists(fullPath))
+        {
+            try
+            {
+                var fileInfo = new FileInfo(fullPath);
+                fileInfo.Refresh();
+                if (fileInfo.LinkTarget is not null
+                    || (fileInfo.Attributes & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) != 0)
+                {
+                    errorMessage = "ChatGPT subscription OAuth connect requires a regular, non-linked dedicated credential file.";
+                    return false;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                errorMessage = "The configured ChatGPT subscription OAuth credential target could not be validated safely.";
+                return false;
+            }
         }
 
         if (repoRoot is null || !IsSubPathOf(fullPath, repoRoot))
@@ -580,6 +940,7 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         return Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var uri)
             && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             && AllowedAuthorizationHosts.Contains(uri.Host)
+            && HasExactOfficialEndpointComponents(uri)
             && (uri.AbsolutePath.Equals("/oauth/authorize", StringComparison.OrdinalIgnoreCase)
                 || uri.AbsolutePath.Equals("/oauth2/authorize", StringComparison.OrdinalIgnoreCase)
                 || uri.AbsolutePath.Equals("/v1/oauth/authorize", StringComparison.OrdinalIgnoreCase));
@@ -590,9 +951,18 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         return Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var uri)
             && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             && AllowedTokenHosts.Contains(uri.Host)
+            && HasExactOfficialEndpointComponents(uri)
             && (uri.AbsolutePath.Equals("/oauth/token", StringComparison.OrdinalIgnoreCase)
                 || uri.AbsolutePath.Equals("/oauth2/token", StringComparison.OrdinalIgnoreCase)
                 || uri.AbsolutePath.Equals("/v1/oauth/token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasExactOfficialEndpointComponents(Uri uri)
+    {
+        return uri.IsDefaultPort
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment);
     }
 
     private static bool IsSubscriptionOAuth(string? authMode)
@@ -607,6 +977,52 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             || normalized.Equals("subscriptionoauth", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("chatgpt_subscription_oauth", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("chatgpt_oauth", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDedicatedSubscriptionEntry(JsonObject entry)
+    {
+        var credentialType = GetNodeString(entry, "auth_type", "authType", "credential_type", "credentialType", "type");
+        var provider = GetNodeString(entry, "provider", "provider_name", "providerName", "name");
+        if (string.IsNullOrWhiteSpace(credentialType) || string.IsNullOrWhiteSpace(provider))
+        {
+            return false;
+        }
+
+        var normalizedType = credentialType.Trim().Replace('-', '_');
+        var isSubscriptionType = normalizedType.Equals("subscription_oauth", StringComparison.OrdinalIgnoreCase)
+            || normalizedType.Equals("chatgpt_subscription_oauth", StringComparison.OrdinalIgnoreCase)
+            || normalizedType.Equals("chatgpt_oauth", StringComparison.OrdinalIgnoreCase)
+            || normalizedType.Equals("oauth_subscription", StringComparison.OrdinalIgnoreCase);
+        var isChatGptProvider = provider.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("OpenAI ChatGPT", StringComparison.OrdinalIgnoreCase);
+        return isSubscriptionType && isChatGptProvider;
+    }
+
+    private static string? GetNodeString(JsonObject parent, params string[] names)
+    {
+        foreach (var property in parent)
+        {
+            if (!names.Any(name => property.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
+                || property.Value is not JsonValue value
+                || !value.TryGetValue<string>(out var result))
+            {
+                continue;
+            }
+
+            return result?.Trim();
+        }
+
+        return null;
+    }
+
+    private static Task<SocAgentSubscriptionOAuthDisconnectResult> DisconnectResult(
+        bool succeeded,
+        bool removed,
+        string status,
+        string message)
+    {
+        return Task.FromResult(new SocAgentSubscriptionOAuthDisconnectResult(succeeded, removed, status, message));
     }
 
     private static string? FirstConfigured(params string?[] values)
@@ -775,51 +1191,17 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
             || fileName.EndsWith(".auth.json", StringComparison.OrdinalIgnoreCase);
     }
 
-    private bool IsPiAuthConnectTarget(string fullPath, string providerKey)
+    private static bool IsReservedCodexCredentialTarget(string providerKey)
     {
-        if (providerKey.Equals("openai-codex", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var piPath = FirstConfigured(
-            configuration["SocAgent:SubscriptionPiAuthFilePath"],
-            configuration["PI_AGENT_AUTH_FILE"],
-            options.SubscriptionPiAuthFilePath,
-            "~/.pi/agent/auth.json");
-        return TryResolveComparisonPath(piPath, out var resolvedPiPath)
-            && PathsEqual(fullPath, resolvedPiPath);
+        return providerKey.Equals("openai-codex", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryResolveComparisonPath(string? path, out string fullPath)
+    private static bool IsGlobalManagedCredentialPath(string path)
     {
-        fullPath = string.Empty;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return false;
-        }
-
-        try
-        {
-            var expanded = ExpandHomeDirectory(Environment.ExpandEnvironmentVariables(path.Trim()));
-            fullPath = Path.IsPathRooted(expanded)
-                ? Path.GetFullPath(expanded)
-                : Path.GetFullPath(expanded, Directory.GetCurrentDirectory());
-            return true;
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-    }
-
-    private static bool PathsEqual(string left, string right)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return string.Equals(
-            Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            comparison);
+        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return !string.IsNullOrWhiteSpace(userHome)
+            && (IsSubPathOf(path, Path.Combine(userHome, ".codex"))
+                || IsSubPathOf(path, Path.Combine(userHome, ".pi")));
     }
 
     private static string ExpandHomeDirectory(string path)
@@ -882,7 +1264,11 @@ public sealed class SocAgentSubscriptionOAuthConnectService(
         string CodeVerifier,
         string ReturnUrl,
         DateTimeOffset IssuedAt,
-        string RedirectUri);
+        string RedirectUri,
+        Guid InitiatorOperatorId,
+        string InitiatorSessionToken);
+
+    private sealed record OAuthInitiator(Guid OperatorId, string SessionToken);
 
     private sealed record TokenExchangeResult(
         string AccessToken,

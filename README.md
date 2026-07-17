@@ -10,7 +10,7 @@ Challenger SIEM is an open-source security telemetry pipeline under active devel
 > [!WARNING]
 > Challenger SIEM is **not production-ready**. There is no supported production release, and the release-readiness checklist still requires real endpoint, database, browser, packaging, upgrade, and security-hardening evidence. Use it for development or controlled labs with synthetic data unless you have independently reviewed and accepted the risks.
 
-The current project version is `1.9.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
+The current project version is `1.10.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
 
 ## Current state
 

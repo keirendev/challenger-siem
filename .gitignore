@@ -42,8 +42,17 @@ id_rsa*
 id_ed25519*
 .local/
 .pi/
+.codex/
+.claude/
+.cursor/
+.continue/
+.windsurf/
+.aider*
 .mcp/
 AGENTS.md
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
 secrets.json
 mcp.local.json
 mcp.*.local.json

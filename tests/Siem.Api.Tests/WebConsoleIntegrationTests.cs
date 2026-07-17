@@ -149,11 +149,12 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Audit policy drift", auditPolicy, StringComparison.Ordinal);
 
         var socAgent = await GetHtmlAsync(client, $"/soc-agent?agent_id={Uri.EscapeDataString(agentId)}");
-        Assert.Contains("soc-agent workspace", socAgent, StringComparison.Ordinal);
-        Assert.Contains("Provider status", socAgent, StringComparison.Ordinal);
+        Assert.Contains("<h1>soc-agent</h1>", socAgent, StringComparison.Ordinal);
+        Assert.Contains("ChatGPT settings", socAgent, StringComparison.Ordinal);
         Assert.Contains("Recent chats", socAgent, StringComparison.Ordinal);
-        Assert.Contains("Live tool activity", socAgent, StringComparison.Ordinal);
-        Assert.Contains("Send a soc-agent message", socAgent, StringComparison.Ordinal);
+        Assert.Contains("What should we investigate?", socAgent, StringComparison.Ordinal);
+        Assert.Contains("Message soc-agent", socAgent, StringComparison.Ordinal);
+        Assert.DoesNotContain("conversation-header", socAgent, StringComparison.Ordinal);
         var socAgentToken = ExtractAntiforgeryToken(socAgent);
         using (var chatResponse = await client.PostAsync("/soc-agent?handler=Send", new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -167,8 +168,8 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             var chatThread = await GetHtmlAsync(client, chatLocation);
             Assert.Contains("Operator", chatThread, StringComparison.Ordinal);
             Assert.Contains("soc-agent", chatThread, StringComparison.Ordinal);
-            Assert.Contains("Tool activity", chatThread, StringComparison.Ordinal);
-            Assert.Contains("Citations", chatThread, StringComparison.Ordinal);
+            Assert.Contains("Sources", chatThread, StringComparison.Ordinal);
+            Assert.DoesNotContain("message-activity", chatThread, StringComparison.Ordinal);
             Assert.Contains("Delete chat", chatThread, StringComparison.Ordinal);
             Assert.Contains("Confirm deletion", chatThread, StringComparison.Ordinal);
             Assert.Contains(agentId, chatThread, StringComparison.Ordinal);

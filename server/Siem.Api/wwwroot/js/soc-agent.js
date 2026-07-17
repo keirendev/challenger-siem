@@ -5,31 +5,40 @@
     }
 
     const form = document.getElementById('soc-agent-composer');
-    const textarea = document.getElementById('Message');
-    const contextInput = document.getElementById('ComposerContextAgentId');
-    const hiddenSessionInput = document.getElementById('soc-agent-session-id-input');
-    const sendButton = document.getElementById('soc-agent-send-button');
-    const cancelButton = document.getElementById('soc-agent-cancel-button');
+    const textarea = document.getElementById('soc-agent-message');
+    const contextInput = document.getElementById('soc-agent-context-agent-id');
+    const hiddenSessionInput = document.getElementById('soc-agent-session-id');
+    const sendButton = document.getElementById('soc-agent-send');
+    const cancelButton = document.getElementById('soc-agent-cancel');
+    const modelSelect = document.getElementById('soc-agent-model-select');
+    const effortSelect = document.getElementById('soc-agent-effort-select');
     const messageList = document.getElementById('soc-agent-message-list');
     const threadScroll = document.getElementById('soc-agent-thread-scroll');
-    const threadEnd = document.getElementById('soc-agent-thread-end');
-    const emptyState = document.getElementById('soc-agent-empty');
-    const scrollButton = document.getElementById('soc-agent-scroll-bottom');
+    const emptyState = document.getElementById('soc-agent-empty-state');
+    const scrollButton = document.getElementById('soc-agent-scroll-latest');
     const runState = document.getElementById('soc-agent-run-state');
     const alertBox = document.getElementById('soc-agent-live-alert');
     const banner = document.getElementById('soc-agent-connection-banner');
-    const activityList = document.getElementById('soc-agent-activity-list');
-    const activityEmpty = document.getElementById('soc-agent-activity-empty');
-    const charCount = document.getElementById('soc-agent-char-count');
-    const contextChip = document.getElementById('soc-agent-context-chip');
-    const sessionMeta = document.getElementById('soc-agent-session-meta');
+    const bannerMessage = document.getElementById('soc-agent-connection-message');
+    const reconnectButton = document.getElementById('soc-agent-reconnect');
+    const charCount = document.getElementById('soc-agent-character-count');
+    const contextChip = document.querySelector('.composer-context .context-chip');
     const providerInlineNotice = document.getElementById('soc-agent-provider-inline-notice');
-    const providerStatus = document.getElementById('soc-agent-provider-inline-status');
     const providerPill = document.getElementById('soc-agent-provider-pill');
     const providerName = document.getElementById('soc-agent-provider-inline-name');
     const providerMessage = document.getElementById('soc-agent-provider-inline-message');
-    const toggleActivity = document.getElementById('soc-agent-toggle-activity');
-    const workspace = document.querySelector('.soc-agent-workspace');
+    const settingsProviderStatus = document.getElementById('soc-agent-settings-provider-status');
+    const settingsProviderName = document.getElementById('soc-agent-settings-provider-name');
+    const settingsProviderMessage = document.getElementById('soc-agent-settings-provider-message');
+    const chatGptLoginPanel = document.getElementById('soc-agent-chatgpt-login-panel');
+    const chatGptLoginState = document.getElementById('soc-agent-chatgpt-login-state');
+    const chatGptLoginMessage = document.getElementById('soc-agent-chatgpt-login-message');
+    const chatGptLoginVerification = document.getElementById('soc-agent-chatgpt-login-verification');
+    const chatGptLoginLink = document.getElementById('soc-agent-chatgpt-login-link');
+    const chatGptLoginCode = document.getElementById('soc-agent-chatgpt-login-code');
+    const chatGptLoginStartForm = document.getElementById('soc-agent-chatgpt-login-start');
+    const chatGptLoginStartButton = chatGptLoginStartForm?.querySelector('button[type="submit"]');
+    const chatGptLoginCancelForm = document.getElementById('soc-agent-chatgpt-login-cancel');
     const maxLength = Number(root.dataset.maxMessageLength || '4000');
     let currentSessionId = root.dataset.sessionId || '';
     let currentRunId = null;
@@ -47,7 +56,7 @@
         if (!alertBox) return;
         alertBox.textContent = message;
         alertBox.hidden = false;
-        alertBox.className = kind === 'error' ? 'alert live-alert' : 'notice live-alert';
+        alertBox.className = kind === 'error' ? 'alert error live-alert' : 'alert success live-alert';
     }
 
     function hideAlert() {
@@ -60,16 +69,20 @@
     function setBanner(message, isError = false) {
         if (!banner) return;
         banner.hidden = !message;
-        banner.textContent = message || '';
+        if (bannerMessage) bannerMessage.textContent = message || '';
         banner.classList.toggle('error', Boolean(isError));
+        if (reconnectButton) reconnectButton.hidden = !(isError && currentRunId);
     }
 
     function setRunning(isRunning, label) {
         running = isRunning;
-        runState.textContent = label || (isRunning ? 'Running' : 'Idle');
-        runState.classList.toggle('warning', isRunning);
+        runState.textContent = label || (isRunning ? 'Running' : 'Ready');
+        runState.classList.toggle('running', isRunning);
         sendButton.disabled = isRunning;
+        cancelButton.hidden = !isRunning;
         cancelButton.disabled = !isRunning || !currentRunId;
+        modelSelect.disabled = isRunning;
+        effortSelect.disabled = isRunning || !selectedModelSupportsEffort();
         textarea.setAttribute('aria-busy', isRunning ? 'true' : 'false');
     }
 
@@ -83,34 +96,59 @@
 
     function updateContextChip() {
         const value = (contextInput.value || '').trim();
-        contextChip.textContent = value ? `Agent context: ${value}` : 'Global SIEM context';
+        contextChip.textContent = value ? 'Agent context' : 'All permitted SIEM data';
+    }
+
+    function selectedModelSupportsEffort() {
+        const option = modelSelect?.selectedOptions?.[0];
+        return Boolean(option?.dataset.reasoningEfforts?.split(',').some(Boolean));
+    }
+
+    function syncReasoningEfforts(preferredEffort = effortSelect?.value) {
+        if (!modelSelect || !effortSelect) return;
+        const option = modelSelect.selectedOptions[0];
+        const efforts = (option?.dataset.reasoningEfforts || '')
+            .split(',')
+            .map(value => value.trim())
+            .filter(Boolean);
+        const fallback = option?.dataset.defaultReasoningEffort || efforts[0] || '';
+        const selected = efforts.includes(preferredEffort) ? preferredEffort : fallback;
+
+        effortSelect.replaceChildren();
+        if (!efforts.length) {
+            const unavailable = createElement('option', '', 'Not available');
+            unavailable.value = '';
+            effortSelect.appendChild(unavailable);
+            effortSelect.disabled = true;
+            return;
+        }
+
+        for (const effort of efforts) {
+            const effortOption = createElement('option', '', effort);
+            effortOption.value = effort;
+            effortOption.selected = effort === selected;
+            effortSelect.appendChild(effortOption);
+        }
+        effortSelect.disabled = running;
+    }
+
+    function applyExecutionSelection(model, effort) {
+        if (!modelSelect || !model) return;
+        const matchingOption = Array.from(modelSelect.options).find(option => option.value === model);
+        if (!matchingOption) return;
+        modelSelect.value = model;
+        syncReasoningEfforts(effort || matchingOption.dataset.defaultReasoningEffort || '');
     }
 
     function hasThreadContent() {
         return Boolean(messageList && messageList.children.length > 0);
     }
 
-    function latestThreadTarget() {
-        return threadEnd || messageList?.lastElementChild || messageList || threadScroll;
-    }
-
-    function latestViewportBottom() {
-        const composerTop = form.getBoundingClientRect().top;
-        if (composerTop > 0 && composerTop < window.innerHeight) {
-            return Math.max(0, composerTop - 16);
-        }
-
-        return window.innerHeight - 16;
-    }
-
     function isLatestVisible() {
-        const target = latestThreadTarget();
-        if (!target || !hasThreadContent()) {
+        if (!threadScroll || !hasThreadContent()) {
             return true;
         }
-
-        const rect = target.getBoundingClientRect();
-        return rect.bottom >= -64 && rect.bottom <= latestViewportBottom() + 96;
+        return threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight < 96;
     }
 
     function updateScrollControl() {
@@ -126,22 +164,15 @@
         updateScrollControl();
     }
 
-    function latestScrollTop(target) {
-        const rect = target.getBoundingClientRect();
-        const desired = window.scrollY + rect.bottom - latestViewportBottom();
-        return Math.max(0, Math.ceil(desired));
-    }
-
     function performScrollToLatest(force = false) {
         if (force) {
             autoFollow = true;
         }
 
-        const target = latestThreadTarget();
-        if ((force || autoFollow) && target) {
+        if ((force || autoFollow) && threadScroll) {
             programmaticScrollUntil = Date.now() + (force ? 700 : 250);
-            window.scrollTo({
-                top: latestScrollTop(target),
+            threadScroll.scrollTo({
+                top: threadScroll.scrollHeight,
                 behavior: force ? 'smooth' : 'auto'
             });
             window.requestAnimationFrame(updateScrollControl);
@@ -206,6 +237,109 @@
             // Fall through to inert link.
         }
         return '#';
+    }
+
+    function safeChatGptVerificationUrl(url) {
+        try {
+            const parsed = new URL(String(url || '').trim());
+            if (parsed.protocol === 'https:'
+                && parsed.hostname === 'auth.openai.com'
+                && parsed.port === ''
+                && parsed.username === ''
+                && parsed.password === ''
+                && parsed.pathname === '/codex/device'
+                && parsed.search === ''
+                && parsed.hash === '') {
+                return parsed.href;
+            }
+        } catch (_) {
+            // Fall through to an inert link.
+        }
+        return '#';
+    }
+
+    function renderChatGptLoginStatus(status) {
+        if (!chatGptLoginPanel || !status) return;
+
+        const state = String(status.state || 'unavailable');
+        const canStart = status.can_start === true;
+        const canCancel = status.can_cancel === true;
+        const verificationUrl = safeChatGptVerificationUrl(status.verification_uri);
+        const userCode = typeof status.user_code === 'string' ? status.user_code.trim() : '';
+
+        if (chatGptLoginState) {
+            chatGptLoginState.textContent = state.replaceAll('_', ' ');
+        }
+        if (chatGptLoginMessage) {
+            chatGptLoginMessage.textContent = status.message || 'ChatGPT login status is unavailable.';
+        }
+        if (chatGptLoginStartForm) {
+            chatGptLoginStartForm.hidden = !canStart;
+        }
+        if (chatGptLoginStartButton) {
+            chatGptLoginStartButton.textContent = ['connected', 'ready', 'succeeded', 'complete'].includes(state)
+                ? 'Log in to ChatGPT again'
+                : 'Log in to ChatGPT';
+        }
+        if (chatGptLoginCancelForm) {
+            chatGptLoginCancelForm.hidden = !canCancel;
+        }
+        if (chatGptLoginVerification) {
+            const showVerification = verificationUrl !== '#' && Boolean(userCode);
+            chatGptLoginVerification.hidden = !showVerification;
+            if (showVerification) {
+                chatGptLoginLink.href = verificationUrl;
+                chatGptLoginCode.textContent = userCode;
+            } else {
+                chatGptLoginLink.removeAttribute('href');
+                chatGptLoginCode.textContent = '';
+            }
+        }
+
+        if (['connected', 'ready', 'succeeded', 'complete'].includes(state)) {
+            fetch('/api/v1/soc-agent/status', { credentials: 'same-origin', cache: 'no-store' })
+                .then(response => response.ok ? response.json() : null)
+                .then(updateProvider)
+                .catch(() => {});
+        }
+    }
+
+    async function pollChatGptLoginStatus() {
+        if (!chatGptLoginPanel?.dataset.statusUrl) return;
+        try {
+            const response = await fetch(chatGptLoginPanel.dataset.statusUrl, {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { Accept: 'application/json' }
+            });
+            if (!response.ok) {
+                throw new Error(`status ${response.status}`);
+            }
+            const status = await response.json();
+            renderChatGptLoginStatus(status);
+            if (status.can_cancel === true || ['starting', 'verifying'].includes(String(status.state || ''))) {
+                window.setTimeout(pollChatGptLoginStatus, 1500);
+            }
+        } catch (_) {
+            if (chatGptLoginMessage) {
+                chatGptLoginMessage.textContent = 'Could not refresh the server login status. Confirm your operator session is still signed in.';
+            }
+        }
+    }
+
+    function initializeChatGptLoginPanel() {
+        if (!chatGptLoginPanel) return;
+
+        const shouldOpen = chatGptLoginPanel.dataset.autoOpen === 'true';
+        const settingsDialog = document.getElementById('soc-agent-settings-dialog');
+        if (shouldOpen && settingsDialog && !settingsDialog.open && typeof settingsDialog.showModal === 'function') {
+            settingsDialog.showModal();
+            chatGptLoginPanel.focus({ preventScroll: true });
+        }
+
+        if (chatGptLoginPanel.dataset.poll === 'true' || shouldOpen) {
+            pollChatGptLoginStatus();
+        }
     }
 
     function sanitizeMarkdownLink(url) {
@@ -499,6 +633,21 @@
         return { label, url, end: urlEnd + 1 };
     }
 
+    function createMessageItem(role, content, stateClass = '') {
+        const item = createElement('li', `message-row ${role === 'operator' ? 'operator' : 'assistant'} ${stateClass}`.trim());
+        item.dataset.role = role;
+        const article = createElement('article');
+        const meta = createElement('header', 'message-meta');
+        article.appendChild(meta);
+        article.appendChild(createMessageBox(role, content));
+        item.appendChild(article);
+        return item;
+    }
+
+    function messageArticle(item) {
+        return item?.querySelector(':scope > article') || item;
+    }
+
     function appendMessage(message) {
         if (!message || !message.message_id) return;
         const existing = document.getElementById(`message-${message.message_id}`);
@@ -520,23 +669,17 @@
             const meta = item.querySelector('.message-meta');
             meta.textContent = '';
             hydrateMessageMeta(meta, message);
-            const existingTools = item.querySelector('.tool-card-grid');
-            if (existingTools) existingTools.remove();
-            const existingCitations = item.querySelector('.citations');
+            const existingCitations = item.querySelector('.message-citations');
             if (existingCitations) existingCitations.remove();
-            hydrateToolCards(item, message.tool_runs || []);
-            hydrateCitations(item, message.citations || []);
+            hydrateCitations(messageArticle(item), message.citations || []);
         } else {
-            item = createElement('li', `message-bubble ${message.role === 'operator' ? 'operator' : 'assistant'}`);
+            item = createMessageItem(message.role, message.content || '');
             item.id = `message-${message.message_id}`;
             item.dataset.messageId = message.message_id;
             item.dataset.role = message.role;
-            const meta = createElement('div', 'message-meta');
+            const meta = item.querySelector('.message-meta');
             hydrateMessageMeta(meta, message);
-            item.appendChild(meta);
-            item.appendChild(createMessageBox(message.role, message.content || ''));
-            hydrateToolCards(item, message.tool_runs || []);
-            hydrateCitations(item, message.citations || []);
+            hydrateCitations(messageArticle(item), message.citations || []);
             messageList.appendChild(item);
         }
 
@@ -546,14 +689,11 @@
 
     function appendOptimisticOperatorMessage(content) {
         emptyState.hidden = true;
-        const item = createElement('li', 'message-bubble operator sending');
+        const item = createMessageItem('operator', content, 'sending');
         item.id = `message-pending-operator-${Date.now()}`;
-        item.dataset.role = 'operator';
-        const meta = createElement('div', 'message-meta');
+        const meta = item.querySelector('.message-meta');
         meta.appendChild(createElement('strong', '', 'Operator'));
         meta.appendChild(createElement('span', 'badge warning', 'sending'));
-        item.appendChild(meta);
-        item.appendChild(createMessageBox('operator', content));
         messageList.appendChild(item);
         scrollToLatest();
         return item;
@@ -578,45 +718,29 @@
     }
 
     function hydrateMessageMeta(meta, message) {
-        meta.appendChild(createElement('strong', '', roleLabel(message.role)));
-        meta.appendChild(createElement('span', '', new Date(message.created_at || Date.now()).toLocaleString()));
+        meta.appendChild(createElement('span', 'message-role', roleLabel(message.role)));
+        const time = createElement('time', '', new Date(message.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        time.dateTime = message.created_at || new Date().toISOString();
+        meta.appendChild(time);
         if (message.provider) {
-            meta.appendChild(createElement('span', 'badge', `${message.provider} / ${message.model || ''}`));
+            const execution = [message.provider, message.model, message.reasoning_effort].filter(Boolean).join(' · ');
+            meta.appendChild(createElement('span', 'message-model', execution));
         }
         if (message.error_code) {
             meta.appendChild(createElement('span', 'badge danger', message.error_code));
         }
     }
 
-    function hydrateToolCards(container, tools) {
-        if (!tools.length) return;
-        const grid = createElement('div', 'tool-card-grid');
-        grid.setAttribute('aria-label', 'Tool activity for this message');
-        for (const tool of tools) {
-            const card = createElement('article', 'tool-card complete');
-            const header = createElement('div', 'tool-card-header');
-            header.appendChild(createElement('strong', '', tool.tool_name || 'tool'));
-            header.appendChild(createElement('span', 'badge ok', 'ok'));
-            card.appendChild(header);
-            card.appendChild(createElement('p', '', tool.summary || 'Completed.'));
-            card.appendChild(createElement('p', 'muted', `Rows: ${tool.row_count ?? 0}`));
-            grid.appendChild(card);
-        }
-        container.appendChild(grid);
-    }
-
     function hydrateCitations(container, citations) {
         if (!citations.length) return;
-        const wrapper = createElement('div', 'citations');
-        wrapper.appendChild(createElement('h3', '', 'Citations'));
+        const wrapper = createElement('div', 'message-citations');
+        wrapper.appendChild(createElement('span', '', 'Sources'));
         const list = createElement('ul');
         for (const citation of citations) {
             const item = createElement('li');
             const link = createElement('a', '', citation.label || 'Citation');
             link.href = safeUrl(citation.url);
             item.appendChild(link);
-            item.appendChild(document.createTextNode(' '));
-            item.appendChild(createElement('span', 'muted', citation.kind || 'reference'));
             list.appendChild(item);
         }
         wrapper.appendChild(list);
@@ -626,14 +750,12 @@
     function ensurePendingAssistant() {
         if (pendingAssistant) return pendingAssistant;
         emptyState.hidden = true;
-        pendingAssistant = createElement('li', 'message-bubble assistant pending', '');
+        pendingAssistant = createMessageItem('soc_agent', 'Preparing live response…', 'pending');
         pendingAssistant.id = `message-pending-${currentRunId || 'run'}`;
         pendingAssistant.setAttribute('aria-busy', 'true');
-        const meta = createElement('div', 'message-meta');
+        const meta = pendingAssistant.querySelector('.message-meta');
         meta.appendChild(createElement('strong', '', 'soc-agent'));
         meta.appendChild(createElement('span', 'badge warning', 'streaming'));
-        pendingAssistant.appendChild(meta);
-        pendingAssistant.appendChild(createMessageBox('soc_agent', 'Preparing live response…'));
         messageList.appendChild(pendingAssistant);
         return pendingAssistant;
     }
@@ -661,34 +783,6 @@
         scrollToLatest();
     }
 
-    function upsertActivity(type, data, sequence) {
-        if (!activityList) return;
-        activityEmpty.hidden = true;
-        const toolName = data.tool_name || data.tool_run?.tool_name || 'soc-agent';
-        let card = activityList.querySelector(`[data-tool-name="${CSS.escape(toolName)}"].running`);
-        if (!card) {
-            card = createElement('article', 'activity-card running');
-            card.dataset.toolName = toolName;
-            const header = createElement('div', 'tool-card-header');
-            header.appendChild(createElement('strong', '', toolName));
-            header.appendChild(createElement('span', 'badge warning', 'running'));
-            card.appendChild(header);
-            card.appendChild(createElement('p', '', data.summary || 'Running.'));
-            card.appendChild(createElement('p', 'muted', `seq ${sequence}`));
-            activityList.prepend(card);
-        }
-
-        if (type === 'tool_finished') {
-            card.classList.remove('running');
-            card.classList.add('complete');
-            const badge = card.querySelector('.badge');
-            badge.className = 'badge ok';
-            badge.textContent = 'ok';
-            card.querySelector('p').textContent = data.summary || 'Completed.';
-            card.querySelector('.muted').textContent = `Rows: ${data.row_count ?? 0} · seq ${sequence}`;
-        }
-    }
-
     function providerNeedsAttention(status) {
         if (!status) return false;
         if (status.requires_connection) return true;
@@ -698,14 +792,24 @@
     function updateProvider(status) {
         if (!status) return;
         const statusText = status.status || 'unknown';
-        if (providerStatus) providerStatus.textContent = statusText;
+        const warningStates = ['disabled', 'provider_not_configured', 'auth_required', 'expired', 'refresh_failed', 'unsupported_delegated_auth', 'unsupported_subscription_oauth', 'scope_missing', 'plan_limited', 'budget_limited', 'rate_limited'];
+        const badgeClass = ['connected', 'local'].includes(statusText)
+            ? 'ok'
+            : (warningStates.includes(statusText) ? 'warning' : 'danger');
+        for (const badge of [providerPill, settingsProviderStatus]) {
+            if (!badge) continue;
+            badge.textContent = statusText.replaceAll('_', ' ');
+            badge.classList.remove('ok', 'warning', 'danger');
+            badge.classList.add(badgeClass);
+        }
         if (providerPill) {
-            providerPill.textContent = statusText;
             providerPill.setAttribute('aria-label', `Provider status: ${statusText}`);
             providerPill.setAttribute('title', status.display_name || status.provider || 'Provider');
         }
         if (providerName) providerName.textContent = status.display_name || status.provider || 'Provider';
         if (providerMessage) providerMessage.textContent = status.message || '';
+        if (settingsProviderName) settingsProviderName.textContent = status.display_name || status.provider || 'Provider';
+        if (settingsProviderMessage) settingsProviderMessage.textContent = status.message || '';
         if (providerInlineNotice) {
             providerInlineNotice.hidden = !providerNeedsAttention(status);
         }
@@ -719,14 +823,15 @@
 
         switch (type) {
             case 'resume_snapshot':
-                setBanner(data.status === 'running' || data.status === 'cancel_requested' ? 'Reconnected to an active soc-agent run.' : 'Connected to soc-agent live events.');
+                applyExecutionSelection(data.model, data.reasoning_effort);
+                setBanner('');
                 break;
             case 'session_created':
                 if (data.session?.session_id) {
                     currentSessionId = data.session.session_id;
                     root.dataset.sessionId = currentSessionId;
                     hiddenSessionInput.value = currentSessionId;
-                    sessionMeta.textContent = `Session ${currentSessionId} · live run active`;
+                    applyExecutionSelection(data.session.model, data.session.reasoning_effort);
                     const url = new URL(window.location.href);
                     url.searchParams.set('session_id', currentSessionId);
                     window.history.replaceState({}, '', url);
@@ -736,9 +841,9 @@
                 appendMessage(data.message);
                 break;
             case 'run_started':
+                applyExecutionSelection(data.model, data.reasoning_effort);
                 setRunning(true, 'Running');
-                setPendingAssistantPlaceholder('soc-agent is running SIEM tools…');
-                showAlert(data.message || 'soc-agent run started.');
+                setPendingAssistantPlaceholder('soc-agent is working…');
                 break;
             case 'provider_status':
                 updateProvider(data.provider_status);
@@ -747,11 +852,9 @@
                 }
                 break;
             case 'tool_started':
-                setPendingAssistantPlaceholder(data.summary || `Running ${data.tool_name || 'soc-agent tool'}…`);
-                upsertActivity(type, data, payload.sequence);
+                setPendingAssistantPlaceholder('soc-agent is working…');
                 break;
             case 'tool_finished':
-                upsertActivity(type, data, payload.sequence);
                 break;
             case 'citation_added':
                 // Final persisted assistant messages render citations; live citation events keep the stream resumable.
@@ -789,7 +892,7 @@
                         ? 'soc-agent completed. Refresh if the final response is not shown.'
                         : currentMessageText(pendingAssistant));
                 }
-                setBanner('soc-agent run complete.');
+                setBanner('');
                 if (data.status === 'complete') hideAlert();
                 break;
         }
@@ -805,7 +908,7 @@
         for (const type of eventTypes) {
             eventSource.addEventListener(type, applyLiveEvent);
         }
-        eventSource.onopen = () => setBanner('Live stream connected.');
+        eventSource.onopen = () => setBanner('');
         eventSource.onerror = () => {
             if (running && currentRunId) {
                 setBanner('Live stream reconnecting…', false);
@@ -824,6 +927,10 @@
             showAlert(`Enter a message up to ${maxLength} characters.`, 'error');
             return;
         }
+        const selectedModel = modelSelect.value || null;
+        const selectedReasoningEffort = selectedModelSupportsEffort()
+            ? (effortSelect.value || null)
+            : null;
 
         setRunning(true, 'Starting');
         setBanner('Starting soc-agent run…');
@@ -833,14 +940,16 @@
         textarea.value = '';
         updateCharacterCount();
         try {
-            const response = await fetch(root.dataset.liveStartUrl, {
+            const response = await fetch(root.dataset.startUrl, {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     session_id: currentSessionId || null,
                     message,
-                    context_agent_id: (contextInput.value || '').trim() || null
+                    context_agent_id: (contextInput.value || '').trim() || null,
+                    model: selectedModel,
+                    reasoning_effort: selectedReasoningEffort
                 })
             });
 
@@ -854,14 +963,14 @@
             hiddenSessionInput.value = currentSessionId;
             root.dataset.sessionId = currentSessionId;
             if (currentSessionId) {
-                sessionMeta.textContent = `Session ${currentSessionId} · live run active`;
+                applyExecutionSelection(result.session?.model, result.session?.reasoning_effort);
                 const url = new URL(window.location.href);
                 url.searchParams.set('session_id', currentSessionId);
                 url.searchParams.delete('agent_id');
                 window.history.replaceState({}, '', url);
             }
             hydrateOptimisticOperatorMessage(optimisticOperator, result.user_message);
-            setPendingAssistantPlaceholder('soc-agent is running SIEM tools…');
+            setPendingAssistantPlaceholder('soc-agent is working…');
             openEventStream(result.run_id, 0);
             setRunning(true, 'Running');
         } catch (error) {
@@ -909,7 +1018,7 @@
     form.addEventListener('submit', startRun);
     cancelButton.addEventListener('click', cancelRun);
     textarea.addEventListener('input', updateCharacterCount);
-    contextInput.addEventListener('input', updateContextChip);
+    modelSelect.addEventListener('change', () => syncReasoningEfforts());
     textarea.addEventListener('keydown', event => {
         const explicitSendShortcut = event.ctrlKey || event.metaKey;
         const plainEnterSend = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
@@ -920,7 +1029,7 @@
             }
         }
     });
-    window.addEventListener('scroll', () => {
+    threadScroll.addEventListener('scroll', () => {
         if (Date.now() < programmaticScrollUntil) {
             window.requestAnimationFrame(updateScrollControl);
             return;
@@ -928,8 +1037,8 @@
 
         setAutoFollow(isLatestVisible());
     }, { passive: true });
-    window.addEventListener('wheel', markUserScrollIntent, { passive: true });
-    window.addEventListener('touchmove', markUserScrollIntent, { passive: true });
+    threadScroll.addEventListener('wheel', markUserScrollIntent, { passive: true });
+    threadScroll.addEventListener('touchmove', markUserScrollIntent, { passive: true });
     window.addEventListener('keydown', event => {
         if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(event.code)) {
             markUserScrollIntent();
@@ -943,23 +1052,23 @@
         }
     }, { passive: true });
     scrollButton.addEventListener('click', () => scrollToLatest(true));
-    document.querySelectorAll('[data-prompt]').forEach(button => {
+    document.querySelectorAll('[data-soc-agent-prompt]').forEach(button => {
         button.addEventListener('click', () => {
-            textarea.value = button.dataset.prompt || '';
+            textarea.value = button.dataset.socAgentPrompt || '';
             updateCharacterCount();
             textarea.focus();
         });
     });
-    toggleActivity.addEventListener('click', () => {
-        const collapsed = workspace.classList.toggle('activity-collapsed');
-        toggleActivity.setAttribute('aria-expanded', String(!collapsed));
-        toggleActivity.textContent = collapsed ? 'Expand' : 'Collapse';
+    reconnectButton.addEventListener('click', () => {
+        if (currentRunId) openEventStream(currentRunId, lastSequence);
     });
 
     hydratePersistedMarkdownMessages();
+    syncReasoningEfforts();
     updateCharacterCount();
     updateContextChip();
-    setAutoFollow(isLatestVisible());
-    window.requestAnimationFrame(updateScrollControl);
+    initializeChatGptLoginPanel();
+    setAutoFollow(true);
+    scrollToLatest();
     resumeActiveRun();
 })();

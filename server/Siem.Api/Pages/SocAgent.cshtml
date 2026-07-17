@@ -2,246 +2,394 @@
 @model Challenger.Siem.Api.Pages.SocAgentModel
 @{
     ViewData["Title"] = "soc-agent";
-    ViewData["MainClass"] = "container soc-agent-container";
-    var composerContextAgentId = Model.ContextAgentId ?? Model.CurrentSession?.ContextAgentId;
-    var hasAgentContext = !string.IsNullOrWhiteSpace(composerContextAgentId);
-    var currentSessionId = Model.CurrentSession?.SessionId.ToString() ?? string.Empty;
+    ViewData["MainClass"] = "soc-agent-page";
+
+    var contextAgentId = string.IsNullOrWhiteSpace(Model.ContextAgentId)
+        ? null
+        : Model.ContextAgentId.Trim();
+    var activeSessionId = Model.CurrentSession?.SessionId ?? Model.SessionId;
+    var selectedModel = Model.ProviderStatus.ModelOptions.FirstOrDefault(option =>
+            string.Equals(option.Model, Model.SelectedModel, StringComparison.OrdinalIgnoreCase))
+        ?? Model.ProviderStatus.ModelOptions.FirstOrDefault();
+    var selectedEfforts = selectedModel?.ReasoningEfforts ?? Array.Empty<string>();
+    var providerStatusLabel = Model.ProviderStatus.Status.Replace('_', ' ');
+    var configuredConnectUrl = Model.ProviderStatus.ConnectUrl?.Trim();
+    var safeConnectUrl = !string.IsNullOrWhiteSpace(configuredConnectUrl)
+        && ((configuredConnectUrl.StartsWith("/", StringComparison.Ordinal) && !configuredConnectUrl.StartsWith("//", StringComparison.Ordinal))
+            || (Uri.TryCreate(configuredConnectUrl, UriKind.Absolute, out var connectUri)
+                && (connectUri.Scheme == Uri.UriSchemeHttps || connectUri.Scheme == Uri.UriSchemeHttp)))
+        ? configuredConnectUrl
+        : null;
+    var configuredChatGptVerificationUrl = Model.ChatGptLoginStatus.VerificationUrl;
+    var safeChatGptVerificationUrl = Uri.TryCreate(configuredChatGptVerificationUrl, UriKind.Absolute, out var chatGptVerificationUri)
+        && chatGptVerificationUri.Scheme == Uri.UriSchemeHttps
+        && string.Equals(chatGptVerificationUri.Host, "auth.openai.com", StringComparison.OrdinalIgnoreCase)
+        && chatGptVerificationUri.IsDefaultPort
+        && string.IsNullOrEmpty(chatGptVerificationUri.UserInfo)
+        && string.Equals(chatGptVerificationUri.AbsolutePath, "/codex/device", StringComparison.Ordinal)
+        && string.IsNullOrEmpty(chatGptVerificationUri.Query)
+        && string.IsNullOrEmpty(chatGptVerificationUri.Fragment)
+        ? chatGptVerificationUri.AbsoluteUri
+        : null;
 }
 
-<partial name="_Breadcrumbs" model='BreadcrumbsModel.Create(new BreadcrumbItem("Overview", Page: "/Index"), new BreadcrumbItem("soc-agent", IsCurrent: true))' />
+@section Head {
+    <link rel="stylesheet" href="~/css/soc-agent.css" asp-append-version="true" />
+}
 
-<div class="page-header soc-agent-titlebar">
-    <div>
-        <p class="page-kicker">Live analyst workspace</p>
-        <h1>soc-agent workspace</h1>
-        <p class="muted">No-reload SIEM investigation chat with live tool progress, bounded citations, cancellation, and proposal-only safety boundaries.</p>
+<header class="soc-agent-header">
+    <h1>soc-agent</h1>
+    <div class="soc-agent-header-actions">
+        <span id="soc-agent-provider-pill" class="badge @Model.StatusBadgeClass()">@providerStatusLabel</span>
+        <a class="button secondary small" asp-page="/SocAgent" asp-route-agent_id="@contextAgentId">New chat</a>
+        <button id="soc-agent-settings-button" class="button secondary small" type="button" data-open-dialog="soc-agent-settings-dialog">Settings</button>
     </div>
-    <div class="soc-agent-title-actions">
-        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-pill" aria-label="Provider status: @Model.ProviderStatus.Status" title="@Model.ProviderStatus.DisplayName">@Model.ProviderStatus.Status</span>
-        <a class="button secondary" asp-page="/SocAgent">New chat</a>
-    </div>
-</div>
+</header>
 
-@if (Model.ErrorMessage is not null)
+@if (!string.IsNullOrWhiteSpace(Model.NoticeMessage))
 {
-    <partial name="_Notice" model='new NoticeModel("soc-agent unavailable", Model.ErrorMessage, "error", IsAlert: true)' />
+    <div class="alert success" role="status">@Model.NoticeMessage</div>
 }
-@if (Model.NoticeMessage is not null)
+@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
 {
-    <partial name="_Notice" model='new NoticeModel("soc-agent update", Model.NoticeMessage, "success")' />
+    <div class="alert error" role="alert">@Model.ErrorMessage</div>
+}
+<div id="soc-agent-live-alert" class="alert error" role="alert" hidden></div>
+
+@if (Model.ShouldShowProviderInlineNotice)
+{
+    <section id="soc-agent-provider-inline-notice" class="soc-agent-provider-notice" aria-label="Provider attention required">
+        <div>
+            <strong id="soc-agent-provider-inline-name">@Model.ProviderStatus.DisplayName</strong>
+            <span id="soc-agent-provider-inline-message">@Model.ProviderStatus.Message</span>
+        </div>
+        <button id="soc-agent-provider-settings-button" class="button secondary small" type="button" data-open-dialog="soc-agent-settings-dialog">Review settings</button>
+    </section>
 }
 
-<div id="soc-agent-live-alert" class="notice live-alert" role="status" aria-live="polite" hidden></div>
-
-<div id="soc-agent-provider-inline-notice" class="notice provider-inline-notice" role="status" aria-live="polite" @(Model.ShouldShowProviderInlineNotice ? null : "hidden")>
-    <div class="provider-inline-summary">
-        <span class="badge @Model.StatusBadgeClass()" id="soc-agent-provider-inline-status">@Model.ProviderStatus.Status</span>
-        <strong id="soc-agent-provider-inline-name">@Model.ProviderStatus.DisplayName</strong>
-        <span id="soc-agent-provider-inline-message">@Model.ProviderStatus.Message</span>
+<dialog id="soc-agent-settings-dialog" class="soc-agent-settings-dialog" aria-labelledby="soc-agent-settings-title">
+    <div class="settings-dialog-header">
+        <div>
+            <p class="eyebrow">soc-agent</p>
+            <h2 id="soc-agent-settings-title">ChatGPT settings</h2>
+        </div>
+        <button class="dialog-close" type="button" aria-label="Close settings" data-close-dialog>×</button>
     </div>
-    @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
-    {
-        <p class="muted">External provider mode may send bounded/redacted prompts and tool summaries outside the local SIEM only after official server-side auth is configured.</p>
-    }
-    @if (Model.ProviderStatus.RequiresConnection || Model.CanStartSubscriptionOAuthConnect)
-    {
-        <div class="provider-inline-actions">
-            @if (Model.CanStartSubscriptionOAuthConnect)
-            {
-                <form method="post" asp-page-handler="ConnectSubscriptionOAuth" class="inline-form">
-                    <button type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT subscription OAuth" : "Connect ChatGPT subscription OAuth")</button>
-                </form>
-            }
-            else if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ConnectUrl))
-            {
-                <a class="button" href="@Model.ProviderStatus.ConnectUrl" target="_blank" rel="noreferrer noopener">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
-            }
-            <span class="muted">Never enter ChatGPT passwords, browser cookies, or unofficial session tokens into Challenger SIEM.</span>
-        </div>
-    }
-</div>
 
-<div class="soc-agent-workspace" data-soc-agent-workspace data-session-id="@currentSessionId" data-context-agent-id="@composerContextAgentId" data-live-start-url="/soc-agent/live/runs" data-max-message-length="4000">
-    <aside class="soc-agent-rail card" aria-labelledby="sessions-title">
-        <div class="rail-header">
-            <div>
-                <p class="page-kicker">History</p>
-                <h2 id="sessions-title">Recent chats</h2>
-            </div>
-            <a class="button secondary" asp-page="/SocAgent">New</a>
-        </div>
-        @if (Model.Sessions.Count == 0)
-        {
-            <p class="muted">No saved chats yet. Send a message to create a persisted session.</p>
-        }
-        else
-        {
-            <ul class="session-list" id="soc-agent-session-list">
-                @foreach (var session in Model.Sessions)
-                {
-                    <li class="session-item">
-                        <a class="session-link @(Model.CurrentSession?.SessionId == session.SessionId ? "active-session" : null)" asp-page="/SocAgent" asp-route-session_id="@session.SessionId" data-session-id="@session.SessionId">
-                            <span>@session.Title</span>
-                            <span class="muted">@session.MessageCount messages · @session.Status · @TimeDisplay.FormatUtc(session.UpdatedAt, "yyyy-MM-dd HH:mm")</span>
-                        </a>
-                        <details class="session-delete">
-                            <summary>Delete chat</summary>
-                            <form method="post" asp-page-handler="DeleteSession" class="session-delete-form">
-                                <input type="hidden" name="DeleteSessionId" value="@session.SessionId" />
-                                <input type="hidden" name="SessionId" value="@Model.CurrentSession?.SessionId" />
-                                <input type="hidden" name="ContextAgentId" value="@Model.ContextAgentId" />
-                                <p class="muted">Deletes this chat session and its persisted messages only. One-shot soc-agent audit turns are retained.</p>
-                                <label class="confirm-inline">
-                                    <input type="checkbox" name="ConfirmDelete" value="true" />
-                                    Confirm deletion of “@session.Title” (@session.MessageCount messages)
-                                </label>
-                                <button type="submit" class="danger">Delete chat</button>
-                            </form>
-                        </details>
-                    </li>
-                }
-            </ul>
-        }
-    </aside>
-
-    <section class="soc-agent-chat" aria-labelledby="thread-title">
-        <div class="card chat-thread live-thread">
-            <div class="thread-header">
+    <div class="settings-dialog-body">
+        <section class="settings-section" aria-labelledby="subscription-settings-title">
+            <div class="settings-section-heading">
                 <div>
-                    <p class="page-kicker">Conversation</p>
-                    <h2 id="thread-title">@(Model.CurrentSession?.Title ?? "New investigation")</h2>
-                    @if (Model.CurrentSession is not null)
+                    <h3 id="subscription-settings-title">Account</h3>
+                    <p>Manage the ChatGPT subscription used by this SIEM instance.</p>
+                </div>
+                <span id="soc-agent-settings-provider-status" class="badge @Model.StatusBadgeClass()">@providerStatusLabel</span>
+            </div>
+
+            <div class="settings-account-summary">
+                <strong id="soc-agent-settings-provider-name">@Model.ProviderStatus.DisplayName</strong>
+                <p id="soc-agent-settings-provider-message">@Model.ProviderStatus.Message</p>
+            </div>
+
+            <dl class="settings-metadata">
+                <div><dt>Provider</dt><dd>@Model.ProviderStatus.Provider</dd></div>
+                <div><dt>Authentication</dt><dd>@Model.AuthenticationLabel</dd></div>
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.CredentialSource))
+                {
+                    <div><dt>Credential source</dt><dd>@Model.ProviderStatus.CredentialSource</dd></div>
+                }
+                @if (Model.ProviderStatus.ExpiresAt.HasValue)
+                {
+                    <div><dt>Expires</dt><dd>@Model.ProviderStatus.ExpiresAt.Value.ToLocalTime().ToString("d MMM yyyy, HH:mm")</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.RefreshStatus))
+                {
+                    <div><dt>Refresh</dt><dd>@Model.ProviderStatus.RefreshStatus.Replace('_', ' ')</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.ScopeStatus))
+                {
+                    <div><dt>Scope</dt><dd>@Model.ProviderStatus.ScopeStatus.Replace('_', ' ')</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ProviderStatus.EntitlementStatus))
+                {
+                    <div><dt>Entitlement</dt><dd>@Model.ProviderStatus.EntitlementStatus.Replace('_', ' ')</dd></div>
+                }
+            </dl>
+
+            @if (Model.ProviderStatus.DataMayLeaveLocalSiem)
+            {
+                <p class="settings-data-note">Prompts and selected SIEM context may be sent to the configured provider. Credentials stay server-side and are never exposed to this page.</p>
+            }
+            else
+            {
+                <p class="settings-data-note">Analysis remains inside the local SIEM provider path.</p>
+            }
+
+            <div class="settings-actions">
+                @if (Model.CanStartSubscriptionOAuthConnect)
+                {
+                    <form method="post" asp-page-handler="ConnectSubscriptionOAuth">
+                        <button class="button" type="submit">@(Model.ProviderStatus.Status == "connected" ? "Reconnect ChatGPT" : "Connect ChatGPT")</button>
+                    </form>
+                }
+                else if (Model.CanManageProviderAuthentication && !string.IsNullOrWhiteSpace(safeConnectUrl))
+                {
+                    <a class="button" href="@safeConnectUrl" rel="noopener noreferrer">@(Model.ProviderStatus.ConnectLabel ?? "Connect provider")</a>
+                }
+            </div>
+
+            @if (Model.UsesCodexManagedLogin)
+            {
+                <div id="soc-agent-chatgpt-login-panel"
+                     class="settings-device-login"
+                     tabindex="-1"
+                     data-status-url="@(Model.CanManageChatGptLogin ? Url.Page("/SocAgent", "ChatGptLoginStatus") : null)"
+                     data-auto-open="@Model.OpenChatGptLoginSettings.ToString().ToLowerInvariant()"
+                     data-poll="@(Model.CanManageChatGptLogin && Model.ChatGptLoginStatus.IsActive ? "true" : "false")">
+                    <div class="settings-device-login-header">
+                        <div>
+                            <strong>SIEM-managed ChatGPT login</strong>
+                            <p>OpenAI Codex manages the shared ChatGPT subscription used by soc-agent on this SIEM.</p>
+                        </div>
+                        <span id="soc-agent-chatgpt-login-state" class="badge">@Model.ChatGptLoginStatus.State.Replace('_', ' ')</span>
+                    </div>
+
+                    <p id="soc-agent-chatgpt-login-message" class="settings-device-login-status" role="status" aria-live="polite">@Model.ChatGptLoginStatus.OperatorMessage</p>
+
+                    @if (Model.CanManageChatGptLogin)
                     {
-                        <p class="muted" id="soc-agent-session-meta">Session @Model.CurrentSession.SessionId · @Model.CurrentSession.MessageCount messages</p>
+                        <div id="soc-agent-chatgpt-login-verification"
+                             class="settings-device-login-code"
+                             hidden="@(string.IsNullOrWhiteSpace(safeChatGptVerificationUrl) || string.IsNullOrWhiteSpace(Model.ChatGptLoginStatus.UserCode))">
+                            <span>Enter this one-time code on OpenAI</span>
+                            <code id="soc-agent-chatgpt-login-code">@Model.ChatGptLoginStatus.UserCode</code>
+                            <a id="soc-agent-chatgpt-login-link" class="button secondary small" href="@safeChatGptVerificationUrl" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
+                        </div>
+
+                        <form id="soc-agent-chatgpt-login-start"
+                              method="post"
+                              asp-page-handler="StartChatGptLogin"
+                              hidden="@(!Model.ChatGptLoginStatus.IsAvailable || Model.ChatGptLoginStatus.IsActive)">
+                            <input type="hidden" name="SessionId" value="@activeSessionId" />
+                            <label class="confirmation-control">
+                                <input type="checkbox" name="ConfirmSharedChatGptLogin" value="true" required />
+                                <span>I understand this replaces the shared server login for all soc-agent users.</span>
+                            </label>
+                            <button class="button" type="submit">@(Model.ProviderStatus.Status == "connected" ? "Log in to ChatGPT again" : "Log in to ChatGPT")</button>
+                        </form>
+
+                        <form id="soc-agent-chatgpt-login-cancel"
+                              method="post"
+                              asp-page-handler="CancelChatGptLogin"
+                              hidden="@(!Model.ChatGptLoginStatus.IsActive)">
+                            <input type="hidden" name="SessionId" value="@activeSessionId" />
+                            <button class="button secondary small" type="submit">Cancel login</button>
+                        </form>
                     }
                     else
                     {
-                        <p class="muted" id="soc-agent-session-meta">Ask a question to start a persisted investigation thread.</p>
+                        <p class="settings-device-login-help">An administrator can start or cancel this shared login. Your ChatGPT password is entered only on OpenAI's page.</p>
                     }
                 </div>
-                <div class="run-state" aria-live="polite">
-                    <span class="badge" id="soc-agent-run-state">Idle</span>
-                    <button type="button" class="button secondary" id="soc-agent-scroll-bottom">Scroll to latest</button>
+            }
+            @if (Model.CanDisconnectSubscriptionOAuth)
+            {
+                <details class="settings-danger-zone">
+                    <summary>Disconnect this SIEM</summary>
+                    <p>This removes only the dedicated soc-agent subscription credential. It does not change your ChatGPT account or other server logins.</p>
+                    <form method="post" asp-page-handler="DisconnectSubscriptionOAuth">
+                        <input type="hidden" name="SessionId" value="@activeSessionId" />
+                        <label class="confirmation-control">
+                            <input type="checkbox" name="ConfirmSubscriptionDisconnect" value="true" required />
+                            <span>I understand this SIEM will lose ChatGPT access.</span>
+                        </label>
+                        <button class="button danger" type="submit">Disconnect ChatGPT</button>
+                    </form>
+                </details>
+            }
+        </section>
+
+        <section class="settings-section" aria-labelledby="model-settings-title">
+            <div class="settings-section-heading">
+                <div>
+                    <h3 id="model-settings-title">Models</h3>
+                    <p>@Model.ProviderStatus.ModelOptions.Count server-approved option@(Model.ProviderStatus.ModelOptions.Count == 1 ? string.Empty : "s") available in chat.</p>
+                </div>
+            </div>
+            <p class="settings-managed-note">Model and effort controls are set per message. The server validates every selection and remains authoritative.</p>
+        </section>
+    </div>
+</dialog>
+
+<div class="soc-agent-workspace"
+     data-soc-agent-workspace
+     data-session-id="@activeSessionId"
+     data-context-agent-id="@contextAgentId"
+     data-start-url="/soc-agent/live/runs"
+     data-max-message-length="4000">
+    <section class="soc-agent-conversation" aria-label="soc-agent chat">
+        <span id="soc-agent-run-state" class="visually-hidden" aria-live="polite">Ready</span>
+
+        <div id="soc-agent-connection-banner" class="soc-agent-connection-banner" role="status" hidden>
+            <span id="soc-agent-connection-message">Live updates disconnected.</span>
+            <button id="soc-agent-reconnect" class="button secondary small" type="button">Reconnect</button>
+        </div>
+
+        <div id="soc-agent-thread-scroll" class="conversation-scroll" tabindex="0" aria-label="Chat transcript">
+            <button id="soc-agent-scroll-latest" class="button tertiary small conversation-latest" type="button" hidden>Latest</button>
+            <div id="soc-agent-empty-state" class="soc-agent-empty" @(Model.Messages.Count > 0 ? "hidden" : null)>
+                <div>
+                    <p class="eyebrow">Read-only analysis</p>
+                    <h3>What should we investigate?</h3>
+                    <p>soc-agent can search the SIEM using bounded tools and cite the records it used.</p>
+                </div>
+                <div class="prompt-grid" aria-label="Suggested prompts">
+                    <button type="button" data-soc-agent-prompt="Summarize the most important recent security events.">Summarize recent security events</button>
+                    <button type="button" data-soc-agent-prompt="Which agents need attention and why?">Find agents needing attention</button>
+                    <button type="button" data-soc-agent-prompt="Review recent authentication failures for suspicious patterns.">Review authentication failures</button>
+                    <button type="button" data-soc-agent-prompt="Show recent high-severity alerts and the evidence behind them.">Review high-severity alerts</button>
                 </div>
             </div>
 
-            <div class="connection-banner" id="soc-agent-connection-banner" role="status" aria-live="polite" hidden></div>
-
-            <div class="thread-scroll" id="soc-agent-thread-scroll">
-                <div class="empty chat-empty" id="soc-agent-empty" @(Model.Messages.Count == 0 ? null : "hidden")>
-                    <h3>Start a SOC investigation</h3>
-                    <p>Try “Summarize active coverage gaps and recent alerts”, or open this page with an agent context from inventory.</p>
-                    <div class="suggested-prompts" aria-label="Suggested prompts">
-                        <button type="button" class="button secondary" data-prompt="Summarize active coverage gaps and recent alerts.">Coverage and alerts</button>
-                        <button type="button" class="button secondary" data-prompt="What should I investigate first for this host context?">Host triage</button>
-                    </div>
-                </div>
-
-                <ol class="message-list live-message-list" id="soc-agent-message-list" aria-label="soc-agent message thread" aria-live="polite">
-                    @foreach (var message in Model.Messages)
-                    {
-                        <li class="message-bubble @(message.Role == "operator" ? "operator" : "assistant")" id="message-@message.MessageId" data-message-id="@message.MessageId" data-role="@message.Role">
-                            <div class="message-meta">
-                                <strong>@Model.RoleLabel(message)</strong>
-                                <span>@TimeDisplay.FormatUtc(message.CreatedAt)</span>
-                                @if (!string.IsNullOrWhiteSpace(message.Provider))
+            <ol id="soc-agent-message-list" class="message-list" aria-live="polite">
+                @foreach (var message in Model.Messages)
+                {
+                    var isOperator = string.Equals(message.Role, "operator", StringComparison.OrdinalIgnoreCase);
+                    <li id="message-@message.MessageId" class="message-row @(isOperator ? "operator" : "assistant")" data-message-id="@message.MessageId" data-role="@message.Role">
+                        <article>
+                            <header class="message-meta">
+                                <span class="message-role">@Model.RoleLabel(message)</span>
+                                <time datetime="@message.CreatedAt.ToString("O")">@message.CreatedAt.ToLocalTime().ToString("HH:mm")</time>
+                                @if (!isOperator && !string.IsNullOrWhiteSpace(message.Model))
                                 {
-                                    <span class="badge">@message.Provider / @message.Model</span>
+                                    <span class="message-model">@message.Provider · @message.Model@(string.IsNullOrWhiteSpace(message.ReasoningEffort) ? string.Empty : $" · {message.ReasoningEffort}")</span>
                                 }
-                                @if (!string.IsNullOrWhiteSpace(message.ErrorCode))
-                                {
-                                    <span class="badge danger">@message.ErrorCode</span>
-                                }
-                            </div>
+                            </header>
                             @if (Model.ShouldRenderMarkdown(message))
                             {
-                                <div class="message-box markdown-content" data-message-markdown="true">@message.Content</div>
+                                <div class="message-content message-box markdown-content" data-soc-agent-markdown data-message-markdown="true">@message.Content</div>
                             }
                             else
                             {
-                                <pre class="message-box">@message.Content</pre>
-                            }
-
-                            @if (message.ToolRuns.Count > 0)
-                            {
-                                <div class="tool-card-grid" aria-label="Tool activity for this message">
-                                    @foreach (var tool in message.ToolRuns)
-                                    {
-                                        <article class="tool-card complete">
-                                            <div class="tool-card-header">
-                                                <strong>@tool.ToolName</strong>
-                                                <span class="badge ok">ok</span>
-                                            </div>
-                                            <p>@tool.Summary</p>
-                                            <p class="muted">Rows: @tool.RowCount</p>
-                                        </article>
-                                    }
-                                </div>
+                                <p class="message-content message-box">@message.Content</p>
                             }
 
                             @if (message.Citations.Count > 0)
                             {
-                                <div class="citations">
-                                    <h3>Citations</h3>
+                                <div class="message-citations">
+                                    <span>Sources</span>
                                     <ul>
                                         @foreach (var citation in message.Citations)
                                         {
-                                            <li><a href="@citation.Url">@citation.Label</a> <span class="muted">@citation.Kind</span></li>
+                                            <li><a href="@citation.Url">@citation.Label</a></li>
                                         }
                                     </ul>
                                 </div>
                             }
-                        </li>
-                    }
-                </ol>
-                <div id="soc-agent-thread-end" class="thread-end-sentinel" aria-hidden="true"></div>
-            </div>
+                        </article>
+                    </li>
+                }
+            </ol>
         </div>
 
-        <form method="post" asp-page-handler="Send" class="card chat-composer live-composer" id="soc-agent-composer" aria-label="Send a soc-agent message">
-            <input type="hidden" asp-for="SessionId" id="soc-agent-session-id-input" />
-            <input type="hidden" id="ComposerContextAgentId" name="ComposerContextAgentId" value="@composerContextAgentId" />
-            <div class="composer-context-row">
-                <div class="context-indicator">
-                    <span class="pill" id="soc-agent-context-chip">@(hasAgentContext ? $"Agent context: {composerContextAgentId}" : "Global SIEM context")</span>
-                    @if (hasAgentContext)
+        <form id="soc-agent-composer" class="soc-agent-composer" method="post" asp-page-handler="Send">
+            <input id="soc-agent-session-id" type="hidden" name="SessionId" value="@activeSessionId" />
+            <input id="soc-agent-context-agent-id" type="hidden" name="ComposerContextAgentId" value="@contextAgentId" />
+            <label class="visually-hidden" for="soc-agent-message">Message soc-agent</label>
+            <textarea id="soc-agent-message" name="Message" maxlength="4000" rows="3" required placeholder="Ask about events, agents, alerts, or recent activity…"></textarea>
+            <div class="composer-footer">
+                <div class="composer-context">
+                    @if (!string.IsNullOrWhiteSpace(contextAgentId))
                     {
-                        <a class="button secondary context-clear-link" asp-page="/SocAgent">Clear context</a>
+                        <span class="context-chip">Agent context</span>
                     }
+                    else
+                    {
+                        <span class="context-chip neutral">All permitted SIEM data</span>
+                    }
+                    <span id="soc-agent-character-count">0 / 4000</span>
                 </div>
-                <span class="muted" id="soc-agent-char-count">0 / 4000</span>
+                <div class="composer-controls">
+                    <label class="composer-select" for="soc-agent-model-select">
+                        <span>Model</span>
+                        <select id="soc-agent-model-select" name="SelectedModel">
+                            @foreach (var option in Model.ProviderStatus.ModelOptions)
+                            {
+                                if (string.Equals(option.Model, Model.SelectedModel, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <option value="@option.Model" data-reasoning-efforts="@string.Join(',', option.ReasoningEfforts)" data-default-reasoning-effort="@option.DefaultReasoningEffort" selected>@option.DisplayName</option>
+                                }
+                                else
+                                {
+                                    <option value="@option.Model" data-reasoning-efforts="@string.Join(',', option.ReasoningEfforts)" data-default-reasoning-effort="@option.DefaultReasoningEffort">@option.DisplayName</option>
+                                }
+                            }
+                        </select>
+                    </label>
+                    <label class="composer-select" for="soc-agent-effort-select">
+                        <span>Effort</span>
+                        <select id="soc-agent-effort-select" name="ReasoningEffort" disabled="@(selectedEfforts.Count == 0)">
+                            @if (selectedEfforts.Count == 0)
+                            {
+                                <option value="">Not available</option>
+                            }
+                            else
+                            {
+                                @foreach (var effort in selectedEfforts)
+                                {
+                                    if (string.Equals(effort, Model.ReasoningEffort, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <option value="@effort" selected>@effort</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="@effort">@effort</option>
+                                    }
+                                }
+                            }
+                        </select>
+                    </label>
+                    <button id="soc-agent-cancel" class="button secondary" type="button" hidden>Cancel</button>
+                    <button id="soc-agent-send" class="button" type="submit">Send</button>
+                </div>
             </div>
-            <div class="form-row">
-                <label for="Message">Message</label>
-                <textarea id="Message" asp-for="Message" rows="3" maxlength="4000" placeholder="Ask soc-agent about coverage, alerts, recent events, detections, or an agent investigation. Enter/Ctrl+Enter/Cmd+Enter sends; Shift+Enter adds a newline." required></textarea>
-            </div>
-            <div class="composer-actions">
-                <button type="submit" id="soc-agent-send-button">Send</button>
-                <button type="button" class="button danger" id="soc-agent-cancel-button" disabled>Cancel</button>
-                @if (Model.HasCurrentSession)
-                {
-                    <a class="button secondary" asp-page="/SocAgent">New chat</a>
-                }
-            </div>
-            <p class="muted">soc-agent can summarize and cite SIEM data, but it cannot mutate detections, configuration, agents, stored data, or repository files.</p>
+            <p class="composer-hint">Enter to send · Shift+Enter for a new line · Read-only tools</p>
         </form>
     </section>
 
-    <aside class="soc-agent-activity card" id="soc-agent-activity-panel" aria-labelledby="activity-title">
-        <div class="activity-panel-header">
-            <div>
-                <p class="page-kicker">Activity</p>
-                <h2 id="activity-title">Live tool activity</h2>
-            </div>
-            <button type="button" class="button secondary" id="soc-agent-toggle-activity" aria-expanded="true" aria-controls="soc-agent-activity-panel">Collapse</button>
+    <aside class="soc-agent-history" aria-labelledby="soc-agent-history-title">
+        <div class="history-header">
+            <h2 id="soc-agent-history-title">Recent chats</h2>
+            <span>@Model.Sessions.Count</span>
         </div>
-
-        <section class="activity-feed" aria-labelledby="activity-feed-title">
-            <h3 id="activity-feed-title">Tool feed</h3>
-            <div id="soc-agent-activity-list" class="activity-list" aria-live="polite">
-                <p class="muted" id="soc-agent-activity-empty">No active run. Tool cards appear here while soc-agent works.</p>
-            </div>
-        </section>
+        @if (Model.Sessions.Count == 0)
+        {
+            <p class="history-empty">Your recent investigations will appear here.</p>
+        }
+        else
+        {
+            <ol class="history-list">
+                @foreach (var session in Model.Sessions)
+                {
+                    var isCurrent = Model.CurrentSession?.SessionId == session.SessionId;
+                    <li class="history-item @(isCurrent ? "current" : null)">
+                        <a asp-page="/SocAgent" asp-route-session_id="@session.SessionId" aria-current="@(isCurrent ? "page" : null)">
+                            <strong>@session.Title</strong>
+                            <span>@session.MessageCount message@(session.MessageCount == 1 ? string.Empty : "s") · @session.Model</span>
+                            <time datetime="@session.UpdatedAt.ToString("O")">@session.UpdatedAt.ToLocalTime().ToString("d MMM, HH:mm")</time>
+                        </a>
+                        <form class="history-delete-form" method="post" asp-page-handler="DeleteSession">
+                            <input type="hidden" name="DeleteSessionId" value="@session.SessionId" />
+                            <input type="hidden" name="ConfirmDelete" value="true" />
+                            <button class="history-delete-button"
+                                    type="submit"
+                                    aria-label="Delete chat: @session.Title"
+                                    title="Delete chat">×</button>
+                        </form>
+                    </li>
+                }
+            </ol>
+        }
     </aside>
 </div>
 

@@ -21,6 +21,105 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
+    public void LocalModelCatalogSuppressesReasoningEffortForEveryAllowedModel()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "Local",
+            Model = "soc-agent-local-test",
+            ReasoningEffort = "high",
+            ReasoningEfforts = ["low", "high"],
+            ModelOptions =
+            [
+                new SocAgentConfiguredModelOption
+                {
+                    Model = "soc-agent-local-alt",
+                    DisplayName = "Local alternate",
+                    ReasoningEfforts = ["medium"],
+                    DefaultReasoningEffort = "medium"
+                }
+            ]
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("soc-agent-local-test", status.Model);
+        Assert.Null(status.ReasoningEffort);
+        Assert.Equal(2, status.ModelOptions.Count);
+        Assert.All(status.ModelOptions, option =>
+        {
+            Assert.Empty(option.ReasoningEfforts);
+            Assert.Null(option.DefaultReasoningEffort);
+        });
+        Assert.Equal(
+            new SocAgentExecutionSelection("soc-agent-local-alt", null),
+            SocAgentModelCatalog.Resolve(status, "soc-agent-local-alt", null));
+        var localEffortError = Assert.Throws<SocAgentSelectionException>(() => SocAgentModelCatalog.Resolve(status, "soc-agent-local-alt", "high"));
+        Assert.Equal("reasoning_effort", localEffortError.Field);
+    }
+
+    [Fact]
+    public void ExternalModelCatalogNormalizesAllowlistAndRejectsUnknownSelections()
+    {
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "OpenAI",
+            AuthMode = "ApiKey",
+            Model = "gpt-default",
+            ReasoningEffort = "MEDIUM",
+            ReasoningEfforts = ["medium", "LOW", "unsupported", "medium"],
+            ModelOptions =
+            [
+                new SocAgentConfiguredModelOption
+                {
+                    Model = "gpt-selected",
+                    DisplayName = "  GPT selected  ",
+                    ReasoningEfforts = ["HIGH", "low", "unsupported", "high"],
+                    DefaultReasoningEffort = "HIGH"
+                },
+                new SocAgentConfiguredModelOption
+                {
+                    Model = "bad model id",
+                    ReasoningEfforts = ["low"]
+                },
+                new SocAgentConfiguredModelOption
+                {
+                    Model = "GPT-SELECTED",
+                    ReasoningEfforts = ["minimal"]
+                }
+            ],
+            ExternalCallsEnabled = true,
+            OpenAiApiKey = "fake-openai-api-key-for-tests"
+        });
+
+        var status = service.GetStatus();
+
+        Assert.Equal("gpt-default", status.Model);
+        Assert.Equal("medium", status.ReasoningEffort);
+        Assert.Equal(2, status.ModelOptions.Count);
+        var defaultOption = Assert.Single(status.ModelOptions, option => option.Model == "gpt-default");
+        Assert.Equal(["medium", "low"], defaultOption.ReasoningEfforts);
+        Assert.Equal("medium", defaultOption.DefaultReasoningEffort);
+        var selectedOption = Assert.Single(status.ModelOptions, option => option.Model == "gpt-selected");
+        Assert.Equal("GPT selected", selectedOption.DisplayName);
+        Assert.Equal(["high", "low"], selectedOption.ReasoningEfforts);
+        Assert.Equal("high", selectedOption.DefaultReasoningEffort);
+
+        Assert.Equal(
+            new SocAgentExecutionSelection("gpt-selected", "high"),
+            SocAgentModelCatalog.Resolve(status, "GPT-SELECTED", null));
+        Assert.Equal(
+            new SocAgentExecutionSelection("gpt-selected", "low"),
+            SocAgentModelCatalog.Resolve(status, "gpt-selected", "LOW"));
+        Assert.False(SocAgentModelCatalog.Supports(status, "not-allowlisted", "low"));
+        Assert.False(SocAgentModelCatalog.Supports(status, "gpt-selected", "medium"));
+        var modelError = Assert.Throws<SocAgentSelectionException>(() => SocAgentModelCatalog.Resolve(status, "not-allowlisted", "low"));
+        Assert.Equal("model", modelError.Field);
+        var effortError = Assert.Throws<SocAgentSelectionException>(() => SocAgentModelCatalog.Resolve(status, "gpt-selected", "medium"));
+        Assert.Equal("reasoning_effort", effortError.Field);
+    }
+
+    [Fact]
     public void OpenAiProviderWithoutServerSideCredentialsRequiresOfficialSetup()
     {
         var service = CreateService(new SocAgentOptions
@@ -222,90 +321,124 @@ public sealed class SocAgentProviderStatusTests
     }
 
     [Fact]
-    public void SubscriptionOAuthCanReadPiOpenAiCodexAuthJsonWithoutSecrets()
+    public void CodexAppServerConnectedReportsManagedStatusWithoutSecretsOrPaths()
     {
-        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
-            "synthetic-pi-access-token",
-            "synthetic-pi-refresh-token",
-            DateTimeOffset.UtcNow.AddHours(2)));
+        const string syntheticSecret = "synthetic-codex-access-token";
+        const string syntheticPath = "/private/synthetic/codex/auth.json";
+        var appServer = new FakeCodexAppServerClient(
+            new SocAgentCodexAccountStatus(
+                IsAvailable: true,
+                IsConnected: true,
+                State: "connected",
+                PlanType: "plus",
+                OperatorMessage: "ChatGPT is connected through the SIEM-managed OpenAI Codex login."),
+            syntheticSecret,
+            syntheticPath);
         var service = CreateService(new SocAgentOptions
         {
             Provider = "ChatGPT",
-            AuthMode = "SubscriptionOAuth",
+            AuthMode = "CodexAppServer",
             Model = "gpt-test",
-            ExternalCallsEnabled = true,
-            SubscriptionAuthFilePath = authFile.FilePath,
-            SubscriptionAuthFileProviderKey = "openai-codex"
-        });
+            ExternalCallsEnabled = true
+        }, appServer, new SocAgentCodexAppServerOptions { Enabled = true });
 
         var status = service.GetStatus();
 
         Assert.Equal("connected", status.Status);
-        Assert.Equal("pi_auth_json", status.AuthMode);
-        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
-        Assert.Equal("pi_auth_json", status.AuthFileMode);
-        Assert.Equal("pi_auth_json", status.ScopeStatus);
-        Assert.Equal("not_checked", status.EntitlementStatus);
-        Assert.Equal("pi_managed", status.RefreshStatus);
-        Assert.Equal("Pi auth.json OpenAI Codex OAuth credential", status.CredentialSource);
+        Assert.Equal("codex_app_server", status.AuthMode);
+        Assert.Equal("codex_app_server", status.ProviderPath);
+        Assert.Null(status.AuthFileMode);
+        Assert.Equal("OpenAI Codex managed", status.CredentialSource);
+        Assert.Equal("Codex managed", status.RefreshStatus);
+        Assert.Equal("primary:codex_app_server", status.SetupPriority);
+        Assert.Equal("plus", status.EntitlementStatus);
         Assert.False(status.RequiresConnection);
         Assert.True(status.DataMayLeaveLocalSiem);
-        Assert.DoesNotContain("synthetic-pi-access-token", status.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("synthetic-pi-refresh-token", status.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain(authFile.FilePath, status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(syntheticSecret, status.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(syntheticPath, status.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Pi auth", status.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pi_auth_json", status.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void SubscriptionOAuthPiAuthUsesCodexEndpointValidationInsteadOfOpenAiChatCompletions()
+    [Theory]
+    [InlineData("https://chatgpt.com:444/backend-api/codex/responses")]
+    [InlineData("https://operator@chatgpt.com/backend-api/codex/responses")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses?route=other")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses#fragment")]
+    [InlineData("https://chatgpt.com/backend-api/codex/responses/")]
+    public void CodexAppServerStatusRejectsEveryEndpointRejectedByInvocation(string configuredUrl)
     {
-        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
-            "synthetic-pi-access-token",
-            "synthetic-pi-refresh-token",
-            DateTimeOffset.UtcNow.AddHours(2)));
+        var appServer = new FakeCodexAppServerClient(
+            new SocAgentCodexAccountStatus(
+                IsAvailable: true,
+                IsConnected: true,
+                State: "connected",
+                PlanType: "plus",
+                OperatorMessage: "ChatGPT is connected."),
+            "synthetic-secret-that-must-not-render",
+            "/synthetic/path/that/must/not/render");
         var service = CreateService(new SocAgentOptions
         {
             Provider = "ChatGPT",
-            AuthMode = "SubscriptionOAuth",
-            Model = "gpt-5.5",
+            AuthMode = "CodexAppServer",
+            Model = "gpt-test",
             ExternalCallsEnabled = true,
-            SubscriptionAuthFilePath = authFile.FilePath,
-            SubscriptionAuthFileProviderKey = "openai-codex",
-            OpenAiBaseUrl = "https://example.invalid/v1"
-        });
-
-        var status = service.GetStatus();
-
-        Assert.Equal("connected", status.Status);
-        Assert.Equal("gpt-5.5", status.Model);
-        Assert.Equal("pi_auth_json", status.AuthMode);
-        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
-        Assert.Contains("ChatGPT Codex Responses", status.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void SubscriptionOAuthPiAuthRejectsUnsafeCodexEndpoint()
-    {
-        using var authFile = SyntheticAuthFile.Create(PiOpenAiCodexAuthJson(
-            "synthetic-pi-access-token",
-            "synthetic-pi-refresh-token",
-            DateTimeOffset.UtcNow.AddHours(2)));
-        var service = CreateService(new SocAgentOptions
-        {
-            Provider = "ChatGPT",
-            AuthMode = "SubscriptionOAuth",
-            ExternalCallsEnabled = true,
-            SubscriptionAuthFilePath = authFile.FilePath,
-            SubscriptionAuthFileProviderKey = "openai-codex",
-            ChatGptCodexResponsesUrl = "https://example.invalid/backend-api/codex/responses"
-        });
+            ChatGptCodexResponsesUrl = configuredUrl
+        }, appServer, new SocAgentCodexAppServerOptions { Enabled = true });
 
         var status = service.GetStatus();
 
         Assert.Equal("provider_error", status.Status);
-        Assert.Equal("pi_auth_json", status.AuthMode);
-        Assert.Equal("pi_auth_json_openai_codex", status.ProviderPath);
+        Assert.Equal("codex_app_server", status.AuthMode);
+        Assert.Equal("codex_app_server", status.ProviderPath);
         Assert.True(status.RequiresConnection);
-        Assert.Contains("chatgpt.com/backend-api/codex/responses", status.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("https://chatgpt.com/backend-api/codex/responses", status.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(configuredUrl, status.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true, "auth_required", "Log in to ChatGPT")]
+    [InlineData(false, "provider_error", "Review ChatGPT login")]
+    public void CodexAppServerAuthRequiredOrUnavailableReportsSafeAction(
+        bool isAvailable,
+        string expectedStatus,
+        string expectedConnectLabel)
+    {
+        const string syntheticSecret = "synthetic-codex-refresh-token";
+        const string syntheticPath = "/private/synthetic/codex/auth.json";
+        var appServer = new FakeCodexAppServerClient(
+            new SocAgentCodexAccountStatus(
+                IsAvailable: isAvailable,
+                IsConnected: false,
+                State: isAvailable ? "auth_required" : "unavailable",
+                PlanType: null,
+                OperatorMessage: isAvailable
+                    ? "ChatGPT login is required."
+                    : "The OpenAI Codex login service is unavailable."),
+            syntheticSecret,
+            syntheticPath);
+        var service = CreateService(new SocAgentOptions
+        {
+            Provider = "ChatGPT",
+            AuthMode = "CodexAppServer",
+            Model = "gpt-test",
+            ExternalCallsEnabled = true
+        }, appServer, new SocAgentCodexAppServerOptions { Enabled = true });
+
+        var status = service.GetStatus();
+
+        Assert.Equal(expectedStatus, status.Status);
+        Assert.Equal("codex_app_server", status.AuthMode);
+        Assert.Equal("codex_app_server", status.ProviderPath);
+        Assert.Equal("OpenAI Codex managed", status.CredentialSource);
+        Assert.Equal("Codex managed", status.RefreshStatus);
+        Assert.True(status.RequiresConnection);
+        Assert.Equal("/soc-agent?manage_login=true", status.ConnectUrl);
+        Assert.Equal(expectedConnectLabel, status.ConnectLabel);
+        Assert.DoesNotContain(syntheticSecret, status.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(syntheticPath, status.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Pi auth", status.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pi_auth_json", status.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -568,20 +701,6 @@ public sealed class SocAgentProviderStatusTests
         """;
     }
 
-    private static string PiOpenAiCodexAuthJson(string accessToken, string refreshToken, DateTimeOffset expiresAt)
-    {
-        return $$"""
-        {
-          "openai-codex": {
-            "type": "oauth",
-            "access": "{{accessToken}}",
-            "refresh": "{{refreshToken}}",
-            "expires": {{expiresAt.ToUnixTimeMilliseconds()}}
-          }
-        }
-        """;
-    }
-
     private static string ValidSubscriptionAuthJson(
         string accessToken,
         DateTimeOffset expiresAt,
@@ -613,10 +732,48 @@ public sealed class SocAgentProviderStatusTests
         """;
     }
 
-    private static SocAgentProviderStatusService CreateService(SocAgentOptions options)
+    private static SocAgentProviderStatusService CreateService(
+        SocAgentOptions options,
+        ISocAgentCodexAppServerClient? codexAppServer = null,
+        SocAgentCodexAppServerOptions? codexOptions = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
-        return new SocAgentProviderStatusService(Options.Create(options), configuration);
+        return new SocAgentProviderStatusService(
+            Options.Create(options),
+            configuration,
+            codexAppServer,
+            codexOptions is null ? null : Options.Create(codexOptions));
+    }
+
+    private sealed class FakeCodexAppServerClient(
+        SocAgentCodexAccountStatus accountStatus,
+        string syntheticSecret,
+        string syntheticCredentialPath) : ISocAgentCodexAppServerClient
+    {
+        private readonly string syntheticSecret = syntheticSecret;
+        private readonly string syntheticCredentialPath = syntheticCredentialPath;
+
+        public SocAgentCodexAccountStatus GetAccountStatus() => accountStatus;
+
+        public SocAgentCodexLoginStatus GetLoginStatus() => new(
+            accountStatus.IsAvailable,
+            false,
+            accountStatus.State,
+            null,
+            null,
+            accountStatus.OperatorMessage);
+
+        public Task<SocAgentCodexLoginStartResult> StartDeviceLoginAsync(CancellationToken cancellationToken)
+        {
+            _ = syntheticSecret;
+            _ = syntheticCredentialPath;
+            return Task.FromResult(new SocAgentCodexLoginStartResult(false, GetLoginStatus()));
+        }
+
+        public Task<SocAgentCodexLoginCancelResult> CancelDeviceLoginAsync(CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new SocAgentCodexLoginCancelResult(false, GetLoginStatus()));
+        }
     }
 
     private sealed class SyntheticAuthFile : IDisposable

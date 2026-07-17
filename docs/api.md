@@ -347,7 +347,7 @@ GET /api/v1/soc-agent/status
 Authorization: Bearer <operator-api-credential>
 ```
 
-Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. When interactive subscription OAuth is enabled, `connect_url` may point at the local `/soc-agent/oauth/start` route, which requires an authenticated operator and redirects to an official provider authorization endpoint with state/PKCE. Subscription OAuth and delegated auth-file responses may include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`. Some compatibility status values remain implementation identifiers and should be treated as opaque. Responses never include provider secrets, raw auth-file contents, account identifiers, or full auth-file paths.
+Returns provider/model/auth state such as `local`, `disabled`, `provider_not_configured`, `auth_required`, `expired`, `refresh_failed`, `unsupported_delegated_auth`, `unsupported_subscription_oauth`, `scope_missing`, `connected`, `budget_limited`, `plan_limited`, `rate_limited`, `auth_failed`, or `provider_error`, plus a safe official setup/connect URL when applicable. The additive `model_options` array is the server allowlist; each item contains `model`, `display_name`, `reasoning_efforts`, and optional `default_reasoning_effort`, while top-level `model` and optional `reasoning_effort` identify the current defaults. `auth_mode=codex_app_server` identifies the primary SIEM-managed ChatGPT login; when it needs attention, `connect_url` points back to the authenticated Settings surface. Only an administrator can start or cancel its device flow, and the only provider-supplied login artifacts sent to that browser session are `https://auth.openai.com/codex/device` and the short-lived user code. The v1 status response itself never exports app-server messages or credentials. For the advanced explicit OAuth-file path, `connect_url` may instead point at `/soc-agent/oauth/start` when its authorization-code/PKCE flow is configured. Subscription OAuth and delegated auth-file responses may include safe optional metadata such as `credential_source`, `expires_at`, `refresh_status`, `provider_path`, `auth_file_mode`, `setup_priority`, `scope_status`, and `entitlement_status`. Some compatibility status values remain implementation identifiers and should be treated as opaque. Responses never include provider secrets, raw auth-file contents, account identifiers, executable/process details, or full auth-file paths.
 
 Backwards-compatible one-shot ask:
 
@@ -358,7 +358,9 @@ Content-Type: application/json
 
 {
   "question": "Summarize current coverage and alerts",
-  "context_agent_id": "win11-test-001"
+  "context_agent_id": "synthetic-win11-001",
+  "model": "approved-reasoning-model",
+  "reasoning_effort": "medium"
 }
 ```
 
@@ -375,11 +377,15 @@ Content-Type: application/json
 
 {
   "message": "Summarize current coverage and alerts",
-  "context_agent_id": "win11-test-001"
+  "context_agent_id": "synthetic-win11-001",
+  "model": "approved-reasoning-model",
+  "reasoning_effort": "medium"
 }
 ```
 
-Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. `DELETE /api/v1/soc-agent/sessions/<session-id>` is a backward-compatible management addition that removes the selected chat session and its `soc_agent_messages` rows through the database cascade, returns `404` when the session is already absent, and returns `409` with `status=run_active` while a live run is active for that session. Bounded one-shot `soc_agent_turns` audit rows are independent and retained. Delete responses are terse metadata only and do not echo message bodies. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` subscription OAuth or `OpenAI` API-key/delegated bearer mode is explicitly configured with server-side credentials and external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, and model. External provider setup must use server-side credentials or a supported delegated flow; browser clients never receive provider tokens.
+`model` and `reasoning_effort` are backward-compatible optional fields on one-shot asks, session creation, chat messages, and live-run starts. The server resolves them against `model_options`; unknown models, unsupported effort values, and any effort for a model with no advertised effort support return validation errors. Omitting both selects the configured defaults, or retains an existing session preference when that pair remains allowed. Responses add optional `reasoning_effort` beside provider/model metadata on answers, sessions, and messages. The value on an assistant message is what actually ran, so a local fallback reports its local model and a null effort while preserving the external preference on the session.
+
+Returns bounded `soc-agent` chat sessions/messages with tool-run summaries and citations back to SIEM review pages. `DELETE /api/v1/soc-agent/sessions/<session-id>` is a backward-compatible management addition that removes the selected chat session and its `soc_agent_messages` rows through the database cascade, returns `404` when the session is already absent, and returns `409` with `status=run_active` while a live run is active for that session. Bounded one-shot `soc_agent_turns` audit rows are independent and retained. Delete responses are terse metadata only and do not echo message bodies. The default provider is `Local`; it does not send data to an external model provider and does not perform mutating actions. When `ChatGPT` with `CodexAppServer`, an explicit subscription OAuth file, or `OpenAI` API-key/delegated bearer mode is configured with external calls enabled, the server sends only bounded/redacted tool context to the configured ChatGPT Codex Responses or OpenAI Chat Completions endpoint and persists the bounded answer, tool summaries, citations, provider, model, and optional reasoning effort. Codex app-server owns the isolated SIEM login and refresh lifecycle through token-free account APIs; immediately before the existing no-tools ChatGPT Responses call, a narrow compatibility adapter reads only the required credential fields from that isolated `CODEX_HOME/auth.json`. The request does not use an app-server turn because that coding-agent surface cannot guarantee tool-free execution. No implicit credential lookup or migration from global Codex state such as `~/.codex/auth.json`, Pi state, or legacy auth files occurs, and browser clients never receive provider tokens.
 
 Same-origin web live transport (outside `/api/v1`, authenticated by the existing operator session cookie rather than operator API credentials in URLs or browser storage):
 
@@ -390,7 +396,7 @@ POST /soc-agent/live/runs/<run-id>/cancel
 GET /soc-agent/live/sessions/<session-id>/active
 ```
 
-`POST /soc-agent/live/runs` persists the operator message, starts or continues a bounded chat session, and returns `run_id`, `session`, `user_message`, `provider_status`, and `next_sequence`. The event stream is `text/event-stream` with monotonic `sequence` IDs plus typed events including `resume_snapshot`, `session_created`, `message_created`, `run_started`, `provider_status`, `tool_started`, `tool_finished`, `citation_added`, `content_delta`, `run_cancel_requested`, `run_error`, and `run_complete`. Reconnecting with `after=<sequence>` replays only newer retained events; refreshing the page can also query the active-run endpoint for the selected session. Cancellation requests stop the active turn through server-side cancellation and persist a bounded assistant cancellation message when interrupted.
+`POST /soc-agent/live/runs` accepts the same optional `model` and `reasoning_effort`, persists the operator message and validated session preference, starts or continues a bounded chat session, and returns `run_id`, `session`, `user_message`, `provider_status`, and `next_sequence`. The validated selection is frozen for that run so a status refresh cannot silently change an in-flight model/effort pair. The event stream is `text/event-stream` with monotonic `sequence` IDs plus typed events including `resume_snapshot`, `session_created`, `message_created`, `run_started`, `provider_status`, `tool_started`, `tool_finished`, `citation_added`, `content_delta`, `run_cancel_requested`, `run_error`, and `run_complete`. Reconnecting with `after=<sequence>` replays only newer retained events; refreshing the page can also query the active-run endpoint for the selected session. Cancellation requests stop the active turn through server-side cancellation and persist a bounded assistant cancellation message when interrupted.
 
 ## Alerts and detections
 

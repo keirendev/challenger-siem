@@ -657,7 +657,7 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
-    public async Task SocAgentChatUsesConfiguredExternalProviderWhenConnected()
+    public async Task SocAgentChatValidatesAndPersistsConfiguredExternalModelSelection()
     {
         var connectionString = database.RequireConnectionString();
         var fakeProvider = new FakeSocAgentModelProvider("Fake official provider answer with citations preserved.");
@@ -669,6 +669,15 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
                 ["SocAgent:ProviderDisplayName"] = "OpenAI ChatGPT",
                 ["SocAgent:AuthMode"] = "ApiKey",
                 ["SocAgent:Model"] = "gpt-test",
+                ["SocAgent:ReasoningEffort"] = "medium",
+                ["SocAgent:ReasoningEfforts:0"] = "low",
+                ["SocAgent:ReasoningEfforts:1"] = "medium",
+                ["SocAgent:ReasoningEfforts:2"] = "high",
+                ["SocAgent:ModelOptions:0:Model"] = "gpt-reasoning-test",
+                ["SocAgent:ModelOptions:0:DisplayName"] = "GPT reasoning test",
+                ["SocAgent:ModelOptions:0:ReasoningEfforts:0"] = "low",
+                ["SocAgent:ModelOptions:0:ReasoningEfforts:1"] = "high",
+                ["SocAgent:ModelOptions:0:DefaultReasoningEffort"] = "high",
                 ["SocAgent:ExternalCallsEnabled"] = "true",
                 ["SocAgent:OpenAiApiKey"] = "fake-openai-api-key-for-tests"
             },
@@ -683,6 +692,28 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Equal("connected", status.Status);
         Assert.False(status.RequiresConnection);
         Assert.True(status.DataMayLeaveLocalSiem);
+        Assert.Equal("medium", status.ReasoningEffort);
+        Assert.Contains(status.ModelOptions, option =>
+            option.Model == "gpt-reasoning-test"
+            && option.DefaultReasoningEffort == "high"
+            && option.ReasoningEfforts.SequenceEqual(["low", "high"]));
+
+        using (var invalidRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/soc-agent/sessions")
+        {
+            Content = JsonContent.Create(new SocAgentSessionCreateRequest
+            {
+                Title = "Synthetic invalid model selection",
+                Model = "not-allowlisted",
+                ReasoningEffort = "high"
+            }, options: JsonOptions.Default)
+        })
+        {
+            invalidRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", OperatorApiToken);
+            using var invalidResponse = await client.SendAsync(invalidRequest, CancellationToken.None);
+            Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+            var invalidBody = await invalidResponse.Content.ReadAsStringAsync(CancellationToken.None);
+            Assert.Contains("allowlist", invalidBody, StringComparison.OrdinalIgnoreCase);
+        }
 
         var session = await PostJsonWithOperatorApiTokenAsync<SocAgentSessionSummary>(client, "/api/v1/soc-agent/sessions", new SocAgentSessionCreateRequest
         {
@@ -690,14 +721,20 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         });
         Assert.Equal("OpenAI", session.Provider);
         Assert.Equal("gpt-test", session.Model);
+        Assert.Equal("medium", session.ReasoningEffort);
 
         var chat = await PostJsonWithOperatorApiTokenAsync<SocAgentChatResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}/messages", new SocAgentChatRequest
         {
-            Message = "Summarize current posture with the official provider. api_key=should-not-leave"
+            Message = "Summarize current posture with the official provider. api_key=should-not-leave",
+            Model = "gpt-reasoning-test",
+            ReasoningEffort = "high"
         });
 
         Assert.Equal("OpenAI", chat.AssistantMessage.Provider);
-        Assert.Equal("gpt-test", chat.AssistantMessage.Model);
+        Assert.Equal("gpt-reasoning-test", chat.AssistantMessage.Model);
+        Assert.Equal("high", chat.AssistantMessage.ReasoningEffort);
+        Assert.Equal("gpt-reasoning-test", chat.Session.Model);
+        Assert.Equal("high", chat.Session.ReasoningEffort);
         Assert.Contains("Fake official provider answer", chat.AssistantMessage.Content, StringComparison.Ordinal);
         Assert.Contains(chat.AssistantMessage.ToolRuns, tool => tool.ToolName == "external_model_provider");
         Assert.NotEmpty(chat.AssistantMessage.Citations);
@@ -705,9 +742,17 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Contains("Local SIEM tool assessment", providerRequest.Prompt, StringComparison.Ordinal);
         Assert.Contains("api_key=<redacted>", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fake-openai-api-key", providerRequest.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("gpt-reasoning-test", providerRequest.EffectiveModel);
+        Assert.Equal("high", providerRequest.ReasoningEffort);
 
         var detail = await GetJsonWithOperatorApiTokenAsync<SocAgentSessionDetailResponse>(client, $"/api/v1/soc-agent/sessions/{session.SessionId}");
-        Assert.Contains(detail.Messages, message => message.Role == "soc_agent" && message.Provider == "OpenAI");
+        Assert.Equal("gpt-reasoning-test", detail.Session.Model);
+        Assert.Equal("high", detail.Session.ReasoningEffort);
+        Assert.Contains(detail.Messages, message =>
+            message.Role == "soc_agent"
+            && message.Provider == "OpenAI"
+            && message.Model == "gpt-reasoning-test"
+            && message.ReasoningEffort == "high");
     }
 
     [PostgresFact]
@@ -1278,7 +1323,11 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         public Task<SocAgentModelProviderResult> CompleteAsync(SocAgentModelProviderRequest request, CancellationToken cancellationToken)
         {
             LastRequest = request;
-            return Task.FromResult(new SocAgentModelProviderResult(request.Status.Provider, request.Status.Model, answer));
+            return Task.FromResult(new SocAgentModelProviderResult(
+                request.Status.Provider,
+                request.EffectiveModel,
+                answer,
+                request.ReasoningEffort));
         }
     }
 

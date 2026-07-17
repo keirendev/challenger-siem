@@ -5,13 +5,22 @@ namespace Challenger.Siem.Api.SocAgent;
 
 public sealed class SocAgentProviderStatusService(
     IOptions<SocAgentOptions> options,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    ISocAgentCodexAppServerClient? codexAppServer = null,
+    IOptions<SocAgentCodexAppServerOptions>? codexOptions = null)
 {
     public SocAgentProviderStatusResponse GetStatus()
     {
+        return SocAgentModelCatalog.AddOptions(GetBaseStatus(), options.Value);
+    }
+
+    private SocAgentProviderStatusResponse GetBaseStatus()
+    {
         var current = options.Value;
         var provider = NormalizeProvider(current.Provider);
-        var authMode = NormalizeAuthMode(current.AuthMode, provider);
+        var configuredAuthMode = NormalizeAuthMode(current.AuthMode, provider);
+        var usesCodexAppServer = IsCodexAppServerAuthMode(configuredAuthMode);
+        var authMode = usesCodexAppServer ? "codex_app_server" : configuredAuthMode;
         var displayName = DisplayNameFor(current, provider, authMode);
 
         if (!current.Enabled)
@@ -71,12 +80,17 @@ public sealed class SocAgentProviderStatusService(
                 authMode,
                 message: "An external ChatGPT/OpenAI provider is selected, but external model calls are disabled. Configure ChatGPT subscription OAuth or another official server-side provider mode before data leaves the local SIEM.",
                 requiresConnection: true,
-                connectUrl: IsSubscriptionOAuth(authMode) ? SubscriptionConnectOrSetupUrl(current) : SafeSetupUrl(current, authMode),
-                connectLabel: IsSubscriptionOAuth(authMode) ? SubscriptionConnectLabel(current, "Review ChatGPT subscription OAuth setup") : "Open official provider setup",
+                connectUrl: usesCodexAppServer ? "/soc-agent?manage_login=true" : IsSubscriptionOAuth(authMode) ? SubscriptionConnectOrSetupUrl(current) : SafeSetupUrl(current, authMode),
+                connectLabel: usesCodexAppServer ? "Review ChatGPT login" : IsSubscriptionOAuth(authMode) ? SubscriptionConnectLabel(current, "Review ChatGPT subscription OAuth setup") : "Open official provider setup",
                 dataMayLeaveLocalSiem: true,
-                providerPath: IsSubscriptionOAuth(authMode) ? "chatgpt_subscription_oauth" : null,
-                authFileMode: IsSubscriptionOAuth(authMode) ? "subscription_oauth" : null,
+                providerPath: usesCodexAppServer ? "codex_app_server" : IsSubscriptionOAuth(authMode) ? "chatgpt_subscription_oauth" : null,
+                authFileMode: usesCodexAppServer ? null : IsSubscriptionOAuth(authMode) ? "subscription_oauth" : null,
                 setupPriority: NormalizePreferredExternalAuthMode(current.PreferredExternalAuthMode));
+        }
+
+        if (usesCodexAppServer)
+        {
+            return CreateCodexAppServerStatus(current, provider, displayName);
         }
 
         if (IsSubscriptionOAuth(authMode))
@@ -203,27 +217,7 @@ public sealed class SocAgentProviderStatusService(
     private SocAgentProviderStatusResponse CreateSubscriptionOAuthStatus(SocAgentOptions current, string provider, string displayName)
     {
         var fileStatus = SocAgentSubscriptionOAuthCredentialLoader.Load(current, configuration, includeSecret: false);
-        if (string.Equals(fileStatus.AuthFileMode, "pi_auth_json", StringComparison.OrdinalIgnoreCase))
-        {
-            if (!UsesChatGptCodexResponsesEndpoint(current))
-            {
-                return Create(
-                    status: "provider_error",
-                    provider,
-                    displayName,
-                    model: current.Model,
-                    authMode: "pi_auth_json",
-                    message: "Pi auth.json ChatGPT subscription mode must use the configured https://chatgpt.com/backend-api/codex/responses endpoint for Codex Responses calls. No external calls will be attempted with the configured endpoint.",
-                    requiresConnection: true,
-                    connectUrl: SafeSetupUrl(current, "subscription_oauth"),
-                    connectLabel: "View ChatGPT subscription OAuth setup",
-                    dataMayLeaveLocalSiem: true,
-                    providerPath: fileStatus.ProviderPath,
-                    authFileMode: fileStatus.AuthFileMode,
-                    setupPriority: fileStatus.SetupPriority);
-            }
-        }
-        else if (!UsesOfficialOpenAiEndpoint(current))
+        if (!UsesOfficialOpenAiEndpoint(current))
         {
             return Create(
                 status: "provider_error",
@@ -284,6 +278,125 @@ public sealed class SocAgentProviderStatusService(
             setupPriority: fileStatus.SetupPriority,
             scopeStatus: fileStatus.ScopeStatus,
             entitlementStatus: fileStatus.EntitlementStatus);
+    }
+
+    private SocAgentProviderStatusResponse CreateCodexAppServerStatus(
+        SocAgentOptions current,
+        string provider,
+        string displayName)
+    {
+        if (!SocAgentProviderEndpointPolicy.TryCreateChatGptCodexResponsesEndpoint(
+                current.ChatGptCodexResponsesUrl,
+                out _))
+        {
+            return Create(
+                status: "provider_error",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "codex_app_server",
+                message: "The ChatGPT Codex Responses URL must use the official https://chatgpt.com/backend-api/codex/responses endpoint. No external calls will be attempted with the configured endpoint.",
+                requiresConnection: true,
+                connectUrl: null,
+                connectLabel: null,
+                dataMayLeaveLocalSiem: true,
+                credentialSource: "OpenAI Codex managed",
+                refreshStatus: "Codex managed",
+                providerPath: "codex_app_server",
+                setupPriority: "primary:codex_app_server");
+        }
+
+        var account = codexOptions?.Value.Enabled == false
+            ? new SocAgentCodexAccountStatus(
+                false,
+                false,
+                "disabled",
+                null,
+                "The SIEM-managed ChatGPT login service is disabled by server configuration.")
+            : codexAppServer?.GetAccountStatus()
+              ?? new SocAgentCodexAccountStatus(
+                false,
+                false,
+                "unavailable",
+                null,
+                "The OpenAI Codex login service is unavailable on this server.");
+
+        if (!account.IsAvailable)
+        {
+            return Create(
+                status: "provider_error",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "codex_app_server",
+                message: account.OperatorMessage,
+                requiresConnection: true,
+                connectUrl: "/soc-agent?manage_login=true",
+                connectLabel: "Review ChatGPT login",
+                dataMayLeaveLocalSiem: true,
+                credentialSource: "OpenAI Codex managed",
+                refreshStatus: "Codex managed",
+                providerPath: "codex_app_server",
+                setupPriority: "primary:codex_app_server",
+                entitlementStatus: account.PlanType);
+        }
+
+        if (!account.IsConnected)
+        {
+            return Create(
+                status: "auth_required",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "codex_app_server",
+                message: account.OperatorMessage,
+                requiresConnection: true,
+                connectUrl: "/soc-agent?manage_login=true",
+                connectLabel: "Log in to ChatGPT",
+                dataMayLeaveLocalSiem: true,
+                credentialSource: "OpenAI Codex managed",
+                refreshStatus: "Codex managed",
+                providerPath: "codex_app_server",
+                setupPriority: "primary:codex_app_server",
+                entitlementStatus: account.PlanType);
+        }
+
+        if (current.DailyBudgetUsd.HasValue && current.DailyBudgetUsd.Value <= 0m)
+        {
+            return Create(
+                status: "budget_limited",
+                provider,
+                displayName,
+                model: current.Model,
+                authMode: "codex_app_server",
+                message: "ChatGPT is connected, but the configured daily budget is exhausted or set to zero.",
+                requiresConnection: false,
+                connectUrl: null,
+                connectLabel: null,
+                dataMayLeaveLocalSiem: true,
+                credentialSource: "OpenAI Codex managed",
+                refreshStatus: "Codex managed",
+                providerPath: "codex_app_server",
+                setupPriority: "primary:codex_app_server",
+                entitlementStatus: account.PlanType);
+        }
+
+        return Create(
+            status: "connected",
+            provider,
+            displayName,
+            model: current.Model,
+            authMode: "codex_app_server",
+            message: account.OperatorMessage,
+            requiresConnection: false,
+            connectUrl: null,
+            connectLabel: null,
+            dataMayLeaveLocalSiem: true,
+            credentialSource: "OpenAI Codex managed",
+            refreshStatus: "Codex managed",
+            providerPath: "codex_app_server",
+            setupPriority: "primary:codex_app_server",
+            entitlementStatus: account.PlanType);
     }
 
     private SocAgentProviderStatusResponse CreateDelegatedFileStatus(SocAgentOptions current, string provider, string displayName)
@@ -441,6 +554,9 @@ public sealed class SocAgentProviderStatusService(
             "chatgpt_subscription_oauth" => "subscription_oauth",
             "chatgptoauth" => "subscription_oauth",
             "chatgpt_oauth" => "subscription_oauth",
+            "codexappserver" => "codex_app_server",
+            "codex_app_server" => "codex_app_server",
+            "chatgpt_codex" => "codex_app_server",
             "api_key" => "api_key",
             "apikey" => "api_key",
             var value => value
@@ -473,16 +589,19 @@ public sealed class SocAgentProviderStatusService(
             return "Local soc-agent";
         }
 
-        return IsSubscriptionOAuth(authMode)
+        return string.Equals(authMode, "codex_app_server", StringComparison.OrdinalIgnoreCase)
+            ? "ChatGPT via OpenAI Codex"
+            : IsSubscriptionOAuth(authMode)
             ? "ChatGPT subscription OAuth"
             : "OpenAI ChatGPT";
     }
 
     private static string NormalizePreferredExternalAuthMode(string? preferred)
     {
-        return NormalizeAuthMode(string.IsNullOrWhiteSpace(preferred) ? "SubscriptionOAuth" : preferred, "OpenAI") switch
+        return NormalizeAuthMode(string.IsNullOrWhiteSpace(preferred) ? "CodexAppServer" : preferred, "OpenAI") switch
         {
             "subscription_oauth" => "primary:subscription_oauth",
+            "codex_app_server" => "primary:codex_app_server",
             "api_key" => "primary:api_key",
             "delegated_file" => "primary:delegated_file",
             var value => $"primary:{value}"
@@ -504,16 +623,8 @@ public sealed class SocAgentProviderStatusService(
             && string.Equals(path, "chat/completions", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool UsesChatGptCodexResponsesEndpoint(SocAgentOptions options)
-    {
-        var configured = string.IsNullOrWhiteSpace(options.ChatGptCodexResponsesUrl)
-            ? "https://chatgpt.com/backend-api/codex/responses"
-            : options.ChatGptCodexResponsesUrl.Trim();
-        return Uri.TryCreate(configured, UriKind.Absolute, out var uri)
-            && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(uri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/backend-api/codex/responses", StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool IsCodexAppServerAuthMode(string authMode) =>
+        string.Equals(authMode, "codex_app_server", StringComparison.OrdinalIgnoreCase);
 
     private static string SubscriptionConnectOrSetupUrl(SocAgentOptions options)
     {

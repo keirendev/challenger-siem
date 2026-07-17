@@ -46,7 +46,7 @@ psql_args_from_connection_string() {
 
 CHECK_SQL="$(cat <<'SQL'
 with required_tables(name) as (
-    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('ingestion_errors'), ('operators'), ('operator_sessions'), ('security_audit_events'), ('managed_retention_runs'), ('managed_retention_removed_events')
+    values ('agents'), ('events'), ('agent_heartbeats'), ('source_health'), ('coverage_exceptions'), ('asset_inventory_snapshots'), ('detection_rules'), ('alerts'), ('alert_evidence'), ('soc_agent_turns'), ('soc_agent_sessions'), ('soc_agent_messages'), ('ingestion_errors'), ('operators'), ('operator_sessions'), ('security_audit_events'), ('managed_retention_runs'), ('managed_retention_removed_events')
 ), missing_tables as (
     select 'missing table ' || name as problem
     from required_tables
@@ -90,6 +90,9 @@ with required_tables(name) as (
         ('idx_alert_evidence_alert'),
         ('idx_soc_agent_turns_created'),
         ('idx_soc_agent_turns_context_agent'),
+        ('idx_soc_agent_sessions_updated'),
+        ('idx_soc_agent_sessions_context_agent'),
+        ('idx_soc_agent_messages_session'),
         ('idx_ingestion_errors_agent_id'),
         ('idx_ingestion_errors_time'),
         ('idx_managed_retention_runs_started'),
@@ -148,6 +151,9 @@ with required_tables(name) as (
         ('detection_rules', 'response_guidance'),
         ('asset_inventory_snapshots', 'host_timezone'),
         ('alert_evidence', 'host_timezone'),
+        ('soc_agent_turns', 'reasoning_effort'),
+        ('soc_agent_sessions', 'reasoning_effort'),
+        ('soc_agent_messages', 'reasoning_effort'),
         ('operators', 'password_hash'),
         ('operators', 'api_token_hash'),
         ('operators', 'locked_until'),

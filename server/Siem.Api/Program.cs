@@ -64,15 +64,29 @@ builder.Services.AddScoped<DashboardRepository>();
 builder.Services.AddScoped<AdminRepository>();
 builder.Services.AddScoped<SocAgentRepository>();
 builder.Services.AddScoped<SocAgentProviderStatusService>();
+builder.Services.AddScoped<ISocAgentOAuthOperatorSessionValidator, SocAgentOAuthOperatorSessionValidator>();
+builder.Services.AddSingleton<SocAgentCodexAppServerClient>();
+builder.Services.AddSingleton<ISocAgentCodexAppServerClient>(serviceProvider =>
+    serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
+builder.Services.AddSingleton<ISocAgentCodexCredentialBroker>(serviceProvider =>
+    serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
+builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHttpClient<ISocAgentModelProvider, OpenAiSocAgentModelProvider>((serviceProvider, client) =>
 {
     var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false
 });
 builder.Services.AddHttpClient<SocAgentSubscriptionOAuthConnectService>((serviceProvider, client) =>
 {
     var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false
 });
 builder.Services.AddScoped<SocAgentService>();
 builder.Services.AddSingleton<SocAgentLiveRunRegistry>();
@@ -85,6 +99,7 @@ builder.Services.AddScoped<SiemMcpAccess>();
 builder.Services.AddScoped<SiemMcpTools>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
 builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
+builder.Services.Configure<SocAgentCodexAppServerOptions>(builder.Configuration.GetSection(SocAgentCodexAppServerOptions.SectionName));
 builder.Services.AddOptions<ManagedRetentionOptions>()
     .Bind(builder.Configuration.GetSection(ManagedRetentionOptions.SectionName))
     .ValidateOnStart();
@@ -1137,7 +1152,14 @@ app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
         });
     }
 
-    return Results.Ok(await socAgent.AskAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
+    try
+    {
+        return Results.Ok(await socAgent.AskAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
+    }
+    catch (ArgumentException ex)
+    {
+        return SocAgentSelectionValidationProblem(ex);
+    }
 });
 
 app.MapGet("/api/v1/soc-agent/status", (HttpContext context, SocAgentService socAgent, TokenService tokens, IConfiguration configuration) =>
@@ -1178,8 +1200,15 @@ app.MapPost("/api/v1/soc-agent/sessions", async Task<IResult> (
         return OperatorAccessFailure(context);
     }
 
-    var session = await socAgent.CreateSessionAsync(request, cancellationToken);
-    return Results.Ok(session);
+    try
+    {
+        var session = await socAgent.CreateSessionAsync(request, cancellationToken);
+        return Results.Ok(session);
+    }
+    catch (ArgumentException ex)
+    {
+        return SocAgentSelectionValidationProblem(ex);
+    }
 });
 
 app.MapGet("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
@@ -1252,6 +1281,10 @@ app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<I
     {
         return Results.NotFound();
     }
+    catch (ArgumentException ex)
+    {
+        return SocAgentSelectionValidationProblem(ex);
+    }
 });
 
 app.MapPost("/soc-agent/live/runs", async Task<IResult> (
@@ -1275,6 +1308,10 @@ app.MapPost("/soc-agent/live/runs", async Task<IResult> (
     catch (KeyNotFoundException)
     {
         return Results.NotFound();
+    }
+    catch (ArgumentException ex)
+    {
+        return SocAgentSelectionValidationProblem(ex);
     }
     catch (InvalidOperationException ex)
     {
@@ -1321,7 +1358,9 @@ app.MapGet("/soc-agent/live/runs/{runId:guid}/events", async Task<IResult> (
         {
             ["status"] = state.Status,
             ["last_sequence"] = state.LastSequence,
-            ["session_id"] = state.SessionId
+            ["session_id"] = state.SessionId,
+            ["model"] = state.Turn.Selection.Model,
+            ["reasoning_effort"] = state.Turn.Selection.ReasoningEffort
         });
     await WriteSocAgentLiveEventAsync(context, snapshot, cancellationToken);
 
@@ -1344,7 +1383,7 @@ app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionO
     {
         return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
     }
-}).RequireAuthorization("analyst");
+}).RequireAuthorization("admin");
 
 app.MapGet("/soc-agent/oauth/callback", async Task<IResult> (
     HttpContext context,
@@ -1565,6 +1604,12 @@ app.MapRazorPages();
 app.Run();
 
 static IResult OperatorAccessFailure(HttpContext context) => context.User.Identity?.IsAuthenticated == true ? Results.Forbid() : Results.Unauthorized();
+
+static IResult SocAgentSelectionValidationProblem(ArgumentException exception)
+{
+    var field = exception is SocAgentSelectionException selection ? selection.Field : "model";
+    return Results.ValidationProblem(new Dictionary<string, string[]> { [field] = new[] { exception.Message } });
+}
 
 static int ParseIntOrDefault(string? value, int fallback)
 {

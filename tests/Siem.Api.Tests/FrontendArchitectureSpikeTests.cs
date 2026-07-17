@@ -85,18 +85,22 @@ public sealed class FrontendArchitectureSpikeTests
         var socAgent = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Pages/SocAgent.cshtml"));
         var program = File.ReadAllText(Path.Combine(root, "server/Siem.Api/Program.cs"));
         var css = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/css/site.css"));
+        var socAgentCss = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/css/soc-agent.css"));
         var designSystemJs = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/js/design-system.js"));
         var socAgentJs = File.ReadAllText(Path.Combine(root, "server/Siem.Api/wwwroot/js/soc-agent.js"));
 
         Assert.Contains("Content-Security-Policy", program, StringComparison.Ordinal);
         Assert.Contains("script-src 'self'", program, StringComparison.Ordinal);
+        Assert.Equal(2, program.Split("AllowAutoRedirect = false", StringSplitOptions.None).Length - 1);
         Assert.Contains("~/js/design-system.js", layout, StringComparison.Ordinal);
         Assert.Contains("~/js/soc-agent.js", socAgent, StringComparison.Ordinal);
+        Assert.Contains("~/css/soc-agent.css", socAgent, StringComparison.Ordinal);
         Assert.DoesNotContain("<script>\n(() =>", socAgent, StringComparison.Ordinal);
         Assert.DoesNotContain("onclick=", eventDetail, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("innerHTML", designSystemJs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("innerHTML", socAgentJs, StringComparison.OrdinalIgnoreCase);
         Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(css), 1, 42000);
+        Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(socAgentCss), 1, 24000);
         Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(designSystemJs), 1, 6000);
         Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(socAgentJs), 1, 45000);
     }

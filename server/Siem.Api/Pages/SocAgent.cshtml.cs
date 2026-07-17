@@ -1,4 +1,5 @@
 using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Authorization;
@@ -11,6 +12,8 @@ namespace Challenger.Siem.Api.Pages;
 public sealed class SocAgentModel(
     SocAgentService socAgent,
     SocAgentSubscriptionOAuthConnectService subscriptionOAuthConnect,
+    ISocAgentCodexAppServerClient codexAppServer,
+    SecurityAuditRepository audit,
     ILogger<SocAgentModel> logger) : PageModel
 {
     [BindProperty(SupportsGet = true, Name = "session_id")]
@@ -32,10 +35,25 @@ public sealed class SocAgentModel(
     public string? ComposerContextAgentId { get; set; }
 
     [BindProperty]
+    public string? SelectedModel { get; set; }
+
+    [BindProperty]
+    public string? ReasoningEffort { get; set; }
+
+    [BindProperty]
     public Guid? DeleteSessionId { get; set; }
 
     [BindProperty]
     public bool ConfirmDelete { get; set; }
+
+    [BindProperty]
+    public bool ConfirmSubscriptionDisconnect { get; set; }
+
+    [BindProperty]
+    public bool ConfirmSharedChatGptLogin { get; set; }
+
+    [BindProperty(SupportsGet = true, Name = "manage_login")]
+    public bool OpenChatGptLoginSettings { get; set; }
 
     [TempData]
     public string? ErrorMessage { get; set; }
@@ -45,6 +63,8 @@ public sealed class SocAgentModel(
 
     public SocAgentProviderStatusResponse ProviderStatus { get; private set; } = new();
 
+    public SocAgentCodexLoginStatus ChatGptLoginStatus { get; private set; } = null!;
+
     public IReadOnlyList<SocAgentSessionSummary> Sessions { get; private set; } = Array.Empty<SocAgentSessionSummary>();
 
     public SocAgentSessionSummary? CurrentSession { get; private set; }
@@ -53,7 +73,36 @@ public sealed class SocAgentModel(
 
     public bool HasCurrentSession => CurrentSession is not null;
 
-    public bool CanStartSubscriptionOAuthConnect => subscriptionOAuthConnect.CanStartInteractiveConnect();
+    public bool CanStartSubscriptionOAuthConnect =>
+        CanManageProviderAuthentication
+        && !UsesCodexManagedLogin
+        && subscriptionOAuthConnect.CanStartInteractiveConnect();
+
+    public bool CanDisconnectSubscriptionOAuth =>
+        CanManageProviderAuthentication
+        && !UsesCodexManagedLogin
+        && subscriptionOAuthConnect.CanDisconnectDedicatedCredential();
+
+    public bool CanManageProviderAuthentication => string.Equals(
+        OperatorAuthorization.Role(User),
+        OperatorRoles.Admin,
+        StringComparison.Ordinal);
+
+    public bool CanManageChatGptLogin => CanManageProviderAuthentication;
+
+    public bool UsesCodexManagedLogin => string.Equals(
+        ProviderStatus.AuthMode,
+        "codex_app_server",
+        StringComparison.OrdinalIgnoreCase);
+
+    public string AuthenticationLabel => ProviderStatus.AuthMode.ToLowerInvariant() switch
+    {
+        "codex_app_server" => "SIEM-managed ChatGPT",
+        "subscription_oauth" => "ChatGPT OAuth (advanced)",
+        "api_key" => "API key",
+        "disabled" => "Disabled",
+        _ => ProviderStatus.AuthMode.Replace('_', ' ')
+    };
 
     public bool ShouldShowProviderInlineNotice => ProviderNeedsAttention(ProviderStatus);
 
@@ -87,8 +136,97 @@ public sealed class SocAgentModel(
         await LoadPageAsync(cancellationToken);
     }
 
+    public IActionResult OnGetChatGptLoginStatus()
+    {
+        Response.Headers.CacheControl = "no-store, max-age=0";
+        Response.Headers.Pragma = "no-cache";
+        if (!CanManageChatGptLogin)
+        {
+            return Forbid();
+        }
+
+        ProviderStatus = socAgent.GetProviderStatus();
+        var status = codexAppServer.GetLoginStatus();
+        return new JsonResult(new
+        {
+            state = status.State,
+            is_applicable = UsesCodexManagedLogin,
+            can_start = status.IsAvailable && !status.IsActive,
+            can_cancel = status.IsActive,
+            verification_uri = status.VerificationUrl,
+            user_code = status.UserCode,
+            message = status.OperatorMessage
+        });
+    }
+
+    public async Task<IActionResult> OnPostStartChatGptLoginAsync(CancellationToken cancellationToken)
+    {
+        if (!CanManageChatGptLogin)
+        {
+            await RecordChatGptLoginAuditAsync("start", "denied", "role_denied", cancellationToken);
+            return Forbid();
+        }
+
+        ProviderStatus = socAgent.GetProviderStatus();
+        if (!UsesCodexManagedLogin)
+        {
+            ErrorMessage = "The SIEM-managed ChatGPT login is unavailable because CodexAppServer authentication is not configured.";
+            await RecordChatGptLoginAuditAsync("start", "denied", "not_applicable", cancellationToken);
+            return RedirectToChatGptLoginSettings();
+        }
+
+        if (!ConfirmSharedChatGptLogin)
+        {
+            ErrorMessage = "Confirm that this replaces the shared server ChatGPT login for all soc-agent users.";
+            await RecordChatGptLoginAuditAsync("start", "denied", "confirmation_required", cancellationToken);
+            return RedirectToChatGptLoginSettings();
+        }
+
+        var result = await codexAppServer.StartDeviceLoginAsync(cancellationToken);
+        var after = result.Status;
+        if (result.Started)
+        {
+            NoticeMessage = after.OperatorMessage;
+        }
+        else
+        {
+            ErrorMessage = after.OperatorMessage;
+        }
+
+        await RecordChatGptLoginAuditAsync("start", result.Started ? "success" : "failure", after.State, cancellationToken);
+        return RedirectToChatGptLoginSettings();
+    }
+
+    public async Task<IActionResult> OnPostCancelChatGptLoginAsync(CancellationToken cancellationToken)
+    {
+        if (!CanManageChatGptLogin)
+        {
+            await RecordChatGptLoginAuditAsync("cancel", "denied", "role_denied", cancellationToken);
+            return Forbid();
+        }
+
+        var result = await codexAppServer.CancelDeviceLoginAsync(cancellationToken);
+        var after = result.Status;
+        if (result.Cancelled)
+        {
+            NoticeMessage = after.OperatorMessage;
+        }
+        else
+        {
+            ErrorMessage = after.OperatorMessage;
+        }
+
+        await RecordChatGptLoginAuditAsync("cancel", result.Cancelled ? "success" : "failure", after.State, cancellationToken);
+        return RedirectToChatGptLoginSettings();
+    }
+
     public IActionResult OnPostConnectSubscriptionOAuth()
     {
+        if (!CanManageProviderAuthentication)
+        {
+            return Forbid();
+        }
+
         try
         {
             var authorizationUri = subscriptionOAuthConnect.CreateAuthorizationUri(HttpContext, "/soc-agent");
@@ -99,6 +237,26 @@ public sealed class SocAgentModel(
             ErrorMessage = ex.OperatorSafeMessage;
             return RedirectToPage();
         }
+    }
+
+    public async Task<IActionResult> OnPostDisconnectSubscriptionOAuthAsync(CancellationToken cancellationToken)
+    {
+        if (!CanManageProviderAuthentication)
+        {
+            return Forbid();
+        }
+
+        var result = await subscriptionOAuthConnect.DisconnectAsync(ConfirmSubscriptionDisconnect, cancellationToken);
+        if (result.Succeeded)
+        {
+            NoticeMessage = result.OperatorSafeMessage;
+        }
+        else
+        {
+            ErrorMessage = result.OperatorSafeMessage;
+        }
+
+        return RedirectToPage(new { session_id = SessionId });
     }
 
     public async Task<IActionResult> OnPostSendAsync(CancellationToken cancellationToken)
@@ -118,7 +276,9 @@ public sealed class SocAgentModel(
             var response = await socAgent.SendChatMessageAsync(SessionId, new SocAgentChatRequest
             {
                 Message = Message,
-                ContextAgentId = string.IsNullOrWhiteSpace(contextAgentId) ? null : contextAgentId.Trim()
+                ContextAgentId = string.IsNullOrWhiteSpace(contextAgentId) ? null : contextAgentId.Trim(),
+                Model = SelectedModel,
+                ReasoningEffort = ReasoningEffort
             }, OperatorAuthorization.Role(User)!, cancellationToken);
 
             return RedirectToPage(new { session_id = response.Session.SessionId });
@@ -126,6 +286,10 @@ public sealed class SocAgentModel(
         catch (KeyNotFoundException)
         {
             ErrorMessage = "The selected soc-agent chat session was not found. Start a new chat and try again.";
+        }
+        catch (ArgumentException ex)
+        {
+            ErrorMessage = ex.Message;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -222,6 +386,33 @@ public sealed class SocAgentModel(
         });
     }
 
+    private IActionResult RedirectToChatGptLoginSettings()
+    {
+        return RedirectToPage(new
+        {
+            session_id = SessionId,
+            manage_login = true
+        });
+    }
+
+    private Task RecordChatGptLoginAuditAsync(
+        string operation,
+        string outcome,
+        string state,
+        CancellationToken cancellationToken)
+    {
+        return audit.RecordAsync(
+            OperatorAuthentication.OperatorId(User),
+            User.Identity?.Name,
+            $"soc_agent.shared_login.{operation}",
+            outcome,
+            "soc_agent_provider",
+            "shared_chatgpt",
+            HttpContext,
+            new Dictionary<string, object?> { ["state"] = state },
+            cancellationToken);
+    }
+
     private async Task LoadPageAsync(CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(OAuthError))
@@ -234,6 +425,7 @@ public sealed class SocAgentModel(
         }
 
         ProviderStatus = socAgent.GetProviderStatus();
+        ChatGptLoginStatus = codexAppServer.GetLoginStatus();
         Sessions = await socAgent.GetRecentSessionsAsync(cancellationToken);
         if (SessionId.HasValue)
         {
@@ -251,5 +443,16 @@ public sealed class SocAgentModel(
                 ContextAgentId = detail.Session.ContextAgentId ?? ContextAgentId;
             }
         }
+
+        var preferredModel = CurrentSession?.Model;
+        var selectedOption = ProviderStatus.ModelOptions.FirstOrDefault(option =>
+                option.Model.Equals(preferredModel, StringComparison.OrdinalIgnoreCase))
+            ?? ProviderStatus.ModelOptions.FirstOrDefault(option =>
+                option.Model.Equals(ProviderStatus.Model, StringComparison.OrdinalIgnoreCase))
+            ?? ProviderStatus.ModelOptions.FirstOrDefault();
+        SelectedModel = selectedOption?.Model ?? ProviderStatus.Model;
+        ReasoningEffort = selectedOption?.ReasoningEfforts.Contains(CurrentSession?.ReasoningEffort ?? string.Empty, StringComparer.OrdinalIgnoreCase) == true
+            ? CurrentSession?.ReasoningEffort
+            : selectedOption?.DefaultReasoningEffort;
     }
 }

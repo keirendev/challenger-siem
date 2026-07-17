@@ -24,7 +24,9 @@ public sealed class SocAgentLiveRunCoordinator(
             {
                 Message = request.Message,
                 ContextAgentId = request.ContextAgentId,
-                ContextEventId = request.ContextEventId
+                ContextEventId = request.ContextEventId,
+                Model = request.Model,
+                ReasoningEffort = request.ReasoningEffort
             },
             operatorRole,
             cancellationToken);
@@ -41,7 +43,9 @@ public sealed class SocAgentLiveRunCoordinator(
         state.Append("run_started", new Dictionary<string, object?>
         {
             ["status"] = "running",
-            ["message"] = "soc-agent started a live SIEM review turn."
+            ["message"] = "soc-agent started a live SIEM review turn.",
+            ["model"] = turn.Selection.Model,
+            ["reasoning_effort"] = turn.Selection.ReasoningEffort
         });
         state.Append("provider_status", new Dictionary<string, object?>
         {

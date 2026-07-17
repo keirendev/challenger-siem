@@ -12,6 +12,12 @@ public sealed record SocAgentAskRequest
 
     [JsonPropertyName("context_event_id")]
     public Guid? ContextEventId { get; init; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 }
 
 public sealed record SocAgentAskResponse
@@ -24,6 +30,9 @@ public sealed record SocAgentAskResponse
 
     [JsonPropertyName("model")]
     public string Model { get; init; } = "soc-agent-local";
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 
     [JsonPropertyName("tool_runs")]
     public IReadOnlyList<SocAgentToolRunSummary> ToolRuns { get; init; } = Array.Empty<SocAgentToolRunSummary>();
@@ -73,6 +82,12 @@ public sealed record SocAgentProviderStatusResponse
     [JsonPropertyName("model")]
     public string Model { get; init; } = "soc-agent-local-v1";
 
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
+
+    [JsonPropertyName("model_options")]
+    public IReadOnlyList<SocAgentModelOption> ModelOptions { get; init; } = Array.Empty<SocAgentModelOption>();
+
     [JsonPropertyName("auth_mode")]
     public string AuthMode { get; init; } = "local";
 
@@ -119,6 +134,21 @@ public sealed record SocAgentProviderStatusResponse
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
+public sealed record SocAgentModelOption
+{
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("reasoning_efforts")]
+    public IReadOnlyList<string> ReasoningEfforts { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("default_reasoning_effort")]
+    public string? DefaultReasoningEffort { get; init; }
+}
+
 public sealed record SocAgentSessionCreateRequest
 {
     [JsonPropertyName("title")]
@@ -129,6 +159,12 @@ public sealed record SocAgentSessionCreateRequest
 
     [JsonPropertyName("context_event_id")]
     public Guid? ContextEventId { get; init; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 }
 
 public sealed record SocAgentSessionSummary
@@ -144,6 +180,9 @@ public sealed record SocAgentSessionSummary
 
     [JsonPropertyName("model")]
     public string Model { get; init; } = "soc-agent-local-v1";
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 
     [JsonPropertyName("status")]
     public string Status { get; init; } = "open";
@@ -183,6 +222,9 @@ public sealed record SocAgentChatMessageDto
 
     [JsonPropertyName("model")]
     public string? Model { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 
     [JsonPropertyName("tool_runs")]
     public IReadOnlyList<SocAgentToolRunSummary> ToolRuns { get; init; } = Array.Empty<SocAgentToolRunSummary>();
@@ -234,6 +276,12 @@ public sealed record SocAgentChatRequest
 
     [JsonPropertyName("context_event_id")]
     public Guid? ContextEventId { get; init; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 }
 
 public sealed record SocAgentChatResponse
@@ -264,6 +312,12 @@ public sealed record SocAgentLiveRunStartRequest
 
     [JsonPropertyName("context_event_id")]
     public Guid? ContextEventId { get; init; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; init; }
 }
 
 public sealed record SocAgentLiveRunStartResponse

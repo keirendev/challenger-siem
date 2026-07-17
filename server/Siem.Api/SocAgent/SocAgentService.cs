@@ -33,13 +33,16 @@ public sealed class SocAgentService(
         CancellationToken cancellationToken)
     {
         var status = GetProviderStatus();
+        var selection = SocAgentModelCatalog.Resolve(status, request.Model, request.ReasoningEffort);
+        status = status with { Model = selection.Model, ReasoningEffort = selection.ReasoningEffort };
         var title = string.IsNullOrWhiteSpace(request.Title)
             ? "New investigation"
             : request.Title.Trim();
         return await audit.CreateSessionAsync(
             title,
-            EffectiveProvider(status),
-            EffectiveModel(status),
+            status.Provider,
+            selection.Model,
+            selection.ReasoningEffort,
             request.ContextAgentId,
             request.ContextEventId,
             cancellationToken);
@@ -119,10 +122,25 @@ public sealed class SocAgentService(
             throw new KeyNotFoundException("soc-agent chat session was not found.");
         }
 
+        var requestedModel = string.IsNullOrWhiteSpace(request.Model)
+            && session is not null
+            && status.ModelOptions.Any(option => option.Model.Equals(session.Model, StringComparison.OrdinalIgnoreCase))
+                ? session.Model
+                : request.Model;
+        var requestedEffort = string.IsNullOrWhiteSpace(request.Model)
+            && string.IsNullOrWhiteSpace(request.ReasoningEffort)
+            && session is not null
+            && SocAgentModelCatalog.Supports(status, requestedModel, session.ReasoningEffort)
+                ? session.ReasoningEffort
+                : request.ReasoningEffort;
+        var selection = SocAgentModelCatalog.Resolve(status, requestedModel, requestedEffort);
+        status = status with { Model = selection.Model, ReasoningEffort = selection.ReasoningEffort };
+
         session ??= await audit.CreateSessionAsync(
             MakeTitle(message),
-            EffectiveProvider(status),
-            EffectiveModel(status),
+            status.Provider,
+            selection.Model,
+            selection.ReasoningEffort,
             request.ContextAgentId,
             request.ContextEventId,
             cancellationToken);
@@ -138,9 +156,13 @@ public sealed class SocAgentService(
             message,
             provider: null,
             model: null,
+            reasoningEffort: null,
             toolRuns: Array.Empty<SocAgentToolRunSummary>(),
             citations: Array.Empty<SocAgentCitation>(),
             errorCode: null,
+            sessionProvider: status.Provider,
+            sessionModel: selection.Model,
+            sessionReasoningEffort: selection.ReasoningEffort,
             cancellationToken);
 
         return new SocAgentChatTurn(
@@ -150,9 +172,12 @@ public sealed class SocAgentService(
             {
                 Question = message,
                 ContextAgentId = effectiveContextAgentId,
-                ContextEventId = effectiveContextEventId
+                ContextEventId = effectiveContextEventId,
+                Model = selection.Model,
+                ReasoningEffort = selection.ReasoningEffort
             },
             status,
+            selection,
             operatorRole);
     }
 
@@ -165,7 +190,7 @@ public sealed class SocAgentService(
         string? errorCode = null;
         try
         {
-            response = await AskAsync(turn.AskRequest, turn.OperatorRole, progress, cancellationToken);
+            response = await AskAsync(turn.AskRequest, turn.OperatorRole, turn.ProviderStatus, progress, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -174,6 +199,7 @@ public sealed class SocAgentService(
             {
                 Provider = EffectiveProvider(turn.ProviderStatus),
                 Model = EffectiveModel(turn.ProviderStatus),
+                ReasoningEffort = EffectiveReasoningEffort(turn.ProviderStatus),
                 Answer = "soc-agent turn was cancelled by the operator before completion. No additional SIEM mutations were performed.",
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -185,6 +211,7 @@ public sealed class SocAgentService(
             {
                 Provider = EffectiveProvider(turn.ProviderStatus),
                 Model = EffectiveModel(turn.ProviderStatus),
+                ReasoningEffort = EffectiveReasoningEffort(turn.ProviderStatus),
                 Answer = "soc-agent could not complete the request. Confirm the database schema is applied and try again.",
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -196,9 +223,13 @@ public sealed class SocAgentService(
             response.Answer,
             response.Provider,
             response.Model,
+            response.ReasoningEffort,
             response.ToolRuns,
             response.Citations,
             errorCode,
+            sessionProvider: null,
+            sessionModel: null,
+            sessionReasoningEffort: null,
             CancellationToken.None);
 
         var updatedSession = await audit.GetSessionAsync(turn.Session.SessionId, CancellationToken.None) ?? turn.Session;
@@ -219,6 +250,18 @@ public sealed class SocAgentService(
     public async Task<SocAgentAskResponse> AskAsync(SocAgentAskRequest request, string operatorRole, ISocAgentProgressSink? progress, CancellationToken cancellationToken)
     {
         var status = GetProviderStatus();
+        var selection = SocAgentModelCatalog.Resolve(status, request.Model, request.ReasoningEffort);
+        status = status with { Model = selection.Model, ReasoningEffort = selection.ReasoningEffort };
+        return await AskAsync(request, operatorRole, status, progress, cancellationToken);
+    }
+
+    private async Task<SocAgentAskResponse> AskAsync(
+        SocAgentAskRequest request,
+        string operatorRole,
+        SocAgentProviderStatusResponse status,
+        ISocAgentProgressSink? progress,
+        CancellationToken cancellationToken)
+    {
         if (progress is not null)
         {
             await progress.ProviderStatusAsync(status, cancellationToken);
@@ -229,6 +272,7 @@ public sealed class SocAgentService(
             {
                 Provider = status.Provider,
                 Model = status.Model,
+                ReasoningEffort = status.ReasoningEffort,
                 Answer = status.Message,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -240,6 +284,7 @@ public sealed class SocAgentService(
             {
                 Provider = status.Provider,
                 Model = status.Model,
+                ReasoningEffort = status.ReasoningEffort,
                 Answer = $"Provider unavailable: {status.Message}",
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -440,7 +485,12 @@ public sealed class SocAgentService(
 
                 var prompt = BuildExternalPrompt(request.Question, localAnswer, toolRuns, citations);
                 var providerResult = await modelProvider.CompleteAsync(
-                    new SocAgentModelProviderRequest(status, prompt, maxResultCharacters),
+                    new SocAgentModelProviderRequest(
+                        status,
+                        prompt,
+                        maxResultCharacters,
+                        status.Model,
+                        status.ReasoningEffort),
                     cancellationToken);
                 var providerToolRun = new SocAgentToolRunSummary
                 {
@@ -458,6 +508,7 @@ public sealed class SocAgentService(
                 {
                     Provider = providerResult.Provider,
                     Model = providerResult.Model,
+                    ReasoningEffort = providerResult.ReasoningEffort,
                     Answer = providerResult.Answer,
                     ToolRuns = toolRuns,
                     Citations = citations,
@@ -485,6 +536,7 @@ public sealed class SocAgentService(
                 {
                     Provider = options.LocalFallbackProvider,
                     Model = options.LocalFallbackModel,
+                    ReasoningEffort = null,
                     Answer = fallbackAnswer,
                     ToolRuns = toolRuns,
                     Citations = citations,
@@ -509,6 +561,7 @@ public sealed class SocAgentService(
                 {
                     Provider = status.Provider,
                     Model = status.Model,
+                    ReasoningEffort = status.ReasoningEffort,
                     Answer = $"External provider unavailable ({ex.ErrorCode}): {ex.OperatorSafeMessage}",
                     ToolRuns = toolRuns,
                     Citations = citations,
@@ -521,6 +574,7 @@ public sealed class SocAgentService(
         {
             Provider = EffectiveProvider(status),
             Model = EffectiveModel(status),
+            ReasoningEffort = EffectiveReasoningEffort(status),
             Answer = localAnswer,
             ToolRuns = toolRuns,
             Citations = citations,
@@ -574,6 +628,15 @@ public sealed class SocAgentService(
         return IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable
             ? options.LocalFallbackModel
             : status.Model;
+    }
+
+    private string? EffectiveReasoningEffort(SocAgentProviderStatusResponse status)
+    {
+        return IsExternalProviderUnavailable(status) && options.FallbackToLocalWhenUnavailable
+            ? null
+            : string.Equals(status.Provider, "Local", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : status.ReasoningEffort;
     }
 
     private static bool CanUseExternalProvider(SocAgentProviderStatusResponse status)

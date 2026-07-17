@@ -331,6 +331,19 @@ restart_platform() {
 }
 
 load_local_env
+soc_agent_auth_mode="${SocAgent__AuthMode:-}"
+soc_agent_auth_mode="${soc_agent_auth_mode,,}"
+soc_agent_auth_mode="${soc_agent_auth_mode//-/_}"
+if [[ "$soc_agent_auth_mode" == "codexappserver" || "$soc_agent_auth_mode" == "codex_app_server" || "$soc_agent_auth_mode" == "chatgpt_codex" ]]; then
+  unset \
+    SocAgent__AuthFilePath \
+    SocAgent__AuthFileProviderKey \
+    SocAgent__SubscriptionAuthFilePath \
+    SocAgent__SubscriptionAuthFileProviderKey \
+    SocAgent__SubscriptionPiAuthFilePath \
+    SocAgent__SubscriptionPiAuthFileProviderKey \
+    SocAgent__SubscriptionUsePiAuthFile
+fi
 STATE_DIR="${CHALLENGER_SIEM_PLATFORM_STATE_DIR:-.local/platform}"
 PID_FILE="${CHALLENGER_SIEM_PLATFORM_PID_FILE:-$STATE_DIR/platform.pid}"
 STATE_FILE="${CHALLENGER_SIEM_PLATFORM_STATE_FILE:-$STATE_DIR/platform.state}"

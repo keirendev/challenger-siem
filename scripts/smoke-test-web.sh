@@ -196,10 +196,10 @@ dashboard = Path('$DASHBOARD_HTML').read_text(encoding='utf-8')
 if 'Security overview' not in dashboard or 'Active agents' not in dashboard:
     raise SystemExit('web smoke failed; overview did not render expected security metrics')
 soc_agent = Path('$SOC_AGENT_HTML').read_text(encoding='utf-8')
-if 'soc-agent workspace' not in soc_agent or 'Provider status' not in soc_agent:
-    raise SystemExit('web smoke failed; soc-agent workspace did not render expected status')
+if '<h1>soc-agent</h1>' not in soc_agent or 'ChatGPT settings' not in soc_agent or 'Recent chats' not in soc_agent or 'What should we investigate?' not in soc_agent:
+    raise SystemExit('web smoke failed; soc-agent workspace did not render the expected chat and settings controls')
 soc_agent_chat = Path('$SOC_AGENT_CHAT_HTML').read_text(encoding='utf-8')
-if 'Tool activity' not in soc_agent_chat or 'Synthetic web smoke soc-agent marker' not in soc_agent_chat:
+if 'Sources' not in soc_agent_chat or 'Synthetic web smoke soc-agent marker' not in soc_agent_chat or 'message-activity' in soc_agent_chat:
     raise SystemExit('web smoke failed; soc-agent chat did not persist the synthetic conversation')
 graphs = Path('$GRAPHS_HTML').read_text(encoding='utf-8')
 if 'Investigation graphs' not in graphs or 'Create graph' not in graphs:

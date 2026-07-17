@@ -38,6 +38,14 @@ The project should remain open-source and custom-built.
 | --- | --- | --- |
 | pypsrp | Optional local WinRM helper support for authorized Windows lab validation | MIT, open-source |
 
+## Optional soc-agent provider runtime
+
+| Component | Purpose | License / status |
+| --- | --- | --- |
+| OpenAI Codex CLI (`codex app-server`) | Official token-free ChatGPT account status and device-code login/refresh control for the optional external `soc-agent` provider | Apache-2.0, official OpenAI CLI; operator-installed external runtime, not vendored or redistributed by Challenger SIEM. |
+
+`SocAgent:CodexAppServer` is enabled by default so the integration is available, while the overall `soc-agent` provider remains local and external calls remain disabled until explicitly configured. The server resolves `codex` from an operator-configured executable path, the service `PATH`, or the service account's `~/.local/bin/codex`; that executable may legitimately be a symlink into the official package tree under `~/.codex/packages`. The process still receives an isolated `.local/soc-agent/codex` `CODEX_HOME` and a forced file credential store there. Global Codex credential/configuration state such as `~/.codex/auth.json` or `config.toml`, and all Pi state, are not credential sources. No credentials are migrated into the isolated state directory, so an administrator must complete a fresh SIEM-managed login. This broker is currently supported only when the SIEM API runs on a non-Windows host with enforceable owner-only file modes; Windows endpoint collection is unaffected, while a Windows-hosted API fails this optional provider path closed pending owner-only DACL enforcement.
+
 ## Frontend architecture decision
 
 The [frontend architecture ADR](frontend-architecture-adr.md) selects enhanced ASP.NET Core/Razor Pages as the only active web-console architecture for high-density search and timeline work. No TypeScript frontend, npm package manager, lockfile, bundler, client router, external component library, CDN, analytics script, font service, or generated static build output is approved by this spike.
