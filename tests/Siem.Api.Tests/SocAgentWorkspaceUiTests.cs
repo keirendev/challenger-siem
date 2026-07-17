@@ -24,7 +24,11 @@ public sealed class SocAgentWorkspaceUiTests
         Assert.Contains("grid-template-columns: minmax(12rem, 14rem) minmax(0, 1fr);", focusedCss, StringComparison.Ordinal);
         Assert.Contains("grid-area: conversation;", focusedCss, StringComparison.Ordinal);
         Assert.Contains("grid-area: history;", focusedCss, StringComparison.Ordinal);
+        Assert.Contains("grid-template-areas:\n        \"connection\"\n        \"transcript\"\n        \"composer\";", focusedCss, StringComparison.Ordinal);
         Assert.Contains("grid-template-rows: auto minmax(0, 1fr) auto;", focusedCss, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-connection-banner {\n    grid-area: connection;", focusedCss, StringComparison.Ordinal);
+        Assert.Contains(".conversation-scroll {\n    grid-area: transcript;", focusedCss, StringComparison.Ordinal);
+        Assert.Contains(".soc-agent-composer {\n    grid-area: composer;", focusedCss, StringComparison.Ordinal);
         Assert.Contains("height: min(64rem, calc(100vh - 7.5rem));", focusedCss, StringComparison.Ordinal);
         Assert.Contains("grid-template-areas:\n            \"conversation\"\n            \"history\";", focusedCss, StringComparison.Ordinal);
         Assert.DoesNotContain("class=\"breadcrumbs\"", page, StringComparison.Ordinal);
@@ -235,7 +239,7 @@ public sealed class SocAgentWorkspaceUiTests
 
         Assert.Contains("height: min(64rem, calc(100vh - 7.5rem));", focusedCss, StringComparison.Ordinal);
         Assert.Contains("class=\"button tertiary small conversation-latest\"", page, StringComparison.Ordinal);
-        Assert.Contains(".conversation-scroll {\n    min-height: 0;\n    overflow-y: auto;", focusedCss, StringComparison.Ordinal);
+        Assert.Contains(".conversation-scroll {\n    grid-area: transcript;\n    min-height: 0;\n    overflow-y: auto;", focusedCss, StringComparison.Ordinal);
         Assert.Contains("overscroll-behavior: contain;", focusedCss, StringComparison.Ordinal);
     }
 

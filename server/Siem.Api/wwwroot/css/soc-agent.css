@@ -84,6 +84,10 @@
     grid-area: conversation;
     position: relative;
     display: grid;
+    grid-template-areas:
+        "connection"
+        "transcript"
+        "composer";
     grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0;
     min-height: 38rem;
@@ -96,6 +100,7 @@
 }
 
 .soc-agent-connection-banner {
+    grid-area: connection;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -120,6 +125,7 @@
 }
 
 .conversation-scroll {
+    grid-area: transcript;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -297,6 +303,7 @@
 }
 
 .soc-agent-composer {
+    grid-area: composer;
     position: sticky;
     bottom: 0;
     z-index: 2;
