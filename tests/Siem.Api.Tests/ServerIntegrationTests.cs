@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Contracts.V1;
@@ -778,7 +779,10 @@ public sealed class ServerIntegrationTests(IntegrationTestDatabase database)
         Assert.Equal(TelemetryPlatforms.Linux, agentCoverage.Platform);
         Assert.Equal(LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L2).Count, agentCoverage.ExpectedSourceCount);
         Assert.Equal(1, Assert.Single(agentCoverage.Sources, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).RecentEventCount);
-        Assert.Empty(agentCoverage.DetectionPrerequisites);
+        Assert.Contains(agentCoverage.DetectionPrerequisites, rule => rule.RuleId == "package.change.linux"
+            && rule.Status == TelemetryCoverageEvaluator.StatusSatisfied);
+        Assert.All(agentCoverage.DetectionPrerequisites, rule =>
+            Assert.EndsWith(".linux", rule.RuleId, StringComparison.OrdinalIgnoreCase));
 
         await using var dataSource = NpgsqlDataSource.Create(connectionString);
         await using var command = dataSource.CreateCommand("select platform || ':' || host_id from agents where agent_id = @agent_id;");

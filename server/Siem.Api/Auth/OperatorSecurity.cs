@@ -120,7 +120,13 @@ public static class EventFieldPolicy
                 SourceIp = null, SourcePort = null, DestinationIp = null, DestinationPort = null,
                 FilePath = null, RegistryKey = null, ObjectName = null, PackageName = null,
                 User = null, Network = null,
-                Process = source.Normalized.Process is null ? null : source.Normalized.Process with { CommandLine = null, Executable = null },
+                Process = source.Normalized.Process is null ? null : source.Normalized.Process with
+                {
+                    Pid = null,
+                    ParentPid = null,
+                    CommandLine = null,
+                    Executable = null
+                },
                 File = null, Entities = Array.Empty<EventEntity>(), Labels = new Dictionary<string,string>()
             }
         };

@@ -33,7 +33,7 @@ public sealed class DetailModel(
     IOptions<ManagedRetentionOptions> retentionOptions) : PageModel
 {
     public string? AgentId { get; private set; }
-    public WindowsCoverageLevel TargetLevel { get; private set; } = WindowsCoverageLevel.L3;
+    public WindowsCoverageLevel TargetLevel { get; private set; } = WindowsCoverageLevel.L4;
     public IReadOnlyList<WindowsCoverageLevel> TargetLevels { get; } = new[] { WindowsCoverageLevel.L1, WindowsCoverageLevel.L2, WindowsCoverageLevel.L3, WindowsCoverageLevel.L4 };
     public CoverageSummary? Summary { get; private set; }
     public AgentTelemetryCoverage? Coverage { get; private set; }
@@ -80,6 +80,7 @@ public sealed class DetailModel(
                 Enabled = source.Enabled,
                 Status = source.Status,
                 LastEventTime = source.LastEventTime,
+                ObservedAt = source.ObservedAt,
                 HostTimezone = source.HostTimezone ?? Summary?.HostTimezone,
                 SourceVersion = source.SourceVersion,
                 ConfigHash = source.ConfigHash,
@@ -134,6 +135,7 @@ public sealed class DetailModel(
         SourceHealthStatuses.Stale => "Last evidence is older than expected. Compare heartbeat, queue, and source timestamps before assuming quiet activity.",
         SourceHealthStatuses.Degraded => source.TransitionState == HealthTransitionStates.Degraded ? "Source is degraded and may be throttled. Review queue pressure and collector limits." : "Source is degraded or applicability is uncertain. Treat findings as partial.",
         SourceHealthStatuses.Error => "Collector or processing error reported. Use safe diagnostics; do not clear logs or mutate policy from the console.",
+        _ when source.RecentEventCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "A current successful bounded poll establishes source readiness even when the source produced no new event.",
         _ => source.RecentEventCount == 0 ? "Health is reported but no recent events were observed in the lookback; evidence may be quiet or incomplete." : "Recent source evidence is present."
     };
 
@@ -221,6 +223,6 @@ public sealed class DetailModel(
     {
         return Enum.TryParse<WindowsCoverageLevel>(targetLevel, ignoreCase: true, out var parsed) && parsed is >= WindowsCoverageLevel.L1 and <= WindowsCoverageLevel.L4
             ? parsed
-            : WindowsCoverageLevel.L3;
+            : WindowsCoverageLevel.L4;
     }
 }

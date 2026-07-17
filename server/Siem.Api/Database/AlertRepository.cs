@@ -9,6 +9,8 @@ namespace Challenger.Siem.Api.Database;
 
 public sealed class AlertRepository(NpgsqlDataSource dataSource)
 {
+    public const int MaxEvidencePerAlert = 128;
+
     public async Task<IReadOnlyList<AlertRecord>> SearchAlertsForRuleAsync(
         string ruleId,
         int ruleVersion,
@@ -120,7 +122,16 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
         var evidence = await LoadEvidenceAsync(connection, alertId, cancellationToken);
         var cases = await LoadCaseLinksAsync(connection, alertId, cancellationToken);
         var activity = await LoadActivityAsync(connection, alertId, cancellationToken);
-        return alert with { Evidence = evidence, Cases = cases, Activity = activity };
+        return alert with
+        {
+            Evidence = evidence.Records,
+            EvidenceTotal = evidence.Total,
+            EvidenceReturned = evidence.Records.Count,
+            EvidenceLimit = MaxEvidencePerAlert,
+            EvidenceTruncated = evidence.Total > evidence.Records.Count,
+            Cases = cases,
+            Activity = activity
+        };
     }
 
     public async Task<AlertRecord?> AssignAsync(Guid alertId, AlertMutationRequest request, string actor, CancellationToken cancellationToken)
@@ -318,19 +329,20 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
     }
 
     public async Task RunLinuxDetectionsAsync(
-        IngestBatchRequest batch,
-        IReadOnlyCollection<Guid> acceptedEventIds,
+        IReadOnlyCollection<EventEnvelope> storedEvents,
         DetectionEngine engine,
         CancellationToken cancellationToken)
     {
-        if (acceptedEventIds.Count == 0)
+        if (storedEvents.Count == 0)
         {
             return;
         }
 
-        var accepted = batch.Events
-            .Where(envelope => acceptedEventIds.Contains(envelope.EventId))
-            .Take(500)
+        // Always evaluate the canonical row read back from storage. This makes a
+        // duplicate-ingest retry recover detection work after a post-commit failure
+        // and prevents a conflicting retry envelope from becoming alert evidence.
+        var accepted = storedEvents
+            .Take(ContractLimits.MaxIngestEventsPerBatch)
             .ToArray();
         if (accepted.Length == 0)
         {
@@ -390,21 +402,32 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select source_id, status, prerequisite_statuses, event_family_statuses, gap_detected, cleared_detected,
-                   bookmark_gap_detected, dropped_events, transition_state, details
+            select source_id, status, platform, source_kind, coverage_level, required_source, requirement_kind,
+                   applicability, enabled, last_event_time, observed_at, prerequisite_statuses, event_family_statuses,
+                   gap_detected, cleared_detected, bookmark_gap_detected, dropped_events, transition_state, details
             from source_health
             where agent_id = @agent_id;
             """;
         command.Parameters.AddWithValue("agent_id", agentId);
         var results = new Dictionary<string, SourceHealthReport>(StringComparer.OrdinalIgnoreCase);
+        var evaluatedAt = DateTimeOffset.UtcNow;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var sourceId = reader.GetString(reader.GetOrdinal("source_id"));
-            results[sourceId] = new SourceHealthReport
+            var report = new SourceHealthReport
             {
                 SourceId = sourceId,
                 Status = reader.GetString(reader.GetOrdinal("status")),
+                Platform = ReadNullableString(reader, "platform"),
+                SourceKind = ReadNullableString(reader, "source_kind"),
+                CoverageLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
+                Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
+                Requirement = ReadNullableString(reader, "requirement_kind"),
+                Applicability = ReadNullableString(reader, "applicability"),
+                Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                LastEventTime = ReadNullableDateTimeOffset(reader, "last_event_time"),
+                ObservedAt = ReadNullableDateTimeOffset(reader, "observed_at"),
                 PrerequisiteStatuses = Jsonb.Read<Dictionary<string, string>>(reader, "prerequisite_statuses"),
                 EventFamilyStatuses = Jsonb.Read<Dictionary<string, string>>(reader, "event_family_statuses"),
                 GapDetected = reader.GetBoolean(reader.GetOrdinal("gap_detected")),
@@ -414,6 +437,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 TransitionState = ReadNullableString(reader, "transition_state"),
                 Details = ReadStringDictionary(reader, "details")
             };
+            results[sourceId] = report with { Status = SourceHealthRules.EffectiveStatus(report, evaluatedAt) };
         }
 
         return results;
@@ -526,12 +550,27 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
     {
         var rule = evaluation.Rule;
         var alertId = ComputeDeterministicAlertId(rule, envelope, evaluation.SuppressionKey);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var alertLock = connection.CreateCommand())
+        {
+            alertLock.Transaction = transaction;
+            alertLock.CommandText = "select pg_advisory_xact_lock(@alert_lock_key);";
+            alertLock.Parameters.AddWithValue("alert_lock_key", BitConverter.ToInt64(alertId.ToByteArray(), 0));
+            await alertLock.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using (var command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 insert into alerts (alert_id, rule_id, rule_version, title, severity, confidence, status, agent_id, hostname, summary, affected_entities)
                 values (@alert_id, @rule_id, @rule_version, @title, @severity, @confidence, 'new', @agent_id, @hostname, @summary, @affected_entities)
-                on conflict (alert_id) do nothing;
+                on conflict (alert_id) do update
+                set confidence = case
+                    when alerts.confidence = 'low' or excluded.confidence = 'low' then 'low'
+                    when alerts.confidence = 'medium' or excluded.confidence = 'medium' then 'medium'
+                    else alerts.confidence
+                end;
                 """;
             command.Parameters.AddWithValue("alert_id", alertId);
             command.Parameters.AddWithValue("rule_id", rule.RuleId);
@@ -548,19 +587,60 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
 
         await using (var evidence = connection.CreateCommand())
         {
+            evidence.Transaction = transaction;
             evidence.CommandText = """
+                with remaining as (
+                    select greatest(@evidence_limit - count(*)::int, 0)::int as slots
+                    from alert_evidence
+                    where alert_id = @alert_id
+                ), candidate_events as (
+                    select e.*
+                    from events e
+                    where e.agent_id = @agent_id
+                      and e.event_id = any(@event_ids)
+                      and not exists (
+                          select 1
+                          from alert_evidence existing
+                          where existing.alert_id = @alert_id
+                            and existing.agent_id = e.agent_id
+                            and existing.event_id = e.event_id)
+                    order by e.event_time desc, e.id asc
+                    limit (select slots from remaining)
+                )
                 insert into alert_evidence (alert_id, agent_id, event_id, event_time, channel, windows_event_id, host_timezone, summary)
                 select @alert_id, e.agent_id, e.event_id, e.event_time, e.channel, e.windows_event_id, e.host_timezone,
                        left(concat_ws(' ', e.source_id, e.event_code, e.event_category, e.event_action), 500)
-                from events e
-                where e.agent_id = @agent_id and e.event_id = any(@event_ids)
+                from candidate_events e
                 on conflict (alert_id, agent_id, event_id) do nothing;
                 """;
             evidence.Parameters.AddWithValue("alert_id", alertId);
             evidence.Parameters.AddWithValue("agent_id", envelope.AgentId);
             evidence.Parameters.AddWithValue("event_ids", evidenceIds.Distinct().Take(20).ToArray());
+            evidence.Parameters.AddWithValue("evidence_limit", MaxEvidencePerAlert);
             await evidence.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        await using (var rollup = connection.CreateCommand())
+        {
+            rollup.Transaction = transaction;
+            rollup.CommandText = """
+                update alerts a
+                set summary = left(
+                    concat(
+                        a.title,
+                        '; confidence=', a.confidence,
+                        '; evidence_events_retained=', (select count(*) from alert_evidence ae where ae.alert_id = a.alert_id),
+                        '; evidence_limit=', @evidence_limit,
+                        '; confidence conservatively reflects the lowest coalesced evaluation. Missing or degraded prerequisite telemetry is a visibility gap, not proof of no threat.'),
+                    2000)
+                where a.alert_id = @alert_id;
+                """;
+            rollup.Parameters.AddWithValue("alert_id", alertId);
+            rollup.Parameters.AddWithValue("evidence_limit", MaxEvidencePerAlert);
+            await rollup.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static string BuildAlertSummary(DetectionEvaluationResult evaluation, int evidenceCount)
@@ -774,7 +854,9 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
         };
     }
 
-    private static async Task<IReadOnlyList<AlertEvidenceRecord>> LoadEvidenceAsync(NpgsqlConnection connection, Guid alertId, CancellationToken cancellationToken)
+    private sealed record BoundedAlertEvidence(IReadOnlyList<AlertEvidenceRecord> Records, int Total);
+
+    private static async Task<BoundedAlertEvidence> LoadEvidenceAsync(NpgsqlConnection connection, Guid alertId, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -786,6 +868,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 ae.channel,
                 ae.windows_event_id,
                 ae.summary,
+                count(*) over()::int as total_evidence,
                 case
                     when e.event_id is not null then 'telemetry_retained'
                     when mre.event_id is not null then 'telemetry_removed_by_retention'
@@ -795,13 +878,17 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
             left join events e on e.agent_id = ae.agent_id and e.event_id = ae.event_id
             left join managed_retention_removed_events mre on mre.agent_id = ae.agent_id and mre.event_id = ae.event_id
             where ae.alert_id = @alert_id
-            order by ae.event_time desc nulls last, ae.id asc;
+            order by ae.event_time desc nulls last, ae.id asc
+            limit @evidence_limit;
             """;
         command.Parameters.AddWithValue("alert_id", alertId);
+        command.Parameters.AddWithValue("evidence_limit", MaxEvidencePerAlert);
         var results = new List<AlertEvidenceRecord>();
+        var total = 0;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
+            total = reader.GetInt32(reader.GetOrdinal("total_evidence"));
             results.Add(new AlertEvidenceRecord
             {
                 AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
@@ -815,7 +902,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
             });
         }
 
-        return results;
+        return new BoundedAlertEvidence(results, total);
     }
 
     private static IReadOnlyList<EventEntity> ReadEntities(string json)

@@ -374,7 +374,7 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
         return Results.Unauthorized();
     }
 
-    var maxEventsPerBatch = ParseIntOrDefault(configuration["Ingestion:MaxEventsPerBatch"], 500);
+    var maxEventsPerBatch = ParseIntOrDefault(configuration["Ingestion:MaxEventsPerBatch"], ContractLimits.MaxIngestEventsPerBatch);
     var validationErrors = RequestValidation.ValidateBatch(request, maxEventsPerBatch);
     if (validationErrors.Count > 0)
     {
@@ -383,7 +383,9 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     }
 
     var result = await events.StoreEventsAsync(request, cancellationToken);
-    await alerts.RunLinuxDetectionsAsync(request, result.AcceptedEventIds, detectionEngine, cancellationToken);
+    var detectionCandidates = result.AcceptedEventIds.Concat(result.DuplicateEventIds);
+    var storedDetectionEvents = await events.LoadStoredEventsAsync(request.AgentId, detectionCandidates, cancellationToken);
+    await alerts.RunLinuxDetectionsAsync(storedDetectionEvents, detectionEngine, cancellationToken);
     return Results.Ok(new IngestBatchResponse
     {
         BatchId = request.BatchId,
@@ -462,7 +464,9 @@ app.MapGet("/api/v1/events/saved-searches", async Task<IResult> (
     }
 
     var operatorId = OperatorAuthentication.OperatorId(context.User);
-    return operatorId.HasValue ? Results.Ok(new { saved_searches = await events.ListSavedSearchesAsync(operatorId.Value, cancellationToken) }) : Results.Unauthorized();
+    return operatorId.HasValue
+        ? Results.Ok(new { saved_searches = await events.ListSavedSearchesAsync(operatorId.Value, OperatorAuthorization.Role(context.User)!, cancellationToken) })
+        : Results.Unauthorized();
 });
 
 app.MapPost("/api/v1/events/saved-searches", async Task<IResult> (

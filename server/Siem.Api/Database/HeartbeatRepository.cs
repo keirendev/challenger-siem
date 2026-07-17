@@ -274,6 +274,44 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        // Source manifest/health arrays are a current full snapshot. Preserve the
+        // historical row for an omitted source, but do not let its previous healthy
+        // state continue to satisfy current coverage after it disappears.
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                update source_health sh
+                set status = 'missing',
+                    enabled = false,
+                    error_code = 'source_omitted_from_latest_heartbeat',
+                    error_message = 'Source was omitted from the latest full source-health snapshot.',
+                    gap_detected = true,
+                    transition_state = 'degraded',
+                    transitioned_at = now(),
+                    details = coalesce(sh.details, '{}'::jsonb) || jsonb_build_object(
+                        'active_gap', 'true',
+                        'omission_reason', 'source_omitted_from_latest_heartbeat'),
+                    updated_at = now()
+                where sh.agent_id = @agent_id
+                  and not (lower(sh.source_id) = any(@submitted_source_ids))
+                  and (
+                      @portable_full_snapshot
+                      or exists (
+                          select 1
+                          from agents a
+                          where a.agent_id = @agent_id and a.platform = 'linux'));
+                """;
+            command.Parameters.AddWithValue("agent_id", request.AgentId);
+            command.Parameters.AddWithValue("submitted_source_ids", request.SourceHealth.Select(source => source.SourceId.ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToArray());
+            command.Parameters.AddWithValue(
+                "portable_full_snapshot",
+                string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
+                || request.SourceManifest.Any(source => TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind))
+                || request.SourceHealth.Any(source => TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind)));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;

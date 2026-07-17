@@ -7,6 +7,8 @@ using Challenger.Siem.Agent.Core.Util;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.L4;
+using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +23,8 @@ public sealed class LinuxAgentWorker(
     LinuxEnrollmentService enrollment,
     LinuxJournalRuntime journalRuntime,
     LinuxSelfIntegrityRuntime selfIntegrityRuntime,
+    LinuxPassiveTelemetryRuntime passiveTelemetryRuntime,
+    LinuxL4TelemetryRuntime l4TelemetryRuntime,
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
     private readonly LinuxAgentOptions options = configured.Value;
@@ -40,6 +44,11 @@ public sealed class LinuxAgentWorker(
                     var journal = journalRuntime.Snapshot();
                     var selfIntegrityManifest = selfIntegrityRuntime.Manifest;
                     var selfIntegrityHealth = selfIntegrityRuntime.Health();
+                    var passiveManifest = passiveTelemetryRuntime.Manifest;
+                    var passiveHealth = passiveTelemetryRuntime.Health();
+                    var l4Manifest = l4TelemetryRuntime.Manifest;
+                    var l4Health = l4TelemetryRuntime.Health();
+                    var allHealth = journal.Health.Concat([selfIntegrityHealth]).Concat(passiveHealth).Concat(l4Health).ToArray();
                     await client.SendHeartbeatAsync(new HeartbeatRequest
                     {
                         AgentId = options.AgentId,
@@ -48,14 +57,14 @@ public sealed class LinuxAgentWorker(
                         Os = Environment.OSVersion.VersionString,
                         Platform = "linux",
                         HostId = options.AgentId,
-                        LastEventTime = journal.Health.Max(source => source.Enabled ? source.LastEventTime : null),
+                        LastEventTime = allHealth.Where(source => source.Enabled).Select(source => source.LastEventTime).DefaultIfEmpty().Max(),
                         QueueDepth = await queue.CountAsync(cancellationToken),
                         MemoryMb = (int)(GC.GetTotalMemory(false) / 1024 / 1024),
                         ResourceMetrics = ResourceMetricsSampler.Sample(),
                         ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json"),
                         QueueMetrics = transportState.Enrich(await queue.GetMetricsAsync(transportState.LastSuccessfulSendTime, cancellationToken)),
-                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).ToArray(),
-                        SourceHealth = journal.Health.Concat([selfIntegrityHealth]).ToArray()
+                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).Concat(passiveManifest).Concat(l4Manifest).ToArray(),
+                        SourceHealth = allHealth
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }
@@ -139,10 +148,21 @@ public sealed class LinuxTransportRuntimeState
     }
 }
 
-public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IEventQueue queue, SiemIngestClient client, LinuxJournalRuntime journalRuntime, LinuxTransportRuntimeState? transportState = null, LinuxSelfIntegrityRuntime? selfIntegrityRuntime = null)
+public sealed class LinuxQueueDrainer(
+    IOptions<LinuxAgentOptions> configured,
+    IEventQueue queue,
+    SiemIngestClient client,
+    LinuxJournalRuntime journalRuntime,
+    LinuxTransportRuntimeState? transportState = null,
+    LinuxSelfIntegrityRuntime? selfIntegrityRuntime = null,
+    IEnumerable<ILinuxAcknowledgementObserver>? acknowledgementObservers = null)
 {
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly LinuxTransportRuntimeState runtimeState = transportState ?? new LinuxTransportRuntimeState();
+    private readonly IReadOnlyList<ILinuxAcknowledgementObserver> observers = BuildObservers(
+        journalRuntime,
+        selfIntegrityRuntime,
+        acknowledgementObservers);
 
     public async Task DrainAsync(CancellationToken cancellationToken)
     {
@@ -163,15 +183,76 @@ public sealed class LinuxQueueDrainer(IOptions<LinuxAgentOptions> configured, IE
         }
         var acknowledgedIds = IngestAcknowledgement.AcknowledgedQueueIds(batch, acknowledgement);
         var acknowledgedSet = acknowledgedIds.ToHashSet();
-        var acknowledgedEvents = batch.Where(item => acknowledgedSet.Contains(item.QueueId)).Select(item => item.Envelope).ToArray();
-        await journalRuntime.RecordAcknowledgedAsync(acknowledgedEvents, cancellationToken);
-        if (selfIntegrityRuntime is not null)
+        var acknowledgedItems = batch.Where(item => acknowledgedSet.Contains(item.QueueId)).ToArray();
+        var rejectedIds = IngestAcknowledgement.RejectedQueueIds(batch, acknowledgement);
+        var rejectedSet = rejectedIds.ToHashSet();
+        var rejectedItems = batch.Where(item => rejectedSet.Contains(item.QueueId)).ToArray();
+        var poisonableIds = rejectedIds.ToHashSet();
+        var deletableIds = acknowledgedIds.ToHashSet();
+        foreach (var observer in observers)
         {
-            await selfIntegrityRuntime.RecordAcknowledgedAsync(acknowledgedEvents, cancellationToken);
+            var relevant = acknowledgedItems.Where(item => observer.HandlesSource(item.Envelope.SourceId)).ToArray();
+            if (relevant.Length == 0) continue;
+            var relevantEvents = relevant.Select(item => item.Envelope).ToArray();
+            try
+            {
+                await observer.RecordAcknowledgedAsync(relevantEvents, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                foreach (var item in relevant) deletableIds.Remove(item.QueueId);
+                try
+                {
+                    observer.RecordAcknowledgementFailure(relevantEvents);
+                }
+                catch
+                {
+                    // Observer health reporting is best effort; accepted rows remain queued for a safe retry.
+                }
+            }
         }
-        await queue.DeleteAsync(acknowledgedIds, cancellationToken);
-        if (acknowledgedIds.Length > 0) runtimeState.ObserveSuccess();
-        var rejected = IngestAcknowledgement.RejectedQueueIds(batch, acknowledgement);
-        if (rejected.Length > 0) await queue.MarkPoisonAsync(rejected, "server_rejected", cancellationToken);
+        // Persist contiguous acceptances first. Rejection observers can then abandon only the
+        // immediately following durable sequence without jumping over an unseen/backed-off row.
+        foreach (var observer in observers)
+        {
+            var relevant = rejectedItems.Where(item => observer.HandlesSource(item.Envelope.SourceId)).ToArray();
+            if (relevant.Length == 0) continue;
+            var relevantEvents = relevant.Select(item => item.Envelope).ToArray();
+            try
+            {
+                await observer.RecordRejectedAsync(relevantEvents, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                foreach (var item in relevant) poisonableIds.Remove(item.QueueId);
+                try { observer.RecordAcknowledgementFailure(relevantEvents); }
+                catch { }
+            }
+        }
+        await queue.DeleteAsync(deletableIds, cancellationToken);
+        if (deletableIds.Count > 0) runtimeState.ObserveSuccess();
+        if (poisonableIds.Count > 0) await queue.MarkPoisonAsync(poisonableIds, "server_rejected", cancellationToken);
+    }
+
+    private static IReadOnlyList<ILinuxAcknowledgementObserver> BuildObservers(
+        LinuxJournalRuntime journalRuntime,
+        LinuxSelfIntegrityRuntime? selfIntegrityRuntime,
+        IEnumerable<ILinuxAcknowledgementObserver>? additional)
+    {
+        var result = new HashSet<ILinuxAcknowledgementObserver>(ReferenceEqualityComparer.Instance) { journalRuntime };
+        if (selfIntegrityRuntime is not null) result.Add(selfIntegrityRuntime);
+        if (additional is not null)
+        {
+            foreach (var observer in additional) result.Add(observer);
+        }
+        return result.ToArray();
     }
 }

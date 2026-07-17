@@ -1,129 +1,177 @@
 # Challenger SIEM
 
-Challenger SIEM is a custom, no-Docker SIEM prototype supporting Windows endpoints and a bounded Linux endpoint service. It pairs C# endpoint agents with an ASP.NET Core ingestion/review API, PostgreSQL storage, and a server-hosted web review console.
+![Status: work in progress](https://img.shields.io/badge/status-work%20in%20progress-orange)
+![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4)
+![PostgreSQL 16+](https://img.shields.io/badge/PostgreSQL-16%2B-4169E1)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Current capabilities
+Challenger SIEM is an open-source security telemetry pipeline under active development. It combines custom .NET endpoint agents, an ASP.NET Core ingestion and review server, PostgreSQL storage, and a server-hosted Razor web console. Windows is the most developed endpoint path; Linux collection is implemented in bounded tiers with higher-visibility sources kept behind explicit opt-in and approval gates.
 
-- Windows Event Log collection with local agent queueing, retries, channel position state, heartbeat/source-health reporting, and host timezone metadata for review displays.
-- Linux endpoint service with enrollment, heartbeat, durable queue delivery, bounded read-only host/security-posture inventory, passive cursor-based L1 journald collection, an opt-in L2 security source pack, and a disabled-by-default explicit-opt-in L3 agent self-integrity snapshot for strict agent-owned paths only.
-- Windows agent installer workflow with plan/install/upgrade/repair/validate/uninstall modes, guarded prerequisite configuration, and a versioned Sysmon L3 profile.
-- Agent registration with an enrollment token and per-agent API token authentication.
-- PostgreSQL-backed event storage with structured search columns, JSONB raw payloads, server-side deduplication, source-health, inventory, alert triage/case-management foundations, detections foundations, investigation graphs, `soc-agent` persistence, and managed telemetry retention with dry-run/status surfaces.
-- Authenticated `/api/v1` review APIs for events, agents/source health, telemetry coverage validation, inventory, alerts, detection rules, investigation graphs, platform capabilities, and `soc-agent`, with bounded prerequisite-aware Linux server-side detection alerts.
-- Authenticated Streamable HTTP MCP access at `/mcp` for approved SIEM clients, with role-scoped read-only tools/resources and evidence-led prompts over events, alerts, assets, source health, coverage, inventory, detections, cases, graphs, and environment posture.
-- Role-protected Razor web console with an accessible Challenger SIEM design-system shell, Overview/Search/Assets/Alerts/Cases/Detections/Dashboards/Health/Administration IA navigation, bounded structured global/event search with saved searches, cursor pagination, configurable columns, UTC timeline aggregation, safe entity/detail pivots, admin-gated audited export, agent inventory, host coverage/source health with telemetry completeness and detection prerequisite status, alert triage, case lifecycle workflows, detection rule management, bounded saved dashboards, admin operator/session/source/retention/capacity/audit review, investigation graphs, the live `soc-agent` workspace, audit-policy snapshots, and system/about status.
-- Synthetic smoke-test and Windows lab validation scripts that keep secrets and collected data out of the public repository.
+> [!WARNING]
+> Challenger SIEM is **not production-ready**. There is no supported production release, and the release-readiness checklist still requires real endpoint, database, browser, packaging, upgrade, and security-hardening evidence. Use it for development or controlled labs with synthetic data unless you have independently reviewed and accepted the risks.
+
+The current project version is `1.9.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
+
+## Current state
+
+| Area | Status | What exists today |
+| --- | --- | --- |
+| Server and storage | **Implemented; development-stage** | Versioned `/api/v1` ingestion and review APIs, PostgreSQL migrations, structured plus JSONB event storage, deduplication, search, source health, coverage, inventory, retention controls, and security-audit records. |
+| Windows endpoint agent | **Implemented; lab validation outstanding** | Windows Event Log collection, durable SQLite queueing, acknowledgement-aware retry, channel positions, enrollment, heartbeats, source health, guarded installer workflows, and an optional Sysmon profile. |
+| Linux endpoint agent | **Implemented in tiers; VM validation outstanding** | Default L1 system-journal collection, optional collection from all local journals already readable by the service identity, bounded inventory, opt-in L2 security families, approval-gated L3 integrity/process/socket/behaviour snapshots, and disabled-by-default L4 policy-posture drift, agent resource SLO, and declared-role journal coverage. L2-L4 remain canary-only pending approval and private soak evidence. |
+| Web console | **Implemented; development-stage** | Role-aware login, overview, event search, assets, source health, coverage, alerts, cases, detections, dashboards, investigation graphs, retention/capacity views, administration, and a `soc-agent` workspace. |
+| Detections and investigations | **Foundation implemented** | A bounded built-in rule catalog, prerequisite-aware evaluation, alert evidence, triage, cases, and graphs. This is not a comprehensive detection-content library or a finished SOC workflow. |
+| MCP and AI-assisted review | **Optional** | Authenticated, role-scoped, read-only MCP tools and resources plus an optional `soc-agent` provider path. These surfaces do not authorize endpoint or SIEM configuration changes. |
+| Production operations | **Not ready** | Production SSO, finalized TLS/mTLS guidance, signed release packaging, mature upgrades/migrations, scale qualification, and supported deployment/operations remain incomplete. |
+
+## Telemetry available today
+
+### Windows
+
+- Core `Security`, `System`, and `Application` event channels.
+- Optional PowerShell, Defender, Task Scheduler, WMI, Remote Desktop, WinRM, Firewall, Group Policy, Code Integrity, AppLocker, and Sysmon channels when present and readable.
+- Host inventory, audit-policy snapshots, source-health state, queue/backoff state, and host timezone metadata.
+
+Advanced Windows coverage depends on the endpoint role, enabled channels, permissions, and operator-approved prerequisites. The agent reports missing, denied, unsupported, stale, and degraded states instead of treating every configured source as healthy.
+
+### Linux
+
+- Cursor-based L1 system journal records for boot, kernel, systemd, authentication, and core-system activity, with a disabled-by-default option to include other local journals already readable by the non-root service identity.
+- An opt-in L2 journal classification pack for login/session, SSH, sudo/su, schedulers, packages, firewall, kernel/security-module, service-change, and agent/log-tamper activity.
+- Bounded read-only host and security-posture inventory.
+- Approval-gated L3 metadata snapshots for agent self-integrity, process appearance/disappearance, TCP/UDP socket changes, and aggregate CPU, memory, load, disk, network, and pressure behaviour.
+- Approval-gated L4 posture-baseline drift, rolling agent CPU/RSS/write SLO evidence with queue context, and fixed journal classifications for declared web, database, DNS, file-server, container-host, and identity-server roles.
+
+The broader journal scope does not grant access, run as root, change groups or ACLs, or guarantee access to every user's journal. It can include high-sensitivity user-service text, command lines, paths, and identities; existing bounds and redaction remain defensive controls, not proof that arbitrary messages are secret-free. The L3/L4 collectors do not install packages, load kernel programs, change audit/firewall/authentication policy, capture network payloads, or inspect process file descriptors. L4 is reported only when L1-L3 are strictly healthy, the approved posture baseline and SLO sources are fresh, role applicability is resolved, and every applicable role source is healthy.
 
 ## Architecture
 
-```text
-Windows endpoint -> WindowsAgent.exe --\
-                                      -> HTTPS/HTTP-in-lab ingestion API
-Linux endpoint   -> Linux agent -----/  -> PostgreSQL storage
-                                         -> Review API + web console + soc-agent workspace
-                                         -> authenticated MCP clients
+```mermaid
+flowchart LR
+    W["Windows endpoint<br/>.NET agent"] -->|"v1 HTTPS ingest"| API["ASP.NET Core<br/>API and review server"]
+    L["Linux endpoint<br/>.NET agent"] -->|"v1 HTTPS ingest"| API
+    API --> PG[("PostgreSQL")]
+    PG --> REVIEW["Search, coverage,<br/>detections and cases"]
+    REVIEW --> WEB["Razor web console"]
+    REVIEW --> MCP["Read-only MCP"]
 ```
 
-See [docs/architecture.md](docs/architecture.md) and the [documentation index](docs/index.md) for the full design.
+Endpoint events are written to a durable local queue before delivery. The server authenticates the agent, validates and deduplicates the batch, stores normalized fields with the raw JSON payload, and returns per-event acknowledgements. See [architecture](docs/architecture.md), [API contract v1](docs/api.md), and [schema design](docs/schema.md).
 
-## Public repository safety
+## Reliability and security foundations
 
-This repository is public. Do not commit tokens, passwords, connection strings, private keys, real agent settings, raw endpoint telemetry, Windows Event Log exports, queue/state databases, captures, dumps, screenshots with real host/user data, or local automation state. Use synthetic examples and keep local validation artifacts under ignored `.local/` paths.
+- Queue-before-checkpoint and acknowledgement-before-delete delivery semantics.
+- Bounded retry/backoff, poison-event handling, source gaps, queue pressure, and stale/offline reporting.
+- Enrollment credentials separated from per-agent credentials; agent tokens are stored hashed server-side.
+- Database-backed operator identities, exact roles, revocable sessions, CSRF protection, and role-aware field redaction.
+- HTTPS required outside local development; plain HTTP is limited to explicitly controlled lab workflows.
+- Destructive cleanup defaults to dry-run and requires explicit confirmation.
+- Public examples and tests use minimal synthetic data.
 
-## Quickstart without Docker
+These controls are foundations, not a claim of completed production hardening or independent security review.
 
-Prerequisites: .NET SDK, PostgreSQL, Bash-compatible shell, and a private local environment file such as `.local/dev.env` containing `ConnectionStrings__SiemDatabase` and `Auth__EnrollmentToken`.
+## Known limitations
+
+- The [release-readiness checklist](docs/release-readiness.md) is not complete, including real Windows and Linux endpoint evidence.
+- Linux L2-L4 rollout requires private canary/soak approval. Broader journal scope does not backfill records older than the durable cursor or turn absent package/sudo activity into evidence. L3 snapshot polling can miss short-lived processes and connections, and the new L4 path has not yet completed its first private Linux VM acceptance run.
+- Linux Audit Framework, eBPF, packet capture, DNS enrichment, process-to-socket attribution, and broad/live file-integrity monitoring are not implemented.
+- Optional Windows channels require host support and may require separately approved configuration. Sysmon is not assumed to be installed.
+- Detection content is deliberately small and prerequisite-aware; missing telemetry reduces confidence or suppresses rules.
+- Production identity-provider integration, signed packages, deployment automation, HA/scale qualification, and mature upgrade guidance are unfinished.
+- PostgreSQL 16+ is required, and the project currently provides no Docker or container deployment workflow.
+
+The [milestone status](docs/milestones.md) tracks the implemented baseline and current next themes without treating planned work as shipped functionality.
+
+## Evaluate locally
+
+Prerequisites:
+
+- .NET 8 SDK
+- PostgreSQL 16 or newer, including `psql`
+- Bash-compatible shell
+
+From a clean checkout, build and run the non-database validation first:
+
+```bash
+dotnet restore Challenger.Siem.sln
+./scripts/validate-repository-safety.sh
+dotnet build Challenger.Siem.sln --no-restore
+dotnet test Challenger.Siem.sln --no-restore --no-build
+./scripts/validate-contracts.sh
+```
+
+PostgreSQL-backed integration tests are opt-in and report a skip reason when no disposable test database is configured.
+
+For a local instance, create a private ignored `.local/dev.env` following the [development guide](docs/development.md), then apply and validate the schema:
 
 ```bash
 ./scripts/apply-schema.sh
-SIEM_OPERATOR_PASSWORD='<private-strong-password>' ./scripts/operator-account.sh bootstrap --username local-admin --role admin
+./scripts/validate-schema.sh
 
-dotnet build Challenger.Siem.sln
-dotnet test Challenger.Siem.sln
+read -rsp "Initial operator password: " SIEM_OPERATOR_PASSWORD
+export SIEM_OPERATOR_PASSWORD
+./scripts/operator-account.sh bootstrap --username local-admin --role admin
+unset SIEM_OPERATOR_PASSWORD
 
-./scripts/smoke-test-server.sh
-./scripts/smoke-test-web.sh
-# release candidates:
-./scripts/release-gates.sh install-browsers
-./scripts/release-gates.sh run
-```
-
-For accumulated disposable test data, start with the dry-run scoped cleanup or fresh-start reset reports. Execute modes require explicit confirmation phrases and are only for operator-owned local test environments:
-
-```bash
-./scripts/cleanup-synthetic-data.sh
-./scripts/reset-test-environment.sh
-```
-
-Run the API and web console locally with the lifecycle helper:
-
-```bash
 ./scripts/platform.sh start
 ./scripts/platform.sh status
-# when finished:
-./scripts/platform.sh stop
 ```
 
-For a foreground run, use `ASPNETCORE_URLS=http://127.0.0.1:5081 dotnet run --project server/Siem.Api --no-launch-profile`. Open `http://127.0.0.1:5081/login` and sign in with the bootstrapped operator username and password.
-
-## Windows agent lab path
-
-Build/publish the standalone Windows agent:
+Open `http://127.0.0.1:5081/login`. The [operator guide](docs/operators.md) covers the full flow, and the synthetic API/web smoke tests write their temporary responses only beneath ignored `.local/` paths:
 
 ```bash
-./scripts/publish-windows-agent.sh
+./scripts/smoke-test-server.sh
+./scripts/smoke-test-web.sh
 ```
 
-For an operator-approved Windows lab, start the API and prepare copy-ready agent files with the URL that the endpoint can reach:
+Do not deploy an endpoint agent from the basic quickstart. Review the [Windows agent guide](docs/agent.md), [Linux agent guide](docs/linux-agent.md), applicable security design, and approval-gated validation runbook first.
 
-```bash
-./scripts/run-server-4444.sh
-./scripts/prepare-windows-agent-files.sh \
-  http://127.0.0.1:4444 \
-  http://<agent-reachable-server-address>:4444 \
-  demo-agent-001 DEMO-WIN11 "Windows 11"
-```
+## Public repository safety
 
-Copy `dist/windows-agent-copy/WindowsAgent.exe`, the generated `agentsettings.json`, and the optional `dist/windows-agent-copy/Sysmon/` profile directory to the Windows host together. The generated settings file contains an API token; do not print or commit it.
+Security telemetry is sensitive even when it does not look like a credential. Never commit or include in public issues or pull requests:
+
+- passwords, tokens, cookies, private keys, certificates with private material, connection strings, or real agent settings;
+- raw endpoint events, journal/Event Log exports, inventory, queue/state databases, captures, dumps, logs, or incident evidence;
+- screenshots, API responses, or test output containing real hosts, users, addresses, software, or customer/lab data;
+- ignored developer or operator-tooling state, local environment files, generated agent packages, or build/runtime artifacts.
+
+Use hand-authored synthetic fixtures and keep all live validation evidence in ignored local paths. Run `./scripts/validate-repository-safety.sh` before staging and again against the staged index. See the [contributor guide](docs/contributors.md) for the complete publication checklist.
 
 ## Repository layout
 
 ```text
 agent/WindowsAgent/     Windows endpoint agent
-agent/LinuxAgent/       Linux endpoint service foundation
-server/Siem.Api/        ASP.NET Core ingestion/search API and Razor Pages console
-shared/Contracts/       Versioned C# API contracts
-contracts/v1/           JSON Schema contracts for external clients
-docs/                   Versioned wiki/operator/developer documentation
-examples/               Minimal synthetic API examples
-scripts/                Local build, schema, smoke, and agent packaging helpers
+agent/LinuxAgent/       Linux endpoint agent
+agent/Agent.Core/       Shared queue, transport, identity, and retry core
+server/Siem.Api/        Ingestion/review API and Razor web console
+shared/Contracts/       Shared versioned C# contracts
+contracts/v1/           External JSON Schema contracts
+docs/                   Architecture, operator, security, and contributor docs
+examples/               Minimal synthetic request examples
+scripts/                Build, schema, validation, smoke, and packaging helpers
+tests/                  Unit, contract, integration, release-gate, and safety tests
 VERSION                 Project version source of truth
-CHANGELOG.md            Release notes and operator-visible changes
+CHANGELOG.md            Unreleased and released project changes
 ```
 
-## Documentation index
+## Documentation
 
-Start with [docs/index.md](docs/index.md). Key pages:
+Start with the [documentation index](docs/index.md). Useful entry points include:
 
-- [Operator guide](docs/operators.md)
-- [Challenger family alignment](docs/challenger-family-alignment.md)
-- [Architecture](docs/architecture.md)
-- [API contract v1](docs/api.md) and [schema design](docs/schema.md)
-- [Windows agent](docs/agent.md), [installer workflow](docs/windows-agent-installer.md), and [agent configuration](docs/agent-config.md)
-- [Linux agent](docs/linux-agent.md), [host coverage specification](docs/linux-host-coverage-spec.md), [security/privacy design](docs/linux-agent-security.md), and [local-host validation runbook](docs/linux-local-host-validation.md)
-- [Authentication](docs/auth.md) and [TLS deployment](docs/tls.md)
-- [Web console product specification](docs/web.md) and [visual capture guide](docs/web-console-demo.md)
-- [soc-agent](docs/soc-agent.md)
-- [MCP server and client setup](docs/mcp.md)
-- [Runbooks](docs/runbooks.md) and [troubleshooting](docs/troubleshooting.md)
-- [Contributor guide](docs/contributors.md), [development](docs/development.md), [release gates](docs/release-gates.md), and [versioning](docs/versioning.md)
+- [Architecture and scope](docs/architecture.md)
+- [Local development](docs/development.md) and [operator guide](docs/operators.md)
+- [Windows endpoint agent](docs/agent.md) and [Linux endpoint agent](docs/linux-agent.md)
+- [Linux security/privacy design](docs/linux-agent-security.md), [passive telemetry contract](docs/linux-passive-telemetry.md), and [L4 coverage contract](docs/linux-l4-coverage.md)
+- [API v1](docs/api.md), [schema](docs/schema.md), and [MCP](docs/mcp.md)
+- [Release readiness](docs/release-readiness.md), [release gates](docs/release-gates.md), and [versioning](docs/versioning.md)
+- [Dependencies and third-party licensing](docs/dependencies.md)
 
-## Versioning
+## Contributing
 
-Check the current version with:
+Contributions should be small, testable, safe for a public repository, and honest about validation status. Read the [contributor guide](docs/contributors.md) and [development guide](docs/development.md) before changing code, contracts, schemas, or endpoint behavior. Use synthetic fixtures only, preserve `/api/v1` compatibility unless deliberately introducing a new version, and document skipped validation with a reason.
 
-```bash
-./scripts/current-version.sh
-```
+Current priorities and deferred work are listed in [milestone status](docs/milestones.md).
 
-`VERSION` drives .NET assembly metadata and local helper defaults. Follow [docs/versioning.md](docs/versioning.md) and update [CHANGELOG.md](CHANGELOG.md) for notable operator-visible changes.
+## License
+
+Project-owned source code and documentation are licensed under the [MIT License](LICENSE). Third-party dependencies and optional external tools retain their own license terms; see [dependencies and ownership](docs/dependencies.md).

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Services;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.SelfIntegrity;
@@ -9,7 +10,7 @@ public sealed class LinuxSelfIntegrityRuntime(
     IOptions<LinuxAgentOptions> configured,
     LinuxSelfIntegrityStateStore stateStore,
     LinuxSelfIntegrityCollector collector,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider) : ILinuxAcknowledgementObserver
 {
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly object sync = new();
@@ -86,6 +87,21 @@ public sealed class LinuxSelfIntegrityRuntime(
         await stateStore.WriteAcknowledgedAsync(sequence, timeProvider.GetUtcNow(), cancellationToken);
         var loaded = await stateStore.ReadAsync(cancellationToken);
         lock (sync) state = loaded;
+    }
+
+    public bool HandlesSource(string? sourceId) => sourceId == LinuxTelemetrySourceIds.AgentSelfIntegrity;
+
+    public void RecordAcknowledgementFailure(IReadOnlyCollection<EventEnvelope> events)
+    {
+        if (!events.Any(item => HandlesSource(item.SourceId))) return;
+        lock (sync)
+        {
+            status = SourceHealthStatuses.Error;
+            errorCode = "self_integrity_acknowledgement_state_write_failed";
+            gapCount++;
+            transitionedAt = timeProvider.GetUtcNow();
+            transitionState = HealthTransitionStates.Degraded;
+        }
     }
 
     public SourceManifestEntry Manifest => LinuxTelemetrySourceCatalog.SelfIntegritySnapshot with

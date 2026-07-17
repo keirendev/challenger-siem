@@ -5,6 +5,37 @@ namespace Challenger.Siem.Api.Database;
 public static class SourceHealthRules
 {
     public static readonly TimeSpan DefaultStaleAfter = TimeSpan.FromHours(24);
+    public static readonly TimeSpan PassivePollingStaleAfter = TimeSpan.FromHours(2);
+    public static readonly TimeSpan PerformanceSloStaleAfter = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaximumFutureObservationSkew = TimeSpan.FromMinutes(5);
+
+    private static readonly IReadOnlySet<string> LinuxPassivePollingSourceIds = LinuxTelemetrySourceCatalog.L3Passive
+        .Select(source => source.SourceId)
+        .Append(LinuxTelemetrySourceIds.PolicyPostureDrift)
+        .Concat(LinuxTelemetrySourceCatalog.All
+            .Where(source => source.CoverageLevel == WindowsCoverageLevel.L4
+                && source.Requirement == SourceRequirementKinds.RoleSpecific)
+            .Select(source => source.SourceId))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public static IReadOnlySet<string> TwoHourPollingSourceIds => LinuxPassivePollingSourceIds;
+
+    public static IReadOnlySet<string> PerformanceSloSourceIds { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.AgentPerformanceSlo };
+
+    public static bool IsSuccessfulPollingSource(string sourceId) =>
+        LinuxPassivePollingSourceIds.Contains(sourceId)
+        || PerformanceSloSourceIds.Contains(sourceId);
+
+    public static TimeSpan? PollingStaleAfter(string sourceId)
+    {
+        if (PerformanceSloSourceIds.Contains(sourceId))
+        {
+            return PerformanceSloStaleAfter;
+        }
+
+        return LinuxPassivePollingSourceIds.Contains(sourceId) ? PassivePollingStaleAfter : null;
+    }
 
     public static string EffectiveStatus(SourceHealthReport report, DateTimeOffset now)
     {
@@ -38,6 +69,22 @@ public static class SourceHealthRules
             return SourceHealthStatuses.Stale;
         }
 
+        // Snapshot-diff and metrics sources can scan successfully without emitting a new event.
+        // Their agent-reported scan observation, rather than event output, is the freshness signal.
+        var pollingStaleAfter = PollingStaleAfter(report.SourceId);
+        if (pollingStaleAfter.HasValue
+            && report.ObservedAt.HasValue
+            && report.ObservedAt.Value.ToUniversalTime() > now.ToUniversalTime() + MaximumFutureObservationSkew)
+        {
+            return SourceHealthStatuses.Degraded;
+        }
+        if (pollingStaleAfter.HasValue
+            && (!report.ObservedAt.HasValue
+                || now - report.ObservedAt.Value.ToUniversalTime() > pollingStaleAfter.Value))
+        {
+            return SourceHealthStatuses.Stale;
+        }
+
         var mandatory = report.Requirement switch
         {
             SourceRequirementKinds.Mandatory => true,
@@ -46,13 +93,17 @@ public static class SourceHealthRules
             _ => report.Required
         };
         if (mandatory
+            && !IsSuccessfulPollingSource(report.SourceId)
             && report.CoverageLevel >= WindowsCoverageLevel.L2
             && report.EventFamilyStatuses is { Count: > 0 }
             && report.EventFamilyStatuses.Values.All(value => value == SourceEvidenceStatuses.NotObserved))
         {
             return SourceHealthStatuses.Degraded;
         }
-        if (mandatory && report.LastEventTime.HasValue && now - report.LastEventTime.Value.ToUniversalTime() > DefaultStaleAfter)
+        if (mandatory
+            && !IsSuccessfulPollingSource(report.SourceId)
+            && report.LastEventTime.HasValue
+            && now - report.LastEventTime.Value.ToUniversalTime() > DefaultStaleAfter)
         {
             return SourceHealthStatuses.Stale;
         }

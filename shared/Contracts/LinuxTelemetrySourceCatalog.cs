@@ -15,6 +15,17 @@ public static class LinuxTelemetrySourceIds
     public const string AgentLogTamper = "linux-agent-log-tamper";
     public const string AuditFramework = "linux-audit-framework";
     public const string AgentSelfIntegrity = "linux-agent-self-integrity-snapshot";
+    public const string ProcessSnapshotDiff = "linux-process-snapshot-diff";
+    public const string NetworkSocketSnapshotDiff = "linux-network-socket-snapshot-diff";
+    public const string HostBehaviourMetrics = "linux-host-behaviour-metrics";
+    public const string PolicyPostureDrift = "linux-policy-posture-drift";
+    public const string AgentPerformanceSlo = "linux-agent-performance-slo";
+    public const string RoleWeb = "linux-role-web";
+    public const string RoleDatabase = "linux-role-database";
+    public const string RoleDns = "linux-role-dns";
+    public const string RoleFileServer = "linux-role-file-server";
+    public const string RoleContainer = "linux-role-container";
+    public const string RoleIdentity = "linux-role-identity";
 }
 
 /// <summary>
@@ -27,6 +38,9 @@ public static class LinuxTelemetrySourceCatalog
     public const string L1PackId = "linux-l1-journal";
     public const string L2PackId = "linux-l2-security";
     public const string L3SelfIntegrityPackId = "linux-l3-self-integrity-snapshot";
+    public const string L3PassivePackId = "linux-l3-passive-snapshot";
+    public const string L4PosturePackId = "linux-l4-policy-posture";
+    public const string L4RolePackId = "linux-l4-role-journal";
 
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =
     [
@@ -178,10 +192,71 @@ public static class LinuxTelemetrySourceCatalog
         InstallerManaged = false
     };
 
+    public static readonly IReadOnlyList<SourceManifestEntry> L3Passive =
+    [
+        PassiveEntry(
+            LinuxTelemetrySourceIds.ProcessSnapshotDiff,
+            "Linux process snapshot differences",
+            TelemetrySourceKinds.InventoryDiff,
+            "linux.procfs.process",
+            "linux-process-snapshot-v1",
+            "explicit_passive_telemetry_opt_in,approval_hash_matches,procfs_process_metadata_readable",
+            "process_baseline,process_baseline_disappeared,process_observed,process_disappeared,process_changed",
+            "baseline_diff,pid_reuse,permission_partial,pressure_restart"),
+        PassiveEntry(
+            LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff,
+            "Linux network socket snapshot differences",
+            TelemetrySourceKinds.InventoryDiff,
+            "linux.procfs.network",
+            "linux-network-snapshot-v1",
+            "explicit_passive_telemetry_opt_in,approval_hash_matches,procfs_network_metadata_readable",
+            "socket_baseline,socket_baseline_disappeared,socket_observed,socket_disappeared,socket_changed",
+            "ipv4_ipv6,listener_connection_diff,permission_partial,pressure_restart"),
+        PassiveEntry(
+            LinuxTelemetrySourceIds.HostBehaviourMetrics,
+            "Linux host behaviour metrics",
+            TelemetrySourceKinds.AgentHealth,
+            "linux.procfs.metrics",
+            "linux-host-behaviour-v1",
+            "explicit_passive_telemetry_opt_in,approval_hash_matches,procfs_host_metrics_readable",
+            "host_metrics_sample",
+            "coalesced_sample,counter_reset,permission_partial,pressure_restart")
+    ];
+
+    public static readonly IReadOnlyList<SourceManifestEntry> L4 =
+    [
+        L4SnapshotEntry(
+            LinuxTelemetrySourceIds.PolicyPostureDrift,
+            "Linux policy and posture drift",
+            TelemetrySourceKinds.InventoryDiff,
+            "linux.policy.posture",
+            "linux-policy-posture-v1",
+            "explicit_l4_opt_in,approval_hash_matches,approved_baseline_matches,bounded_inventory_available",
+            "policy_baseline,policy_drift,policy_restored,policy_sample,policy_gap",
+            "preflight_baseline,drift_restore,partial_pressure_restart"),
+        L4SnapshotEntry(
+            LinuxTelemetrySourceIds.AgentPerformanceSlo,
+            "Linux agent performance SLO",
+            TelemetrySourceKinds.AgentHealth,
+            "challenger.siem.agent.slo",
+            "linux-agent-performance-slo-v1",
+            "explicit_l4_opt_in,approval_hash_matches,resource_counters_available,slo_window_complete",
+            "slo_sample,slo_breach,slo_recovery,slo_gap",
+            "warmup,cpu_rss_write_thresholds,counter_reset,pressure_restart"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleWeb, "Linux web-server role journal", "linux-role-web-v1", "web_server", "web_service,web_security"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleDatabase, "Linux database-server role journal", "linux-role-database-v1", "database_server", "database_service,database_authentication,database_security"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleDns, "Linux DNS-server role journal", "linux-role-dns-v1", "dns_server", "dns_service,dns_security"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleFileServer, "Linux file-server role journal", "linux-role-file-server-v1", "file_server", "file_service,file_authentication,file_security"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleContainer, "Linux container-host role journal", "linux-role-container-v1", "container_host", "container_service,container_lifecycle,container_security"),
+        L4RoleEntry(LinuxTelemetrySourceIds.RoleIdentity, "Linux identity-server role journal", "linux-role-identity-v1", "identity_server", "identity_service,identity_authentication,identity_security")
+    ];
+
     public static readonly IReadOnlyList<SourceManifestEntry> All = L1
         .Concat(L2Security)
         .Append(UnsupportedAuditFramework)
         .Append(SelfIntegritySnapshot)
+        .Concat(L3Passive)
+        .Concat(L4)
         .OrderBy(entry => entry.CoverageLevel)
         .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)
         .ToArray();
@@ -223,20 +298,19 @@ public static class LinuxTelemetrySourceCatalog
             return entry;
         }
 
-        if (observedSourceIds.Contains(entry.SourceId))
-        {
-            return entry with
-            {
-                Applicability = SourceApplicabilityStatuses.Applicable,
-                ApplicabilityReason = null
-            };
-        }
-
         if (entry.Requirement == SourceRequirementKinds.RoleSpecific)
         {
             var applicableRoles = entry.ApplicableRoles ?? Array.Empty<string>();
             if (declaredRoles.Count == 0)
             {
+                if (observedSourceIds.Contains(entry.SourceId))
+                {
+                    return entry with
+                    {
+                        Applicability = SourceApplicabilityStatuses.Applicable,
+                        ApplicabilityReason = null
+                    };
+                }
                 return entry with
                 {
                     Applicability = SourceApplicabilityStatuses.Unknown,
@@ -251,6 +325,15 @@ public static class LinuxTelemetrySourceCatalog
                     Applicability = SourceApplicabilityStatuses.NotApplicable,
                     ApplicabilityReason = "declared_roles_do_not_require_source"
                 };
+        }
+
+        if (observedSourceIds.Contains(entry.SourceId))
+        {
+            return entry with
+            {
+                Applicability = SourceApplicabilityStatuses.Applicable,
+                ApplicabilityReason = null
+            };
         }
 
         if (entry.Requirement == SourceRequirementKinds.Optional)
@@ -309,4 +392,94 @@ public static class LinuxTelemetrySourceCatalog
     private static IReadOnlyList<string> Split(string value) => string.IsNullOrWhiteSpace(value)
         ? Array.Empty<string>()
         : value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static SourceManifestEntry PassiveEntry(
+        string sourceId,
+        string displayName,
+        string sourceKind,
+        string sourceNamespace,
+        string parserId,
+        string prerequisites,
+        string eventFamilies,
+        string validationScenarios) => new()
+        {
+            SourceId = sourceId,
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = sourceKind,
+            SourceNamespace = sourceNamespace,
+            Applicability = SourceApplicabilityStatuses.Unknown,
+            ApplicabilityReason = "explicit_opt_in_required",
+            CheckpointKind = SourceCheckpointKinds.Sequence,
+            DisplayName = displayName,
+            CoverageLevel = WindowsCoverageLevel.L3,
+            Required = true,
+            Requirement = SourceRequirementKinds.Mandatory,
+            EnabledByDefault = false,
+            SourcePack = L3PassivePackId,
+            ParserId = parserId,
+            Prerequisites = Split(prerequisites),
+            EventFamilies = Split(eventFamilies),
+            ValidationScenarios = Split(validationScenarios),
+            Privacy = "high_sensitivity_metadata",
+            InstallerManaged = false
+        };
+
+    private static SourceManifestEntry L4SnapshotEntry(
+        string sourceId,
+        string displayName,
+        string sourceKind,
+        string sourceNamespace,
+        string parserId,
+        string prerequisites,
+        string eventFamilies,
+        string validationScenarios) => new()
+        {
+            SourceId = sourceId,
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = sourceKind,
+            SourceNamespace = sourceNamespace,
+            Applicability = SourceApplicabilityStatuses.Applicable,
+            CheckpointKind = SourceCheckpointKinds.Sequence,
+            DisplayName = displayName,
+            CoverageLevel = WindowsCoverageLevel.L4,
+            Required = true,
+            Requirement = SourceRequirementKinds.Mandatory,
+            EnabledByDefault = false,
+            SourcePack = L4PosturePackId,
+            ParserId = parserId,
+            Prerequisites = Split(prerequisites),
+            EventFamilies = Split(eventFamilies),
+            ValidationScenarios = Split(validationScenarios),
+            Privacy = "high_sensitivity_metadata",
+            InstallerManaged = false
+        };
+
+    private static SourceManifestEntry L4RoleEntry(
+        string sourceId,
+        string displayName,
+        string parserId,
+        string applicableRole,
+        string eventFamilies) => new()
+        {
+            SourceId = sourceId,
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = TelemetrySourceKinds.LinuxJournal,
+            SourceNamespace = "systemd.journal",
+            Applicability = SourceApplicabilityStatuses.Unknown,
+            ApplicabilityReason = "host_role_not_declared",
+            CheckpointKind = SourceCheckpointKinds.Cursor,
+            DisplayName = displayName,
+            CoverageLevel = WindowsCoverageLevel.L4,
+            Required = false,
+            Requirement = SourceRequirementKinds.RoleSpecific,
+            ApplicableRoles = [applicableRole],
+            EnabledByDefault = false,
+            SourcePack = L4RolePackId,
+            ParserId = parserId,
+            Prerequisites = ["systemd_journal_readable", $"declared_role_{applicableRole}"],
+            EventFamilies = Split(eventFamilies),
+            ValidationScenarios = ["quiet_source_readiness", "role_event_classification", "privacy_redaction", "cursor_restart"],
+            Privacy = "high_sensitivity",
+            InstallerManaged = false
+        };
 }

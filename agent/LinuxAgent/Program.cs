@@ -5,6 +5,8 @@ using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.L4;
+using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.State;
@@ -27,7 +29,10 @@ builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetS
         "Heartbeat interval or drain batch size is outside the supported range")
     .Validate(options => options.HasValidInventoryBounds(), "Inventory bounds are outside the supported range")
     .Validate(options => options.HasValidJournalBounds(), "Journal bounds are outside the supported range")
+    .Validate(options => options.HasValidQueueBounds(), "Queue bounds are outside the supported range")
     .Validate(options => options.HasValidSelfIntegrityBounds(), "Self-integrity bounds are outside the supported range")
+    .Validate(options => options.HasValidPassiveTelemetryBounds(), "Passive telemetry bounds are outside the supported range")
+    .Validate(options => options.HasValidL4TelemetryBounds(), "L4 telemetry bounds are outside the supported range")
     .ValidateOnStart();
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -52,13 +57,34 @@ builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
 });
 builder.Services.AddSingleton<LinuxEnrollmentService>();
 builder.Services.AddSingleton<LinuxJournalRuntime>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxJournalRuntime>());
 builder.Services.AddSingleton<LinuxSelfIntegrityStateStore>(services => new LinuxSelfIntegrityStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.SelfIntegrity.StatePath));
 builder.Services.AddSingleton<LinuxSelfIntegrityRuntime>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxSelfIntegrityRuntime>());
 builder.Services.AddSingleton<ILinuxSelfIntegritySource, LinuxSelfIntegritySource>();
 builder.Services.AddSingleton<LinuxSelfIntegrityCollector>();
 builder.Services.AddSingleton<LinuxJournalNormalizer>();
 builder.Services.AddSingleton<ILinuxJournalSource, LinuxJournalProcessSource>();
 builder.Services.AddSingleton<LinuxTransportRuntimeState>();
+builder.Services.AddSingleton<LinuxPassiveTelemetryStateStore>(services =>
+    new LinuxPassiveTelemetryStateStore(
+        services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.PassiveTelemetry.StatePath,
+        "/var/lib/challenger-siem-agent"));
+builder.Services.AddSingleton<ILinuxProcessSnapshotSource, LinuxProcfsProcessSource>();
+builder.Services.AddSingleton<ILinuxNetworkSnapshotSource, LinuxProcfsNetworkSource>();
+builder.Services.AddSingleton<ILinuxHostMetricsSource, LinuxHostMetricsSource>();
+builder.Services.AddSingleton<LinuxPassiveTelemetryCollector>();
+builder.Services.AddSingleton<LinuxPassiveTelemetryRuntime>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxPassiveTelemetryRuntime>());
+builder.Services.AddSingleton<LinuxL4TelemetryStateStore>(services =>
+    new LinuxL4TelemetryStateStore(
+        services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.L4Telemetry.StatePath,
+        "/var/lib/challenger-siem-agent"));
+builder.Services.AddSingleton<ILinuxAgentSloSource, LinuxAgentSloSource>();
+builder.Services.AddSingleton<LinuxL4TelemetryCollector>();
+builder.Services.AddSingleton<LinuxL4TelemetryRuntime>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxL4TelemetryRuntime>());
+builder.Services.AddSingleton<ILinuxInventoryObserver>(services => services.GetRequiredService<LinuxL4TelemetryRuntime>());
 builder.Services.AddSingleton<LinuxQueueDrainer>();
 builder.Services.AddSingleton<ILinuxInventorySource, LinuxInventorySource>();
 builder.Services.AddSingleton<ILinuxInventoryCollector>(services =>
@@ -74,6 +100,8 @@ builder.Services.AddHostedService<LinuxAgentWorker>();
 builder.Services.AddHostedService<LinuxJournalService>();
 builder.Services.AddHostedService<LinuxInventoryService>();
 builder.Services.AddHostedService<LinuxSelfIntegrityService>();
+builder.Services.AddHostedService<LinuxPassiveTelemetryService>();
+builder.Services.AddHostedService<LinuxL4TelemetryService>();
 builder.Services.AddSystemd();
 
 var app = builder.Build();
@@ -82,6 +110,21 @@ if (args.Contains("--self-integrity-plan", StringComparer.Ordinal))
     var collector = app.Services.GetRequiredService<LinuxSelfIntegrityCollector>();
     var plan = await collector.PreflightAsync(CancellationToken.None);
     Console.WriteLine(JsonSerializer.Serialize(plan, JsonDefaults.Options));
+    return 0;
+}
+if (args.Contains("--passive-telemetry-plan", StringComparer.Ordinal))
+{
+    var collector = app.Services.GetRequiredService<LinuxPassiveTelemetryCollector>();
+    Console.WriteLine(JsonSerializer.Serialize(collector.Preflight(), JsonDefaults.Options));
+    return 0;
+}
+if (args.Contains("--l4-telemetry-plan", StringComparer.Ordinal))
+{
+    var options = app.Services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value;
+    var inventory = app.Services.GetRequiredService<ILinuxInventoryCollector>();
+    var snapshots = await inventory.CollectAsync(options.AgentId, Environment.MachineName, CancellationToken.None);
+    var collector = app.Services.GetRequiredService<LinuxL4TelemetryCollector>();
+    Console.WriteLine(JsonSerializer.Serialize(collector.Preflight(snapshots), JsonDefaults.Options));
     return 0;
 }
 

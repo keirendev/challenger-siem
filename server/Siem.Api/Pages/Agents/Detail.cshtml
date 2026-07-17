@@ -21,7 +21,7 @@
         <div class="table-title">
             <div>
                 <h2>Coverage target</h2>
-                <p class="muted">Review the host against its platform catalog. Linux currently implements L1 and opt-in L2; Windows also defines L3/L4 targets.</p>
+                <p class="muted">Review the host against its platform catalog. Linux supports L1, opt-in L2, explicit-opt-in L3 sources, and strict approval-gated L4; the current level advances only when healthy applicable evidence exists at that level. L4 requires exact healthy L1–L3 prerequisites, both mandatory L4 posture/performance sources, resolved role applicability, and every applicable role pack enabled, fresh, and healthy. Coverage exceptions never satisfy this strict L4 gate.</p>
             </div>
             <div class="actions">
                 @foreach (var level in Model.TargetLevels)
@@ -129,6 +129,11 @@ else
         </section>
     }
 
+    @if (Model.TargetLevel == WindowsCoverageLevel.L4 && Model.Summary.CurrentLevel < WindowsCoverageLevel.L4)
+    {
+        <partial name="_Notice" model='new NoticeModel("L4 evidence incomplete", "This host remains at its highest fully evidenced lower level. Unknown role applicability, an exception, a stale observation, warm-up, or unhealthy mandatory/applicable source prevents L4; quiet successful polling does not require a synthetic security event.", "warning")' />
+    }
+
     <section class="table-card" id="sources">
         <div class="table-title">
             <div>
@@ -176,12 +181,20 @@ else
                                     {
                                         <div class="muted">@source.Applicability</div>
                                     }
+                                    @if (source.ApplicableRoles?.Count > 0)
+                                    {
+                                        <div class="muted">roles: @string.Join(", ", source.ApplicableRoles)</div>
+                                    }
                                 </td>
                                 <td>@(source.Reported ? "yes" : "no")</td>
                                 <td>@source.RecentEventCount</td>
                                 <td>
                                     @TimeDisplay.FormatHostTime(source.LastEventTime, source.HostTimezone ?? Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone, "yyyy-MM-dd HH:mm")
                                     <div class="muted">@TimeDisplay.HostTimezoneLabel(source.HostTimezone ?? Model.Coverage?.HostTimezone ?? Model.Summary.HostTimezone)</div>
+                                    @if (source.ObservedAt.HasValue)
+                                    {
+                                        <div class="muted">successful observation @TimeDisplay.FormatUtc(source.ObservedAt, "yyyy-MM-dd HH:mm")</div>
+                                    }
                                 </td>
                                 <td>
                                     <div>rate @(source.EventRatePerMinute?.ToString("0.###") ?? "unknown")/min</div>
@@ -319,7 +332,7 @@ else
             <div class="table-title">
                 <div>
                     <h2 id="detection-prereq-title">Detection prerequisite status</h2>
-                    <p class="muted">Platform-applicable built-in detection rules are compared with source health, recent event presence, inventory, and audit-policy prerequisites. Executable built-ins remain Windows-focused.</p>
+                    <p class="muted">Platform-applicable Windows or Linux built-in detection rules are compared with source health, recent event presence, inventory, and audit-policy prerequisites. Missing evidence remains a visible detection gap.</p>
                 </div>
             </div>
             <div class="table-scroll">

@@ -49,16 +49,19 @@ else if (Model.Envelope is not null)
             <dt>Outcome</dt><dd>@(Model.Envelope.Normalized?.Outcome ?? "—")</dd>
             <dt>User</dt><dd>@(Model.Envelope.Normalized?.UserName ?? "—")</dd>
             <dt>Target user</dt><dd>@(Model.Envelope.Normalized?.TargetUserName ?? "—")</dd>
-            <dt>Process</dt><dd>@(Model.Envelope.Normalized?.ProcessImage ?? "—")</dd>
-            <dt>Command line</dt><dd>@(Model.Envelope.Normalized?.ProcessCommandLine ?? "—")</dd>
+            <dt>Process ID</dt><dd>@(Model.Envelope.Normalized?.ProcessId ?? Model.Envelope.Normalized?.Process?.Pid ?? "—")</dd>
+            <dt>Parent process ID</dt><dd>@(Model.Envelope.Normalized?.ParentProcessId ?? Model.Envelope.Normalized?.Process?.ParentPid ?? "—")</dd>
+            <dt>Process</dt><dd>@(Model.Envelope.Normalized?.ProcessImage ?? Model.Envelope.Normalized?.Process?.Executable ?? "—")</dd>
+            <dt>Command line</dt><dd>@(Model.Envelope.Normalized?.ProcessCommandLine ?? Model.Envelope.Normalized?.Process?.CommandLine ?? "—")</dd>
             <dt>Service</dt><dd>@(Model.Envelope.Normalized?.ServiceName ?? "—")</dd>
             <dt>Task</dt><dd>@(Model.Envelope.Normalized?.TaskName ?? "—")</dd>
             <dt>Package</dt><dd>@(Model.Envelope.Normalized?.PackageName ?? "—")</dd>
-            <dt>File</dt><dd>@(Model.Envelope.Normalized?.FilePath ?? "—")</dd>
+            <dt>File</dt><dd>@(Model.Envelope.Normalized?.FilePath ?? Model.Envelope.Normalized?.File?.Path ?? "—")</dd>
+            <dt>File hash</dt><dd>@(Model.Envelope.Normalized?.Hash ?? Model.Envelope.Normalized?.File?.Sha256 ?? "—")</dd>
             <dt>Registry</dt><dd>@(Model.Envelope.Normalized?.RegistryKey ?? "—")</dd>
-            <dt>Source network</dt><dd>@(Model.Envelope.Normalized?.SourceIp ?? "—"):@(Model.Envelope.Normalized?.SourcePort ?? "—")</dd>
-            <dt>Destination network</dt><dd>@(Model.Envelope.Normalized?.DestinationIp ?? "—"):@(Model.Envelope.Normalized?.DestinationPort ?? "—")</dd>
-            <dt>Protocol</dt><dd>@(Model.Envelope.Normalized?.Protocol ?? "—")</dd>
+            <dt>Source network</dt><dd>@(Model.Envelope.Normalized?.SourceIp ?? Model.Envelope.Normalized?.Network?.SourceIp ?? "—"):@(Model.Envelope.Normalized?.SourcePort ?? Model.Envelope.Normalized?.Network?.SourcePort?.ToString() ?? "—")</dd>
+            <dt>Destination network</dt><dd>@(Model.Envelope.Normalized?.DestinationIp ?? Model.Envelope.Normalized?.Network?.DestinationIp ?? "—"):@(Model.Envelope.Normalized?.DestinationPort ?? Model.Envelope.Normalized?.Network?.DestinationPort?.ToString() ?? "—")</dd>
+            <dt>Protocol</dt><dd>@(Model.Envelope.Normalized?.Protocol ?? Model.Envelope.Normalized?.Network?.Protocol ?? "—")</dd>
         </dl>
     </section>
 

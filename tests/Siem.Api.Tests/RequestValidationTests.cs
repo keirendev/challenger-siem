@@ -262,22 +262,7 @@ public sealed class RequestValidationTests
 
     private static HeartbeatRequest CreateLinuxHeartbeat()
     {
-        var manifest = new SourceManifestEntry
-        {
-            SourceId = "linux-journal-l1",
-            Platform = TelemetryPlatforms.Linux,
-            SourceKind = EventSources.LinuxJournal,
-            SourceNamespace = "systemd",
-            Applicability = SourceApplicabilityStatuses.Applicable,
-            CheckpointKind = SourceCheckpointKinds.Cursor,
-            DisplayName = "Linux journal",
-            CoverageLevel = WindowsCoverageLevel.L1,
-            Required = true,
-            Requirement = SourceRequirementKinds.Mandatory,
-            Prerequisites = new[] { "systemd_journal_available" },
-            EventFamilies = new[] { "system" },
-            ValidationScenarios = new[] { "synthetic_journal" }
-        };
+        var manifest = LinuxTelemetrySourceCatalog.L1.Single();
         return new HeartbeatRequest
         {
             AgentId = "linux-synthetic-001",
@@ -310,13 +295,14 @@ public sealed class RequestValidationTests
                     Status = SourceHealthStatuses.Healthy,
                     Required = manifest.Required,
                     Requirement = manifest.Requirement,
+                    ApplicableRoles = manifest.ApplicableRoles,
                     Enabled = true,
                     LastEventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
                     ObservedAt = DateTimeOffset.Parse("2026-07-11T12:00:01Z"),
                     CollectedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic;i=1" },
                     AcknowledgedCheckpoint = new SourceCheckpoint { Cursor = "s=synthetic;i=1" },
-                    PrerequisiteStatuses = new Dictionary<string,string> { ["systemd_journal_available"] = SourceEvidenceStatuses.Satisfied },
-                    EventFamilyStatuses = new Dictionary<string,string> { ["system"] = SourceEvidenceStatuses.Observed },
+                    PrerequisiteStatuses = manifest.Prerequisites.ToDictionary(item => item, _ => SourceEvidenceStatuses.Satisfied, StringComparer.Ordinal),
+                    EventFamilyStatuses = manifest.EventFamilies.ToDictionary(item => item, _ => SourceEvidenceStatuses.Observed, StringComparer.Ordinal),
                     SilenceSeconds = 0,
                     EventRatePerMinute = 0,
                     GapCount = 0,

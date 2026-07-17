@@ -282,6 +282,54 @@ public sealed class FullCoverageServerTests
     }
 
     [Fact]
+    public void RecoveredPassiveGapCountersRemainHistoricalWithoutCurrentGap()
+    {
+        var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L3Passive.First();
+        var recovered = new SourceHealthReport
+        {
+            SourceId = entry.SourceId,
+            DisplayName = entry.DisplayName,
+            Platform = TelemetryPlatforms.Linux,
+            SourceKind = entry.SourceKind,
+            CoverageLevel = WindowsCoverageLevel.L3,
+            Status = SourceHealthStatuses.Healthy,
+            Required = true,
+            Enabled = true,
+            ObservedAt = now,
+            GapCount = 3,
+            DroppedEvents = 2,
+            Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["active_gap"] = "recovered_or_none",
+                ["active_bookmark_gap"] = "recovered_or_none"
+            }
+        };
+
+        var coverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-agent",
+            recovered,
+            now.AddHours(-1),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            null);
+        Assert.False(coverage.HasCheckpointGap);
+        Assert.Equal(3, coverage.GapCount);
+        Assert.Equal(2, coverage.DroppedEvents);
+
+        var active = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-agent",
+            recovered with
+            {
+                GapDetected = true,
+                Details = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["active_gap"] = "present" }
+            },
+            now.AddHours(-1),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            null);
+        Assert.True(active.HasCheckpointGap);
+    }
+
+    [Fact]
     public void TelemetryCoverageContractsExposePressureGapCapacityAndGuidanceAdditively()
     {
         var source = new SourceTelemetryCoverage

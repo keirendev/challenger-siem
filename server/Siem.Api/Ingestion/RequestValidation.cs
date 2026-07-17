@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using Challenger.Siem.Contracts.V1;
 
@@ -5,6 +7,8 @@ namespace Challenger.Siem.Api.Ingestion;
 
 public static class RequestValidation
 {
+    public static readonly TimeSpan MaximumFutureTimestampSkew = TimeSpan.FromMinutes(5);
+
     private static readonly HashSet<string> AllowedSeverities = new(StringComparer.Ordinal)
     {
         "verbose", "information", "warning", "error", "critical", "audit_success", "audit_failure"
@@ -83,9 +87,12 @@ public static class RequestValidation
         return ToValidationProblem(errors);
     }
 
-    public static Dictionary<string, string[]> ValidateHeartbeat(HeartbeatRequest request)
+    public static Dictionary<string, string[]> ValidateHeartbeat(
+        HeartbeatRequest request,
+        DateTimeOffset? receivedAt = null)
     {
         var errors = NewErrorBag();
+        var receivedAtUtc = (receivedAt ?? DateTimeOffset.UtcNow).ToUniversalTime();
         RequireLength(errors, nameof(request.AgentId), request.AgentId, 1, 128);
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
@@ -99,6 +106,7 @@ public static class RequestValidation
             RequireLength(errors, "platform", request.Platform, 1, 16);
             RequireLength(errors, "host_id", request.HostId, 1, 255);
             ValidateTimestamp(errors, "last_event_time", request.LastEventTime);
+            ValidateNotExcessivelyFuture(errors, "last_event_time", request.LastEventTime, receivedAtUtc);
         }
         ValidateHostTimezone(errors, "host_timezone", request.HostTimezone);
         OptionalMaxLength(errors, "config_hash", request.ConfigHash, 128);
@@ -121,7 +129,12 @@ public static class RequestValidation
         }
 
         ValidateQueueMetrics(errors, request.QueueMetrics, enforceLinuxBounds: linuxHeartbeat);
-        ValidateResourceMetrics(errors, "resource_metrics", request.ResourceMetrics, enforceLinuxBounds: linuxHeartbeat);
+        ValidateResourceMetrics(
+            errors,
+            "resource_metrics",
+            request.ResourceMetrics,
+            enforceLinuxBounds: linuxHeartbeat,
+            receivedAtUtc: receivedAtUtc);
 
         if (request.SourceManifest is null)
         {
@@ -151,7 +164,7 @@ public static class RequestValidation
             }
             for (var index = 0; index < request.SourceHealth.Count; index++)
             {
-                ValidateSourceHealth(errors, request.SourceHealth[index], index);
+                ValidateSourceHealth(errors, request.SourceHealth[index], index, receivedAtUtc);
             }
         }
 
@@ -164,9 +177,14 @@ public static class RequestValidation
         return ToValidationProblem(errors);
     }
 
-    public static Dictionary<string, string[]> ValidateBatch(IngestBatchRequest batch, int maxEventsPerBatch)
+    public static Dictionary<string, string[]> ValidateBatch(
+        IngestBatchRequest batch,
+        int maxEventsPerBatch,
+        DateTimeOffset? receivedAt = null)
     {
         var errors = NewErrorBag();
+        var receivedAtUtc = (receivedAt ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var effectiveMaxEventsPerBatch = Math.Clamp(maxEventsPerBatch, 1, ContractLimits.MaxIngestEventsPerBatch);
         RequireLength(errors, nameof(batch.AgentId), batch.AgentId, 1, 128);
 
         if (batch.BatchId == Guid.Empty)
@@ -185,17 +203,39 @@ public static class RequestValidation
             return ToValidationProblem(errors);
         }
 
-        if (batch.Events.Count > maxEventsPerBatch)
+        if (batch.Events.Count > effectiveMaxEventsPerBatch)
         {
-            Add(errors, nameof(batch.Events), $"Batch contains more than {maxEventsPerBatch} events.");
+            Add(errors, nameof(batch.Events), $"Batch contains more than {effectiveMaxEventsPerBatch} events.");
         }
 
         for (var index = 0; index < batch.Events.Count; index++)
         {
-            ValidateEvent(errors, batch.AgentId, batch.Events[index], index);
+            ValidateEvent(errors, batch.AgentId, batch.Events[index], index, receivedAtUtc);
         }
 
+        ValidateUniqueEventIds(errors, batch.Events);
+
         return ToValidationProblem(errors);
+    }
+
+    private static void ValidateUniqueEventIds(
+        Dictionary<string, List<string>> errors,
+        IReadOnlyList<EventEnvelope> events)
+    {
+        var duplicateGroups = events
+            .Select((envelope, index) => (Envelope: envelope, Index: index))
+            .Where(item => item.Envelope is not null && item.Envelope.EventId != Guid.Empty)
+            .GroupBy(item => item.Envelope.EventId)
+            .Where(group => group.Count() > 1);
+
+        foreach (var group in duplicateGroups)
+        {
+            foreach (var duplicate in group)
+            {
+                Add(errors, $"events[{duplicate.Index}].event_id",
+                    "Event ID must be unique within an ingest batch.");
+            }
+        }
     }
 
     public static Dictionary<string, string[]> ValidateInventoryBatch(AssetInventoryBatchRequest request)
@@ -257,7 +297,12 @@ public static class RequestValidation
         request.Events.Any(envelope => TelemetrySourceKinds.UsesPortableIdentity(envelope.Source)
             || string.Equals(envelope.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal));
 
-    private static void ValidateEvent(Dictionary<string, List<string>> errors, string batchAgentId, EventEnvelope? envelope, int index)
+    private static void ValidateEvent(
+        Dictionary<string, List<string>> errors,
+        string batchAgentId,
+        EventEnvelope? envelope,
+        int index,
+        DateTimeOffset receivedAtUtc)
     {
         var prefix = $"events[{index}]";
         if (envelope is null)
@@ -290,6 +335,7 @@ public static class RequestValidation
         {
             ValidatePortableEventIdentity(errors, prefix, envelope);
         }
+        ValidateKnownLinuxEventIdentity(errors, prefix, envelope);
 
         OptionalMaxLength(errors, $"{prefix}.event_code", envelope.EventCode, 128);
         OptionalMaxLength(errors, $"{prefix}.facility", envelope.Facility, 128);
@@ -303,6 +349,9 @@ public static class RequestValidation
         var portableEvent = TelemetrySourceKinds.UsesPortableIdentity(envelope.Source);
         if (portableEvent)
         {
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.event_time", envelope.EventTime, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.checkpoint.event_time", envelope.Checkpoint?.EventTime, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.checkpoint.recorded_at", envelope.Checkpoint?.RecordedAt, receivedAtUtc);
             ValidateTimestamp(errors, $"{prefix}.ingest_time", envelope.IngestTime);
         }
         ValidateHostTimezone(errors, $"{prefix}.host_timezone", envelope.HostTimezone);
@@ -602,6 +651,110 @@ public static class RequestValidation
         ValidateUser(errors, $"{prefix}.normalized.user", normalized.User);
         ValidateNetwork(errors, $"{prefix}.normalized.network", normalized.Network);
         ValidateFile(errors, $"{prefix}.normalized.file", normalized.File);
+        if (enforcePortableBounds)
+        {
+            ValidatePortableNormalizedConsistency(errors, prefix, normalized);
+        }
+    }
+
+    private static void ValidatePortableNormalizedConsistency(
+        Dictionary<string, List<string>> errors,
+        string eventPrefix,
+        NormalizedEventFields normalized)
+    {
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.pid", "process_id",
+            normalized.ProcessId, normalized.Process?.Pid, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.parent_pid", "parent_process_id",
+            normalized.ParentProcessId, normalized.Process?.ParentPid, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.executable", "process_image",
+            normalized.ProcessImage, normalized.Process?.Executable, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.command_line", "process_command_line",
+            normalized.ProcessCommandLine, normalized.Process?.CommandLine, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.user.name", "user_name",
+            normalized.UserName, normalized.User?.Name, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.user.id", "user_sid",
+            normalized.UserSid, normalized.User?.Id, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.network.source_ip", "source_ip",
+            normalized.SourceIp, normalized.Network?.SourceIp, EquivalentIpAddress);
+        ValidateDuplicatePortRepresentation(errors, $"{eventPrefix}.normalized.network.source_port", "source_port",
+            normalized.SourcePort, normalized.Network?.SourcePort);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.network.destination_ip", "destination_ip",
+            normalized.DestinationIp, normalized.Network?.DestinationIp, EquivalentIpAddress);
+        ValidateDuplicatePortRepresentation(errors, $"{eventPrefix}.normalized.network.destination_port", "destination_port",
+            normalized.DestinationPort, normalized.Network?.DestinationPort);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.network.protocol", "protocol",
+            normalized.Protocol, normalized.Network?.Protocol, EquivalentProtocol);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.file.path", "file_path",
+            normalized.FilePath, normalized.File?.Path, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.file.sha256", "hash",
+            normalized.Hash, normalized.File?.Sha256, EquivalentSha256);
+    }
+
+    private static void ValidateDuplicateRepresentation(
+        Dictionary<string, List<string>> errors,
+        string nestedKey,
+        string flattenedField,
+        string? flattenedValue,
+        string? nestedValue,
+        Func<string, string, bool> equivalent)
+    {
+        if (flattenedValue is null || nestedValue is null || equivalent(flattenedValue, nestedValue))
+        {
+            return;
+        }
+
+        Add(errors, nestedKey,
+            $"Value must represent the same concept as normalized.{flattenedField} when both fields are supplied.");
+    }
+
+    private static void ValidateDuplicatePortRepresentation(
+        Dictionary<string, List<string>> errors,
+        string nestedKey,
+        string flattenedField,
+        string? flattenedValue,
+        int? nestedValue)
+    {
+        if (flattenedValue is null || !nestedValue.HasValue)
+        {
+            return;
+        }
+
+        if (int.TryParse(flattenedValue, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+            && parsed == nestedValue.Value)
+        {
+            return;
+        }
+
+        Add(errors, nestedKey,
+            $"Value must represent the same numeric port as normalized.{flattenedField} when both fields are supplied.");
+    }
+
+    private static bool EquivalentOrdinal(string left, string right) =>
+        string.Equals(left, right, StringComparison.Ordinal);
+
+    private static bool EquivalentProtocol(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    private static bool EquivalentIpAddress(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IPAddress.TryParse(left, out var leftAddress)
+            && IPAddress.TryParse(right, out var rightAddress)
+            && leftAddress.Equals(rightAddress);
+    }
+
+    private static bool EquivalentSha256(string left, string right)
+    {
+        var hasAlgorithmPrefix = left.StartsWith("sha256=", StringComparison.OrdinalIgnoreCase)
+            || left.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase);
+        var candidate = hasAlgorithmPrefix ? left[7..] : left;
+        return candidate.Length == 64
+            && candidate.All(Uri.IsHexDigit)
+            && string.Equals(candidate, right, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ValidateProcess(Dictionary<string, List<string>> errors, string prefix, ProcessTelemetryConcept? process)
@@ -858,14 +1011,7 @@ public static class RequestValidation
             return;
         }
 
-        var valid = checkpointKind switch
-        {
-            SourceCheckpointKinds.Cursor => checkpoint.Cursor is not null && checkpoint.Sequence is null,
-            SourceCheckpointKinds.Sequence => checkpoint.Cursor is null && checkpoint.Sequence.HasValue,
-            SourceCheckpointKinds.CursorAndSequence => checkpoint.Cursor is not null && checkpoint.Sequence.HasValue,
-            _ => false
-        };
-        if (!valid)
+        if (!CheckpointMatchesKind(checkpoint, checkpointKind))
         {
             Add(errors, $"source_health[{healthIndex}].{field}", $"Checkpoint fields must match manifest checkpoint_kind {checkpointKind}.");
         }
@@ -888,6 +1034,17 @@ public static class RequestValidation
             TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind));
         ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
             source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, source.CheckpointKind);
+        ValidateKnownLinuxSourceDescriptor(
+            errors,
+            prefix,
+            source.SourceId,
+            source.Platform,
+            source.SourceKind,
+            source.SourceNamespace,
+            source.Facility,
+            source.Unit,
+            source.CheckpointKind);
+        ValidateKnownLinuxManifestMetadata(errors, prefix, source);
         if (TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind) && string.IsNullOrWhiteSpace(source.CheckpointKind))
         {
             Add(errors, $"{prefix}.checkpoint_kind", "Portable source manifests require a checkpoint kind.");
@@ -905,7 +1062,11 @@ public static class RequestValidation
         }
     }
 
-    private static void ValidateSourceHealth(Dictionary<string, List<string>> errors, SourceHealthReport? source, int index)
+    private static void ValidateSourceHealth(
+        Dictionary<string, List<string>> errors,
+        SourceHealthReport? source,
+        int index,
+        DateTimeOffset receivedAtUtc)
     {
         var prefix = $"source_health[{index}]";
         if (source is null)
@@ -917,6 +1078,17 @@ public static class RequestValidation
         RequireLength(errors, $"{prefix}.display_name", source.DisplayName, 1, 255);
         ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
             source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, checkpointKind: null);
+        ValidateKnownLinuxSourceDescriptor(
+            errors,
+            prefix,
+            source.SourceId,
+            source.Platform,
+            source.SourceKind,
+            source.SourceNamespace,
+            source.Facility,
+            source.Unit,
+            checkpointKind: null);
+        ValidateKnownLinuxHealthMetadata(errors, prefix, source);
         var portableSource = TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind);
         var supportedStatus = portableSource
             ? AllowedSourceStatuses.Contains(source.Status)
@@ -956,6 +1128,8 @@ public static class RequestValidation
         if (portableSource)
         {
             ValidateTimestamp(errors, $"{prefix}.last_event_time", source.LastEventTime);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.last_event_time", source.LastEventTime, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.observed_at", source.ObservedAt, receivedAtUtc);
         }
         ValidateTimestamp(errors, $"{prefix}.observed_at", source.ObservedAt);
         ValidateHostTimezone(errors, $"{prefix}.host_timezone", source.HostTimezone);
@@ -1007,6 +1181,10 @@ public static class RequestValidation
                 ValidateCheckpoint(errors, $"{prefix}.collected_checkpoint", source.CollectedCheckpoint, required: true);
                 ValidateCheckpoint(errors, $"{prefix}.acknowledged_checkpoint", source.AcknowledgedCheckpoint, required: true);
             }
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.collected_checkpoint.event_time", source.CollectedCheckpoint?.EventTime, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.collected_checkpoint.recorded_at", source.CollectedCheckpoint?.RecordedAt, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.acknowledged_checkpoint.event_time", source.AcknowledgedCheckpoint?.EventTime, receivedAtUtc);
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.acknowledged_checkpoint.recorded_at", source.AcknowledgedCheckpoint?.RecordedAt, receivedAtUtc);
         }
         else
         {
@@ -1081,6 +1259,172 @@ public static class RequestValidation
         }
     }
 
+    private static void ValidateKnownLinuxEventIdentity(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        EventEnvelope envelope)
+    {
+        var canonical = FindKnownLinuxSource(envelope.SourceId);
+        if (canonical is null)
+        {
+            return;
+        }
+
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source_id", "source_id", canonical.SourceId, envelope.SourceId);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.platform", "platform", canonical.Platform, envelope.Platform);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source", "source kind", canonical.SourceKind, envelope.Source);
+        if (envelope.Checkpoint is not null
+            && canonical.CheckpointKind is not null
+            && !CheckpointMatchesKind(envelope.Checkpoint, canonical.CheckpointKind))
+        {
+            Add(errors, $"{prefix}.checkpoint",
+                $"Known Linux source checkpoint fields must match canonical checkpoint kind {canonical.CheckpointKind}.");
+        }
+    }
+
+    private static void ValidateKnownLinuxSourceDescriptor(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        string? sourceId,
+        string? platform,
+        string? sourceKind,
+        string? sourceNamespace,
+        string? facility,
+        string? unit,
+        string? checkpointKind)
+    {
+        var canonical = FindKnownLinuxSource(sourceId);
+        if (canonical is null)
+        {
+            return;
+        }
+
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source_id", "source_id", canonical.SourceId, sourceId);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.platform", "platform", canonical.Platform, platform);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source_kind", "source kind", canonical.SourceKind, sourceKind);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source_namespace", "source namespace", canonical.SourceNamespace, sourceNamespace);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.facility", "facility", canonical.Facility, facility);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.unit", "unit", canonical.Unit, unit);
+        if (checkpointKind is not null)
+        {
+            ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.checkpoint_kind", "checkpoint kind", canonical.CheckpointKind, checkpointKind);
+        }
+    }
+
+    private static SourceManifestEntry? FindKnownLinuxSource(string? sourceId) =>
+        sourceId is null
+            ? null
+            : LinuxTelemetrySourceCatalog.All.FirstOrDefault(entry =>
+                string.Equals(entry.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+
+    private static void ValidateKnownLinuxManifestMetadata(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        SourceManifestEntry submitted)
+    {
+        var canonical = FindKnownLinuxSource(submitted.SourceId);
+        if (canonical is null)
+        {
+            return;
+        }
+
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.display_name", "display name", canonical.DisplayName, submitted.DisplayName);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.coverage_level", "coverage level", canonical.CoverageLevel.ToString(), submitted.CoverageLevel.ToString());
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.requirement", "requirement", canonical.Requirement, submitted.Requirement);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.source_pack", "source pack", canonical.SourcePack, submitted.SourcePack);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.parser_id", "parser", canonical.ParserId, submitted.ParserId);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.privacy", "privacy classification", canonical.Privacy, submitted.Privacy);
+        if (canonical.Required != submitted.Required)
+        {
+            Add(errors, $"{prefix}.required", "Known Linux source required flag must exactly match its canonical catalog value.");
+        }
+        if (canonical.EnabledByDefault != submitted.EnabledByDefault)
+        {
+            Add(errors, $"{prefix}.enabled_by_default", "Known Linux source enabled-by-default flag must exactly match its canonical catalog value.");
+        }
+        if (canonical.InstallerManaged != submitted.InstallerManaged)
+        {
+            Add(errors, $"{prefix}.installer_managed", "Known Linux source installer-managed flag must exactly match its canonical catalog value.");
+        }
+
+        ValidateCanonicalLinuxList(errors, $"{prefix}.applicable_roles", "applicable roles", canonical.ApplicableRoles, submitted.ApplicableRoles);
+        ValidateCanonicalLinuxList(errors, $"{prefix}.prerequisites", "prerequisites", canonical.Prerequisites, submitted.Prerequisites);
+        ValidateCanonicalLinuxList(errors, $"{prefix}.event_families", "event families", canonical.EventFamilies, submitted.EventFamilies);
+        ValidateCanonicalLinuxList(errors, $"{prefix}.validation_scenarios", "validation scenarios", canonical.ValidationScenarios, submitted.ValidationScenarios);
+    }
+
+    private static void ValidateKnownLinuxHealthMetadata(
+        Dictionary<string, List<string>> errors,
+        string prefix,
+        SourceHealthReport submitted)
+    {
+        var canonical = FindKnownLinuxSource(submitted.SourceId);
+        if (canonical is null)
+        {
+            return;
+        }
+
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.display_name", "display name", canonical.DisplayName, submitted.DisplayName);
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.coverage_level", "coverage level", canonical.CoverageLevel.ToString(), submitted.CoverageLevel.ToString());
+        ValidateCanonicalLinuxSourceValue(errors, $"{prefix}.requirement", "requirement", canonical.Requirement, submitted.Requirement);
+        if (canonical.Required != submitted.Required)
+        {
+            Add(errors, $"{prefix}.required", "Known Linux source required flag must exactly match its canonical catalog value.");
+        }
+        ValidateCanonicalLinuxList(errors, $"{prefix}.applicable_roles", "applicable roles", canonical.ApplicableRoles, submitted.ApplicableRoles);
+
+        if (canonical.Applicability == SourceApplicabilityStatuses.Unsupported
+            && submitted.Applicability != SourceApplicabilityStatuses.Unsupported)
+        {
+            Add(errors, $"{prefix}.applicability", "Known unsupported Linux source must retain canonical unsupported applicability.");
+        }
+        if (canonical.Requirement == SourceRequirementKinds.Mandatory
+            && canonical.Applicability == SourceApplicabilityStatuses.Applicable
+            && submitted.Applicability != SourceApplicabilityStatuses.Applicable)
+        {
+            Add(errors, $"{prefix}.applicability", "Known mandatory applicable Linux source cannot report itself as inapplicable.");
+        }
+    }
+
+    private static void ValidateCanonicalLinuxList(
+        Dictionary<string, List<string>> errors,
+        string key,
+        string fieldName,
+        IReadOnlyList<string>? canonical,
+        IReadOnlyList<string>? submitted)
+    {
+        if (canonical is null && submitted is null)
+        {
+            return;
+        }
+
+        if (canonical is null || submitted is null || !canonical.SequenceEqual(submitted, StringComparer.Ordinal))
+        {
+            Add(errors, key, $"Known Linux source {fieldName} must exactly match its canonical catalog value.");
+        }
+    }
+
+    private static void ValidateCanonicalLinuxSourceValue(
+        Dictionary<string, List<string>> errors,
+        string key,
+        string fieldName,
+        string? canonicalValue,
+        string? submittedValue)
+    {
+        if (!string.Equals(canonicalValue, submittedValue, StringComparison.Ordinal))
+        {
+            Add(errors, key, $"Known Linux source {fieldName} must exactly match its canonical catalog value.");
+        }
+    }
+
+    private static bool CheckpointMatchesKind(SourceCheckpoint checkpoint, string checkpointKind) => checkpointKind switch
+    {
+        SourceCheckpointKinds.Cursor => checkpoint.Cursor is not null && checkpoint.Sequence is null,
+        SourceCheckpointKinds.Sequence => checkpoint.Cursor is null && checkpoint.Sequence.HasValue,
+        SourceCheckpointKinds.CursorAndSequence => checkpoint.Cursor is not null && checkpoint.Sequence.HasValue,
+        _ => false
+    };
+
     private static void ValidateCheckpoint(Dictionary<string, List<string>> errors, string prefix, SourceCheckpoint? checkpoint, bool required)
     {
         if (checkpoint is null)
@@ -1133,10 +1477,15 @@ public static class RequestValidation
         Dictionary<string, List<string>> errors,
         string prefix,
         AgentResourceMetrics? metrics,
-        bool enforceLinuxBounds)
+        bool enforceLinuxBounds,
+        DateTimeOffset receivedAtUtc)
     {
         if (metrics is null) return;
         ValidateTimestamp(errors, $"{prefix}.observed_at", metrics.ObservedAt);
+        if (enforceLinuxBounds)
+        {
+            ValidateNotExcessivelyFuture(errors, $"{prefix}.observed_at", metrics.ObservedAt, receivedAtUtc);
+        }
         if (metrics.CpuPercent is < 0 || (enforceLinuxBounds && metrics.CpuPercent > 100))
         {
             Add(errors, $"{prefix}.cpu_percent", enforceLinuxBounds
@@ -1226,6 +1575,19 @@ public static class RequestValidation
     private static void ValidateTimestamp(Dictionary<string, List<string>> errors, string key, DateTimeOffset? value)
     {
         if (value.HasValue && value.Value == default) Add(errors, key, "Timestamp must not be the default value.");
+    }
+
+    private static void ValidateNotExcessivelyFuture(
+        Dictionary<string, List<string>> errors,
+        string key,
+        DateTimeOffset? value,
+        DateTimeOffset receivedAtUtc)
+    {
+        if (value.HasValue && value.Value.ToUniversalTime() > receivedAtUtc + MaximumFutureTimestampSkew)
+        {
+            Add(errors, key,
+                $"Timestamp must not be more than {MaximumFutureTimestampSkew.TotalMinutes:0} minutes ahead of server receive time.");
+        }
     }
 
     private static void ValidateNonNegative(Dictionary<string, List<string>> errors, string key, long? value)

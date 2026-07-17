@@ -32,6 +32,10 @@
     "summary": { "type": "string" },
     "affected_entities": { "type": "array", "items": { "$ref": "event-envelope.schema.json#/$defs/entity" } },
     "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "evidence_total": { "type": "integer", "minimum": 0 },
+    "evidence_returned": { "type": "integer", "minimum": 0, "maximum": 128 },
+    "evidence_limit": { "type": "integer", "minimum": 0, "maximum": 128 },
+    "evidence_truncated": { "type": "boolean" },
     "cases": { "type": "array", "items": { "$ref": "#/$defs/case_link" } },
     "activity": { "type": "array", "items": { "$ref": "#/$defs/activity" } }
   },

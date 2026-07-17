@@ -10,6 +10,20 @@ namespace Challenger.Siem.Api.Tests;
 public sealed class EventSearchTimelineTests
 {
     [Fact]
+    public void NestedLegacySearchFallbackKeepsDenormalizedPredicatesIndexable()
+    {
+        var implementation = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "EventRepository.cs"));
+
+        Assert.Contains("AddFallbackTextFilter(where, command, \"process_command_line\"", implementation, StringComparison.Ordinal);
+        Assert.Contains("AddFallbackTextFilter(where, command, \"file_path\"", implementation, StringComparison.Ordinal);
+        Assert.Contains("AddFallbackTextFilter(where, command, \"source_ip\"", implementation, StringComparison.Ordinal);
+        Assert.Contains("indexedExpression} is null and {legacyFallbackExpression}", implementation, StringComparison.Ordinal);
+        Assert.DoesNotContain("coalesce(process_command_line, normalized_json", implementation, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("coalesce(file_path, normalized_json", implementation, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("coalesce(source_ip, normalized_json", implementation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void EventSearchQueryValidatesBoundsAndStructuredFilters()
     {
         var query = EventSearchQuery.FromQuery(new QueryCollection(new Dictionary<string, StringValues>
@@ -67,6 +81,34 @@ public sealed class EventSearchTimelineTests
     }
 
     [Fact]
+    public void SavedSearchRolePolicyDoesNotDiscloseProtectedFilterValues()
+    {
+        var saved = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["agent_id"] = "synthetic-agent",
+            ["PROCESS_COMMAND_LINE"] = "/usr/bin/synthetic --private-value",
+            ["source_ip"] = "192.0.2.10",
+            ["destination_port"] = "443",
+            ["file_path"] = "/opt/synthetic/private.conf",
+            ["entity_type"] = "user",
+            ["entity_value"] = "synthetic-private-user"
+        };
+
+        var viewer = EventSearchQuery.SavedQueryForRole(saved, "viewer");
+        Assert.Equal("synthetic-agent", viewer["agent_id"]);
+        Assert.DoesNotContain(viewer, item => item.Key.Equals("process_command_line", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("source_ip", viewer.Keys);
+        Assert.DoesNotContain("destination_port", viewer.Keys);
+        Assert.DoesNotContain("file_path", viewer.Keys);
+        Assert.DoesNotContain("entity_type", viewer.Keys);
+        Assert.DoesNotContain("entity_value", viewer.Keys);
+
+        var analyst = EventSearchQuery.SavedQueryForRole(saved, "analyst");
+        Assert.Equal(saved.Count, analyst.Count);
+        Assert.Equal("/usr/bin/synthetic --private-value", analyst["process_command_line"]);
+    }
+
+    [Fact]
     public void CursorRoundTripIsBoundedAndTamperDetecting()
     {
         var now = DateTimeOffset.UtcNow;
@@ -98,6 +140,18 @@ public sealed class EventSearchTimelineTests
         Assert.Equal("linux", document.RootElement.GetProperty("active_filters")[0].GetProperty("value").GetString());
     }
 
+    private static string RepositoryFile(params string[] parts)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            var candidate = Path.Combine(new[] { current.FullName }.Concat(parts).ToArray());
+            if (File.Exists(candidate)) return candidate;
+            current = current.Parent;
+        }
+        throw new FileNotFoundException($"Could not locate repository file: {string.Join('/', parts)}");
+    }
+
     [Fact]
     public void SearchSavedQueryMigrationAddsTablesAndIndexSupportedPredicates()
     {
@@ -121,6 +175,20 @@ public sealed class EventSearchTimelineTests
         Assert.Contains("Saved searches", markup, StringComparison.Ordinal);
         Assert.Contains("Type EXPORT to confirm", markup, StringComparison.Ordinal);
         Assert.Contains("Next cursor", markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EventDetailRazorFallsBackToPortableNestedTelemetry()
+    {
+        var markup = File.ReadAllText(RepositoryPath("server", "Siem.Api", "Pages", "Events", "Detail.cshtml"));
+        Assert.Contains("Process?.Pid", markup, StringComparison.Ordinal);
+        Assert.Contains("Process?.ParentPid", markup, StringComparison.Ordinal);
+        Assert.Contains("Process?.Executable", markup, StringComparison.Ordinal);
+        Assert.Contains("Process?.CommandLine", markup, StringComparison.Ordinal);
+        Assert.Contains("Network?.SourceIp", markup, StringComparison.Ordinal);
+        Assert.Contains("Network?.DestinationPort", markup, StringComparison.Ordinal);
+        Assert.Contains("File?.Path", markup, StringComparison.Ordinal);
+        Assert.Contains("File?.Sha256", markup, StringComparison.Ordinal);
     }
 
     private static string RepositoryPath(params string[] parts)

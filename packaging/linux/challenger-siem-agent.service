@@ -10,6 +10,7 @@ Type=notify
 User=challenger-siem
 Group=challenger-siem
 Environment=CHALLENGER_SIEM_AGENT_CONFIG=/etc/challenger-siem-agent/agentsettings.json
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle
 ExecStart=/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent
 Restart=on-failure
 RestartSec=10s

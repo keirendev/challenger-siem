@@ -173,7 +173,7 @@
                             <td class="mono">@agent.AgentId</td>
                             <td><strong>@agent.Hostname</strong><div class="muted">@agent.OsVersion · @agent.AgentVersion</div><div class="muted">host tz @TimeDisplay.HostTimezoneShortLabel(agent.HostTimezone)</div></td>
                             <td><span class="badge neutral">@agent.Platform</span></td>
-                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L3">@agent.CurrentCoverageLevel</a> <span class="badge @agent.CoverageStatus">@agent.CoverageStatus</span></td>
+                            <td><a asp-page="/Agents/Detail" asp-route-agent_id="@agent.AgentId" asp-route-target_level="L4">@agent.CurrentCoverageLevel</a> <span class="badge @agent.CoverageStatus">@agent.CoverageStatus</span></td>
                             <td>@agent.MissingMandatorySources missing / @agent.StaleSources stale / @agent.DegradedSources degraded / @agent.PermissionDeniedSources denied / @agent.UnsupportedSources unsupported / @agent.GapSources gap / @agent.ErrorSources error</td>
                             <td>@TimeDisplay.FormatUtc(agent.FirstSeen, "yyyy-MM-dd HH:mm")</td>
                             <td>

@@ -1221,6 +1221,18 @@ public sealed record AlertRecord
     [JsonPropertyName("evidence")]
     public IReadOnlyList<AlertEvidenceRecord> Evidence { get; init; } = Array.Empty<AlertEvidenceRecord>();
 
+    [JsonPropertyName("evidence_total")]
+    public int EvidenceTotal { get; init; }
+
+    [JsonPropertyName("evidence_returned")]
+    public int EvidenceReturned { get; init; }
+
+    [JsonPropertyName("evidence_limit")]
+    public int EvidenceLimit { get; init; }
+
+    [JsonPropertyName("evidence_truncated")]
+    public bool EvidenceTruncated { get; init; }
+
     [JsonPropertyName("cases")]
     public IReadOnlyList<AlertCaseLinkRecord> Cases { get; init; } = Array.Empty<AlertCaseLinkRecord>();
 

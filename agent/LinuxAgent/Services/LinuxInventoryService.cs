@@ -1,6 +1,7 @@
 using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
+using Challenger.Siem.LinuxAgent.L4;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Services;
@@ -34,9 +35,11 @@ public sealed class LinuxInventoryService(
     SiemIngestClient client,
     LinuxEnrollmentService enrollment,
     TimeProvider timeProvider,
-    ILogger<LinuxInventoryService> logger) : BackgroundService
+    ILogger<LinuxInventoryService> logger,
+    IEnumerable<ILinuxInventoryObserver>? inventoryObservers = null) : BackgroundService
 {
     private readonly LinuxAgentOptions options = configured.Value;
+    private readonly IReadOnlyList<ILinuxInventoryObserver> observers = inventoryObservers?.ToArray() ?? Array.Empty<ILinuxInventoryObserver>();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -53,6 +56,15 @@ public sealed class LinuxInventoryService(
                 await schedule.TryRunDueAsync(async cancellationToken =>
                 {
                     var snapshots = await collector.CollectAsync(options.AgentId, Environment.MachineName, cancellationToken);
+                    foreach (var observer in observers)
+                    {
+                        try { await observer.ObserveInventoryAsync(snapshots, cancellationToken); }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning("Linux inventory observer failed ({ErrorType}); inventory delivery continues independently.", ex.GetType().Name);
+                        }
+                    }
                     await client.SendInventoryAsync(snapshots, cancellationToken);
                 }, stoppingToken);
             }
