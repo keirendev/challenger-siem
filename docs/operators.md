@@ -51,7 +51,7 @@ Start the API and web console:
 ./scripts/platform.sh status
 ```
 
-The helper runs the API/web-console process in the background, stores PID/log state under `.local/platform/`, and checks `/health` without printing secrets. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Then browse to `http://127.0.0.1:5081/login` and sign in with an operator username/password. The web console uses an HTTP-only, strict-SameSite, database-revocable session cookie after login.
+The helper checks `/health` without printing secrets. It either owns a background API/web-console process under `.local/platform/` or delegates to the user-systemd unit named by `CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT`; it will not start both. Use `./scripts/platform.sh restart` after local configuration changes and `./scripts/platform.sh stop` when finished. Browse to the reported `urls` value plus `/login` and sign in with an operator username/password. The unmanaged fallback is `http://127.0.0.1:5081`; persistent Linux-agent integration uses the stable `https://127.0.0.1:5443` endpoint and explicit local TLS files. The web console uses an HTTP-only, strict-SameSite, database-revocable session cookie after login.
 
 ## Validate with synthetic data
 

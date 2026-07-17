@@ -131,6 +131,14 @@ Checks that do not require destructive host actions:
 4. Confirm queue and state paths are writable by the process/service account.
 5. Run bounded interactive validation before installing as a service when possible.
 
+## Linux agent is running but heartbeats stop and the queue grows
+
+First run `./scripts/platform.sh status`. A connected development agent should use the persistent `https://127.0.0.1:5443` endpoint from the development endpoint contract, while disposable smoke and foreground web processes stay on their assigned ports. If status does not report the expected manager and URL, stop the competing process before restoring the intended owner.
+
+For HTTPS, compare the certificate actually served on the agent's exact `ServerBaseUrl` with the certificate configured for the persistent service. A certificate for `localhost` alone does not validate `127.0.0.1`; the intended certificate must be trusted and contain the exact DNS name or IP subject alternative name. `platform.sh` now refuses an HTTPS background start without an explicit stable Kestrel certificate and delegates lifecycle commands when `CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT` is configured.
+
+After restoring transport, verify that `last_seen` becomes current, the durable queue decreases across multiple checks, send state recovers, and poison/drop counters remain zero. A large queue can take time to drain at the configured bounded batch rate. Do not delete the queue, rotate agent credentials, weaken TLS validation, or restart the agent merely to make the dashboard green.
+
 ## WinRM lab validation cannot reach the API
 
 - Start the API on this host with `./scripts/run-server-4444.sh`; it listens on `http://0.0.0.0:4444` by default.

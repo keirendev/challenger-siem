@@ -432,11 +432,14 @@ PY
       echo 'L4 telemetry preflight: private agent state directory is not writable by challenger-siem; validate installed ownership before preflight'
       return 0
     fi
-    runuser -u challenger-siem -- env -i \
-      PATH=/usr/bin:/bin \
-      CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
-      DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
-      "$binary" --l4-telemetry-plan
+    (
+      cd "$state"
+      runuser -u challenger-siem -- env -i \
+        PATH=/usr/bin:/bin \
+        CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
+        DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
+        "$binary" --l4-telemetry-plan
+    )
     return
   fi
   if [[ $(id -un) != challenger-siem ]]; then
@@ -447,11 +450,14 @@ PY
     echo 'L4 telemetry preflight: private agent state directory is not writable by the service identity; validate the installed ownership before preflight'
     return 0
   fi
-  env -i \
-    PATH=/usr/bin:/bin \
-    CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
-    DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
-    "$binary" --l4-telemetry-plan
+  (
+    cd "$state"
+    env -i \
+      PATH=/usr/bin:/bin \
+      CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
+      "$binary" --l4-telemetry-plan
+  )
 }
 
 plan(){
@@ -567,7 +573,11 @@ install(){
   mkdir -p -m 0755 "$opt" "$(dirname "$unit")"
   mkdir -p -m 0700 "$etc" "$state"
   command install -m 0755 "$payload/Challenger.Siem.LinuxAgent" "$opt/Challenger.Siem.LinuxAgent"
-  command install -m 0600 "$config" "$etc/agentsettings.json"
+  if [[ -e $etc/agentsettings.json && $config -ef $etc/agentsettings.json ]]; then
+    echo 'configuration input is the installed protected configuration; preserving it in place'
+  else
+    command install -m 0600 "$config" "$etc/agentsettings.json"
+  fi
   command install -m 0644 "$unit_template" "$unit"
   if [[ $root == / ]]; then
     chown -R root:root "$opt"

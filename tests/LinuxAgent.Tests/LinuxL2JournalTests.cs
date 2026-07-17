@@ -180,6 +180,44 @@ public sealed class LinuxL2JournalTests
     }
 
     [Fact]
+    public void PacmanAlpmPackageChangesAreClassifiedWithoutTreatingPacmanCommandsAsEvents()
+    {
+        var normalizer = new LinuxJournalNormalizer();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        var positive = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = "s=synthetic-pacman;i=1;b=fake",
+            ["__REALTIME_TIMESTAMP"] = "1783944100000050",
+            ["_BOOT_ID"] = "00000000000000000000000000000002",
+            ["_TRANSPORT"] = "syslog",
+            ["SYSLOG_IDENTIFIER"] = "pacman",
+            ["PRIORITY"] = "6",
+            ["MESSAGE"] = "[ALPM] upgraded synthetic-package (1.2.3-1 -> 1.2.4-1)"
+        });
+        Assert.True(normalizer.TryNormalize(positive, options, DateTimeOffset.Parse("2026-07-13T12:00:00Z"), out var normalized, out var error), error);
+        Assert.NotNull(normalized);
+        Assert.Equal(LinuxTelemetrySourceIds.PackageManagement, normalized.Envelope.SourceId);
+        Assert.Equal("package_update", normalized.EventFamily);
+        Assert.Equal("update", normalized.Envelope.Normalized?.Action);
+        Assert.Equal("synthetic-package", normalized.Envelope.Normalized?.PackageName);
+
+        var negative = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = "s=synthetic-pacman;i=2;b=fake",
+            ["__REALTIME_TIMESTAMP"] = "1783944100000051",
+            ["_BOOT_ID"] = "00000000000000000000000000000002",
+            ["_TRANSPORT"] = "syslog",
+            ["SYSLOG_IDENTIFIER"] = "pacman",
+            ["PRIORITY"] = "6",
+            ["MESSAGE"] = "[PACMAN] Running a synthetic read-only package query"
+        });
+        Assert.True(normalizer.TryNormalize(negative, options, DateTimeOffset.Parse("2026-07-13T12:00:00Z"), out var ignored, out var negativeError), negativeError);
+        Assert.NotNull(ignored);
+        Assert.Equal(LinuxTelemetrySourceIds.JournalL1, ignored.Envelope.SourceId);
+        Assert.Null(ignored.Envelope.Normalized?.Action);
+    }
+
+    [Fact]
     public void MalformedAmbiguousSecretAndOversizedInputsRemainBounded()
     {
         var normalizer = new LinuxJournalNormalizer();
