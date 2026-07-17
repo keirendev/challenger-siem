@@ -14,6 +14,9 @@ fi
 if [[ -n "${CHALLENGER_SIEM_DATABASE:-}" ]]; then
   export CHALLENGER_SIEM_DATABASE
 fi
+if [[ -n "${CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT:-}" ]]; then
+  export CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT
+fi
 
 python3 - "$@" <<'PY'
 import argparse
@@ -368,6 +371,25 @@ def platform_pid_alive():
     return True
 
 
+def platform_service_alive():
+    unit = os.environ.get("CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT", "").strip()
+    if not unit:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,160}\.service", unit):
+        fail("Refusing local artifact cleanup with an invalid configured platform service name.", code=1)
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", unit],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        fail("Could not verify the configured platform service state; run ./scripts/platform.sh stop first.", code=1)
+    return result.returncode == 0
+
+
 def print_artifact_report(execute, delete_artifacts, include_logs, include_generated):
     categories = candidate_paths(include_logs, include_generated)
     action = "remove" if execute and delete_artifacts else "dry-run"
@@ -383,8 +405,8 @@ def print_artifact_report(execute, delete_artifacts, include_logs, include_gener
     print("artifact_generated_agent_files_preserved=" + ("false" if include_generated else "true"))
 
     if execute and delete_artifacts:
-        if platform_pid_alive() and (categories.get("platform_state") or categories.get("platform_logs")):
-            fail("Refusing local artifact cleanup while the local platform PID appears live; run ./scripts/platform.sh stop first.", code=1)
+        if (platform_pid_alive() or platform_service_alive()) and (categories.get("platform_state") or categories.get("platform_logs")):
+            fail("Refusing local artifact cleanup while the local platform appears live; run ./scripts/platform.sh stop first.", code=1)
         for paths in categories.values():
             for path in paths:
                 remove_path(path)

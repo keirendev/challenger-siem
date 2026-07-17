@@ -4,6 +4,8 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source scripts/dev-endpoints.sh
 
 if [[ -f .local/dev.env ]]; then
   # shellcheck disable=SC1091
@@ -14,7 +16,7 @@ fi
 
 PROJECT_VERSION="$(./scripts/current-version.sh)"
 
-BASE_URL="${1:-${SIEM_REGISTER_BASE_URL:-http://127.0.0.1:4444}}"
+BASE_URL="${1:-${SIEM_REGISTER_BASE_URL:-$SIEM_DEV_WINDOWS_LAB_LOCAL_URL}}"
 AGENT_ID="${2:-${SIEM_REGISTER_AGENT_ID:-demo-agent-001}}"
 HOSTNAME="${3:-${SIEM_REGISTER_HOSTNAME:-DEMO-WIN11}}"
 OS_VERSION="${4:-${SIEM_REGISTER_OS_VERSION:-Windows 11}}"

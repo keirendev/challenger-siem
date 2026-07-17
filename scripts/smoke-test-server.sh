@@ -4,6 +4,8 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source scripts/dev-endpoints.sh
 
 if [[ -f .local/dev.env ]]; then
   # shellcheck disable=SC1091
@@ -14,7 +16,7 @@ fi
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
 : "${SIEM_OPERATOR_API_TOKEN:?SIEM_OPERATOR_API_TOKEN is required}"
 
-BASE_URL="${SIEM_SMOKE_BASE_URL:-http://127.0.0.1:5080}"
+BASE_URL="${SIEM_SMOKE_BASE_URL:-$SIEM_DEV_API_SMOKE_URL}"
 LOG_FILE=".local/smoke-api.log"
 REGISTER_RESPONSE=".local/smoke-register-response.json"
 INGEST_RESPONSE=".local/smoke-ingest-response.json"

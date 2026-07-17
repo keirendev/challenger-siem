@@ -10,7 +10,7 @@ Challenger SIEM is an open-source security telemetry pipeline under active devel
 > [!WARNING]
 > Challenger SIEM is **not production-ready**. There is no supported production release, and the release-readiness checklist still requires real endpoint, database, browser, packaging, upgrade, and security-hardening evidence. Use it for development or controlled labs with synthetic data unless you have independently reviewed and accepted the risks.
 
-The current project version is `1.10.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
+The current project version is `1.11.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
 
 ## Current state
 
@@ -117,7 +117,7 @@ unset SIEM_OPERATOR_PASSWORD
 ./scripts/platform.sh status
 ```
 
-Open `http://127.0.0.1:5081/login`. The [operator guide](docs/operators.md) covers the full flow, and the synthetic API/web smoke tests write their temporary responses only beneath ignored `.local/` paths:
+Open the `urls` value reported by `platform.sh status` and append `/login`. The unmanaged fallback is `http://127.0.0.1:5081`; an operator-configured persistent Linux-agent integration service uses the stable `https://127.0.0.1:5443` endpoint. The [operator guide](docs/operators.md) covers the full flow, and the synthetic API/web smoke tests write their temporary responses only beneath ignored `.local/` paths:
 
 ```bash
 ./scripts/smoke-test-server.sh

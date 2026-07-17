@@ -86,15 +86,41 @@ Default local background lifecycle:
 ./scripts/platform.sh stop
 ```
 
-The helper loads `.local/dev.env` when present, starts the API/web-console process in the background, records PID/log state under `.local/platform/`, and checks `/health` without printing secrets. It binds to `http://127.0.0.1:5081` by default; set `CHALLENGER_SIEM_PLATFORM_URLS` or `ASPNETCORE_URLS` to override.
+The helper loads `.local/dev.env` when present and checks `/health` without printing secrets. With no persistent service configured, it starts a background process on `http://127.0.0.1:5081` and records PID/log state under `.local/platform/`. When `CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT` names an installed user service, every lifecycle command delegates to that unit instead of starting a competing process. HTTPS background starts fail closed unless an explicit stable Kestrel certificate is configured; they never silently fall back to an ASP.NET development certificate.
 
-For a foreground development run:
+### Development endpoint contract
+
+Local ports have one stable purpose and are centralized in `scripts/dev-endpoints.sh`:
+
+| Workflow | Default endpoint | Ownership |
+| --- | --- | --- |
+| Persistent local Linux-agent integration | `https://127.0.0.1:5443` | One operator-managed user service with a stable certificate valid for `127.0.0.1` |
+| Background/foreground web development | `http://127.0.0.1:5081` | One interactive process; do not run it concurrently with the web smoke test |
+| API smoke test | `http://127.0.0.1:5080` | Disposable process owned by `smoke-test-server.sh` |
+| Web smoke test | `http://127.0.0.1:5081` | Disposable process owned by `smoke-test-web.sh` |
+| Approved Windows lab listener | `http://0.0.0.0:4444` | Foreground lab-only process; host checks use `127.0.0.1:4444` |
+| Release gates | Random free loopback port | Disposable isolated run |
+
+An enrolled Linux agent should keep one `ServerBaseUrl`; do not move it between the interactive, smoke, and persistent endpoints. For a pre-existing operator-managed user service, keep only non-secret ownership/TLS paths in ignored `.local/dev.env`:
+
+```bash
+export CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT=challenger-siem-platform.service
+export CHALLENGER_SIEM_PLATFORM_URLS=https://127.0.0.1:5443
+export CHALLENGER_SIEM_PLATFORM_HEALTH_URL=https://127.0.0.1:5443/health
+export CHALLENGER_SIEM_PLATFORM_CA_CERT="$PWD/.local/platform-runtime/tls/ca.crt"
+export Kestrel__Certificates__Default__Path="$PWD/.local/platform-runtime/tls/server.crt"
+export Kestrel__Certificates__Default__KeyPath="$PWD/.local/platform-runtime/tls/server.key"
+```
+
+The user service itself and all certificates remain ignored local operator material. Verify that the unit is enabled and that user lingering is intentionally configured before relying on it across host reboots. `platform.sh status` reports `manager=user-systemd` when persistent ownership is active.
+
+For a foreground web-development run after stopping any process that owns port 5081:
 
 ```bash
 dotnet run --project server/Siem.Api
 ```
 
-The web review console is hosted by the API process at the API base URL. Open the base URL and log in with the bootstrapped operator username/password. Login creates an HTTP-only, strict-SameSite, revocable session cookie; credentials are not stored in browser local storage.
+The launch profile uses `http://127.0.0.1:5081`. It is not the persistent Linux-agent endpoint. The web review console is hosted by the API process at the API base URL. Open the base URL and log in with the bootstrapped operator username/password. Login creates an HTTP-only, strict-SameSite, revocable session cookie; credentials are not stored in browser local storage.
 
 For an explicitly approved isolated Windows lab listener:
 
@@ -217,7 +243,7 @@ Stop the local platform before executing artifact cleanup so the script does not
 ```bash
 ./scripts/validate-schema.sh
 ./scripts/platform.sh restart
-curl --silent --fail http://127.0.0.1:5081/health
+./scripts/platform.sh status
 ./scripts/smoke-test-server.sh
 ./scripts/smoke-test-web.sh
 ```
@@ -227,16 +253,16 @@ Endpoint-side cleanup is separate. Do not clear Windows Event Logs, delete endpo
 Manual equivalent:
 
 ```bash
-curl -k https://localhost:5001/api/v1/agents/register \
+curl http://127.0.0.1:5081/api/v1/agents/register \
   -H "X-Enrollment-Token: $Auth__EnrollmentToken" \
   -H 'Content-Type: application/json' \
   --data @examples/agent-registration.json
 
-curl -k https://localhost:5001/api/v1/ingest/events \
+curl http://127.0.0.1:5081/api/v1/ingest/events \
   -H "Authorization: Bearer <api-token-from-registration>" \
   -H 'Content-Type: application/json' \
   --data @examples/fake-event-batch.json
 
-curl -k 'https://localhost:5001/api/v1/events?windows_event_id=4625' \
+curl 'http://127.0.0.1:5081/api/v1/events?windows_event_id=4625' \
   -H "Authorization: Bearer $SIEM_OPERATOR_API_TOKEN"
 ```

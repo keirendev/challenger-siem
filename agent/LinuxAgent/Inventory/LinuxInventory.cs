@@ -62,9 +62,9 @@ public sealed class LinuxInventory(
         }
 
         snapshots.Add(Create("linux_packages", agentId, hostname, collectedAt,
-            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.DpkgPackages, LinuxInventoryOperation.RpmPackages)));
+            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.DpkgPackages, LinuxInventoryOperation.RpmPackages, LinuxInventoryOperation.PacmanPackages)));
         snapshots.Add(Create("linux_available_updates", agentId, hostname, collectedAt,
-            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.AptUpdates, LinuxInventoryOperation.DnfUpdates)));
+            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.AptUpdates, LinuxInventoryOperation.DnfUpdates, LinuxInventoryOperation.PacmanUpdates)));
         snapshots.Add(Create("linux_interfaces", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Interfaces, token, cancellationToken)));
         snapshots.Add(Create("linux_listeners", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Listeners, token, cancellationToken)));
         snapshots.Add(Create("linux_mounts", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Mounts, token, cancellationToken)));

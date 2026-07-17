@@ -27,8 +27,10 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.Units => ParseServices(source.Content, "unit"),
             LinuxInventoryOperation.Timers => ParseTimers(source.Content),
             LinuxInventoryOperation.DpkgPackages or LinuxInventoryOperation.RpmPackages => ParsePackages(source.Content),
+            LinuxInventoryOperation.PacmanPackages => ParsePacmanPackages(source.Content),
             LinuxInventoryOperation.AptUpdates => ParseAptUpdates(source.Content),
             LinuxInventoryOperation.DnfUpdates => ParseDnfUpdates(source.Content),
+            LinuxInventoryOperation.PacmanUpdates => ParsePacmanUpdates(source.Content),
             LinuxInventoryOperation.Interfaces => ParseInterfaces(source.Content),
             LinuxInventoryOperation.Listeners => ParseListeners(source.Content),
             LinuxInventoryOperation.Mounts => ParseMounts(source.Content),
@@ -46,7 +48,8 @@ public static class LinuxInventoryParsers
         if (parsed is null)
             return (InventorySourceState.Malformed, Array.Empty<InventoryItem>(), source.Truncated, "unsupported_parser");
         if (parsed.Count == 0 && operation is not LinuxInventoryOperation.DpkgPackages and not LinuxInventoryOperation.RpmPackages
-            and not LinuxInventoryOperation.AptUpdates and not LinuxInventoryOperation.DnfUpdates)
+            and not LinuxInventoryOperation.PacmanPackages and not LinuxInventoryOperation.AptUpdates
+            and not LinuxInventoryOperation.DnfUpdates and not LinuxInventoryOperation.PacmanUpdates)
             return (InventorySourceState.Malformed, Array.Empty<InventoryItem>(), source.Truncated, "malformed_output");
 
         var ordered = parsed.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.Identity, StringComparer.Ordinal).ToArray();
@@ -151,6 +154,22 @@ public static class LinuxInventoryParsers
         return items;
     }
 
+    private static IReadOnlyList<InventoryItem>? ParsePacmanPackages(string? content)
+    {
+        if (content is null) return null;
+        var items = new List<InventoryItem>();
+        foreach (var line in Lines(content))
+        {
+            var fields = SplitFields(line);
+            if (fields.Length != 2) continue;
+            var name = SafeToken(fields[0]);
+            var version = SafeToken(fields[1]);
+            if (name is not null && version is not null)
+                items.Add(Item("package", name, "installed", new Dictionary<string, string> { ["version"] = version }));
+        }
+        return items;
+    }
+
     private static IReadOnlyList<InventoryItem>? ParseAptUpdates(string? content)
     {
         if (content is null) return null;
@@ -182,6 +201,22 @@ public static class LinuxInventoryParsers
             if (separator <= 0 || !architectures.Contains(fields[0][(separator + 1)..])) continue;
             var name = SafeToken(fields[0][..separator]);
             var version = SafeToken(fields[1]);
+            if (name is not null && version is not null)
+                items.Add(Item("package_update", name, "available", new Dictionary<string, string> { ["version"] = version }));
+        }
+        return items;
+    }
+
+    private static IReadOnlyList<InventoryItem>? ParsePacmanUpdates(string? content)
+    {
+        if (content is null) return null;
+        var items = new List<InventoryItem>();
+        foreach (var line in Lines(content))
+        {
+            var fields = SplitFields(line);
+            if (fields.Length != 4 || fields[2] != "->") continue;
+            var name = SafeToken(fields[0]);
+            var version = SafeToken(fields[3]);
             if (name is not null && version is not null)
                 items.Add(Item("package_update", name, "available", new Dictionary<string, string> { ["version"] = version }));
         }

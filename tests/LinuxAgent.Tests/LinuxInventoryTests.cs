@@ -42,6 +42,40 @@ public sealed class LinuxInventoryTests
                 Assert.Empty(policy.ExecutablePaths);
             }
         }
+
+        var pacmanPackages = LinuxInventoryCatalog.Get(LinuxInventoryOperation.PacmanPackages);
+        Assert.Equal(new[] { "/usr/bin/pacman", "/bin/pacman" }, pacmanPackages.ExecutablePaths);
+        Assert.Equal(new[] { "-Q" }, pacmanPackages.Arguments);
+        var pacmanUpdates = LinuxInventoryCatalog.Get(LinuxInventoryOperation.PacmanUpdates);
+        Assert.Equal(new[] { "-Qu" }, pacmanUpdates.Arguments);
+        Assert.DoesNotContain(1, pacmanUpdates.AcceptedExitCodes);
+        Assert.Contains(1, pacmanUpdates.AcceptedSilentExitCodes!);
+        Assert.True(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 0, 0));
+        Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 0, 1));
+        Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 1, 0));
+    }
+
+    [Fact]
+    public async Task PacmanFallbackProducesBoundedPackageAndAvailableUpdateInventory()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.DpkgPackages, new(InventorySourceState.Unavailable, "command_missing"));
+        source.Set(LinuxInventoryOperation.PacmanPackages,
+            InventorySourceResult.Success("synthetic-package 1.2.3-1\nsynthetic-library 4.5.6-2\n"));
+        source.Set(LinuxInventoryOperation.AptUpdates, new(InventorySourceState.Unavailable, "command_missing"));
+        source.Set(LinuxInventoryOperation.PacmanUpdates,
+            InventorySourceResult.Success("synthetic-package 1.2.3-1 -> 1.2.4-1\n"));
+
+        var snapshots = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        var packages = snapshots.Single(item => item.SnapshotType == "linux_packages");
+        var updates = snapshots.Single(item => item.SnapshotType == "linux_available_updates");
+
+        Assert.Equal("success", packages.Summary["state"]);
+        Assert.Contains(packages.Items, item => item.Name == "synthetic-package" && item.Metadata["version"] == "1.2.3-1");
+        Assert.Contains(packages.Items, item => item.Name == "synthetic-library" && item.Metadata["version"] == "4.5.6-2");
+        Assert.Equal("1.2.4-1", Assert.Single(updates.Items).Metadata["version"]);
+        Assert.Contains(LinuxInventoryOperation.PacmanPackages, source.Calls);
+        Assert.Contains(LinuxInventoryOperation.PacmanUpdates, source.Calls);
     }
 
     [Fact]

@@ -19,8 +19,10 @@ public enum LinuxInventoryOperation
     Timers,
     DpkgPackages,
     RpmPackages,
+    PacmanPackages,
     AptUpdates,
     DnfUpdates,
+    PacmanUpdates,
     Interfaces,
     Listeners,
     Mounts,
@@ -70,7 +72,8 @@ public sealed record InventorySourcePolicy(
     string? FilePath,
     TimeSpan Timeout,
     int MaxOutputBytes,
-    IReadOnlySet<int> AcceptedExitCodes);
+    IReadOnlySet<int> AcceptedExitCodes,
+    IReadOnlySet<int>? AcceptedSilentExitCodes = null);
 
 public static class LinuxInventoryCatalog
 {
@@ -103,8 +106,14 @@ public static class LinuxInventoryCatalog
         Command(LinuxInventoryOperation.Timers, new[] { "/usr/bin/systemctl", "/bin/systemctl" }, new[] { "list-unit-files", "--type=timer", "--no-legend", "--no-pager" });
         Command(LinuxInventoryOperation.DpkgPackages, new[] { "/usr/bin/dpkg-query" }, new[] { "-W", "-f=${binary:Package}\t${Version}\n" });
         Command(LinuxInventoryOperation.RpmPackages, new[] { "/usr/bin/rpm", "/bin/rpm" }, new[] { "-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\n" });
+        Command(LinuxInventoryOperation.PacmanPackages, new[] { "/usr/bin/pacman", "/bin/pacman" }, new[] { "-Q" });
         Command(LinuxInventoryOperation.AptUpdates, new[] { "/usr/bin/apt", "/bin/apt" }, new[] { "list", "--upgradable" });
         Command(LinuxInventoryOperation.DnfUpdates, new[] { "/usr/bin/dnf", "/bin/dnf" }, new[] { "--cacheonly", "check-update", "--quiet" }, listing, 20, 0, 100);
+        Command(LinuxInventoryOperation.PacmanUpdates, new[] { "/usr/bin/pacman", "/bin/pacman" }, new[] { "-Qu" });
+        result[LinuxInventoryOperation.PacmanUpdates] = result[LinuxInventoryOperation.PacmanUpdates] with
+        {
+            AcceptedSilentExitCodes = new[] { 1 }.ToFrozenSet()
+        };
         Command(LinuxInventoryOperation.Interfaces, new[] { "/usr/sbin/ip", "/usr/bin/ip", "/sbin/ip" }, new[] { "-o", "link", "show" });
         Command(LinuxInventoryOperation.Listeners, new[] { "/usr/sbin/ss", "/usr/bin/ss", "/sbin/ss" }, new[] { "-H", "-lntu" });
         Command(LinuxInventoryOperation.Mounts, new[] { "/usr/bin/findmnt", "/bin/findmnt" }, new[] { "--raw", "--noheadings", "--output", "FSTYPE" });
@@ -204,7 +213,7 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         var output = await stdout;
         var errorOutput = await stderr;
         var truncated = output.Truncated || errorOutput.Truncated;
-        if (!policy.AcceptedExitCodes.Contains(process.ExitCode) && !truncated)
+        if (!IsAcceptedCommandCompletion(policy, process.ExitCode, output.Bytes.Length, errorOutput.Bytes.Length) && !truncated)
         {
             return ClassifyCommandFailure(policy.Operation, process.ExitCode, Encoding.UTF8.GetString(errorOutput.Bytes)) == InventorySourceState.PermissionDenied
                 ? new(InventorySourceState.PermissionDenied, "command_permission_denied")
@@ -212,6 +221,10 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         }
         return InventorySourceResult.Success(Encoding.UTF8.GetString(output.Bytes), truncated, exitCode: process.ExitCode);
     }
+
+    internal static bool IsAcceptedCommandCompletion(InventorySourcePolicy policy, int exitCode, int stdoutBytes, int stderrBytes) =>
+        policy.AcceptedExitCodes.Contains(exitCode)
+        || (policy.AcceptedSilentExitCodes?.Contains(exitCode) == true && stdoutBytes == 0 && stderrBytes == 0);
 
     private static async Task<(byte[] Bytes, bool Truncated)> ReadBoundedAsync(Stream stream, int maxBytes, Process process, CancellationToken cancellationToken)
     {

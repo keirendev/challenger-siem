@@ -4,6 +4,8 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source scripts/dev-endpoints.sh
 
 if [[ -f .local/dev.env ]]; then
   # shellcheck disable=SC1091
@@ -16,7 +18,7 @@ fi
 : "${SIEM_OPERATOR_USERNAME:?SIEM_OPERATOR_USERNAME is required}"
 : "${SIEM_OPERATOR_PASSWORD:?SIEM_OPERATOR_PASSWORD is required}"
 
-BASE_URL="${SIEM_WEB_SMOKE_BASE_URL:-http://127.0.0.1:5081}"
+BASE_URL="${SIEM_WEB_SMOKE_BASE_URL:-$SIEM_DEV_WEB_SMOKE_URL}"
 RUN_API="${SIEM_WEB_SMOKE_RUN_API:-1}"
 AGENT_ID="web-smoke-$(date +%s)-$$"
 HOSTNAME="WEB-SMOKE-HOST"

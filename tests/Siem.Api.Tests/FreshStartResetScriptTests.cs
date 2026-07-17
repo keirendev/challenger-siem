@@ -66,7 +66,9 @@ public sealed class FreshStartResetScriptTests(IntegrationTestDatabase database)
         Assert.Contains("artifact_secret_config_preserved=true", script, StringComparison.Ordinal);
         Assert.Contains("--include-generated-agent-files", script, StringComparison.Ordinal);
         Assert.Contains("--include-platform-logs", script, StringComparison.Ordinal);
-        Assert.Contains("Refusing local artifact cleanup while the local platform PID appears live", script, StringComparison.Ordinal);
+        Assert.Contains("platform_service_alive", script, StringComparison.Ordinal);
+        Assert.Contains("CHALLENGER_SIEM_PLATFORM_SYSTEMD_UNIT", script, StringComparison.Ordinal);
+        Assert.Contains("Refusing local artifact cleanup while the local platform appears live", script, StringComparison.Ordinal);
         Assert.Contains("database_target=local_disposable", script, StringComparison.Ordinal);
         Assert.Contains("preserved_detection_rules", script, StringComparison.Ordinal);
         Assert.DoesNotContain("glob(\".local/*\")", script, StringComparison.Ordinal);
