@@ -595,6 +595,120 @@ public sealed class LinuxL2CoverageTests
                 now));
     }
 
+    [Theory]
+    [InlineData("quiet")]
+    [InlineData("recent")]
+    [InlineData("partial_family")]
+    public void LoginSessionFreshnessUsesCurrentJournalObservationDuringQuietPeriods(string evidenceState)
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.LoginSession);
+        var lastEventTime = evidenceState switch
+        {
+            "recent" => now.Subtract(TimeSpan.FromMinutes(5)),
+            "partial_family" => now.Subtract(TimeSpan.FromDays(2)),
+            _ => (DateTimeOffset?)null
+        };
+        var report = Report(entry, now) with
+        {
+            LastEventTime = lastEventTime,
+            ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+            EventFamilyStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["login"] = evidenceState == "quiet"
+                    ? SourceEvidenceStatuses.NotObserved
+                    : SourceEvidenceStatuses.Observed,
+                ["session"] = evidenceState == "recent"
+                    ? SourceEvidenceStatuses.Observed
+                    : SourceEvidenceStatuses.NotObserved
+            }
+        };
+
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, report.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(report, now));
+        Assert.Equal(
+            evidenceState == "quiet" ? SourceEvidenceStatuses.NotObserved : SourceEvidenceStatuses.Observed,
+            report.EventFamilyStatuses!["login"]);
+        Assert.Equal(
+            evidenceState == "recent" ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            report.EventFamilyStatuses["session"]);
+    }
+
+    [Fact]
+    public void LoginSessionObservationExpiryAndVisibilityFailuresRemainFailClosed()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.LoginSession);
+        var report = Report(entry, now) with
+        {
+            LastEventTime = null,
+            ObservedAt = now,
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                family => family,
+                _ => SourceEvidenceStatuses.NotObserved,
+                StringComparer.Ordinal)
+        };
+
+        Assert.Equal(
+            SourceHealthStatuses.Stale,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew).AddSeconds(1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Missing,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    Status = SourceHealthStatuses.Missing,
+                    ErrorCode = "login_session_journal_unavailable",
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.Missing,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Key == "pam_or_logind_journal_visibility"
+                            ? SourceEvidenceStatuses.Degraded
+                            : pair.Value,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.PermissionDenied,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.PermissionDenied,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Error,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1),
+                    GapDetected = true
+                },
+                now));
+    }
+
     [Fact]
     public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
     {

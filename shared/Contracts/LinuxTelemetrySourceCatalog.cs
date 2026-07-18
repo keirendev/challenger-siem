@@ -50,7 +50,8 @@ public static class LinuxTelemetrySourceCatalog
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             LinuxTelemetrySourceIds.AgentLogTamper,
-            LinuxTelemetrySourceIds.KernelSecurity
+            LinuxTelemetrySourceIds.KernelSecurity,
+            LinuxTelemetrySourceIds.LoginSession
         };
 
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =
