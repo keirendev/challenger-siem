@@ -349,6 +349,103 @@ public sealed class LinuxL2CoverageTests
         }
     }
 
+    [Theory]
+    [InlineData("absent")]
+    [InlineData("old")]
+    [InlineData("recent")]
+    public void AgentLogTamperFreshnessUsesCurrentJournalObservationDuringQuietPeriods(string eventAge)
+    {
+        var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.AgentLogTamper);
+        var lastEventTime = eventAge switch
+        {
+            "old" => now.Subtract(TimeSpan.FromDays(2)),
+            "recent" => now.Subtract(TimeSpan.FromMinutes(5)),
+            _ => (DateTimeOffset?)null
+        };
+        var familyStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["agent_tamper"] = eventAge == "absent"
+                ? SourceEvidenceStatuses.NotObserved
+                : SourceEvidenceStatuses.Observed,
+            ["log_tamper"] = SourceEvidenceStatuses.NotObserved
+        };
+        var report = Report(entry, now) with
+        {
+            LastEventTime = lastEventTime,
+            ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+            EventFamilyStatuses = familyStatuses
+        };
+
+        Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(report, now));
+        Assert.Equal(
+            eventAge == "absent" ? SourceEvidenceStatuses.NotObserved : SourceEvidenceStatuses.Observed,
+            report.EventFamilyStatuses!["agent_tamper"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, report.EventFamilyStatuses["log_tamper"]);
+    }
+
+    [Fact]
+    public void AgentLogTamperObservationExpiryAndVisibilityFailuresRemainExplicit()
+    {
+        var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.AgentLogTamper);
+        var report = Report(entry, now) with
+        {
+            LastEventTime = null,
+            ObservedAt = now,
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                family => family,
+                _ => SourceEvidenceStatuses.NotObserved,
+                StringComparer.Ordinal)
+        };
+
+        Assert.Equal(
+            SourceHealthStatuses.Stale,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew).AddSeconds(1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Key == "systemd_journal_readable"
+                            ? SourceEvidenceStatuses.Degraded
+                            : pair.Value,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.PermissionDenied,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.PermissionDenied,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Error,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1),
+                    GapDetected = true
+                },
+                now));
+    }
+
     [Fact]
     public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
     {
@@ -602,6 +699,7 @@ public sealed class LinuxL2CoverageTests
             ApplicableRoles = entry.ApplicableRoles,
             Enabled = status is not SourceHealthStatuses.Unsupported and not SourceHealthStatuses.NotApplicable,
             LastEventTime = status == SourceHealthStatuses.Healthy ? now : null,
+            ObservedAt = status == SourceHealthStatuses.Healthy ? now : null,
             CollectedCheckpoint = entry.SourceKind == TelemetrySourceKinds.LinuxJournal
                 ? new SourceCheckpoint { Cursor = "s=synthetic;i=coverage", RecordedAt = now }
                 : null,

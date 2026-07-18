@@ -626,7 +626,7 @@ public sealed class TelemetryCoverageRepository(
         SourceHealthStatuses.Degraded when IsSourceThrottled(source) => "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
         SourceHealthStatuses.Degraded => "Source is degraded or applicability is uncertain; treat telemetry as partial.",
         SourceHealthStatuses.Error => "Collector error, gap, or clear condition requires safe diagnostics; do not clear logs from the console.",
-        _ when recentCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "Source reports a current successful bounded polling observation; no new event was required for readiness.",
+        _ when recentCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "Source reports a current successful bounded observation; no new event was required for readiness.",
         _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
         _ => "Recent source evidence is present."
     };
@@ -647,7 +647,7 @@ public sealed class TelemetryCoverageRepository(
             && recentCount == 0
             && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId))
         {
-            return "Source health is healthy and a current successful polling observation is available; the source was quiet in the lookback.";
+            return "Source health is healthy and a current successful source observation is available; the source was quiet in the lookback.";
         }
 
         if (string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase) && recentCount == 0)

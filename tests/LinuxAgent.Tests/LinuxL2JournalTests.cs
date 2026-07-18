@@ -333,6 +333,44 @@ public sealed class LinuxL2JournalTests
     }
 
     [Fact]
+    public async Task RuntimeUsesSuccessfulJournalObservationForQuietTamperFamilies()
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
+        var clock = new FixedTimeProvider(now);
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
+        await runtime.InitializeAsync("1.11.2-test", "synthetic-config", default);
+
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+        await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "session", normalizer, options), default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var absent = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.AgentLogTamper);
+        Assert.Equal(SourceHealthStatuses.Healthy, absent.Status);
+        Assert.Equal(now, absent.ObservedAt);
+        Assert.Null(absent.LastEventTime);
+        Assert.All(absent.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.Satisfied, value));
+        Assert.All(absent.EventFamilyStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.NotObserved, value));
+
+        var oldAgentEvent = NormalizeFixture(fixtures, "agent_tamper", normalizer, options);
+        await runtime.RecordCollectedAsync(oldAgentEvent, default);
+        var old = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.AgentLogTamper);
+        Assert.Equal(SourceHealthStatuses.Healthy, old.Status);
+        Assert.Equal(now, old.ObservedAt);
+        Assert.Equal(oldAgentEvent.Envelope.EventTime, old.LastEventTime);
+        Assert.Equal(SourceEvidenceStatuses.Observed, old.EventFamilyStatuses!["agent_tamper"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, old.EventFamilyStatuses["log_tamper"]);
+    }
+
+    [Fact]
     public void RepresentativeL2NormalizationBenchmarkIsBounded()
     {
         var fixtures = FixtureCases().Select(item => item.GetProperty("positive").GetRawText()).ToArray();
@@ -391,5 +429,10 @@ public sealed class LinuxL2JournalTests
         public TemporaryState() => Directory.CreateDirectory(root);
         public string Path => System.IO.Path.Combine(root, "state.json");
         public void Dispose() => Directory.Delete(root, true);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => value;
     }
 }

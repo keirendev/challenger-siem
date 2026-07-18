@@ -18,13 +18,21 @@ public static class SourceHealthRules
             .Select(source => source.SourceId))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    public static IReadOnlySet<string> TwoHourPollingSourceIds => LinuxPassivePollingSourceIds;
+    private static readonly IReadOnlySet<string> LinuxQuietJournalSourceIds =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            LinuxTelemetrySourceIds.AgentLogTamper
+        };
+
+    public static IReadOnlySet<string> TwoHourPollingSourceIds { get; } = LinuxPassivePollingSourceIds
+        .Concat(LinuxQuietJournalSourceIds)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public static IReadOnlySet<string> PerformanceSloSourceIds { get; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.AgentPerformanceSlo };
 
     public static bool IsSuccessfulPollingSource(string sourceId) =>
-        LinuxPassivePollingSourceIds.Contains(sourceId)
+        TwoHourPollingSourceIds.Contains(sourceId)
         || PerformanceSloSourceIds.Contains(sourceId);
 
     public static TimeSpan? PollingStaleAfter(string sourceId)
@@ -34,7 +42,7 @@ public static class SourceHealthRules
             return PerformanceSloStaleAfter;
         }
 
-        return LinuxPassivePollingSourceIds.Contains(sourceId) ? PassivePollingStaleAfter : null;
+        return TwoHourPollingSourceIds.Contains(sourceId) ? PassivePollingStaleAfter : null;
     }
 
     public static string EffectiveStatus(SourceHealthReport report, DateTimeOffset now)
@@ -60,6 +68,10 @@ public static class SourceHealthRules
         {
             return SourceHealthStatuses.Unsupported;
         }
+        if (report.GapDetected || report.ClearedDetected || report.BookmarkGapDetected)
+        {
+            return SourceHealthStatuses.Error;
+        }
         if (report.PrerequisiteStatuses?.Values.Any(value => value is SourceEvidenceStatuses.Missing or SourceEvidenceStatuses.Degraded) == true)
         {
             return SourceHealthStatuses.Degraded;
@@ -69,8 +81,9 @@ public static class SourceHealthRules
             return SourceHealthStatuses.Stale;
         }
 
-        // Snapshot-diff and metrics sources can scan successfully without emitting a new event.
-        // Their agent-reported scan observation, rather than event output, is the freshness signal.
+        // Snapshot-diff, metrics, and rare tamper-activity sources can be observed successfully
+        // without emitting a new event. Their agent-reported source observation, rather than
+        // production activity, is the freshness signal.
         var pollingStaleAfter = PollingStaleAfter(report.SourceId);
         if (pollingStaleAfter.HasValue
             && report.ObservedAt.HasValue
@@ -106,11 +119,6 @@ public static class SourceHealthRules
             && now - report.LastEventTime.Value.ToUniversalTime() > DefaultStaleAfter)
         {
             return SourceHealthStatuses.Stale;
-        }
-
-        if (report.GapDetected || report.ClearedDetected || report.BookmarkGapDetected)
-        {
-            return SourceHealthStatuses.Error;
         }
 
         return report.Status;

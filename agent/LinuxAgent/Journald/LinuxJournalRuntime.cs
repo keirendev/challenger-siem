@@ -481,8 +481,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ApplicableRoles = manifest.ApplicableRoles,
             Enabled = enabled,
             LastEventTime = sourceLatest,
-            ObservedAt = manifest.CoverageLevel == WindowsCoverageLevel.L4
-                && manifest.Requirement == SourceRequirementKinds.RoleSpecific
+            ObservedAt = manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
+                || (manifest.CoverageLevel == WindowsCoverageLevel.L4
+                    && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
                     ? lastSuccessfulReadAt
                     : now,
             CollectedCheckpoint = collected,
@@ -575,6 +576,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         if (status == SourceHealthStatuses.Healthy
             && manifest.CoverageLevel == WindowsCoverageLevel.L2
             && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
+            && manifest.SourceId != LinuxTelemetrySourceIds.AgentLogTamper
             && !observedSources.Contains(manifest.SourceId))
         {
             return SourceHealthStatuses.Degraded;
@@ -637,6 +639,23 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             if (prerequisite is "systemd_journal_available" or "systemd_journal_readable")
             {
                 values[prerequisite] = SystemVisibilityEvidence(enabled, effectiveStatus);
+                continue;
+            }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
+                && prerequisite == "journald_and_agent_unit_visibility")
+            {
+                values[prerequisite] = effectiveStatus switch
+                {
+                    SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
+                    SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
+                    SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+                    SourceHealthStatuses.Stale => SourceEvidenceStatuses.Stale,
+                    SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
+                    SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
+                    _ when !enabled => SourceEvidenceStatuses.Disabled,
+                    _ when lastSuccessfulReadAt.HasValue => SourceEvidenceStatuses.Satisfied,
+                    _ => SourceEvidenceStatuses.Unknown
+                };
                 continue;
             }
             values[prerequisite] = effectiveStatus switch
