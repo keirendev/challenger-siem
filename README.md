@@ -7,9 +7,6 @@
 
 Challenger SIEM is an open-source security telemetry pipeline under active development. It combines custom .NET endpoint agents, an ASP.NET Core ingestion and review server, PostgreSQL storage, and a server-hosted Razor web console. Windows is the most developed endpoint path; Linux collection is implemented in bounded tiers with higher-visibility sources kept behind explicit opt-in and approval gates.
 
-> [!WARNING]
-> Challenger SIEM is **not production-ready**. There is no supported production release, and the release-readiness checklist still requires real endpoint, database, browser, packaging, upgrade, and security-hardening evidence. Use it for development or controlled labs with synthetic data unless you have independently reviewed and accepted the risks.
-
 The current project version is `1.11.0`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
 
 ## Current state
@@ -68,75 +65,6 @@ Endpoint events are written to a durable local queue before delivery. The server
 - Destructive cleanup defaults to dry-run and requires explicit confirmation.
 - Public examples and tests use minimal synthetic data.
 
-These controls are foundations, not a claim of completed production hardening or independent security review.
-
-## Known limitations
-
-- The [release-readiness checklist](docs/release-readiness.md) is not complete, including real Windows and Linux endpoint evidence.
-- Linux L2-L4 rollout requires private canary/soak approval. Broader journal scope does not backfill records older than the durable cursor or turn absent package/sudo activity into evidence. L3 snapshot polling can miss short-lived processes and connections, and the new L4 path has not yet completed its first private Linux VM acceptance run.
-- Linux Audit Framework, eBPF, packet capture, DNS enrichment, process-to-socket attribution, and broad/live file-integrity monitoring are not implemented.
-- Optional Windows channels require host support and may require separately approved configuration. Sysmon is not assumed to be installed.
-- Detection content is deliberately small and prerequisite-aware; missing telemetry reduces confidence or suppresses rules.
-- Production identity-provider integration, signed packages, deployment automation, HA/scale qualification, and mature upgrade guidance are unfinished.
-- PostgreSQL 16+ is required, and the project currently provides no Docker or container deployment workflow.
-
-The [milestone status](docs/milestones.md) tracks the implemented baseline and current next themes without treating planned work as shipped functionality.
-
-## Evaluate locally
-
-Prerequisites:
-
-- .NET 8 SDK
-- PostgreSQL 16 or newer, including `psql`
-- Bash-compatible shell
-
-From a clean checkout, build and run the non-database validation first:
-
-```bash
-dotnet restore Challenger.Siem.sln
-./scripts/validate-repository-safety.sh
-dotnet build Challenger.Siem.sln --no-restore
-dotnet test Challenger.Siem.sln --no-restore --no-build
-./scripts/validate-contracts.sh
-```
-
-PostgreSQL-backed integration tests are opt-in and report a skip reason when no disposable test database is configured.
-
-For a local instance, create a private ignored `.local/dev.env` following the [development guide](docs/development.md), then apply and validate the schema:
-
-```bash
-./scripts/apply-schema.sh
-./scripts/validate-schema.sh
-
-read -rsp "Initial operator password: " SIEM_OPERATOR_PASSWORD
-export SIEM_OPERATOR_PASSWORD
-./scripts/operator-account.sh bootstrap --username local-admin --role admin
-unset SIEM_OPERATOR_PASSWORD
-
-./scripts/platform.sh start
-./scripts/platform.sh status
-```
-
-Open the `urls` value reported by `platform.sh status` and append `/login`. The unmanaged fallback is `http://127.0.0.1:5081`; an operator-configured persistent Linux-agent integration service uses the stable `https://127.0.0.1:5443` endpoint. The [operator guide](docs/operators.md) covers the full flow, and the synthetic API/web smoke tests write their temporary responses only beneath ignored `.local/` paths:
-
-```bash
-./scripts/smoke-test-server.sh
-./scripts/smoke-test-web.sh
-```
-
-Do not deploy an endpoint agent from the basic quickstart. Review the [Windows agent guide](docs/agent.md), [Linux agent guide](docs/linux-agent.md), applicable security design, and approval-gated validation runbook first.
-
-## Public repository safety
-
-Security telemetry is sensitive even when it does not look like a credential. Never commit or include in public issues or pull requests:
-
-- passwords, tokens, cookies, private keys, certificates with private material, connection strings, or real agent settings;
-- raw endpoint events, journal/Event Log exports, inventory, queue/state databases, captures, dumps, logs, or incident evidence;
-- screenshots, API responses, or test output containing real hosts, users, addresses, software, or customer/lab data;
-- ignored developer or operator-tooling state, local environment files, generated agent packages, or build/runtime artifacts.
-
-Use hand-authored synthetic fixtures and keep all live validation evidence in ignored local paths. Run `./scripts/validate-repository-safety.sh` before staging and again against the staged index. See the [contributor guide](docs/contributors.md) for the complete publication checklist.
-
 ## Repository layout
 
 ```text
@@ -165,12 +93,6 @@ Start with the [documentation index](docs/index.md). Useful entry points include
 - [API v1](docs/api.md), [schema](docs/schema.md), and [MCP](docs/mcp.md)
 - [Release readiness](docs/release-readiness.md), [release gates](docs/release-gates.md), and [versioning](docs/versioning.md)
 - [Dependencies and third-party licensing](docs/dependencies.md)
-
-## Contributing
-
-Contributions should be small, testable, safe for a public repository, and honest about validation status. Read the [contributor guide](docs/contributors.md) and [development guide](docs/development.md) before changing code, contracts, schemas, or endpoint behavior. Use synthetic fixtures only, preserve `/api/v1` compatibility unless deliberately introducing a new version, and document skipped validation with a reason.
-
-Current priorities and deferred work are listed in [milestone status](docs/milestones.md).
 
 ## License
 
