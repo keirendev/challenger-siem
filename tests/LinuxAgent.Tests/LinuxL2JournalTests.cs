@@ -50,6 +50,9 @@ public sealed class LinuxL2JournalTests
         var firewall = Assert.Single(LinuxTelemetrySourceCatalog.L2Security, item => item.SourceId == LinuxTelemetrySourceIds.Firewall);
         Assert.Equal(SourceRequirementKinds.Optional, firewall.Requirement);
         Assert.Equal(SourceApplicabilityStatuses.Unknown, firewall.Applicability);
+        Assert.Equal(
+            new[] { LinuxTelemetrySourceIds.AgentLogTamper, LinuxTelemetrySourceIds.KernelSecurity }.Order(StringComparer.Ordinal),
+            LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Order(StringComparer.Ordinal));
         Assert.Equal(SourceApplicabilityStatuses.Unsupported, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.Applicability);
         Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.SourceKind);
 
@@ -431,6 +434,68 @@ public sealed class LinuxL2JournalTests
         Assert.Equal(oldAgentEvent.Envelope.EventTime, old.LastEventTime);
         Assert.Equal(SourceEvidenceStatuses.Observed, old.EventFamilyStatuses!["agent_tamper"]);
         Assert.Equal(SourceEvidenceStatuses.NotObserved, old.EventFamilyStatuses["log_tamper"]);
+    }
+
+    [Fact]
+    public async Task RuntimeUsesSuccessfulJournalObservationForQuietKernelSecurityFamilies()
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var clock = new FixedTimeProvider(now);
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
+        await runtime.InitializeAsync("1.11.4-test", "synthetic-config", default);
+
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+        await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "session", normalizer, options), default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var quiet = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, quiet.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, quiet.Status);
+        Assert.Equal(now, quiet.ObservedAt);
+        Assert.Null(quiet.LastEventTime);
+        Assert.All(quiet.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.Satisfied, value));
+        Assert.All(quiet.EventFamilyStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.NotObserved, value));
+        Assert.Equal("successful_journal_read", quiet.Details!["freshness_basis"]);
+        Assert.Equal("independent_observation_state", quiet.Details["event_family_freshness"]);
+
+        var oldKernelModuleEvent = NormalizeFixture(fixtures, "kernel_module", normalizer, options);
+        await runtime.RecordCollectedAsync(oldKernelModuleEvent, default);
+        var partiallyObserved = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        Assert.Equal(SourceHealthStatuses.Healthy, partiallyObserved.Status);
+        Assert.Equal(now, partiallyObserved.ObservedAt);
+        Assert.Equal(oldKernelModuleEvent.Envelope.EventTime, partiallyObserved.LastEventTime);
+        Assert.Equal(SourceEvidenceStatuses.Observed, partiallyObserved.EventFamilyStatuses!["kernel_module"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, partiallyObserved.EventFamilyStatuses["kernel_security"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, partiallyObserved.EventFamilyStatuses["security_module"]);
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.Unavailable,
+            Array.Empty<string>(),
+            ErrorCode: "journal_unavailable"));
+        var unavailable = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        Assert.Equal(SourceHealthStatuses.Missing, unavailable.Status);
+        Assert.All(unavailable.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.Missing, value));
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.PermissionDenied,
+            Array.Empty<string>(),
+            ErrorCode: "journal_permission_denied"));
+        var denied = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        Assert.Equal(SourceHealthStatuses.PermissionDenied, denied.Status);
+        Assert.All(denied.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.PermissionDenied, value));
     }
 
     [Fact]

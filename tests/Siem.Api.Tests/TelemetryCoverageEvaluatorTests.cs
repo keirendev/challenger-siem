@@ -48,6 +48,28 @@ public sealed class TelemetryCoverageEvaluatorTests
     }
 
     [Fact]
+    public void QuietKernelObservationDoesNotReplaceRecentKernelEventEvidence()
+    {
+        var rule = Rule("synthetic.kernel-change", LinuxTelemetrySourceIds.KernelSecurity);
+        var source = Source(
+            LinuxTelemetrySourceIds.KernelSecurity,
+            TelemetrySourceKinds.LinuxJournal,
+            recentEventCount: 0,
+            observedAt: DateTimeOffset.Parse("2026-07-19T01:00:00Z"),
+            coverageLevel: WindowsCoverageLevel.L2);
+
+        var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
+            [rule],
+            [source],
+            new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
+            WindowsCoverageLevel.L2));
+
+        Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
+        Assert.Contains(LinuxTelemetrySourceIds.KernelSecurity, result.HealthySources);
+        Assert.Empty(result.RecentEventSources);
+    }
+
+    [Fact]
     public void HealthyAnyOfAlternativeDoesNotReportSiblingAlternativesAsMissing()
     {
         var rule = Rule(

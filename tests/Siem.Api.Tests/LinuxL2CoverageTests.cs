@@ -482,6 +482,119 @@ public sealed class LinuxL2CoverageTests
                 now));
     }
 
+    [Theory]
+    [InlineData("quiet")]
+    [InlineData("partial_old")]
+    [InlineData("partial_recent")]
+    public void KernelSecurityFreshnessUsesCurrentJournalObservationDuringQuietPeriods(string evidenceState)
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        var hasKernelModuleEvidence = evidenceState != "quiet";
+        var lastEventTime = evidenceState switch
+        {
+            "partial_old" => now.Subtract(TimeSpan.FromDays(2)),
+            "partial_recent" => now.Subtract(TimeSpan.FromMinutes(5)),
+            _ => (DateTimeOffset?)null
+        };
+        var report = Report(entry, now) with
+        {
+            LastEventTime = lastEventTime,
+            ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+            EventFamilyStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["kernel_security"] = SourceEvidenceStatuses.NotObserved,
+                ["security_module"] = SourceEvidenceStatuses.NotObserved,
+                ["kernel_module"] = hasKernelModuleEvidence
+                    ? SourceEvidenceStatuses.Observed
+                    : SourceEvidenceStatuses.NotObserved
+            }
+        };
+
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, report.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(report, now));
+        Assert.Equal(
+            hasKernelModuleEvidence ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            report.EventFamilyStatuses!["kernel_module"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, report.EventFamilyStatuses["kernel_security"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, report.EventFamilyStatuses["security_module"]);
+    }
+
+    [Fact]
+    public void KernelSecurityObservationExpiryAndVisibilityFailuresRemainFailClosed()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.KernelSecurity);
+        var report = Report(entry, now) with
+        {
+            LastEventTime = null,
+            ObservedAt = now,
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                family => family,
+                _ => SourceEvidenceStatuses.NotObserved,
+                StringComparer.Ordinal)
+        };
+
+        Assert.Equal(
+            SourceHealthStatuses.Stale,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew).AddSeconds(1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Missing,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    Status = SourceHealthStatuses.Missing,
+                    ErrorCode = "kernel_journal_unavailable",
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.Missing,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Key == "kernel_journal_visibility"
+                            ? SourceEvidenceStatuses.Degraded
+                            : pair.Value,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.PermissionDenied,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.PermissionDenied,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Error,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1),
+                    GapDetected = true
+                },
+                now));
+    }
+
     [Fact]
     public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
     {

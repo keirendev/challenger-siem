@@ -42,6 +42,17 @@ public static class LinuxTelemetrySourceCatalog
     public const string L4PosturePackId = "linux-l4-policy-posture";
     public const string L4RolePackId = "linux-l4-role-journal";
 
+    /// <summary>
+    /// Quiet event-driven rows whose source freshness follows the shared journal reader rather
+    /// than the age or presence of matching family activity.
+    /// </summary>
+    public static IReadOnlySet<string> SuccessfulJournalObservationSourceIds { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            LinuxTelemetrySourceIds.AgentLogTamper,
+            LinuxTelemetrySourceIds.KernelSecurity
+        };
+
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =
     [
         Entry(

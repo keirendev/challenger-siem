@@ -18,20 +18,23 @@ public static class SourceHealthRules
             .Select(source => source.SourceId))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly IReadOnlySet<string> LinuxQuietJournalSourceIds =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            LinuxTelemetrySourceIds.AgentLogTamper
-        };
-
     public static IReadOnlySet<string> TwoHourPollingSourceIds { get; } = LinuxPassivePollingSourceIds
-        .Concat(LinuxQuietJournalSourceIds)
+        .Concat(LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public static IReadOnlySet<string> PerformanceSloSourceIds { get; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.AgentPerformanceSlo };
 
+    private static readonly IReadOnlySet<string> SuccessfulDetectionObservationSourceIds =
+        LinuxPassivePollingSourceIds
+            .Append(LinuxTelemetrySourceIds.AgentLogTamper)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     public static bool IsSuccessfulPollingSource(string sourceId) =>
+        SuccessfulDetectionObservationSourceIds.Contains(sourceId)
+        || PerformanceSloSourceIds.Contains(sourceId);
+
+    public static bool UsesSuccessfulObservationFreshness(string sourceId) =>
         TwoHourPollingSourceIds.Contains(sourceId)
         || PerformanceSloSourceIds.Contains(sourceId);
 
@@ -81,9 +84,9 @@ public static class SourceHealthRules
             return SourceHealthStatuses.Stale;
         }
 
-        // Snapshot-diff, metrics, and rare tamper-activity sources can be observed successfully
-        // without emitting a new event. Their agent-reported source observation, rather than
-        // production activity, is the freshness signal.
+        // Snapshot-diff, metrics, and quiet event-driven journal sources can be observed
+        // successfully without emitting a new event. Their agent-reported source observation,
+        // rather than production activity, is the freshness signal.
         var pollingStaleAfter = PollingStaleAfter(report.SourceId);
         if (pollingStaleAfter.HasValue
             && report.ObservedAt.HasValue
@@ -106,7 +109,7 @@ public static class SourceHealthRules
             _ => report.Required
         };
         if (mandatory
-            && !IsSuccessfulPollingSource(report.SourceId)
+            && !UsesSuccessfulObservationFreshness(report.SourceId)
             && report.CoverageLevel >= WindowsCoverageLevel.L2
             && report.EventFamilyStatuses is { Count: > 0 }
             && report.EventFamilyStatuses.Values.All(value => value == SourceEvidenceStatuses.NotObserved))
@@ -114,7 +117,7 @@ public static class SourceHealthRules
             return SourceHealthStatuses.Degraded;
         }
         if (mandatory
-            && !IsSuccessfulPollingSource(report.SourceId)
+            && !UsesSuccessfulObservationFreshness(report.SourceId)
             && report.LastEventTime.HasValue
             && now - report.LastEventTime.Value.ToUniversalTime() > DefaultStaleAfter)
         {

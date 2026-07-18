@@ -506,6 +506,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 : "unverified";
             details["package_management_state"] = PackageManagementState();
         }
+        if (LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId))
+        {
+            details["freshness_basis"] = "successful_journal_read";
+            details["event_family_freshness"] = "independent_observation_state";
+        }
 
         return new SourceHealthReport
         {
@@ -525,7 +530,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ApplicableRoles = manifest.ApplicableRoles,
             Enabled = enabled,
             LastEventTime = sourceLatest,
-            ObservedAt = manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
+            ObservedAt = LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
                 || (manifest.CoverageLevel == WindowsCoverageLevel.L4
                     && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
                     ? lastSuccessfulReadAt
@@ -627,7 +632,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         if (status == SourceHealthStatuses.Healthy
             && manifest.CoverageLevel == WindowsCoverageLevel.L2
             && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
-            && manifest.SourceId != LinuxTelemetrySourceIds.AgentLogTamper
+            && !LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
             && !observedSources.Contains(manifest.SourceId))
         {
             return SourceHealthStatuses.Degraded;
@@ -707,18 +712,13 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             if (manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
                 && prerequisite == "journald_and_agent_unit_visibility")
             {
-                values[prerequisite] = effectiveStatus switch
-                {
-                    SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
-                    SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
-                    SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
-                    SourceHealthStatuses.Stale => SourceEvidenceStatuses.Stale,
-                    SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
-                    SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
-                    _ when !enabled => SourceEvidenceStatuses.Disabled,
-                    _ when lastSuccessfulReadAt.HasValue => SourceEvidenceStatuses.Satisfied,
-                    _ => SourceEvidenceStatuses.Unknown
-                };
+                values[prerequisite] = SuccessfulJournalObservationPrerequisiteEvidence(enabled, effectiveStatus);
+                continue;
+            }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.KernelSecurity
+                && prerequisite == "kernel_journal_visibility")
+            {
+                values[prerequisite] = SuccessfulJournalObservationPrerequisiteEvidence(enabled, effectiveStatus);
                 continue;
             }
             values[prerequisite] = effectiveStatus switch
@@ -739,6 +739,20 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         }
         return values;
     }
+
+    private string SuccessfulJournalObservationPrerequisiteEvidence(bool enabled, string effectiveStatus) =>
+        effectiveStatus switch
+        {
+            SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
+            SourceHealthStatuses.NotApplicable => SourceEvidenceStatuses.NotApplicable,
+            SourceHealthStatuses.PermissionDenied => SourceEvidenceStatuses.PermissionDenied,
+            SourceHealthStatuses.Stale => SourceEvidenceStatuses.Stale,
+            SourceHealthStatuses.Error => SourceEvidenceStatuses.Degraded,
+            SourceHealthStatuses.Missing => SourceEvidenceStatuses.Missing,
+            _ when !enabled => SourceEvidenceStatuses.Disabled,
+            _ when lastSuccessfulReadAt.HasValue => SourceEvidenceStatuses.Satisfied,
+            _ => SourceEvidenceStatuses.Unknown
+        };
 
     private string PackageManagementPrerequisiteEvidence(bool enabled, string effectiveStatus)
     {
