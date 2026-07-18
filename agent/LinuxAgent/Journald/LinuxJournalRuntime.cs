@@ -721,6 +721,12 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 values[prerequisite] = SuccessfulJournalObservationPrerequisiteEvidence(enabled, effectiveStatus);
                 continue;
             }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.LoginSession
+                && prerequisite == "pam_or_logind_journal_visibility")
+            {
+                values[prerequisite] = SuccessfulJournalObservationPrerequisiteEvidence(enabled, effectiveStatus);
+                continue;
+            }
             values[prerequisite] = effectiveStatus switch
             {
                 SourceHealthStatuses.Unsupported => SourceEvidenceStatuses.Unsupported,
