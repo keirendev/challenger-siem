@@ -71,6 +71,8 @@ public sealed class LinuxInventoryTests
         var updates = snapshots.Single(item => item.SnapshotType == "linux_available_updates");
 
         Assert.Equal("success", packages.Summary["state"]);
+        Assert.Equal("supported", packages.Summary[LinuxPackageManagementInventoryEvidence.StateKey]);
+        Assert.Equal("pacman", packages.Summary[LinuxPackageManagementInventoryEvidence.ProducerKey]);
         Assert.Contains(packages.Items, item => item.Name == "synthetic-package" && item.Metadata["version"] == "1.2.3-1");
         Assert.Contains(packages.Items, item => item.Name == "synthetic-library" && item.Metadata["version"] == "4.5.6-2");
         Assert.Equal("1.2.4-1", Assert.Single(updates.Items).Metadata["version"]);
@@ -128,6 +130,9 @@ public sealed class LinuxInventoryTests
         };
         Assert.Equal(expected, snapshots.Select(snapshot => snapshot.SnapshotType));
         Assert.All(snapshots, snapshot => Assert.Equal("success", snapshot.Summary["state"]));
+        var packages = Assert.Single(snapshots, snapshot => snapshot.SnapshotType == "linux_packages");
+        Assert.Equal("supported", packages.Summary[LinuxPackageManagementInventoryEvidence.StateKey]);
+        Assert.Equal("dpkg", packages.Summary[LinuxPackageManagementInventoryEvidence.ProducerKey]);
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_users").Items, item => item.Name == "synthetic-user" && item.Metadata["uid"] == "1001");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_services").Items, item => item.Name == "synthetic-api.service" && item.Status == "active");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_units").Items, item => item.Name == "synthetic-failed.service" && item.Status == "failed");

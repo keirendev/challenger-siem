@@ -58,6 +58,7 @@ builder.Services.AddHttpClient<SiemIngestClient>((services, client) =>
 builder.Services.AddSingleton<LinuxEnrollmentService>();
 builder.Services.AddSingleton<LinuxJournalRuntime>();
 builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxJournalRuntime>());
+builder.Services.AddSingleton<ILinuxInventoryObserver>(services => services.GetRequiredService<LinuxJournalRuntime>());
 builder.Services.AddSingleton<LinuxSelfIntegrityStateStore>(services => new LinuxSelfIntegrityStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.SelfIntegrity.StatePath));
 builder.Services.AddSingleton<LinuxSelfIntegrityRuntime>();
 builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxSelfIntegrityRuntime>());

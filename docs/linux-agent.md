@@ -28,7 +28,7 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 | `linux-ssh` | L2 | role-specific | SSH authentication/session | applicable for declared `ssh_server`/`bastion`, not applicable for other declared roles, unknown when no role is declared |
 | `linux-sudo-su` | L2 | mandatory | `sudo`, `su` | applicable when L2 is selected |
 | `linux-cron-timers` | L2 | mandatory | cron, systemd timers | applicable when L2 is selected |
-| `linux-package-management` | L2 | mandatory | install, update, remove | applicable when L2 is selected |
+| `linux-package-management` | L2 | mandatory when supported | install, update, remove | applicability comes from bounded dpkg/rpm/pacman inventory or a matching record; quiet supported producers remain degraded until journal visibility is proved |
 | `linux-firewall` | L2 | optional | allow/deny/policy change | unknown until already-enabled firewall journal evidence is observed |
 | `linux-kernel-security` | L2 | mandatory | kernel security, security modules, kernel modules | applicable when L2 is selected |
 | `linux-service-change` | L2 | mandatory | service start/stop/reload/failure | applicable when L2 is selected |
@@ -48,6 +48,8 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 | `linux-role-identity` | L4 | role-specific | structured identity-service journal family | applicable to declared `identity_server` |
 
 Every manifest includes platform/source kind/namespace, coverage level, checkpoint kind, `mandatory`/`optional`/`role_specific` requirement, applicable roles, prerequisites, event families, validation scenarios, parser/source-pack identity, privacy level, and applicability/reason. Corresponding health includes bounded prerequisite and event-family state maps.
+
+The exact package producer matrix and supported, quiet, unsupported, missing, and malformed state transitions are documented in [Linux package-management evidence](linux-package-management-evidence.md). Inventory resolves whether an in-scope package backend exists; it does not turn event absence into proof of journal visibility.
 
 ## Passive L3 process, network, and behaviour pack
 

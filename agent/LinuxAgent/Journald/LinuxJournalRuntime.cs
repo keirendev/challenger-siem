@@ -1,6 +1,7 @@
 using System.Globalization;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.L4;
 using Challenger.Siem.LinuxAgent.State;
@@ -8,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Journal;
 
-public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, LinuxStateStore state, TimeProvider timeProvider) : ILinuxAcknowledgementObserver
+public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, LinuxStateStore state, TimeProvider timeProvider) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
 {
     private static readonly IReadOnlySet<string> AcknowledgedSourceIds = LinuxTelemetrySourceCatalog.All
         .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
@@ -46,6 +47,10 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     private SystemJournalVisibility systemJournalVisibility = SystemJournalVisibility.Unknown;
     private string scopeTransition = "steady";
     private bool clearObservedEvidenceOnScopeApply;
+    private LinuxPackageManagementInventoryEvidence packageManagementInventory = new(
+        LinuxPackageManagementInventoryStates.Unknown,
+        "unknown",
+        "package_manager_inventory_not_observed");
 
     public async Task InitializeAsync(string sourceVersion, string sourceConfigHash, CancellationToken cancellationToken)
     {
@@ -216,6 +221,14 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     }
 
     public bool HandlesSource(string? sourceId) => sourceId is not null && AcknowledgedSourceIds.Contains(sourceId);
+
+    public Task ObserveInventoryAsync(IReadOnlyList<AssetInventorySnapshot> snapshots, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var evidence = LinuxPackageManagementInventoryEvidence.FromSnapshots(snapshots);
+        lock (sync) packageManagementInventory = evidence;
+        return Task.CompletedTask;
+    }
 
     public void RecordAcknowledgementFailure(IReadOnlyCollection<EventEnvelope> events)
     {
@@ -434,6 +447,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                     targetLevel,
                     options.Journal.DeclaredRoles,
                     observedSources)
+                .Select(ResolveInventoryApplicability)
                 .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
                 .ToArray();
             var health = manifest.Select(BuildHealth).ToArray();
@@ -462,6 +476,36 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         var isJournalSource = manifest.SourceKind == TelemetrySourceKinds.LinuxJournal;
         var collected = isJournalSource ? Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime) : null;
         var acknowledged = isJournalSource ? Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime) : null;
+
+        var details = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["collector_state"] = sourceState,
+            ["gap_state"] = gapState,
+            ["rotation_state"] = gapState == "rotation" ? "gap" : "cursor_continuity_or_unknown",
+            ["vacuum_state"] = gapState == "vacuum" ? "gap" : gapState == "invalid_cursor" ? "possible_gap" : "no_gap_observed",
+            ["permission_state"] = permissionDenied ? "denied" : "allowed_or_unknown",
+            ["throttle_state"] = throttled ? "active" : "inactive",
+            ["duplicate_records"] = duplicateCount.ToString(CultureInfo.InvariantCulture),
+            ["reordered_records"] = reorderedCount.ToString(CultureInfo.InvariantCulture),
+            ["malformed_records"] = malformedCount.ToString(CultureInfo.InvariantCulture),
+            ["binary_or_invalid_text_records"] = binaryOrInvalidTextCount.ToString(CultureInfo.InvariantCulture),
+            ["configuration_state"] = enabled ? "enabled" : "disabled",
+            ["configured_coverage_level"] = options.Journal.TargetCoverageLevel.ToString(),
+            ["configured_journal_scope"] = LinuxJournalScopes.Configured(options.Journal),
+            ["system_journal_visibility"] = VisibilityDetail(systemJournalVisibility),
+            ["scope_transition"] = scopeTransition,
+            ["collector_version"] = version
+        };
+        if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement)
+        {
+            details["package_manager_inventory_state"] = packageManagementInventory.State;
+            details["package_manager_producer"] = packageManagementInventory.Producer;
+            details["package_manager_inventory_reason"] = packageManagementInventory.Reason;
+            details["package_manager_journal_visibility"] = observedSources.Contains(manifest.SourceId)
+                ? "observed"
+                : "unverified";
+            details["package_management_state"] = PackageManagementState();
+        }
 
         return new SourceHealthReport
         {
@@ -506,26 +550,33 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             SourceVersion = version,
             PrerequisiteStatuses = BuildPrerequisiteStatuses(manifest, enabled, effectiveStatus),
             EventFamilyStatuses = BuildEventFamilyStatuses(manifest, enabled, effectiveStatus),
-            Details = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["collector_state"] = sourceState,
-                ["gap_state"] = gapState,
-                ["rotation_state"] = gapState == "rotation" ? "gap" : "cursor_continuity_or_unknown",
-                ["vacuum_state"] = gapState == "vacuum" ? "gap" : gapState == "invalid_cursor" ? "possible_gap" : "no_gap_observed",
-                ["permission_state"] = permissionDenied ? "denied" : "allowed_or_unknown",
-                ["throttle_state"] = throttled ? "active" : "inactive",
-                ["duplicate_records"] = duplicateCount.ToString(CultureInfo.InvariantCulture),
-                ["reordered_records"] = reorderedCount.ToString(CultureInfo.InvariantCulture),
-                ["malformed_records"] = malformedCount.ToString(CultureInfo.InvariantCulture),
-                ["binary_or_invalid_text_records"] = binaryOrInvalidTextCount.ToString(CultureInfo.InvariantCulture),
-                ["configuration_state"] = enabled ? "enabled" : "disabled",
-                ["configured_coverage_level"] = options.Journal.TargetCoverageLevel.ToString(),
-                ["configured_journal_scope"] = LinuxJournalScopes.Configured(options.Journal),
-                ["system_journal_visibility"] = VisibilityDetail(systemJournalVisibility),
-                ["scope_transition"] = scopeTransition,
-                ["collector_version"] = version
-            }
+            Details = details
         };
+    }
+
+    private SourceManifestEntry ResolveInventoryApplicability(SourceManifestEntry manifest)
+    {
+        if (manifest.SourceId != LinuxTelemetrySourceIds.PackageManagement
+            || observedSources.Contains(manifest.SourceId))
+        {
+            return manifest;
+        }
+
+        return manifest with
+        {
+            Applicability = packageManagementInventory.Applicability,
+            ApplicabilityReason = packageManagementInventory.Applicability == SourceApplicabilityStatuses.Applicable
+                ? null
+                : packageManagementInventory.Reason
+        };
+    }
+
+    private string PackageManagementState()
+    {
+        if (observedSources.Contains(LinuxTelemetrySourceIds.PackageManagement)) return "supported_observed";
+        return packageManagementInventory.State == LinuxPackageManagementInventoryStates.Supported
+            ? "supported_quiet_visibility_unverified"
+            : packageManagementInventory.State;
     }
 
     private decimal? EventRatePerMinute(DateTimeOffset now)
@@ -596,6 +647,12 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         }
         if (effectiveStatus == SourceHealthStatuses.Degraded)
         {
+            if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement
+                && packageManagementInventory.State == LinuxPackageManagementInventoryStates.Supported
+                && !observedSources.Contains(manifest.SourceId))
+            {
+                return "package_manager_journal_visibility_unverified";
+            }
             return manifest.Applicability == SourceApplicabilityStatuses.Unknown
                 ? manifest.ApplicabilityReason ?? "source_applicability_unknown"
                 : "source_event_family_not_observed";
@@ -641,6 +698,12 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 values[prerequisite] = SystemVisibilityEvidence(enabled, effectiveStatus);
                 continue;
             }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement
+                && prerequisite == "package_manager_journal_visibility")
+            {
+                values[prerequisite] = PackageManagementPrerequisiteEvidence(enabled, effectiveStatus);
+                continue;
+            }
             if (manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
                 && prerequisite == "journald_and_agent_unit_visibility")
             {
@@ -675,6 +738,19 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             };
         }
         return values;
+    }
+
+    private string PackageManagementPrerequisiteEvidence(bool enabled, string effectiveStatus)
+    {
+        if (effectiveStatus == SourceHealthStatuses.Unsupported) return SourceEvidenceStatuses.Unsupported;
+        if (effectiveStatus == SourceHealthStatuses.NotApplicable) return SourceEvidenceStatuses.NotApplicable;
+        if (!enabled || effectiveStatus == SourceHealthStatuses.Disabled) return SourceEvidenceStatuses.Disabled;
+        if (effectiveStatus == SourceHealthStatuses.PermissionDenied) return SourceEvidenceStatuses.PermissionDenied;
+        if (effectiveStatus == SourceHealthStatuses.Stale) return SourceEvidenceStatuses.Stale;
+        if (effectiveStatus == SourceHealthStatuses.Missing) return SourceEvidenceStatuses.Missing;
+        if (gap || throttled || status == SourceHealthStatuses.Error) return SourceEvidenceStatuses.Degraded;
+        if (observedSources.Contains(LinuxTelemetrySourceIds.PackageManagement)) return SourceEvidenceStatuses.Satisfied;
+        return packageManagementInventory.PrerequisiteStatus;
     }
 
     private string SystemVisibilityEvidence(bool enabled, string effectiveStatus)

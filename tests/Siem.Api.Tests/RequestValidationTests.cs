@@ -244,6 +244,88 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
+    public void ValidateHeartbeatAcceptsInventoryResolvedUnsupportedPackageProducer()
+    {
+        var manifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry =>
+            entry.SourceId == LinuxTelemetrySourceIds.PackageManagement) with
+        {
+            Applicability = SourceApplicabilityStatuses.Unsupported,
+            ApplicabilityReason = "package_manager_producer_out_of_scope"
+        };
+        var heartbeat = CreateLinuxHeartbeat() with
+        {
+            SourceManifest = [manifest],
+            SourceHealth =
+            [
+                new SourceHealthReport
+                {
+                    SourceId = manifest.SourceId,
+                    Platform = manifest.Platform,
+                    SourceKind = manifest.SourceKind,
+                    SourceNamespace = manifest.SourceNamespace,
+                    Applicability = manifest.Applicability,
+                    ApplicabilityReason = manifest.ApplicabilityReason,
+                    DisplayName = manifest.DisplayName,
+                    CoverageLevel = manifest.CoverageLevel,
+                    Status = SourceHealthStatuses.Unsupported,
+                    Required = manifest.Required,
+                    Requirement = manifest.Requirement,
+                    ApplicableRoles = manifest.ApplicableRoles,
+                    Enabled = false,
+                    ObservedAt = DateTimeOffset.Parse("2026-07-11T12:00:01Z"),
+                    PrerequisiteStatuses = manifest.Prerequisites.ToDictionary(
+                        item => item,
+                        _ => SourceEvidenceStatuses.Unsupported,
+                        StringComparer.Ordinal),
+                    EventFamilyStatuses = manifest.EventFamilies.ToDictionary(
+                        item => item,
+                        _ => SourceEvidenceStatuses.Unsupported,
+                        StringComparer.Ordinal),
+                    EventRatePerMinute = 0,
+                    GapCount = 0,
+                    TransitionState = HealthTransitionStates.Degraded,
+                    TransitionedAt = DateTimeOffset.Parse("2026-07-11T12:00:01Z"),
+                    DroppedEvents = 0,
+                    PoisonEvents = 0
+                }
+            ]
+        };
+
+        var errors = RequestValidation.ValidateHeartbeat(heartbeat);
+
+        Assert.Empty(errors);
+
+        var notApplicableManifest = manifest with
+        {
+            Applicability = SourceApplicabilityStatuses.NotApplicable,
+            ApplicabilityReason = "synthetic_not_applicable"
+        };
+        var notApplicableHealth = heartbeat.SourceHealth.Single() with
+        {
+            Applicability = notApplicableManifest.Applicability,
+            ApplicabilityReason = notApplicableManifest.ApplicabilityReason,
+            Status = SourceHealthStatuses.NotApplicable,
+            PrerequisiteStatuses = notApplicableManifest.Prerequisites.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.NotApplicable,
+                StringComparer.Ordinal),
+            EventFamilyStatuses = notApplicableManifest.EventFamilies.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.NotApplicable,
+                StringComparer.Ordinal)
+        };
+        var invalid = heartbeat with
+        {
+            SourceManifest = [notApplicableManifest],
+            SourceHealth = [notApplicableHealth]
+        };
+
+        var invalidErrors = RequestValidation.ValidateHeartbeat(invalid);
+
+        Assert.Contains("source_health[0].applicability", invalidErrors.Keys);
+    }
+
+    [Fact]
     public void ValidateRegistrationRequiresAgentIdentity()
     {
         var request = new AgentRegistrationRequest

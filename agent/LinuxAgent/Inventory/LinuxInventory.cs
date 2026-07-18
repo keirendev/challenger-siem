@@ -42,14 +42,14 @@ public sealed class LinuxInventory(
         var init = await ReadAsync(LinuxInventoryOperation.InitSystem, token, cancellationToken, parse: false);
         if (init.Source.State == InventorySourceState.Success && LinuxInventoryParsers.IsNonSystemd(init.Source))
         {
-            var notApplicable = new Parsed(InventorySourceState.NotApplicable, Array.Empty<InventoryItem>(), false, "non_systemd", init.Source);
+            var notApplicable = new Parsed(init.Operation, InventorySourceState.NotApplicable, Array.Empty<InventoryItem>(), false, "non_systemd", init.Source);
             snapshots.Add(Create("linux_services", agentId, hostname, collectedAt, notApplicable));
             snapshots.Add(Create("linux_units", agentId, hostname, collectedAt, notApplicable));
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, notApplicable));
         }
         else if (init.Source.State != InventorySourceState.Success)
         {
-            var unavailable = new Parsed(init.Source.State, Array.Empty<InventoryItem>(), init.Source.Truncated, init.Source.ErrorCode, init.Source);
+            var unavailable = new Parsed(init.Operation, init.Source.State, Array.Empty<InventoryItem>(), init.Source.Truncated, init.Source.ErrorCode, init.Source);
             snapshots.Add(Create("linux_services", agentId, hostname, collectedAt, unavailable));
             snapshots.Add(Create("linux_units", agentId, hostname, collectedAt, unavailable));
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, unavailable));
@@ -61,8 +61,20 @@ public sealed class LinuxInventory(
             snapshots.Add(Create("linux_timers", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Timers, token, cancellationToken)));
         }
 
-        snapshots.Add(Create("linux_packages", agentId, hostname, collectedAt,
-            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.DpkgPackages, LinuxInventoryOperation.RpmPackages, LinuxInventoryOperation.PacmanPackages)));
+        var packageInventory = await ReadPreferredWithAttemptsAsync(
+            token,
+            cancellationToken,
+            LinuxInventoryOperation.DpkgPackages,
+            LinuxInventoryOperation.RpmPackages,
+            LinuxInventoryOperation.PacmanPackages);
+        var packageEvidence = LinuxPackageManagementInventoryEvidence.Evaluate(
+            DistributionId(os),
+            packageInventory.Attempts.Select(item => new LinuxPackageManagerInventoryProbe(
+                PackageProducer(item.Operation),
+                item.State,
+                item.ErrorCode)).ToArray());
+        var packageSnapshot = Create("linux_packages", agentId, hostname, collectedAt, packageInventory.Selected);
+        snapshots.Add(packageSnapshot with { Summary = packageEvidence.AddTo(packageSnapshot.Summary) });
         snapshots.Add(Create("linux_available_updates", agentId, hostname, collectedAt,
             await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.AptUpdates, LinuxInventoryOperation.DnfUpdates, LinuxInventoryOperation.PacmanUpdates)));
         snapshots.Add(Create("linux_interfaces", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Interfaces, token, cancellationToken)));
@@ -88,17 +100,25 @@ public sealed class LinuxInventory(
     public int SerializedSize(string agentId, DateTimeOffset sentAt, IReadOnlyList<AssetInventorySnapshot> snapshots) =>
         JsonSerializer.SerializeToUtf8Bytes(new AssetInventoryBatchRequest { AgentId = agentId, SentAt = sentAt, Snapshots = snapshots }).Length;
 
-    private async Task<Parsed> ReadPreferredAsync(CancellationToken token, CancellationToken caller, params LinuxInventoryOperation[] operations)
+    private async Task<Parsed> ReadPreferredAsync(CancellationToken token, CancellationToken caller, params LinuxInventoryOperation[] operations) =>
+        (await ReadPreferredWithAttemptsAsync(token, caller, operations)).Selected;
+
+    private async Task<PreferredRead> ReadPreferredWithAttemptsAsync(
+        CancellationToken token,
+        CancellationToken caller,
+        params LinuxInventoryOperation[] operations)
     {
         Parsed? strongest = null;
+        var attempts = new List<Parsed>(operations.Length);
         foreach (var operation in operations)
         {
             var result = await ReadAsync(operation, token, caller);
-            if (result.State == InventorySourceState.Success) return result;
-            if (result.State == InventorySourceState.Malformed && result.ErrorCode != "file_not_regular") return result;
+            attempts.Add(result);
+            if (result.State == InventorySourceState.Success) return new(result, attempts);
+            if (result.State == InventorySourceState.Malformed && result.ErrorCode != "file_not_regular") return new(result, attempts);
             if (strongest is null || StatePriority(result.State) > StatePriority(strongest.State)) strongest = result;
         }
-        return strongest!;
+        return new(strongest!, attempts);
     }
 
     private async Task<Parsed> ReadAsync(LinuxInventoryOperation operation, CancellationToken token, CancellationToken caller, bool parse = true)
@@ -109,9 +129,9 @@ public sealed class LinuxInventory(
         {
             result = new(InventorySourceState.Timeout, "collection_deadline");
         }
-        if (!parse) return new(result.State, Array.Empty<InventoryItem>(), result.Truncated, result.ErrorCode, result);
+        if (!parse) return new(operation, result.State, Array.Empty<InventoryItem>(), result.Truncated, result.ErrorCode, result);
         var parsed = LinuxInventoryParsers.Parse(operation, result);
-        return new(parsed.State, parsed.Items, parsed.Truncated, parsed.ErrorCode, result);
+        return new(operation, parsed.State, parsed.Items, parsed.Truncated, parsed.ErrorCode, result);
     }
 
     private static AssetInventorySnapshot Create(string type, string agentId, string hostname, DateTimeOffset collectedAt, Parsed parsed)
@@ -193,5 +213,24 @@ public sealed class LinuxInventory(
         _ => throw new ArgumentOutOfRangeException(nameof(state))
     };
 
-    private sealed record Parsed(InventorySourceState State, IReadOnlyList<InventoryItem> Items, bool Truncated, string ErrorCode, InventorySourceResult Source);
+    private static string? DistributionId(Parsed os) => os.Items
+        .FirstOrDefault(item => item.Kind == "operating_system")?
+        .Metadata.GetValueOrDefault("distribution_id");
+
+    private static string PackageProducer(LinuxInventoryOperation operation) => operation switch
+    {
+        LinuxInventoryOperation.DpkgPackages => "dpkg",
+        LinuxInventoryOperation.RpmPackages => "rpm",
+        LinuxInventoryOperation.PacmanPackages => "pacman",
+        _ => "unknown"
+    };
+
+    private sealed record PreferredRead(Parsed Selected, IReadOnlyList<Parsed> Attempts);
+    private sealed record Parsed(
+        LinuxInventoryOperation Operation,
+        InventorySourceState State,
+        IReadOnlyList<InventoryItem> Items,
+        bool Truncated,
+        string ErrorCode,
+        InventorySourceResult Source);
 }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Challenger.Siem.Contracts.V1;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
@@ -333,6 +334,68 @@ public sealed class LinuxL2JournalTests
     }
 
     [Fact]
+    public async Task PackageManagementInventoryAndJournalEvidenceStatesAreDeterministic()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory,
+            "fixtures",
+            "synthetic-linux-package-management-evidence-cases.json")));
+        var packageFixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+
+        foreach (var fixture in document.RootElement.EnumerateArray())
+        {
+            var expected = fixture.GetProperty("expected");
+            var probes = fixture.GetProperty("probes").EnumerateArray()
+                .Select(probe => new LinuxPackageManagerInventoryProbe(
+                    probe.GetProperty("producer").GetString()!,
+                    InventoryState(probe.GetProperty("state").GetString()!),
+                    probe.GetProperty("error_code").GetString()!))
+                .ToArray();
+            var evidence = LinuxPackageManagementInventoryEvidence.Evaluate(
+                fixture.GetProperty("distribution_id").GetString(),
+                probes);
+            Assert.Equal(expected.GetProperty("inventory_state").GetString(), evidence.State);
+            Assert.Equal(expected.GetProperty("producer").GetString(), evidence.Producer);
+
+            using var temporary = new TemporaryState();
+            var options = TestOptions(WindowsCoverageLevel.L2);
+            options.State.Path = temporary.Path;
+            var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
+            await runtime.InitializeAsync("1.11.3-test", "synthetic-config", default);
+            runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, ["synthetic-journal-record"]));
+            var summary = evidence.AddTo(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["state"] = "success",
+                ["error_code"] = "none",
+                ["item_count"] = "0",
+                ["truncated"] = "false"
+            });
+            await runtime.ObserveInventoryAsync(
+                [new AssetInventorySnapshot { SnapshotType = LinuxPackageManagementInventoryEvidence.SnapshotType, Summary = summary }],
+                default);
+
+            foreach (var family in fixture.GetProperty("observed_families").EnumerateArray().Select(item => item.GetString()!))
+            {
+                await runtime.RecordCollectedAsync(NormalizeFixture(packageFixtures, family, normalizer, options), default);
+            }
+
+            var health = Assert.Single(runtime.Snapshot().Health,
+                item => item.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+            Assert.Equal(expected.GetProperty("applicability").GetString(), health.Applicability);
+            Assert.Equal(expected.GetProperty("status").GetString(), health.Status);
+            Assert.Equal(expected.GetProperty("error_code").GetString(), health.ErrorCode);
+            Assert.Equal(expected.GetProperty("package_state").GetString(), health.Details!["package_management_state"]);
+            Assert.Equal(expected.GetProperty("systemd_journal_readable").GetString(), health.PrerequisiteStatuses!["systemd_journal_readable"]);
+            Assert.Equal(expected.GetProperty("package_manager_journal_visibility").GetString(), health.PrerequisiteStatuses["package_manager_journal_visibility"]);
+            foreach (var family in new[] { "package_install", "package_update", "package_remove" })
+            {
+                Assert.Equal(expected.GetProperty(family).GetString(), health.EventFamilyStatuses![family]);
+            }
+        }
+    }
+
+    [Fact]
     public async Task RuntimeUsesSuccessfulJournalObservationForQuietTamperFamilies()
     {
         using var temporary = new TemporaryState();
@@ -422,6 +485,17 @@ public sealed class LinuxL2JournalTests
     };
 
     private static string Record(IReadOnlyDictionary<string, object> fields) => JsonSerializer.Serialize(fields);
+
+    private static InventorySourceState InventoryState(string value) => value switch
+    {
+        "success" => InventorySourceState.Success,
+        "unavailable" => InventorySourceState.Unavailable,
+        "not_applicable" => InventorySourceState.NotApplicable,
+        "permission_denied" => InventorySourceState.PermissionDenied,
+        "timeout" => InventorySourceState.Timeout,
+        "malformed" => InventorySourceState.Malformed,
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported synthetic inventory state.")
+    };
 
     private sealed class TemporaryState : IDisposable
     {

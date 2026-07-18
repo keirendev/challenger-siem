@@ -46,7 +46,10 @@ public static class LinuxInventoryParsers
             _ => null
         };
         if (parsed is null)
-            return (InventorySourceState.Malformed, Array.Empty<InventoryItem>(), source.Truncated, "unsupported_parser");
+            return (InventorySourceState.Malformed, Array.Empty<InventoryItem>(), source.Truncated,
+                operation is LinuxInventoryOperation.DpkgPackages or LinuxInventoryOperation.RpmPackages or LinuxInventoryOperation.PacmanPackages
+                    ? "malformed_output"
+                    : "unsupported_parser");
         if (parsed.Count == 0 && operation is not LinuxInventoryOperation.DpkgPackages and not LinuxInventoryOperation.RpmPackages
             and not LinuxInventoryOperation.PacmanPackages and not LinuxInventoryOperation.AptUpdates
             and not LinuxInventoryOperation.DnfUpdates and not LinuxInventoryOperation.PacmanUpdates)
@@ -142,7 +145,8 @@ public static class LinuxInventoryParsers
     {
         if (content is null) return null;
         var items = new List<InventoryItem>();
-        foreach (var line in Lines(content))
+        var lines = Lines(content).ToArray();
+        foreach (var line in lines)
         {
             var fields = line.Split('\t');
             if (fields.Length != 2) continue;
@@ -151,14 +155,15 @@ public static class LinuxInventoryParsers
             if (name is not null && version is not null)
                 items.Add(Item("package", name, "installed", new Dictionary<string, string> { ["version"] = version }));
         }
-        return items;
+        return lines.Length > 0 && items.Count == 0 ? null : items;
     }
 
     private static IReadOnlyList<InventoryItem>? ParsePacmanPackages(string? content)
     {
         if (content is null) return null;
         var items = new List<InventoryItem>();
-        foreach (var line in Lines(content))
+        var lines = Lines(content).ToArray();
+        foreach (var line in lines)
         {
             var fields = SplitFields(line);
             if (fields.Length != 2) continue;
@@ -167,7 +172,7 @@ public static class LinuxInventoryParsers
             if (name is not null && version is not null)
                 items.Add(Item("package", name, "installed", new Dictionary<string, string> { ["version"] = version }));
         }
-        return items;
+        return lines.Length > 0 && items.Count == 0 ? null : items;
     }
 
     private static IReadOnlyList<InventoryItem>? ParseAptUpdates(string? content)

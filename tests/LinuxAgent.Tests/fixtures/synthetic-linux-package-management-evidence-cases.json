@@ -1,0 +1,113 @@
+[
+  {
+    "case": "supported",
+    "distribution_id": "synthetic",
+    "probes": [
+      { "producer": "dpkg", "state": "success", "error_code": "none" }
+    ],
+    "observed_families": ["package_install"],
+    "expected": {
+      "inventory_state": "supported",
+      "producer": "dpkg",
+      "applicability": "applicable",
+      "status": "healthy",
+      "error_code": null,
+      "package_state": "supported_observed",
+      "systemd_journal_readable": "satisfied",
+      "package_manager_journal_visibility": "satisfied",
+      "package_install": "observed",
+      "package_update": "not_observed",
+      "package_remove": "not_observed"
+    }
+  },
+  {
+    "case": "quiet",
+    "distribution_id": "arch",
+    "probes": [
+      { "producer": "dpkg", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "rpm", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "pacman", "state": "success", "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "supported",
+      "producer": "pacman",
+      "applicability": "applicable",
+      "status": "degraded",
+      "error_code": "package_manager_journal_visibility_unverified",
+      "package_state": "supported_quiet_visibility_unverified",
+      "systemd_journal_readable": "satisfied",
+      "package_manager_journal_visibility": "unknown",
+      "package_install": "not_observed",
+      "package_update": "not_observed",
+      "package_remove": "not_observed"
+    }
+  },
+  {
+    "case": "unsupported",
+    "distribution_id": "alpine",
+    "probes": [
+      { "producer": "dpkg", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "rpm", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "pacman", "state": "unavailable", "error_code": "command_missing" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "unsupported",
+      "producer": "apk",
+      "applicability": "unsupported",
+      "status": "unsupported",
+      "error_code": "package_manager_producer_out_of_scope",
+      "package_state": "unsupported",
+      "systemd_journal_readable": "unsupported",
+      "package_manager_journal_visibility": "unsupported",
+      "package_install": "unsupported",
+      "package_update": "unsupported",
+      "package_remove": "unsupported"
+    }
+  },
+  {
+    "case": "missing",
+    "distribution_id": "synthetic",
+    "probes": [
+      { "producer": "dpkg", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "rpm", "state": "unavailable", "error_code": "command_missing" },
+      { "producer": "pacman", "state": "unavailable", "error_code": "command_missing" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "missing",
+      "producer": "unknown",
+      "applicability": "unknown",
+      "status": "degraded",
+      "error_code": "supported_package_manager_inventory_missing",
+      "package_state": "missing",
+      "systemd_journal_readable": "satisfied",
+      "package_manager_journal_visibility": "missing",
+      "package_install": "not_observed",
+      "package_update": "not_observed",
+      "package_remove": "not_observed"
+    }
+  },
+  {
+    "case": "malformed",
+    "distribution_id": "synthetic",
+    "probes": [
+      { "producer": "dpkg", "state": "malformed", "error_code": "malformed_output" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "malformed",
+      "producer": "dpkg",
+      "applicability": "unknown",
+      "status": "degraded",
+      "error_code": "package_manager_inventory_malformed",
+      "package_state": "malformed",
+      "systemd_journal_readable": "satisfied",
+      "package_manager_journal_visibility": "degraded",
+      "package_install": "not_observed",
+      "package_update": "not_observed",
+      "package_remove": "not_observed"
+    }
+  }
+]

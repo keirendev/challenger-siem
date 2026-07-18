@@ -1380,9 +1380,15 @@ public static class RequestValidation
         }
         if (canonical.Requirement == SourceRequirementKinds.Mandatory
             && canonical.Applicability == SourceApplicabilityStatuses.Applicable
+            && canonical.SourceId != LinuxTelemetrySourceIds.PackageManagement
             && submitted.Applicability != SourceApplicabilityStatuses.Applicable)
         {
             Add(errors, $"{prefix}.applicability", "Known mandatory applicable Linux source cannot report itself as inapplicable.");
+        }
+        if (canonical.SourceId == LinuxTelemetrySourceIds.PackageManagement
+            && submitted.Applicability == SourceApplicabilityStatuses.NotApplicable)
+        {
+            Add(errors, $"{prefix}.applicability", "Known Linux package-management source must report inventory-resolved applicable, unknown, or unsupported applicability.");
         }
     }
 

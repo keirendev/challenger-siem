@@ -81,6 +81,42 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
+    public void PackageManagementRetainsInventoryResolvedApplicability()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var manifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry =>
+            entry.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+        var unsupported = Report(manifest, now) with
+        {
+            Applicability = SourceApplicabilityStatuses.Unsupported,
+            ApplicabilityReason = "package_manager_producer_out_of_scope",
+            Status = SourceHealthStatuses.Unsupported,
+            Enabled = false,
+            PrerequisiteStatuses = manifest.Prerequisites.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.Unsupported,
+                StringComparer.Ordinal),
+            EventFamilyStatuses = manifest.EventFamilies.ToDictionary(
+                item => item,
+                _ => SourceEvidenceStatuses.Unsupported,
+                StringComparer.Ordinal)
+        };
+
+        var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
+            [unsupported],
+            WindowsCoverageLevel.L2,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            now,
+            TelemetryPlatforms.Linux);
+
+        var package = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+        Assert.Equal(SourceApplicabilityStatuses.Unsupported, package.Applicability);
+        Assert.Equal(SourceHealthStatuses.Unsupported, package.Status);
+        Assert.All(package.EventFamilyStatuses!.Values,
+            state => Assert.Equal(SourceEvidenceStatuses.Unsupported, state));
+    }
+
+    [Fact]
     public void LinuxL1TargetExcludesDisabledAndUnsupportedL2RowsFromSummary()
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");

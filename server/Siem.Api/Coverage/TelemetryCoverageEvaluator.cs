@@ -52,6 +52,7 @@ public static class TelemetryCoverageEvaluator
                 }
                 var forceRequiredApplicability = expected.Requirement == SourceRequirementKinds.Mandatory
                     && expected.Applicability == SourceApplicabilityStatuses.Applicable
+                    && expected.SourceId != LinuxTelemetrySourceIds.PackageManagement
                     && reported.Applicability != SourceApplicabilityStatuses.Applicable;
                 if (forceRequiredApplicability)
                 {
