@@ -51,6 +51,13 @@ public sealed class FrontendArchitectureSpikeTests
         Assert.Contains("Health", layout, StringComparison.Ordinal);
         Assert.Contains("Administration", layout, StringComparison.Ordinal);
         Assert.Contains("asp-page=\"/Logout\"", layout, StringComparison.Ordinal);
+        Assert.Contains(">Sign out</button>", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("API v1", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("contracts/v1", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("coverage review", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("Server authorization remains authoritative.", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("operator-name", layout, StringComparison.Ordinal);
+        Assert.DoesNotContain("Current role", layout, StringComparison.Ordinal);
 
         Assert.Contains("aria-label=\"Event search filters\"", events, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Active event filters\"", events, StringComparison.Ordinal);

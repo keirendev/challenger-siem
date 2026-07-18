@@ -940,8 +940,6 @@ pre,
     letter-spacing: 0.16em;
 }
 
-.operator-panel,
-.system-strip,
 .global-search {
     display: flex;
     align-items: center;
@@ -1027,31 +1025,8 @@ pre,
     border-top: 1px solid var(--line);
 }
 
-.operator-panel {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.3rem;
-}
-
-.operator-name {
-    max-width: 10rem;
-    overflow: hidden;
-    color: var(--text);
-    font-size: 0.8rem;
-    font-weight: 750;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .logout .button {
     width: 100%;
-}
-
-.rail-policy {
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.68rem;
-    line-height: 1.4;
 }
 
 .command-bar {
@@ -1089,14 +1064,6 @@ pre,
     flex: 1 1 18rem;
     min-height: 2.55rem;
     background: var(--panel);
-}
-
-.system-strip {
-    justify-content: flex-end;
-}
-
-.system-strip a {
-    text-decoration: none;
 }
 
 .breadcrumbs {
@@ -1371,9 +1338,7 @@ button.small {
     }
 
     .brand-copy,
-    .rail-section-label,
-    .operator-panel,
-    .rail-policy {
+    .rail-section-label {
         position: absolute;
         width: 1px;
         height: 1px;
@@ -1416,10 +1381,6 @@ button.small {
 
     .command-bar {
         position: static;
-    }
-
-    .system-strip {
-        justify-content: flex-start;
     }
 }
 

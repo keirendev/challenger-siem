@@ -1,7 +1,6 @@
 @{
     var currentPage = (ViewContext.RouteData.Values["page"] as string) ?? string.Empty;
     var mainClass = ViewData["MainClass"] as string ?? "container";
-    var operatorName = User.Identity?.Name ?? "operator";
     var operatorRole = OperatorAuthorization.Role(User) ?? "anonymous";
     var canUseAnalystWorkspaces = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageInvestigations);
     var canManageOperators = OperatorAuthorization.HasPermission(operatorRole, OperatorPermission.ManageOperators);
@@ -64,14 +63,9 @@
                 }
 
                 <div class="rail-footer">
-                    <div class="operator-panel" aria-label="Current operator">
-                        <span class="operator-name">@operatorName</span>
-                        <span class="badge role" aria-label="Current role @operatorRole">@operatorRole</span>
-                    </div>
                     <form class="logout" method="post" asp-page="/Logout">
                         <button type="submit" class="button secondary small">Sign out</button>
                     </form>
-                    <p class="rail-policy">Server authorization remains authoritative.</p>
                 </div>
             }
         </header>
@@ -86,11 +80,6 @@
                         <button type="submit" class="button">Search</button>
                         <span id="global-search-help" class="visually-hidden">Searches permitted fields in the current bounded event index without placing the query in the URL.</span>
                     </form>
-                    <div class="system-strip" aria-label="System status summary">
-                        <a asp-page="/About"><span class="badge ok">API v1</span></a>
-                        <span class="badge neutral">contracts/v1</span>
-                        <a asp-page="/Agents/Index" asp-route-health="stale"><span class="badge warning">coverage review</span></a>
-                    </div>
                 </div>
             }
 
