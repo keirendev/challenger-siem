@@ -149,7 +149,7 @@ Use one vocabulary across pages, APIs, badges, charts, and docs. Badges must inc
 - `missing` — expected source or record is absent.
 - `disabled` — explicitly disabled or retired.
 - `permission_denied` — collector/source lacks access; do not treat as no-threat evidence.
-- `unsupported` — platform/source not supported by current implementation.
+- `unsupported` — platform/source not supported by current implementation. Optional unsupported capabilities remain countable and filterable but use informational presentation and do not degrade aggregate health or create completeness gaps; mandatory/applicable unsupported sources remain gaps.
 - `not_applicable` — host role/platform makes the source irrelevant.
 - `excepted` — approved server-side exception; still visible.
 - `unknown` — insufficient evidence; do not imply health.

@@ -178,18 +178,39 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         var l3Summary = Assert.Single(l3.Summaries, summary => summary.AgentId == agentId);
         Assert.Equal(WindowsCoverageLevel.L3, l3Summary.TargetLevel);
         Assert.Equal(WindowsCoverageLevel.L3, l3Summary.CurrentLevel);
+        Assert.Equal(SourceHealthStatuses.Healthy, l3Summary.OverallStatus);
+        Assert.Equal(1, l3Summary.UnsupportedSources);
 
         var l2 = await repository.SearchAsync(null, WindowsCoverageLevel.L2, CancellationToken.None);
         var l2Summary = Assert.Single(l2.Summaries, summary => summary.AgentId == agentId);
         Assert.Equal(WindowsCoverageLevel.L2, l2Summary.TargetLevel);
         Assert.Equal(WindowsCoverageLevel.L2, l2Summary.CurrentLevel);
+        Assert.Equal(SourceHealthStatuses.Healthy, l2Summary.OverallStatus);
+        Assert.Equal(1, l2Summary.UnsupportedSources);
+
+        var telemetry = await new TelemetryCoverageRepository(dataSource, repository, new AlertRepository(dataSource))
+            .AssessAsync(agentId, WindowsCoverageLevel.L2, 24, CancellationToken.None);
+        var agentCoverage = Assert.Single(telemetry.Agents);
+        Assert.Equal(SourceHealthStatuses.Healthy, agentCoverage.OverallStatus);
+        Assert.Equal(1, agentCoverage.UnsupportedSources);
+        Assert.DoesNotContain(agentCoverage.Gaps, gap =>
+            gap.Contains("unsupported by the current collector set", StringComparison.OrdinalIgnoreCase));
 
         var review = new ReviewRepository(dataSource);
         var fullInventory = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, agentId, null, "all", null, null, null, null, null, null),
             TimeSpan.FromDays(1),
             CancellationToken.None);
-        Assert.Equal(WindowsCoverageLevel.L3, Assert.Single(fullInventory).CurrentCoverageLevel);
+        var fullInventoryItem = Assert.Single(fullInventory);
+        Assert.Equal(WindowsCoverageLevel.L3, fullInventoryItem.CurrentCoverageLevel);
+        Assert.Equal(SourceHealthStatuses.Healthy, fullInventoryItem.CoverageStatus);
+        Assert.Equal(1, fullInventoryItem.UnsupportedSources);
+
+        var unsupportedCapabilityInventory = await review.SearchAgentsAsync(
+            new AgentInventoryQuery(null, agentId, null, "all", null, null, "unsupported", null, null, null),
+            TimeSpan.FromDays(1),
+            CancellationToken.None);
+        Assert.Equal(agentId, Assert.Single(unsupportedCapabilityInventory).AgentId);
 
         var incompleteAgentId = $"linux-l3-incomplete-{Guid.NewGuid():N}";
         const string incompleteHostname = "SYNTHETIC-LINUX-L3-INCOMPLETE";

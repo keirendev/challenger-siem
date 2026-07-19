@@ -493,9 +493,11 @@ public sealed class TelemetryCoverageRepository(
             gaps.Add($"{summary.DegradedSources} source(s) report degraded or uncertain coverage.");
         }
 
-        if (summary.UnsupportedSources > 0)
+        var mandatoryUnsupportedSources = sources.Count(source => IsMandatoryForCoverage(source)
+            && string.Equals(source.Status, SourceHealthStatuses.Unsupported, StringComparison.OrdinalIgnoreCase));
+        if (mandatoryUnsupportedSources > 0)
         {
-            gaps.Add($"{summary.UnsupportedSources} source(s) are explicitly unsupported by the current collector set.");
+            gaps.Add($"{mandatoryUnsupportedSources} mandatory/applicable source(s) are explicitly unsupported by the current collector set.");
         }
 
         if (recentEventCount == 0)
@@ -566,6 +568,14 @@ public sealed class TelemetryCoverageRepository(
     private static bool IsReportedByAgent(SourceHealthReport source) =>
         !source.Details.TryGetValue("reported_by_agent", out var reported)
         || string.Equals(reported, "true", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMandatoryForCoverage(SourceTelemetryCoverage source) => source.Requirement switch
+    {
+        SourceRequirementKinds.Mandatory => true,
+        SourceRequirementKinds.RoleSpecific => source.Applicability == SourceApplicabilityStatuses.Applicable,
+        SourceRequirementKinds.Optional => false,
+        _ => source.Required
+    };
 
     private static string AgentPressureState(QueueSloMetrics? queue, IReadOnlyList<SourceTelemetryCoverage> sources)
     {

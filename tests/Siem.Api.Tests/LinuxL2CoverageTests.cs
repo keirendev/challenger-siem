@@ -3,6 +3,7 @@ using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
+using Challenger.Siem.Api.Pages.Agents;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
@@ -142,6 +143,66 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(0, summary.MissingMandatorySources);
         Assert.Equal(0, summary.UnsupportedSources);
+    }
+
+    [Fact]
+    public void OptionalUnsupportedAuditRemainsCapabilityOnlyForAggregateHealthAndWebPresentation()
+    {
+        var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
+        var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
+                WindowsCoverageLevel.L2,
+                ["general_server"],
+                new HashSet<string>(StringComparer.Ordinal) { LinuxTelemetrySourceIds.Firewall })
+            .Where(entry => entry.CoverageLevel <= WindowsCoverageLevel.L2)
+            .ToArray();
+        var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
+            manifest.Select(entry => Report(entry, now)).ToArray(),
+            WindowsCoverageLevel.L2,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            now,
+            TelemetryPlatforms.Linux);
+
+        var summary = TelemetryCoverageEvaluator.CreateSummary(
+            "linux-synthetic",
+            "SYNTHETIC-LINUX-01",
+            0,
+            now,
+            merged,
+            WindowsCoverageLevel.L2);
+        Assert.Equal(WindowsCoverageLevel.L2, summary.CurrentLevel);
+        Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
+        Assert.Equal(1, summary.UnsupportedSources);
+        Assert.Equal(0, summary.MissingMandatorySources);
+
+        var audit = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        var auditCoverage = new SourceTelemetryCoverage
+        {
+            SourceId = audit.SourceId,
+            Status = audit.Status,
+            Required = audit.Required,
+            Requirement = audit.Requirement,
+            Applicability = audit.Applicability
+        };
+        Assert.Equal("informational", DetailModel.SourceStatusBadgeClass(auditCoverage));
+        Assert.Contains("does not degrade aggregate health", DetailModel.SourceStateGuidance(auditCoverage), StringComparison.Ordinal);
+
+        var mandatoryUnsupported = auditCoverage with
+        {
+            Required = true,
+            Requirement = SourceRequirementKinds.Mandatory,
+            Applicability = SourceApplicabilityStatuses.Applicable
+        };
+        Assert.Equal("danger", DetailModel.SourceStatusBadgeClass(mandatoryUnsupported));
+        Assert.Contains("visibility gap", DetailModel.SourceStateGuidance(mandatoryUnsupported), StringComparison.Ordinal);
+        Assert.Equal(SourceHealthStatuses.Unsupported, TelemetryCoverageEvaluator.CalculateOverallStatus(
+        [
+            audit with
+            {
+                Required = true,
+                Requirement = SourceRequirementKinds.Mandatory,
+                Applicability = SourceApplicabilityStatuses.Applicable
+            }
+        ]));
     }
 
     [Fact]

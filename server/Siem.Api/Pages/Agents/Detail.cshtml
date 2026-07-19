@@ -86,10 +86,25 @@ else
                     "error" => Model.Summary.ErrorSources,
                     _ => 0
                 };
+                var hasMandatoryUnsupported = state == "unsupported" && Model.Sources.Any(source =>
+                    string.Equals(source.Status, SourceHealthStatuses.Unsupported, StringComparison.OrdinalIgnoreCase)
+                    && DetailModel.SourceStatusBadgeClass(source) != "informational");
+                var badgeClass = count == 0
+                    ? "neutral"
+                    : state == "unsupported"
+                        ? hasMandatoryUnsupported ? "danger" : "informational"
+                        : state is "error" or "permission_denied"
+                            ? "danger"
+                            : "warning";
+                var stateSummary = count == 0
+                    ? "not observed in current evidence"
+                    : state == "unsupported"
+                        ? hasMandatoryUnsupported ? "review required" : "capability reported"
+                        : "review required";
                 <article class="state-chip">
-                    <span class="badge @(count == 0 ? "neutral" : state is "error" or "permission_denied" ? "danger" : "warning")">@state</span>
+                    <span class="badge @badgeClass">@state</span>
                     <strong>@count</strong>
-                    <span class="muted">@(count == 0 ? "not observed in current evidence" : "review required")</span>
+                    <span class="muted">@stateSummary</span>
                 </article>
             }
         </div>
@@ -174,7 +189,7 @@ else
                                     <div class="muted mono">@(string.IsNullOrWhiteSpace(source.Channel) ? source.SourceId : source.Channel)</div>
                                 </td>
                                 <td>@source.CoverageLevel</td>
-                                <td><span class="badge @(source.Status is "healthy" or "not_applicable" or "excepted" ? "ok" : source.Status is "stale" or "missing" or "degraded" or "disabled" ? "warning" : "danger")">@source.Status</span></td>
+                                <td><span class="badge @DetailModel.SourceStatusBadgeClass(source)">@source.Status</span></td>
                                 <td>
                                     @(source.Requirement ?? (source.Required ? "mandatory" : "optional"))
                                     @if (!string.IsNullOrWhiteSpace(source.Applicability))

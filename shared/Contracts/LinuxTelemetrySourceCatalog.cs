@@ -154,10 +154,6 @@ public static class LinuxTelemetrySourceCatalog
             validationScenarios: "agent_unit_change,journal_gap_or_corruption")
     ];
 
-    /// <summary>
-    /// Audit is declared honestly but is not collected by this pack. The entry prevents an absent
-    /// collector from being mistaken for healthy coverage and does not enable or alter audit policy.
-    /// </summary>
     public static readonly SourceManifestEntry SelfIntegritySnapshot = new()
     {
         SourceId = LinuxTelemetrySourceIds.AgentSelfIntegrity,
@@ -181,6 +177,11 @@ public static class LinuxTelemetrySourceCatalog
         InstallerManaged = false
     };
 
+    /// <summary>
+    /// Audit is declared honestly but is not collected by this pack. The optional entry prevents an
+    /// absent collector from being mistaken for healthy collection while remaining capability-only
+    /// for aggregate health. It does not enable or alter audit policy.
+    /// </summary>
     public static readonly SourceManifestEntry UnsupportedAuditFramework = new()
     {
         SourceId = LinuxTelemetrySourceIds.AuditFramework,

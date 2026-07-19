@@ -127,7 +127,8 @@ public sealed class DetailModel(
     public static string SourceStateGuidance(SourceTelemetryCoverage source) => source.Status switch
     {
         SourceHealthStatuses.Missing => "Expected telemetry is absent. Verify agent/source configuration and prerequisites through an approved runbook; do not treat absence as clean evidence.",
-        SourceHealthStatuses.Unsupported => "This source is not supported by the current collector set. Track as a visibility limitation unless a future approved collector is added.",
+        SourceHealthStatuses.Unsupported when !IsMandatoryForCoverage(source) => "This optional capability is not supported by the current collector set. It remains visible for capability review but does not degrade aggregate health or create a completeness gap.",
+        SourceHealthStatuses.Unsupported => "This required source is not supported by the current collector set. Track it as a visibility gap unless a future approved collector is added.",
         SourceHealthStatuses.NotApplicable => "The declared platform or role makes this source not applicable. Keep the reason visible for review.",
         SourceHealthStatuses.Excepted => "An approved coverage exception is active. Review exception scope and expiry outside this page.",
         SourceHealthStatuses.Disabled => "The source is explicitly disabled. Follow configuration/change-control runbooks; this UI does not enable it.",
@@ -137,6 +138,32 @@ public sealed class DetailModel(
         SourceHealthStatuses.Error => "Collector or processing error reported. Use safe diagnostics; do not clear logs or mutate policy from the console.",
         _ when source.RecentEventCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "A current successful bounded source observation establishes readiness even when the source produced no new event.",
         _ => source.RecentEventCount == 0 ? "Health is reported but no recent events were observed in the lookback; evidence may be quiet or incomplete." : "Recent source evidence is present."
+    };
+
+    public static string SourceStatusBadgeClass(SourceTelemetryCoverage source)
+    {
+        if (source.Status is SourceHealthStatuses.Healthy or SourceHealthStatuses.NotApplicable or SourceHealthStatuses.Excepted)
+        {
+            return "ok";
+        }
+
+        if (string.Equals(source.Status, SourceHealthStatuses.Unsupported, StringComparison.OrdinalIgnoreCase)
+            && !IsMandatoryForCoverage(source))
+        {
+            return "informational";
+        }
+
+        return source.Status is SourceHealthStatuses.Stale or SourceHealthStatuses.Missing or SourceHealthStatuses.Degraded or SourceHealthStatuses.Disabled
+            ? "warning"
+            : "danger";
+    }
+
+    private static bool IsMandatoryForCoverage(SourceTelemetryCoverage source) => source.Requirement switch
+    {
+        SourceRequirementKinds.Mandatory => true,
+        SourceRequirementKinds.RoleSpecific => source.Applicability == SourceApplicabilityStatuses.Applicable,
+        SourceRequirementKinds.Optional => false,
+        _ => source.Required
     };
 
     private static IReadOnlyList<InventorySnapshotReview> BuildInventorySnapshotReviews(

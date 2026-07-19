@@ -99,12 +99,14 @@ Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degr
 
 - `permission_denied` means the fixed source could not be read; the agent does not retry as root or change groups/ACLs.
 - `degraded` represents pressure, unresolved optional/role applicability, or a mandatory L2 family whose producer evidence has not yet been observed; it is distinct from stale data.
-- `unsupported` is explicit collector/platform capability absence, currently used for Linux Audit Framework.
+- `unsupported` is explicit collector/platform capability absence, currently used for Linux Audit Framework. The optional audit row remains visible and counted as a capability limitation but does not degrade aggregate health or create a telemetry completeness gap; a mandatory or applicable unsupported source remains an aggregate gap.
 - `not_applicable` requires a declared role/platform reason.
 - `stale` covers age/discontinuity conditions; cursor gaps remain errors where appropriate.
 - prerequisite states and event-family states distinguish satisfied/observed, not observed, missing, disabled, stale, degraded, denied, unsupported, not applicable, excepted, and unknown.
 
 Mandatory applicable sources determine the current level. Optional sources do not lower the level; an applicable role-specific source becomes mandatory for that role. Lower-level assessments can account for server-approved exceptions, but strict L4 requires `healthy` for every mandatory/applicable source and accepts no exception as full coverage. `not_applicable` requires resolved role evidence; `unsupported`, denied, stale, degraded, disabled, missing, unresolved-role, and excepted mandatory/applicable sources do not satisfy L4.
+
+The current audit boundary remains out of scope for collection. [GitHub issue #241](https://github.com/keirendev/challenger-siem/issues/241) is the separate design-only milestone for a possible read-only collector that consumes only an already configured and readable audit facility. It does not authorize implementation, live audit access, package or service changes, audit-policy mutation, capability grants, permission changes, or other privilege expansion.
 
 ## Configuration
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Challenger.Siem.Api.Database;
 using Challenger.Siem.Contracts.V1;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -190,6 +191,54 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
             Assert.Contains("Deleted soc-agent chat session", afterDelete, StringComparison.Ordinal);
             Assert.DoesNotContain(sessionId.ToString(), afterDelete, StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    [PostgresFact]
+    public async Task OptionalUnsupportedLinuxAuditIsInformationalInWebCoverage()
+    {
+        var connectionString = database.RequireConnectionString();
+        var agentId = $"web-linux-audit-{Guid.NewGuid():N}";
+        const string hostname = "SYNTHETIC-LINUX-AUDIT";
+        var now = DateTimeOffset.UtcNow;
+        var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
+                WindowsCoverageLevel.L2,
+                ["general_server"],
+                new HashSet<string>(StringComparer.Ordinal) { LinuxTelemetrySourceIds.Firewall })
+            .Where(entry => entry.CoverageLevel <= WindowsCoverageLevel.L2)
+            .ToArray();
+        var sourceHealth = manifest.Select(entry => LinuxCoverageReport(entry, now)).ToArray();
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await InsertSyntheticLinuxAgentAsync(dataSource, agentId, hostname);
+        await new HeartbeatRepository(dataSource).InsertHeartbeatAsync(new HeartbeatRequest
+        {
+            AgentId = agentId,
+            Hostname = hostname,
+            AgentVersion = "1.11.6-test",
+            Os = "Synthetic Linux",
+            Platform = TelemetryPlatforms.Linux,
+            HostId = $"{agentId}-host",
+            LastEventTime = now,
+            QueueDepth = 0,
+            SourceHealth = sourceHealth
+        }, CancellationToken.None);
+        using var factory = CreateFactory(connectionString);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        await LoginAsync(client);
+
+        var agents = await GetHtmlAsync(client, $"/agents?agent_id={Uri.EscapeDataString(agentId)}&source_issue=unsupported");
+        Assert.Contains(agentId, agents, StringComparison.Ordinal);
+        Assert.Contains("<span class=\"badge healthy\">healthy</span>", agents, StringComparison.Ordinal);
+
+        var detail = await GetHtmlAsync(client,
+            $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}&target_level=L2");
+        Assert.Contains("linux-audit-framework", detail, StringComparison.Ordinal);
+        Assert.True(
+            Regex.Matches(detail, "badge informational\">unsupported", RegexOptions.CultureInvariant).Count >= 2,
+            "The optional unsupported capability should be informational in both the state summary and source row.");
+        Assert.Contains("capability reported", detail, StringComparison.Ordinal);
+        Assert.Contains("does not degrade aggregate health or create a completeness gap", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsupported by the current collector set", detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [PostgresFact]
@@ -476,6 +525,65 @@ public sealed class WebConsoleIntegrationTests(IntegrationTestDatabase database)
         UtcOffsetMinutes = -420,
         IsDaylightSavingTime = true
     };
+
+    private static async Task InsertSyntheticLinuxAgentAsync(NpgsqlDataSource dataSource, string agentId, string hostname)
+    {
+        await using var command = dataSource.CreateCommand("""
+            insert into agents(agent_id, hostname, machine_guid, os_version, agent_version, api_token_hash, platform, host_id)
+            values(@agent_id, @hostname, null, 'Synthetic Linux', '1.11.6-test', 'synthetic-hash', 'linux', @host_id);
+            """);
+        command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("hostname", hostname);
+        command.Parameters.AddWithValue("host_id", $"{agentId}-host");
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static SourceHealthReport LinuxCoverageReport(SourceManifestEntry entry, DateTimeOffset now)
+    {
+        var unsupported = entry.Applicability == SourceApplicabilityStatuses.Unsupported;
+        var notApplicable = entry.Applicability == SourceApplicabilityStatuses.NotApplicable;
+        var status = unsupported
+            ? SourceHealthStatuses.Unsupported
+            : notApplicable
+                ? SourceHealthStatuses.NotApplicable
+                : SourceHealthStatuses.Healthy;
+        var evidence = unsupported
+            ? SourceEvidenceStatuses.Unsupported
+            : notApplicable
+                ? SourceEvidenceStatuses.NotApplicable
+                : SourceEvidenceStatuses.Satisfied;
+
+        return new SourceHealthReport
+        {
+            SourceId = entry.SourceId,
+            DisplayName = entry.DisplayName,
+            Platform = entry.Platform,
+            SourceKind = entry.SourceKind,
+            SourceNamespace = entry.SourceNamespace,
+            Applicability = entry.Applicability,
+            ApplicabilityReason = entry.ApplicabilityReason,
+            CoverageLevel = entry.CoverageLevel,
+            Status = status,
+            Required = entry.Required,
+            Requirement = entry.Requirement,
+            ApplicableRoles = entry.ApplicableRoles,
+            Enabled = !unsupported && !notApplicable,
+            LastEventTime = status == SourceHealthStatuses.Healthy ? now : null,
+            ObservedAt = status == SourceHealthStatuses.Healthy ? now : null,
+            CollectedCheckpoint = entry.SourceKind == TelemetrySourceKinds.LinuxJournal && status == SourceHealthStatuses.Healthy
+                ? new SourceCheckpoint { Cursor = "s=synthetic;i=audit-capability", RecordedAt = now }
+                : null,
+            AcknowledgedCheckpoint = entry.SourceKind == TelemetrySourceKinds.LinuxJournal && status == SourceHealthStatuses.Healthy
+                ? new SourceCheckpoint { Cursor = "s=synthetic;i=audit-capability", RecordedAt = now }
+                : null,
+            PrerequisiteStatuses = entry.Prerequisites.ToDictionary(item => item, _ => evidence, StringComparer.Ordinal),
+            EventFamilyStatuses = entry.EventFamilies.ToDictionary(
+                item => item,
+                _ => status == SourceHealthStatuses.Healthy ? SourceEvidenceStatuses.Observed : evidence,
+                StringComparer.Ordinal),
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+        };
+    }
 
     private static async Task PostWithBearerAsync(HttpClient client, string path, object payload, string token)
     {

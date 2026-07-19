@@ -374,6 +374,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     count(*) filter (where in_coverage_status_scope and effective_status = 'error')::int as error_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'degraded')::int as degraded_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (where in_coverage_status_scope and (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'unsupported')::int as mandatory_unsupported_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'unsupported')::int as unsupported_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'healthy')::int as healthy_sources,
                     count(*) filter (
@@ -503,7 +504,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     case
                         when coalesce(sh.error_sources, 0) > 0 then 'error'
                         when coalesce(sh.permission_denied_sources, 0) > 0 then 'permission_denied'
-                        when coalesce(sh.unsupported_sources, 0) > 0 then 'unsupported'
+                        when coalesce(sh.mandatory_unsupported_sources, 0) > 0 then 'unsupported'
                         when coalesce(sh.missing_mandatory_sources, 0) > 0 then 'missing'
                         when coalesce(sh.stale_sources, 0) > 0 then 'stale'
                         when coalesce(sh.degraded_sources, 0) > 0 then 'degraded'

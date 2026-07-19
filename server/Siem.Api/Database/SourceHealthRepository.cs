@@ -314,7 +314,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     when coalesce(h.missing_mandatory_sources, 0) > 0 then 'missing'
                     when coalesce(h.stale_sources, 0) > 0 then 'stale'
                     when coalesce(h.permission_denied_sources, 0) > 0 then 'permission_denied'
-                    when coalesce(h.degraded_sources, 0) > 0 or coalesce(h.unsupported_sources, 0) > 0 then 'degraded'
+                    when coalesce(h.degraded_sources, 0) > 0 then 'degraded'
                     when coalesce(h.healthy_sources, 0) = 0 then 'missing'
                     else 'healthy'
                 end as overall_status

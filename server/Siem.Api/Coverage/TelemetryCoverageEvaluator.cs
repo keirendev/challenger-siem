@@ -316,7 +316,7 @@ public static class TelemetryCoverageEvaluator
         {
             return SourceHealthStatuses.PermissionDenied;
         }
-        if (HasStatus(sources, SourceHealthStatuses.Degraded) || HasStatus(sources, SourceHealthStatuses.Unsupported))
+        if (HasStatus(sources, SourceHealthStatuses.Degraded))
         {
             return SourceHealthStatuses.Degraded;
         }
