@@ -422,6 +422,20 @@ public sealed class LinuxPassiveTelemetryRuntime(
             ["pending_reservation"] = progress.PendingReservationStart.HasValue ? "present" : "none",
             ["acknowledgement_state"] = runtime.AcknowledgementPending ? "retry_pending" : "persisted"
         };
+        if (manifest.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff)
+        {
+            var classifiedReadSkips = SaturatingAdd(
+                progress.CumulativeExpectedRaceSkipCount,
+                progress.CumulativeCoverageGapReadSkipCount);
+            runtimeDetails["expected_race_skips"] =
+                progress.CumulativeExpectedRaceSkipCount.ToString(CultureInfo.InvariantCulture);
+            runtimeDetails["coverage_gap_read_skips"] =
+                progress.CumulativeCoverageGapReadSkipCount.ToString(CultureInfo.InvariantCulture);
+            runtimeDetails["unclassified_read_skips"] = Math.Max(
+                    0,
+                    progress.CumulativeReadSkipCount - classifiedReadSkips)
+                .ToString(CultureInfo.InvariantCulture);
+        }
         // Runtime-owned health evidence is mandatory for interpreting the row. Add it first,
         // then retain as much collector detail as fits the shared portable-source limit.
         var details = BoundDetails(runtimeDetails, progress.LastHealthDetails);
@@ -504,8 +518,20 @@ public sealed class LinuxPassiveTelemetryRuntime(
 
     private static PassiveSourceProgress Acknowledge(PassiveSourceProgress progress, long sequence, DateTimeOffset now)
     {
-        if (sequence <= progress.AcknowledgedSequence || sequence > progress.CollectedSequence) return progress;
-        return progress with { AcknowledgedSequence = sequence, AcknowledgedAt = now };
+        if (sequence > progress.CollectedSequence) return progress;
+        var acknowledgedSequence = Math.Max(progress.AcknowledgedSequence, sequence);
+        var bookmarkGapRecovered = progress.ActiveBookmarkGapDetected
+            && !progress.ActiveGapDetected
+            && progress.LastHealthStatus == SourceHealthStatuses.Healthy
+            && acknowledgedSequence >= progress.CollectedSequence
+            && !progress.PendingReservationStart.HasValue;
+        if (acknowledgedSequence == progress.AcknowledgedSequence && !bookmarkGapRecovered) return progress;
+        return progress with
+        {
+            AcknowledgedSequence = acknowledgedSequence,
+            AcknowledgedAt = acknowledgedSequence > progress.AcknowledgedSequence ? now : progress.AcknowledgedAt,
+            ActiveBookmarkGapDetected = bookmarkGapRecovered ? false : progress.ActiveBookmarkGapDetected
+        };
     }
 
     private static LinuxPassiveTelemetryState Reserve(PassiveCollectionResult result, LinuxPassiveTelemetryState current)
@@ -541,6 +567,9 @@ public sealed class LinuxPassiveTelemetryRuntime(
             && result.GapCount == 0
             && result.DeferredCount == 0
             && !result.Partial;
+        var bookmarkGapRecoveredWithoutAcknowledgement = recovered
+            && result.Events.Count == 0
+            && currentProgress.AcknowledgedSequence >= currentProgress.CollectedSequence;
         var proposedProgress = sourceProgress with
         {
             NextSequence = Math.Max(currentProgress.NextSequence, sourceProgress.NextSequence),
@@ -551,11 +580,19 @@ public sealed class LinuxPassiveTelemetryRuntime(
             AbandonedSequenceCount = currentProgress.AbandonedSequenceCount,
             CumulativeGapCount = SaturatingAdd(currentProgress.CumulativeGapCount, result.GapCount),
             CumulativeReadSkipCount = SaturatingAdd(currentProgress.CumulativeReadSkipCount, result.ReadSkipCount),
+            CumulativeExpectedRaceSkipCount = SaturatingAdd(
+                currentProgress.CumulativeExpectedRaceSkipCount,
+                result.ExpectedRaceSkipCount),
+            CumulativeCoverageGapReadSkipCount = SaturatingAdd(
+                currentProgress.CumulativeCoverageGapReadSkipCount,
+                result.CoverageGapReadSkipCount),
             CumulativeDroppedCount = SaturatingAdd(currentProgress.CumulativeDroppedCount, result.DroppedCount),
             CumulativeSampledCount = SaturatingAdd(currentProgress.CumulativeSampledCount, result.SampledCount),
             CumulativePressureScanCount = currentProgress.CumulativePressureScanCount,
             ActiveGapDetected = recovered ? false : currentProgress.ActiveGapDetected || result.GapCount > 0,
-            ActiveBookmarkGapDetected = recovered ? false : currentProgress.ActiveBookmarkGapDetected,
+            ActiveBookmarkGapDetected = bookmarkGapRecoveredWithoutAcknowledgement
+                ? false
+                : currentProgress.ActiveBookmarkGapDetected,
             DeferredCount = result.DeferredCount,
             LastHealthStatus = result.HealthStatus,
             LastHealthErrorCode = Bound(result.ErrorCode, 128),

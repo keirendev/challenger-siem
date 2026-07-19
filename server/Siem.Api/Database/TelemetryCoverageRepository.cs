@@ -624,22 +624,59 @@ public sealed class TelemetryCoverageRepository(
     private static bool IsSourceThrottled(SourceHealthReport source) => string.Equals(source.TransitionState, HealthTransitionStates.Degraded, StringComparison.OrdinalIgnoreCase)
         || (source.Details.TryGetValue("throttle_state", out var throttleState) && string.Equals(throttleState, "throttled", StringComparison.OrdinalIgnoreCase));
 
-    private static string SourceStateGuidance(SourceHealthReport source, int recentCount) => source.Status switch
+    private static string SourceStateGuidance(SourceHealthReport source, int recentCount) =>
+        FirewallStateGuidance(source, recentCount) ?? source.Status switch
+        {
+            SourceHealthStatuses.Missing => "Expected telemetry is absent; do not infer completeness without source evidence.",
+            SourceHealthStatuses.Unsupported => "Source is unsupported by the current collector set and remains a documented visibility limit.",
+            SourceHealthStatuses.NotApplicable => "Source is explicitly not applicable for the platform or declared host role.",
+            SourceHealthStatuses.Excepted => "Coverage exception is active; review exception scope and expiry.",
+            SourceHealthStatuses.Disabled => "Source is disabled; remediation requires an approved host/configuration runbook outside this UI.",
+            SourceHealthStatuses.PermissionDenied => "Collector access was denied; review least-privilege prerequisites without automatic host mutation.",
+            SourceHealthStatuses.Stale => "Source evidence is stale; compare heartbeat, queue, and source timestamps.",
+            SourceHealthStatuses.Degraded when IsSourceThrottled(source) => "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
+            SourceHealthStatuses.Degraded => "Source is degraded or applicability is uncertain; treat telemetry as partial.",
+            SourceHealthStatuses.Error => "Collector error, gap, or clear condition requires safe diagnostics; do not clear logs from the console.",
+            _ when recentCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "Source reports a current successful bounded observation; no new event was required for readiness.",
+            _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
+            _ => "Recent source evidence is present."
+        };
+
+    private static string? FirewallStateGuidance(SourceHealthReport source, int recentCount)
     {
-        SourceHealthStatuses.Missing => "Expected telemetry is absent; do not infer completeness without source evidence.",
-        SourceHealthStatuses.Unsupported => "Source is unsupported by the current collector set and remains a documented visibility limit.",
-        SourceHealthStatuses.NotApplicable => "Source is explicitly not applicable for the platform or declared host role.",
-        SourceHealthStatuses.Excepted => "Coverage exception is active; review exception scope and expiry.",
-        SourceHealthStatuses.Disabled => "Source is disabled; remediation requires an approved host/configuration runbook outside this UI.",
-        SourceHealthStatuses.PermissionDenied => "Collector access was denied; review least-privilege prerequisites without automatic host mutation.",
-        SourceHealthStatuses.Stale => "Source evidence is stale; compare heartbeat, queue, and source timestamps.",
-        SourceHealthStatuses.Degraded when IsSourceThrottled(source) => "Source is degraded or throttled; review pressure and backlog before assuming complete coverage.",
-        SourceHealthStatuses.Degraded => "Source is degraded or applicability is uncertain; treat telemetry as partial.",
-        SourceHealthStatuses.Error => "Collector error, gap, or clear condition requires safe diagnostics; do not clear logs from the console.",
-        _ when recentCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "Source reports a current successful bounded observation; no new event was required for readiness.",
-        _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
-        _ => "Recent source evidence is present."
-    };
+        if (!string.Equals(source.SourceId, LinuxTelemetrySourceIds.Firewall, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (string.Equals(
+                source.Details.GetValueOrDefault("firewall_journal_visibility"),
+                "observed",
+                StringComparison.Ordinal))
+        {
+            if (source.Status != SourceHealthStatuses.Healthy)
+            {
+                return "Structured firewall evidence exists, but current source health is not healthy. Resolve the reported journal condition without exposing raw rules or changing firewall policy.";
+            }
+            return recentCount == 0
+                ? "Structured firewall evidence newer than the last inventory observation established direct visibility, but no matching event is in this lookback. Review timestamps without exposing raw rules or changing firewall policy."
+                : "Structured firewall evidence newer than the last inventory observation established direct visibility. Review normalized events without exposing raw rules or changing firewall policy.";
+        }
+
+        return source.Details.GetValueOrDefault("firewall_inventory_state") switch
+        {
+            "absent" => "No supported nftables, firewalld, or UFW producer was found by bounded inventory. Do not install or enable a firewall solely to change telemetry status.",
+            "logging_disabled" => "A supported firewall is present but logging is disabled. If this optional visibility is required, use a separately approved firewall change runbook; the SIEM never enables or reconfigures logging.",
+            "logging_enabled" when source.Status == SourceHealthStatuses.Healthy && recentCount == 0 => "Firewall logging is already enabled and a current journal observation was quiet. No matching event is not proof of clean traffic, and coverage guidance contains no raw rules or records.",
+            "logging_enabled" when recentCount > 0 => "Already-enabled firewall logging produced recent structured evidence. Review events without changing firewall policy from this workflow.",
+            "logging_enabled" => "Bounded inventory reports firewall logging already enabled, but current source health is not healthy. Resolve the reported journal health condition without exposing raw rules or changing firewall policy.",
+            "unsupported" => "An out-of-scope firewall producer was found. The optional row remains a capability decision; do not replace or reconfigure the host firewall merely to make it supported.",
+            "permission_denied" => "The bounded firewall inventory probe was denied. Review existing least-privilege access through a separately approved runbook; the collector does not elevate or mutate host policy.",
+            "timeout" => "The bounded firewall inventory probe timed out. Retry safe diagnostics before any host change; no firewall policy mutation is required.",
+            "malformed" => "Bounded firewall state could not be parsed. Validate the supported producer/version without exposing raw rules or changing policy.",
+            _ => "Firewall applicability is unresolved because bounded producer/logging evidence has not arrived. This optional unknown remains visible without proving coverage."
+        };
+    }
 
     private static string SourceReason(SourceHealthReport source, int recentCount)
     {

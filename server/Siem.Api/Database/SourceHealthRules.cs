@@ -85,8 +85,7 @@ public static class SourceHealthRules
         }
 
         if (LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Contains(report.SourceId)
-            && report.EventFamilyStatuses is { Count: > 0 }
-            && report.EventFamilyStatuses.Values.All(value => value == SourceEvidenceStatuses.NotObserved))
+            && !HasJournalProducerEvidence(report))
         {
             return SourceHealthStatuses.Degraded;
         }
@@ -132,5 +131,22 @@ public static class SourceHealthRules
         }
 
         return report.Status;
+    }
+
+    private static bool HasJournalProducerEvidence(SourceHealthReport report)
+    {
+        if (report.EventFamilyStatuses?.Values.Any(value => value == SourceEvidenceStatuses.Observed) == true)
+        {
+            return true;
+        }
+
+        return report.SourceId switch
+        {
+            LinuxTelemetrySourceIds.Firewall => report.PrerequisiteStatuses?.GetValueOrDefault("firewall_logging_already_enabled")
+                == SourceEvidenceStatuses.Satisfied,
+            LinuxTelemetrySourceIds.Ssh => report.PrerequisiteStatuses?.GetValueOrDefault("sshd_journal_visibility")
+                == SourceEvidenceStatuses.Satisfied,
+            _ => false
+        };
     }
 }

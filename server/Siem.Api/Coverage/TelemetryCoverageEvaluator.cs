@@ -288,7 +288,13 @@ public static class TelemetryCoverageEvaluator
             return SourceHealthStatuses.Missing;
         }
 
-        if (HasStatus(sources, SourceHealthStatuses.Error))
+        var aggregateSources = sources
+            .Where(source => !((source.Requirement == SourceRequirementKinds.Optional
+                    || source.Requirement is null && !source.Required)
+                && source.Applicability == SourceApplicabilityStatuses.Unknown))
+            .ToArray();
+
+        if (HasStatus(aggregateSources, SourceHealthStatuses.Error))
         {
             return SourceHealthStatuses.Error;
         }
@@ -308,15 +314,15 @@ public static class TelemetryCoverageEvaluator
         {
             return SourceHealthStatuses.Missing;
         }
-        if (HasStatus(sources, SourceHealthStatuses.Stale))
+        if (HasStatus(aggregateSources, SourceHealthStatuses.Stale))
         {
             return SourceHealthStatuses.Stale;
         }
-        if (HasStatus(sources, SourceHealthStatuses.PermissionDenied))
+        if (HasStatus(aggregateSources, SourceHealthStatuses.PermissionDenied))
         {
             return SourceHealthStatuses.PermissionDenied;
         }
-        if (HasStatus(sources, SourceHealthStatuses.Degraded))
+        if (HasStatus(aggregateSources, SourceHealthStatuses.Degraded))
         {
             return SourceHealthStatuses.Degraded;
         }
@@ -665,6 +671,28 @@ public static class TelemetryCoverageEvaluator
                 && string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase);
         }
 
+        bool IsRoleResolvedAndHealthyWhenApplicable(SourceManifestEntry entry)
+        {
+            if (!sourceById.TryGetValue(entry.SourceId, out var source)
+                || source.Applicability is not SourceApplicabilityStatuses.Applicable and not SourceApplicabilityStatuses.NotApplicable)
+            {
+                return false;
+            }
+
+            return source.Applicability == SourceApplicabilityStatuses.NotApplicable
+                || IsExactlyHealthy(entry);
+        }
+
+        var lowerRoleSources = expected
+            .Where(entry => entry.CoverageLevel < WindowsCoverageLevel.L4
+                && entry.Requirement == SourceRequirementKinds.RoleSpecific)
+            .ToArray();
+        if (lowerRoleSources.Length == 0
+            || lowerRoleSources.Any(entry => !IsRoleResolvedAndHealthyWhenApplicable(entry)))
+        {
+            return false;
+        }
+
         var lowerMandatory = expected
             .Where(entry => entry.CoverageLevel < WindowsCoverageLevel.L4)
             .Where(entry => entry.Requirement == SourceRequirementKinds.Mandatory
@@ -702,22 +730,7 @@ public static class TelemetryCoverageEvaluator
             return false;
         }
 
-        foreach (var roleSource in l4RoleSources)
-        {
-            if (!sourceById.TryGetValue(roleSource.SourceId, out var source)
-                || source.Applicability is not SourceApplicabilityStatuses.Applicable and not SourceApplicabilityStatuses.NotApplicable)
-            {
-                return false;
-            }
-
-            if (source.Applicability == SourceApplicabilityStatuses.Applicable
-                && (!source.Enabled || !string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase)))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return l4RoleSources.All(IsRoleResolvedAndHealthyWhenApplicable);
     }
 
     private static bool SourceNameEquals(string? left, string? right) =>

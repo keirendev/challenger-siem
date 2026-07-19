@@ -50,9 +50,11 @@ public static class LinuxTelemetrySourceCatalog
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             LinuxTelemetrySourceIds.AgentLogTamper,
+            LinuxTelemetrySourceIds.Firewall,
             LinuxTelemetrySourceIds.KernelSecurity,
             LinuxTelemetrySourceIds.LoginSession,
-            LinuxTelemetrySourceIds.Scheduler
+            LinuxTelemetrySourceIds.Scheduler,
+            LinuxTelemetrySourceIds.Ssh
         };
 
     /// <summary>
@@ -62,7 +64,9 @@ public static class LinuxTelemetrySourceCatalog
     public static IReadOnlySet<string> JournalObservationRequiresProducerEvidenceSourceIds { get; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            LinuxTelemetrySourceIds.Scheduler
+            LinuxTelemetrySourceIds.Firewall,
+            LinuxTelemetrySourceIds.Scheduler,
+            LinuxTelemetrySourceIds.Ssh
         };
 
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =

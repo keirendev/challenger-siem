@@ -413,6 +413,8 @@ public sealed class LinuxPassiveTelemetryTests
 
             Assert.Equal(PassiveReadStatuses.Success, read.Status);
             Assert.Equal(1, read.SkippedCount);
+            Assert.Equal(1, read.ExpectedRaceSkipCount);
+            Assert.Equal(0, read.CoverageGapReadSkipCount);
             Assert.Equal(0, read.VisibilityGapCount);
             Assert.False(Assert.Single(read.Items).EnrichmentPartial);
 
@@ -423,6 +425,8 @@ public sealed class LinuxPassiveTelemetryTests
 
             Assert.Equal(SourceHealthStatuses.Healthy, result.HealthStatus);
             Assert.Equal(1, result.ReadSkipCount);
+            Assert.Equal(1, result.ExpectedRaceSkipCount);
+            Assert.Equal(0, result.CoverageGapReadSkipCount);
             Assert.Equal(0, result.GapCount);
             Assert.Equal(0, result.DroppedCount);
             Assert.False(result.Partial);
@@ -546,8 +550,106 @@ public sealed class LinuxPassiveTelemetryTests
 
         Assert.Equal(2, result.NewState.Process.Baseline.Count);
         Assert.DoesNotContain(staleKey, result.NewState.Process.Baseline.Keys);
-        Assert.True(result.GapCount >= 1);
+        Assert.Equal(2, result.GapCount);
         Assert.Equal(SourceHealthStatuses.Degraded, result.HealthStatus);
+        Assert.Equal("1", result.Details["partial_baseline_evictions"]);
+    }
+
+    [Fact]
+    public async Task PartialEnrichmentAndSplitSkipCountersSurviveRestartUntilCompleteHealthyScan()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-passive-partial-recovery-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var statePath = Path.Combine(root, "passive-state.json");
+        try
+        {
+            var options = CreateAgentOptions(enabled: true);
+            options.PassiveTelemetry.StatePath = statePath;
+            var partialProcess = Process(25, 1, 250, "/usr/bin/synthetic-partial", null) with
+            {
+                Signature = Sha256("synthetic-partial-signature"),
+                EnrichmentPartial = true
+            };
+            var sources = new SyntheticSources
+            {
+                Processes = new(
+                    [partialProcess],
+                    PassiveReadStatuses.Partial,
+                    "process_metadata_permission_denied",
+                    false,
+                    100,
+                    2,
+                    1,
+                    BootDetails(),
+                    ExpectedRaceSkipCount: 1,
+                    CoverageGapReadSkipCount: 1)
+            };
+            var collector = Collector(options, sources);
+            options.PassiveTelemetry.ApprovedPlanHash = collector.PlanHash;
+            var store = new LinuxPassiveTelemetryStateStore(statePath, root);
+            var runtime = new LinuxPassiveTelemetryRuntime(
+                Options.Create(options),
+                store,
+                collector,
+                new FixedTimeProvider(SyntheticNow));
+            await runtime.InitializeAsync(default);
+
+            var partial = await collector.CollectProcessesAsync(
+                runtime.CurrentState,
+                options.AgentId,
+                "synthetic-host",
+                default);
+            await runtime.CommitCollectionAsync(partial, (_, _) => Task.CompletedTask, default);
+            var degraded = Assert.Single(
+                runtime.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.Equal(SourceHealthStatuses.Degraded, degraded.Status);
+            Assert.True(degraded.GapDetected);
+            Assert.Equal(SourceEvidenceStatuses.Observed, degraded.EventFamilyStatuses!["process_baseline"]);
+            Assert.Equal("2", degraded.Details["read_skips"]);
+            Assert.Equal("1", degraded.Details["expected_race_skips"]);
+            Assert.Equal("1", degraded.Details["coverage_gap_read_skips"]);
+            Assert.Equal("0", degraded.Details["unclassified_read_skips"]);
+
+            var restarted = new LinuxPassiveTelemetryRuntime(
+                Options.Create(options),
+                store,
+                collector,
+                new FixedTimeProvider(SyntheticNow));
+            await restarted.InitializeAsync(default);
+            var durable = Assert.Single(
+                restarted.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.True(durable.GapDetected);
+            Assert.Equal("1", durable.Details["expected_race_skips"]);
+            Assert.Equal("1", durable.Details["coverage_gap_read_skips"]);
+
+            sources.Processes = Successful(partialProcess with
+            {
+                Signature = Sha256("synthetic-complete-signature"),
+                EnrichmentPartial = false
+            });
+            var complete = await collector.CollectProcessesAsync(
+                restarted.CurrentState,
+                options.AgentId,
+                "synthetic-host",
+                default);
+            Assert.Empty(complete.Events);
+            await restarted.CommitCollectionAsync(complete, (_, _) => Task.CompletedTask, default);
+
+            var recovered = Assert.Single(
+                restarted.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.Equal(SourceHealthStatuses.Healthy, recovered.Status);
+            Assert.False(recovered.GapDetected);
+            Assert.Equal(1, recovered.GapCount);
+            Assert.Equal("1", recovered.Details["expected_race_skips"]);
+            Assert.Equal("1", recovered.Details["coverage_gap_read_skips"]);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -864,7 +966,6 @@ public sealed class LinuxPassiveTelemetryTests
     [Fact]
     public async Task SequenceReservationSurvivesInterruptedEnqueueAndAcknowledgesOnlyCommittedMaximum()
     {
-        if (!OperatingSystem.IsLinux()) return;
         var root = Path.Combine(Path.GetTempPath(), $"challenger-passive-reservation-synthetic-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var statePath = Path.Combine(root, "passive-state.json");
@@ -907,19 +1008,40 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Null(recovered.PendingReservationStart);
             Assert.Null(recovered.PendingReservationEnd);
             Assert.Equal(2, recovered.AbandonedSequenceCount);
+            var interruptedGap = Assert.Single(
+                recoveredRuntime.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.True(interruptedGap.BookmarkGapDetected);
             var retry = await collector.CollectProcessesAsync(recoveredRuntime.CurrentState, options.AgentId, "synthetic-host", default);
             Assert.Equal([3L, 4L], retry.Events.Select(item => item.Checkpoint!.Sequence!.Value));
 
             await recoveredRuntime.CommitCollectionAsync(retry, (_, _) => Task.CompletedTask, default);
-            await recoveredRuntime.RecordAcknowledgedAsync(retry.Events.Reverse().ToArray(), default);
-            Assert.Equal(4, recoveredRuntime.CurrentState.Process.Progress.AcknowledgedSequence);
-            await recoveredRuntime.RecordAcknowledgedAsync(
+            var committedGap = Assert.Single(
+                recoveredRuntime.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.True(committedGap.BookmarkGapDetected);
+
+            var awaitingAcknowledgement = new LinuxPassiveTelemetryRuntime(
+                Options.Create(options),
+                store,
+                collector,
+                new FixedTimeProvider(SyntheticNow));
+            await awaitingAcknowledgement.InitializeAsync(default);
+            var durableGap = Assert.Single(
+                awaitingAcknowledgement.Health(),
+                item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.True(durableGap.BookmarkGapDetected);
+
+            await awaitingAcknowledgement.RecordAcknowledgedAsync(retry.Events.Reverse().ToArray(), default);
+            Assert.Equal(4, awaitingAcknowledgement.CurrentState.Process.Progress.AcknowledgedSequence);
+            await awaitingAcknowledgement.RecordAcknowledgedAsync(
                 [retry.Events[0] with { Checkpoint = retry.Events[0].Checkpoint! with { Sequence = 99 } }],
                 default);
-            Assert.Equal(4, recoveredRuntime.CurrentState.Process.Progress.AcknowledgedSequence);
-            var health = Assert.Single(recoveredRuntime.Health(), item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+            Assert.Equal(4, awaitingAcknowledgement.CurrentState.Process.Progress.AcknowledgedSequence);
+            var health = Assert.Single(awaitingAcknowledgement.Health(), item => item.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
             Assert.Equal(2, health.GapCount);
             Assert.Equal(0, health.DroppedEvents);
+            Assert.False(health.BookmarkGapDetected);
         }
         finally
         {

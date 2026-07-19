@@ -32,7 +32,9 @@ public sealed record PassiveReadResult<T>(
     long BytesRead,
     long SkippedCount = 0,
     long VisibilityGapCount = 0,
-    IReadOnlyDictionary<string, string>? Details = null);
+    IReadOnlyDictionary<string, string>? Details = null,
+    long ExpectedRaceSkipCount = 0,
+    long CoverageGapReadSkipCount = 0);
 
 public sealed record LinuxProcessObservation(
     string Key,
@@ -133,6 +135,8 @@ public sealed record PassiveSourceProgress
     [JsonPropertyName("abandoned_sequence_count")] public long AbandonedSequenceCount { get; init; }
     [JsonPropertyName("cumulative_gap_count")] public long CumulativeGapCount { get; init; }
     [JsonPropertyName("cumulative_read_skip_count")] public long CumulativeReadSkipCount { get; init; }
+    [JsonPropertyName("cumulative_expected_race_skip_count")] public long CumulativeExpectedRaceSkipCount { get; init; }
+    [JsonPropertyName("cumulative_coverage_gap_read_skip_count")] public long CumulativeCoverageGapReadSkipCount { get; init; }
     [JsonPropertyName("cumulative_dropped_count")] public long CumulativeDroppedCount { get; init; }
     [JsonPropertyName("cumulative_sampled_count")] public long CumulativeSampledCount { get; init; }
     [JsonPropertyName("cumulative_pressure_scan_count")] public long CumulativePressureScanCount { get; init; }
@@ -197,7 +201,9 @@ public sealed record PassiveCollectionResult(
     long DeferredCount,
     long SampledCount,
     bool Partial,
-    IReadOnlyDictionary<string, string> Details);
+    IReadOnlyDictionary<string, string> Details,
+    long ExpectedRaceSkipCount = 0,
+    long CoverageGapReadSkipCount = 0);
 
 public sealed record PassiveTelemetryPlanSource(
     string SourceId,

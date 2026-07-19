@@ -178,6 +178,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("linux_l2_mandatory_source_ids", LinuxL2MandatorySourceIds);
         command.Parameters.AddWithValue("linux_l2_mandatory_source_count", LinuxL2MandatorySourceIds.Length);
         command.Parameters.AddWithValue("linux_l2_role_source_ids", LinuxL2RoleSourceIds);
+        command.Parameters.AddWithValue("linux_l2_role_source_count", LinuxL2RoleSourceIds.Length);
         command.Parameters.AddWithValue("linux_l4_mandatory_source_ids", LinuxL4MandatorySourceIds);
         command.Parameters.AddWithValue("linux_l4_mandatory_source_count", LinuxL4MandatorySourceIds.Length);
         command.Parameters.AddWithValue("linux_l4_role_source_ids", LinuxL4RoleSourceIds);
@@ -371,9 +372,37 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                           end
                     )::int as missing_mandatory_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'stale')::int as stale_sources,
+                    count(*) filter (
+                        where in_coverage_status_scope
+                          and effective_status = 'stale'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_stale_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'error')::int as error_sources,
+                    count(*) filter (
+                        where in_coverage_status_scope
+                          and effective_status = 'error'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_error_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'degraded')::int as degraded_sources,
+                    count(*) filter (
+                        where in_coverage_status_scope
+                          and effective_status = 'degraded'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_degraded_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (
+                        where in_coverage_status_scope
+                          and effective_status = 'permission_denied'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_permission_denied_sources,
+                    count(*) filter (
+                        where in_coverage_status_scope
+                          and (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable'))
+                          and effective_status = 'permission_denied')::int as mandatory_permission_denied_sources,
                     count(*) filter (where in_coverage_status_scope and (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'unsupported')::int as mandatory_unsupported_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'unsupported')::int as unsupported_sources,
                     count(*) filter (where in_coverage_status_scope and effective_status = 'healthy')::int as healthy_sources,
@@ -402,6 +431,8 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     count(*) filter (where coverage_level = 'L3' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l3_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l1_mandatory_source_ids) and coverage_level = 'L1' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as linux_l1_canonical_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_mandatory_source_ids) and coverage_level = 'L2' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as linux_l2_canonical_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids))::int as linux_l2_role_present_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability in ('applicable', 'not_applicable'))::int as linux_l2_role_resolved_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable')::int as linux_l2_role_applicable_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as linux_l2_role_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids) and coverage_level = 'L3' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as linux_l3_canonical_strict_healthy_sources,
@@ -473,6 +504,9 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                              and coalesce(sh.linux_l1_canonical_strict_healthy_sources, 0) = @linux_l1_mandatory_source_count
                              and @linux_l2_mandatory_source_count > 0
                              and coalesce(sh.linux_l2_canonical_strict_healthy_sources, 0) = @linux_l2_mandatory_source_count
+                             and @linux_l2_role_source_count > 0
+                             and coalesce(sh.linux_l2_role_present_sources, 0) = @linux_l2_role_source_count
+                             and coalesce(sh.linux_l2_role_resolved_sources, 0) = @linux_l2_role_source_count
                              and coalesce(sh.linux_l2_role_strict_healthy_sources, 0) = coalesce(sh.linux_l2_role_applicable_sources, 0)
                              and @linux_l3_required_source_count > 0
                              and coalesce(sh.linux_l3_canonical_strict_healthy_sources, 0) = @linux_l3_required_source_count
@@ -502,12 +536,13 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                         else 'L0'
                     end as current_coverage_level,
                     case
-                        when coalesce(sh.error_sources, 0) > 0 then 'error'
-                        when coalesce(sh.permission_denied_sources, 0) > 0 then 'permission_denied'
+                        when coalesce(sh.aggregate_error_sources, 0) > 0 then 'error'
+                        when coalesce(sh.mandatory_permission_denied_sources, 0) > 0 then 'permission_denied'
                         when coalesce(sh.mandatory_unsupported_sources, 0) > 0 then 'unsupported'
                         when coalesce(sh.missing_mandatory_sources, 0) > 0 then 'missing'
-                        when coalesce(sh.stale_sources, 0) > 0 then 'stale'
-                        when coalesce(sh.degraded_sources, 0) > 0 then 'degraded'
+                        when coalesce(sh.aggregate_stale_sources, 0) > 0 then 'stale'
+                        when coalesce(sh.aggregate_permission_denied_sources, 0) > 0 then 'permission_denied'
+                        when coalesce(sh.aggregate_degraded_sources, 0) > 0 then 'degraded'
                         when coalesce(sh.healthy_sources, 0) = 0 then 'missing'
                         else 'healthy'
                     end as coverage_status

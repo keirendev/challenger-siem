@@ -124,6 +124,80 @@ public sealed class LinuxL4CoverageTests
     }
 
     [Fact]
+    public void LinuxL4RequiresResolvedSshApplicabilityAndAcceptsCurrentQuietProducerEvidence()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var sshId = LinuxTelemetrySourceIds.Ssh;
+
+        var unknown = Merged(Reports(now).Select(report => report.SourceId == sshId
+            ? report with
+            {
+                Applicability = SourceApplicabilityStatuses.Unknown,
+                ApplicabilityReason = "host_role_not_declared",
+                Status = SourceHealthStatuses.Degraded,
+                Enabled = true,
+                ObservedAt = now
+            }
+            : report).ToArray(), now);
+        Assert.Equal(WindowsCoverageLevel.L3, Current(unknown));
+
+        var unsupported = Merged(Reports(now).Select(report => report.SourceId == sshId
+            ? report with
+            {
+                Applicability = SourceApplicabilityStatuses.Unsupported,
+                ApplicabilityReason = "ssh_producer_not_present",
+                Status = SourceHealthStatuses.Unsupported,
+                Enabled = false,
+                ObservedAt = now,
+                PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                    pair => pair.Key,
+                    _ => SourceEvidenceStatuses.Unsupported,
+                    StringComparer.Ordinal),
+                EventFamilyStatuses = report.EventFamilyStatuses!.ToDictionary(
+                    pair => pair.Key,
+                    _ => SourceEvidenceStatuses.Unsupported,
+                    StringComparer.Ordinal)
+            }
+            : report).ToArray(), now);
+        Assert.Equal(WindowsCoverageLevel.L3, Current(unsupported));
+
+        var quietApplicable = Merged(Reports(now).Select(report => report.SourceId == sshId
+            ? report with
+            {
+                Applicability = SourceApplicabilityStatuses.Applicable,
+                ApplicabilityReason = null,
+                Status = SourceHealthStatuses.Healthy,
+                Enabled = true,
+                LastEventTime = null,
+                ObservedAt = now,
+                PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                    pair => pair.Key,
+                    _ => SourceEvidenceStatuses.Satisfied,
+                    StringComparer.Ordinal),
+                EventFamilyStatuses = report.EventFamilyStatuses!.ToDictionary(
+                    pair => pair.Key,
+                    _ => SourceEvidenceStatuses.NotObserved,
+                    StringComparer.Ordinal)
+            }
+            : report).ToArray(), now);
+        var quietSsh = Assert.Single(quietApplicable, report => report.SourceId == sshId);
+        Assert.Equal(SourceHealthStatuses.Healthy, quietSsh.Status);
+        Assert.True(SourceHealthRules.UsesSuccessfulObservationFreshness(sshId));
+        Assert.False(SourceHealthRules.IsSuccessfulPollingSource(sshId));
+        Assert.Equal(WindowsCoverageLevel.L4, Current(quietApplicable));
+
+        var stale = Merged(quietApplicable.Select(report => report.SourceId == sshId
+            ? report with
+            {
+                Status = SourceHealthStatuses.Healthy,
+                ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1)
+            }
+            : report).ToArray(), now);
+        Assert.Equal(SourceHealthStatuses.Stale, Assert.Single(stale, report => report.SourceId == sshId).Status);
+        Assert.Equal(WindowsCoverageLevel.L1, Current(stale));
+    }
+
+    [Fact]
     public void LinuxL4PollingFreshnessUsesSuccessfulObservationWithoutAnEvent()
     {
         var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
@@ -270,6 +344,8 @@ public sealed class LinuxL4CoverageTests
         var review = Read("server", "Siem.Api", "Review", "ReviewRepository.cs");
         foreach (var implementation in new[] { sourceHealth, review })
         {
+            Assert.Contains("linux_l2_role_source_count", implementation, StringComparison.Ordinal);
+            Assert.Contains("l2_role_resolved_sources", implementation, StringComparison.Ordinal);
             Assert.Contains("linux_l4_mandatory_source_ids", implementation, StringComparison.Ordinal);
             Assert.Contains("linux_l4_role_source_ids", implementation, StringComparison.Ordinal);
             Assert.Contains("l4_role_resolved", implementation, StringComparison.OrdinalIgnoreCase);

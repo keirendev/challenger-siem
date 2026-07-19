@@ -1,0 +1,211 @@
+[
+  {
+    "case": "undeclared_unknown",
+    "roles": [],
+    "inventory": null,
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "unknown",
+      "applicability": "unknown",
+      "applicability_reason": "host_role_not_declared",
+      "status": "degraded",
+      "enabled": true,
+      "error_code": "host_role_not_declared",
+      "sshd_journal_visibility": "unknown",
+      "event_family_state": "not_observed"
+    }
+  },
+  {
+    "case": "explicitly_applicable_quiet",
+    "roles": ["ssh_server"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": "sshd.service",
+      "service_status": "active",
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "supported_active",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "healthy",
+      "enabled": true,
+      "error_code": null,
+      "sshd_journal_visibility": "satisfied",
+      "event_family_state": "not_observed"
+    }
+  },
+  {
+    "case": "inventory_resolved_applicable_quiet",
+    "roles": [],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": "ssh.service",
+      "service_status": "active",
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "supported_active",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "healthy",
+      "enabled": true,
+      "error_code": null,
+      "sshd_journal_visibility": "satisfied",
+      "event_family_state": "not_observed"
+    }
+  },
+  {
+    "case": "explicitly_not_applicable",
+    "roles": ["general_server"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": "sshd.service",
+      "service_status": "active",
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "supported_active",
+      "applicability": "not_applicable",
+      "applicability_reason": "declared_roles_do_not_require_source",
+      "status": "not_applicable",
+      "enabled": false,
+      "error_code": null,
+      "sshd_journal_visibility": "not_applicable",
+      "event_family_state": "not_applicable"
+    }
+  },
+  {
+    "case": "declared_service_inactive",
+    "roles": ["bastion"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": "sshd.service",
+      "service_status": "inactive",
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "supported_inactive",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "degraded",
+      "enabled": true,
+      "error_code": "ssh_service_not_active",
+      "sshd_journal_visibility": "disabled",
+      "event_family_state": "not_observed"
+    }
+  },
+  {
+    "case": "declared_inventory_denied",
+    "roles": ["ssh_server"],
+    "inventory": {
+      "service_state": "permission_denied",
+      "service_error": "synthetic_permission_denied",
+      "service_name": null,
+      "service_status": null,
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "permission_denied",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "permission_denied",
+      "enabled": true,
+      "error_code": "ssh_inventory_permission_denied",
+      "sshd_journal_visibility": "permission_denied",
+      "event_family_state": "permission_denied"
+    }
+  },
+  {
+    "case": "declared_bounded_service_inventory_truncated",
+    "roles": ["ssh_server"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": null,
+      "service_status": null,
+      "service_truncated": true,
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "unknown",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "degraded",
+      "enabled": true,
+      "error_code": "ssh_service_inventory_truncated",
+      "sshd_journal_visibility": "unknown",
+      "event_family_state": "not_observed"
+    }
+  },
+  {
+    "case": "declared_journal_denied",
+    "roles": ["ssh_server"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": "sshd.service",
+      "service_status": "active",
+      "ssh_state": "success",
+      "ssh_error": "none",
+      "ssh_item": true
+    },
+    "journal_status": "permission_denied",
+    "expected": {
+      "evidence_state": "supported_active",
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "status": "permission_denied",
+      "enabled": true,
+      "error_code": "journal_permission_denied",
+      "sshd_journal_visibility": "permission_denied",
+      "event_family_state": "permission_denied"
+    }
+  },
+  {
+    "case": "declared_unsupported",
+    "roles": ["ssh_server"],
+    "inventory": {
+      "service_state": "success",
+      "service_error": "none",
+      "service_name": null,
+      "service_status": null,
+      "ssh_state": "unavailable",
+      "ssh_error": "file_missing",
+      "ssh_item": false
+    },
+    "journal_status": "success",
+    "expected": {
+      "evidence_state": "unsupported",
+      "applicability": "unsupported",
+      "applicability_reason": "ssh_producer_not_present",
+      "status": "unsupported",
+      "enabled": false,
+      "error_code": "ssh_producer_not_present",
+      "sshd_journal_visibility": "unsupported",
+      "event_family_state": "unsupported"
+    }
+  }
+]

@@ -270,6 +270,8 @@ public sealed class LinuxPassiveTelemetryStateStore(string configuredPath, strin
             || progress.AbandonedSequenceCount < 0
             || progress.CumulativeGapCount < 0
             || progress.CumulativeReadSkipCount < 0
+            || progress.CumulativeExpectedRaceSkipCount < 0
+            || progress.CumulativeCoverageGapReadSkipCount < 0
             || progress.CumulativeDroppedCount < 0
             || progress.CumulativeSampledCount < 0
             || progress.CumulativePressureScanCount < 0

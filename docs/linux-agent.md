@@ -25,11 +25,11 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 | --- | --- | --- | --- | --- |
 | `linux-journal-l1` | L1 | mandatory | boot, system, application/service baseline | enabled by default |
 | `linux-login-session` | L2 | mandatory | login, session | applicable when L2 is selected; current PAM/logind journal visibility establishes source freshness independently of authentication activity |
-| `linux-ssh` | L2 | role-specific | SSH authentication/session | applicable for declared `ssh_server`/`bastion`, not applicable for other declared roles, unknown when no role is declared |
+| `linux-ssh` | L2 | role-specific | SSH authentication/session | declared `ssh_server`/`bastion` or exact active-service evidence is applicable; other declared roles are not applicable; unresolved undeclared hosts remain unknown; current successful reads support quiet health only after producer evidence |
 | `linux-sudo-su` | L2 | mandatory | `sudo`, `su` | applicable when L2 is selected |
 | `linux-cron-timers` | L2 | mandatory | cron, systemd timers | applicable when L2 is selected; remains degraded until either family proves producer visibility, then current journal observation establishes source freshness |
 | `linux-package-management` | L2 | mandatory when supported | install, update, remove | applicability comes from bounded dpkg/rpm/pacman inventory or a matching record; quiet supported producers remain degraded until journal visibility is proved |
-| `linux-firewall` | L2 | optional | allow/deny/policy change | unknown until already-enabled firewall journal evidence is observed |
+| `linux-firewall` | L2 | optional | allow/deny/policy change | bounded nftables/firewalld/UFW state resolves absent, logging-disabled, logging-enabled quiet, denied, and unsupported-producer states; no policy is changed |
 | `linux-kernel-security` | L2 | mandatory | kernel security, security modules, kernel modules | applicable when L2 is selected; current system-journal visibility establishes source freshness independently of rare family activity |
 | `linux-service-change` | L2 | mandatory | service start/stop/reload/failure | applicable when L2 is selected |
 | `linux-agent-log-tamper` | L2 | mandatory | agent/log tamper | applicable when L2 is selected |
@@ -49,7 +49,7 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 
 Every manifest includes platform/source kind/namespace, coverage level, checkpoint kind, `mandatory`/`optional`/`role_specific` requirement, applicable roles, prerequisites, event families, validation scenarios, parser/source-pack identity, privacy level, and applicability/reason. Corresponding health includes bounded prerequisite and event-family state maps.
 
-The exact package producer matrix and supported, quiet, unsupported, missing, and malformed state transitions are documented in [Linux package-management evidence](linux-package-management-evidence.md). Inventory resolves whether an in-scope package backend exists; it does not turn event absence into proof of journal visibility.
+The exact package producer matrix and supported, quiet, unsupported, missing, and malformed state transitions are documented in [Linux package-management evidence](linux-package-management-evidence.md). Inventory resolves whether an in-scope package backend exists; it does not turn event absence into proof of journal visibility. The [Linux firewall evidence](linux-firewall-evidence.md) matrix separates absent, logging-disabled, logging-enabled quiet, unsupported, denied, and observed states using only fixed read-only probes and structured journal evidence. The separate [Linux SSH applicability and quiet-source evidence](linux-ssh-evidence.md) matrix defines declared-role precedence, bounded active-service evidence, quiet, denied, inactive, and unsupported states without generating SSH activity or changing host configuration.
 
 ## Passive L3 process, network, and behaviour pack
 
@@ -99,6 +99,7 @@ Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degr
 
 - `permission_denied` means the fixed source could not be read; the agent does not retry as root or change groups/ACLs.
 - `degraded` represents pressure, unresolved optional/role applicability, or a mandatory L2 family whose producer evidence has not yet been observed; it is distinct from stale data.
+- an optional `unknown` row such as pre-inventory firewall applicability remains visible and counted without lowering aggregate health by itself; a known applicable degraded, denied, stale, or errored source remains actionable.
 - `unsupported` is explicit collector/platform capability absence, currently used for Linux Audit Framework. The optional audit row remains visible and counted as a capability limitation but does not degrade aggregate health or create a telemetry completeness gap; a mandatory or applicable unsupported source remains an aggregate gap.
 - `not_applicable` requires a declared role/platform reason.
 - `stale` covers age/discontinuity conditions; cursor gaps remain errors where appropriate.
@@ -106,7 +107,7 @@ Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degr
 
 Mandatory applicable sources determine the current level. Optional sources do not lower the level; an applicable role-specific source becomes mandatory for that role. Lower-level assessments can account for server-approved exceptions, but strict L4 requires `healthy` for every mandatory/applicable source and accepts no exception as full coverage. `not_applicable` requires resolved role evidence; `unsupported`, denied, stale, degraded, disabled, missing, unresolved-role, and excepted mandatory/applicable sources do not satisfy L4.
 
-The current audit boundary remains out of scope for collection. [GitHub issue #241](https://github.com/keirendev/challenger-siem/issues/241) is the separate design-only milestone for a possible read-only collector that consumes only an already configured and readable audit facility. It does not authorize implementation, live audit access, package or service changes, audit-policy mutation, capability grants, permission changes, or other privilege expansion.
+The current audit boundary remains out of scope for collection. The [read-only Linux Audit Framework ADR](linux-audit-framework-adr.md) is the reviewed design/security/privacy boundary for a possible collector that consumes only an already configured and readable audit facility. It does not authorize implementation, live audit access, package or service changes, audit-policy mutation, capability grants, permission changes, or other privilege expansion.
 
 ## Configuration
 

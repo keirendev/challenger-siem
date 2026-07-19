@@ -183,9 +183,29 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'permission_denied')::int as mandatory_permission_denied_sources,
                     count(*) filter (where (required_source or (requirement_kind = 'role_specific' and applicability = 'applicable')) and effective_status = 'unsupported')::int as mandatory_unsupported_sources,
                     count(*) filter (where effective_status = 'stale')::int as stale_sources,
+                    count(*) filter (
+                        where effective_status = 'stale'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_stale_sources,
                     count(*) filter (where effective_status = 'error')::int as error_sources,
+                    count(*) filter (
+                        where effective_status = 'error'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_error_sources,
                     count(*) filter (where effective_status = 'degraded')::int as degraded_sources,
+                    count(*) filter (
+                        where effective_status = 'degraded'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_degraded_sources,
                     count(*) filter (where effective_status = 'permission_denied')::int as permission_denied_sources,
+                    count(*) filter (
+                        where effective_status = 'permission_denied'
+                          and not (
+                              coalesce(requirement_kind, case when required_source then 'mandatory' else 'optional' end) = 'optional'
+                              and coalesce(applicability, '') = 'unknown'))::int as aggregate_permission_denied_sources,
                     count(*) filter (where effective_status = 'unsupported')::int as unsupported_sources,
                     count(*) filter (where effective_status = 'excepted')::int as excepted_sources,
                     count(*) filter (where effective_status = 'not_applicable')::int as not_applicable_sources,
@@ -205,6 +225,8 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     count(*) filter (where coverage_level = 'L3' and (requirement_kind = 'mandatory' or (requirement_kind = 'role_specific' and applicability = 'applicable') or (requirement_kind is null and required_source)) and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l3_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l1_mandatory_source_ids) and coverage_level = 'L1' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l1_canonical_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_mandatory_source_ids) and coverage_level = 'L2' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l2_canonical_strict_healthy_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids))::int as l2_role_present_sources,
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability in ('applicable', 'not_applicable'))::int as l2_role_resolved_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable')::int as l2_role_applicable_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l2_role_source_ids) and coverage_level = 'L2' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as l2_role_strict_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l3_required_source_ids) and coverage_level = 'L3' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as l3_canonical_strict_healthy_sources,
@@ -269,6 +291,9 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                          and coalesce(h.l1_canonical_strict_healthy_sources, 0) = @linux_l1_mandatory_source_count
                          and @linux_l2_mandatory_source_count > 0
                          and coalesce(h.l2_canonical_strict_healthy_sources, 0) = @linux_l2_mandatory_source_count
+                         and @linux_l2_role_source_count > 0
+                         and coalesce(h.l2_role_present_sources, 0) = @linux_l2_role_source_count
+                         and coalesce(h.l2_role_resolved_sources, 0) = @linux_l2_role_source_count
                          and coalesce(h.l2_role_strict_healthy_sources, 0) = coalesce(h.l2_role_applicable_sources, 0)
                          and @linux_l3_required_source_count > 0
                          and coalesce(h.l3_canonical_strict_healthy_sources, 0) = @linux_l3_required_source_count
@@ -308,13 +333,13 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     else 'L0'
                 end as current_level,
                 case
-                    when coalesce(h.error_sources, 0) > 0 then 'error'
+                    when coalesce(h.aggregate_error_sources, 0) > 0 then 'error'
                     when coalesce(h.mandatory_permission_denied_sources, 0) > 0 then 'permission_denied'
                     when coalesce(h.mandatory_unsupported_sources, 0) > 0 then 'unsupported'
                     when coalesce(h.missing_mandatory_sources, 0) > 0 then 'missing'
-                    when coalesce(h.stale_sources, 0) > 0 then 'stale'
-                    when coalesce(h.permission_denied_sources, 0) > 0 then 'permission_denied'
-                    when coalesce(h.degraded_sources, 0) > 0 then 'degraded'
+                    when coalesce(h.aggregate_stale_sources, 0) > 0 then 'stale'
+                    when coalesce(h.aggregate_permission_denied_sources, 0) > 0 then 'permission_denied'
+                    when coalesce(h.aggregate_degraded_sources, 0) > 0 then 'degraded'
                     when coalesce(h.healthy_sources, 0) = 0 then 'missing'
                     else 'healthy'
                 end as overall_status
@@ -340,6 +365,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("linux_l2_mandatory_source_ids", LinuxL2MandatorySourceIds);
         command.Parameters.AddWithValue("linux_l2_mandatory_source_count", LinuxL2MandatorySourceIds.Length);
         command.Parameters.AddWithValue("linux_l2_role_source_ids", LinuxL2RoleSourceIds);
+        command.Parameters.AddWithValue("linux_l2_role_source_count", LinuxL2RoleSourceIds.Length);
         command.Parameters.AddWithValue("linux_l4_mandatory_source_ids", LinuxL4MandatorySourceIds);
         command.Parameters.AddWithValue("linux_l4_mandatory_source_count", LinuxL4MandatorySourceIds.Length);
         command.Parameters.AddWithValue("linux_l4_role_source_ids", LinuxL4RoleSourceIds);
