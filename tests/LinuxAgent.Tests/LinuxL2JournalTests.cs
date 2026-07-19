@@ -47,21 +47,25 @@ public sealed class LinuxL2JournalTests
         var ssh = Assert.Single(LinuxTelemetrySourceCatalog.L2Security, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
         Assert.Equal(SourceRequirementKinds.RoleSpecific, ssh.Requirement);
         Assert.Equal(new[] { "ssh_server", "bastion" }, ssh.ApplicableRoles);
+        Assert.Equal(new[] { "ssh_success_failure", "ssh_session_lifecycle" }, ssh.ValidationScenarios);
         var firewall = Assert.Single(LinuxTelemetrySourceCatalog.L2Security, item => item.SourceId == LinuxTelemetrySourceIds.Firewall);
         Assert.Equal(SourceRequirementKinds.Optional, firewall.Requirement);
         Assert.Equal(SourceApplicabilityStatuses.Unknown, firewall.Applicability);
+        Assert.Equal(new[] { "firewall_allow_deny", "firewall_policy_change" }, firewall.ValidationScenarios);
         Assert.Equal(
             new[]
             {
                 LinuxTelemetrySourceIds.AgentLogTamper,
+                LinuxTelemetrySourceIds.Firewall,
                 LinuxTelemetrySourceIds.KernelSecurity,
                 LinuxTelemetrySourceIds.LoginSession,
-                LinuxTelemetrySourceIds.Scheduler
+                LinuxTelemetrySourceIds.Scheduler,
+                LinuxTelemetrySourceIds.Ssh
             }.Order(StringComparer.Ordinal),
             LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Order(StringComparer.Ordinal));
         Assert.Equal(
-            new[] { LinuxTelemetrySourceIds.Scheduler },
-            LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds);
+            new[] { LinuxTelemetrySourceIds.Firewall, LinuxTelemetrySourceIds.Scheduler, LinuxTelemetrySourceIds.Ssh }.Order(StringComparer.Ordinal),
+            LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Order(StringComparer.Ordinal));
         Assert.Equal(SourceApplicabilityStatuses.Unsupported, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.Applicability);
         Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.SourceKind);
 
@@ -329,6 +333,313 @@ public sealed class LinuxL2JournalTests
     }
 
     [Fact]
+    public async Task SshRoleApplicabilityAndProducerEvidenceStatesAreDeterministic()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory,
+            "fixtures",
+            "synthetic-linux-ssh-evidence-cases.json")));
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+
+        foreach (var fixture in document.RootElement.EnumerateArray())
+        {
+            using var temporary = new TemporaryState();
+            var options = TestOptions(WindowsCoverageLevel.L2);
+            options.Journal.DeclaredRoles = fixture.GetProperty("roles").EnumerateArray()
+                .Select(role => role.GetString()!)
+                .ToArray();
+            options.State.Path = temporary.Path;
+            var runtime = new LinuxJournalRuntime(
+                Options.Create(options),
+                new LinuxStateStore(temporary.Path),
+                new FixedTimeProvider(now));
+            await runtime.InitializeAsync("1.11.8-test", "synthetic-config", default);
+
+            if (fixture.GetProperty("inventory") is { ValueKind: not JsonValueKind.Null } inventory)
+            {
+                await runtime.ObserveInventoryAsync(SshEvidenceSnapshots(inventory), default);
+            }
+
+            // An unrelated hand-authored journal fixture establishes the shared reader without
+            // manufacturing SSH activity or changing service/authentication configuration.
+            await runtime.RecordCollectedAsync(
+                NormalizeFixture(fixtures, "kernel_module", normalizer, options),
+                default);
+            if (fixture.GetProperty("journal_status").GetString() == "permission_denied")
+            {
+                runtime.RecordReadResult(new JournalReadResult(
+                    JournalReadStatus.PermissionDenied,
+                    Array.Empty<string>(),
+                    ErrorCode: "journal_permission_denied"));
+            }
+            else
+            {
+                runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+                await runtime.RecordSuccessfulReadObservationAsync(default);
+            }
+
+            var expected = fixture.GetProperty("expected");
+            var snapshot = runtime.Snapshot();
+            var manifest = Assert.Single(snapshot.Manifest, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+            var health = Assert.Single(snapshot.Health, item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+            Assert.Equal(expected.GetProperty("applicability").GetString(), manifest.Applicability);
+            Assert.Equal(expected.GetProperty("applicability_reason").GetString(), manifest.ApplicabilityReason);
+            Assert.Equal(manifest.Applicability, health.Applicability);
+            Assert.Equal(expected.GetProperty("status").GetString(), health.Status);
+            Assert.Equal(expected.GetProperty("enabled").GetBoolean(), health.Enabled);
+            Assert.Equal(expected.GetProperty("error_code").GetString(), health.ErrorCode);
+            Assert.Equal(expected.GetProperty("sshd_journal_visibility").GetString(),
+                health.PrerequisiteStatuses!["sshd_journal_visibility"]);
+            Assert.All(health.EventFamilyStatuses!.Values,
+                value => Assert.Equal(expected.GetProperty("event_family_state").GetString(), value));
+            Assert.Equal(expected.GetProperty("evidence_state").GetString(), health.Details!["ssh_inventory_state"]);
+            Assert.Equal("successful_journal_read", health.Details["freshness_basis"]);
+            Assert.Equal("independent_observation_state", health.Details["event_family_freshness"]);
+            Assert.Null(health.LastEventTime);
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        LinuxSshInventoryStates.SupportedInactive,
+        SourceApplicabilityStatuses.Applicable,
+        SourceHealthStatuses.Degraded,
+        SourceEvidenceStatuses.Disabled,
+        "ssh_service_not_active",
+        "producer_inactive")]
+    [InlineData(
+        LinuxSshInventoryStates.PermissionDenied,
+        SourceApplicabilityStatuses.Applicable,
+        SourceHealthStatuses.PermissionDenied,
+        SourceEvidenceStatuses.PermissionDenied,
+        "ssh_inventory_permission_denied",
+        "permission_denied")]
+    [InlineData(
+        LinuxSshInventoryStates.Malformed,
+        SourceApplicabilityStatuses.Applicable,
+        SourceHealthStatuses.Degraded,
+        SourceEvidenceStatuses.Degraded,
+        "ssh_inventory_malformed",
+        "degraded")]
+    [InlineData(
+        LinuxSshInventoryStates.Unsupported,
+        SourceApplicabilityStatuses.Unsupported,
+        SourceHealthStatuses.Unsupported,
+        SourceEvidenceStatuses.Unsupported,
+        "ssh_producer_not_present",
+        "unsupported")]
+    public async Task NewerSshInventoryOverridesHistoricalEventAcrossRestartUntilANewerEvent(
+        string inventoryState,
+        string expectedApplicability,
+        string expectedStatus,
+        string expectedPrerequisite,
+        string expectedError,
+        string expectedVisibility)
+    {
+        using var temporary = new TemporaryState();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.Journal.DeclaredRoles = ["ssh_server"];
+        options.State.Path = temporary.Path;
+        var state = new LinuxStateStore(temporary.Path);
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var historicalEventAt = now.AddHours(-2);
+        var inventoryAt = now.AddHours(-1);
+        var recoveredEventAt = now.AddMinutes(-30);
+        var normalized = NormalizeFixture(
+            FixtureCases(),
+            "ssh_authentication",
+            new LinuxJournalNormalizer(),
+            options);
+
+        var initial = new LinuxJournalRuntime(
+            Options.Create(options),
+            state,
+            new FixedTimeProvider(historicalEventAt));
+        await initial.InitializeAsync("1.11.10-test", "synthetic-config", default);
+        await initial.RecordCollectedAsync(At(normalized, historicalEventAt), default);
+        initial.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await initial.RecordSuccessfulReadObservationAsync(default);
+        await initial.ObserveInventoryAsync(SshTransitionSnapshots(inventoryState, inventoryAt), default);
+        AssertSshInventoryOverride(
+            initial,
+            expectedApplicability,
+            expectedStatus,
+            expectedPrerequisite,
+            expectedError,
+            expectedVisibility);
+
+        var restarted = new LinuxJournalRuntime(Options.Create(options), state, new FixedTimeProvider(now));
+        await restarted.InitializeAsync("1.11.10-test", "synthetic-config", default);
+        await restarted.ObserveInventoryAsync(SshTransitionSnapshots(inventoryState, inventoryAt), default);
+        restarted.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await restarted.RecordSuccessfulReadObservationAsync(default);
+        AssertSshInventoryOverride(
+            restarted,
+            expectedApplicability,
+            expectedStatus,
+            expectedPrerequisite,
+            expectedError,
+            expectedVisibility);
+
+        // A delayed replay of an event that predates the inventory snapshot must not turn the
+        // producer green merely because the record was read later.
+        await restarted.RecordCollectedAsync(At(normalized, historicalEventAt), default);
+        AssertSshInventoryOverride(
+            restarted,
+            expectedApplicability,
+            expectedStatus,
+            expectedPrerequisite,
+            expectedError,
+            expectedVisibility);
+
+        await restarted.RecordCollectedAsync(At(normalized, recoveredEventAt), default);
+        var recovered = Assert.Single(restarted.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, recovered.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, recovered.Status);
+        Assert.Equal(SourceEvidenceStatuses.Satisfied, recovered.PrerequisiteStatuses!["sshd_journal_visibility"]);
+        Assert.Equal(SourceEvidenceStatuses.Observed, recovered.EventFamilyStatuses!["ssh_authentication"]);
+        Assert.Equal("observed", recovered.Details!["ssh_journal_visibility"]);
+        Assert.Equal(recoveredEventAt, recovered.LastEventTime);
+
+        await restarted.RecordCollectedAsync(At(normalized, historicalEventAt), default);
+        var afterReorderedHistory = Assert.Single(restarted.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, afterReorderedHistory.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, afterReorderedHistory.Status);
+        Assert.Equal(SourceEvidenceStatuses.Satisfied,
+            afterReorderedHistory.PrerequisiteStatuses!["sshd_journal_visibility"]);
+        Assert.Equal("observed", afterReorderedHistory.Details!["ssh_journal_visibility"]);
+        Assert.Equal(recoveredEventAt, afterReorderedHistory.LastEventTime);
+    }
+
+    [Theory]
+    [InlineData(
+        LinuxSshInventoryStates.SupportedActive,
+        SourceApplicabilityStatuses.Applicable,
+        SourceHealthStatuses.Healthy,
+        SourceEvidenceStatuses.Satisfied,
+        null,
+        "supported_quiet")]
+    [InlineData(
+        LinuxSshInventoryStates.SupportedInactive,
+        SourceApplicabilityStatuses.Unknown,
+        SourceHealthStatuses.Degraded,
+        SourceEvidenceStatuses.Disabled,
+        "host_role_not_declared",
+        "producer_inactive")]
+    [InlineData(
+        LinuxSshInventoryStates.PermissionDenied,
+        SourceApplicabilityStatuses.Unknown,
+        SourceHealthStatuses.PermissionDenied,
+        SourceEvidenceStatuses.PermissionDenied,
+        "ssh_inventory_permission_denied",
+        "permission_denied")]
+    [InlineData(
+        LinuxSshInventoryStates.Malformed,
+        SourceApplicabilityStatuses.Unknown,
+        SourceHealthStatuses.Degraded,
+        SourceEvidenceStatuses.Degraded,
+        "host_role_not_declared",
+        "degraded")]
+    [InlineData(
+        LinuxSshInventoryStates.Unknown,
+        SourceApplicabilityStatuses.Unknown,
+        SourceHealthStatuses.Degraded,
+        SourceEvidenceStatuses.Unknown,
+        "host_role_not_declared",
+        "unverified")]
+    [InlineData(
+        LinuxSshInventoryStates.Unsupported,
+        SourceApplicabilityStatuses.Unsupported,
+        SourceHealthStatuses.Unsupported,
+        SourceEvidenceStatuses.Unsupported,
+        "ssh_producer_not_present",
+        "unsupported")]
+    public async Task CurrentSshInventoryOverridesPersistedUndeclaredApplicability(
+        string inventoryState,
+        string expectedApplicability,
+        string expectedStatus,
+        string expectedPrerequisite,
+        string? expectedError,
+        string expectedVisibility)
+    {
+        using var temporary = new TemporaryState();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var store = new LinuxStateStore(temporary.Path);
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var normalized = NormalizeFixture(
+            FixtureCases(),
+            "ssh_authentication",
+            new LinuxJournalNormalizer(),
+            options);
+        var historical = new LinuxJournalRuntime(
+            Options.Create(options),
+            store,
+            new FixedTimeProvider(now.AddHours(-2)));
+        await historical.InitializeAsync("1.11.10-test", "synthetic-config", default);
+        await historical.RecordCollectedAsync(At(normalized, now.AddHours(-2)), default);
+
+        var restarted = new LinuxJournalRuntime(Options.Create(options), store, new FixedTimeProvider(now));
+        await restarted.InitializeAsync("1.11.10-test", "synthetic-config", default);
+        await restarted.ObserveInventoryAsync(SshTransitionSnapshots(inventoryState, now.AddHours(-1)), default);
+        restarted.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await restarted.RecordSuccessfulReadObservationAsync(default);
+        AssertSshInventoryOverride(
+            restarted,
+            expectedApplicability,
+            expectedStatus,
+            expectedPrerequisite,
+            expectedError,
+            expectedVisibility);
+
+        await restarted.RecordCollectedAsync(At(normalized, now), default);
+        var recovered = Assert.Single(restarted.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, recovered.Applicability);
+        Assert.Equal(SourceHealthStatuses.Healthy, recovered.Status);
+        Assert.Equal(SourceEvidenceStatuses.Satisfied, recovered.PrerequisiteStatuses!["sshd_journal_visibility"]);
+        Assert.Equal("observed", recovered.Details!["ssh_journal_visibility"]);
+    }
+
+    [Fact]
+    public async Task ExplicitNonSshRoleRemainsNotApplicableAfterObservedSshEvent()
+    {
+        using var temporary = new TemporaryState();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.Journal.DeclaredRoles = ["general_server"];
+        options.State.Path = temporary.Path;
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var runtime = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.Path),
+            new FixedTimeProvider(now));
+        await runtime.InitializeAsync("1.11.10-test", "synthetic-config", default);
+        await runtime.ObserveInventoryAsync(
+            SshTransitionSnapshots(LinuxSshInventoryStates.SupportedInactive, now.AddHours(-1)),
+            default);
+        var normalized = NormalizeFixture(
+            FixtureCases(),
+            "ssh_authentication",
+            new LinuxJournalNormalizer(),
+            options);
+        await runtime.RecordCollectedAsync(At(normalized, now.AddMinutes(-30)), default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var ssh = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        Assert.Equal(SourceApplicabilityStatuses.NotApplicable, ssh.Applicability);
+        Assert.Equal(SourceHealthStatuses.NotApplicable, ssh.Status);
+        Assert.False(ssh.Enabled);
+        Assert.Equal(SourceEvidenceStatuses.NotApplicable, ssh.PrerequisiteStatuses!["sshd_journal_visibility"]);
+        Assert.Equal("not_applicable", ssh.Details!["ssh_journal_visibility"]);
+    }
+
+    [Fact]
     public async Task RuntimeReportsNullLastEventTimeForUnobservedSources()
     {
         using var temporary = new TemporaryState();
@@ -405,6 +716,195 @@ public sealed class LinuxL2JournalTests
                 Assert.Equal(expected.GetProperty(family).GetString(), health.EventFamilyStatuses![family]);
             }
         }
+    }
+
+    [Fact]
+    public async Task FirewallInventoryAndStructuredJournalEvidenceStatesAreDeterministic()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory,
+            "fixtures",
+            "synthetic-linux-firewall-evidence-cases.json")));
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var journalFixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+
+        foreach (var fixture in document.RootElement.EnumerateArray())
+        {
+            var expected = fixture.GetProperty("expected");
+            var probes = fixture.GetProperty("probes").EnumerateArray()
+                .Select(probe => new LinuxFirewallInventoryProbe(
+                    probe.GetProperty("producer").GetString()!,
+                    probe.GetProperty("supported").GetBoolean(),
+                    InventoryState(probe.GetProperty("state").GetString()!),
+                    probe.GetProperty("present").GetBoolean(),
+                    probe.GetProperty("active").GetBoolean(),
+                    probe.GetProperty("logging_enabled").ValueKind == JsonValueKind.Null
+                        ? null
+                        : probe.GetProperty("logging_enabled").GetBoolean(),
+                    probe.GetProperty("error_code").GetString()!))
+                .ToArray();
+            var evidence = LinuxFirewallInventoryEvidence.Evaluate(probes);
+            Assert.Equal(expected.GetProperty("inventory_state").GetString(), evidence.State);
+            Assert.Equal(expected.GetProperty("producer").GetString(), evidence.Producer);
+
+            using var temporary = new TemporaryState();
+            var options = TestOptions(WindowsCoverageLevel.L2);
+            options.State.Path = temporary.Path;
+            var runtime = new LinuxJournalRuntime(
+                Options.Create(options),
+                new LinuxStateStore(temporary.Path),
+                new FixedTimeProvider(now));
+            await runtime.InitializeAsync("1.11.9-test", "synthetic-config", default);
+            await runtime.RecordCollectedAsync(
+                NormalizeFixture(journalFixtures, "kernel_module", normalizer, options),
+                default);
+            runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+            await runtime.RecordSuccessfulReadObservationAsync(default);
+            var summary = evidence.AddTo(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["state"] = "success",
+                ["error_code"] = "none",
+                ["item_count"] = "0",
+                ["truncated"] = "false"
+            });
+            await runtime.ObserveInventoryAsync(
+                [new AssetInventorySnapshot { SnapshotType = LinuxFirewallInventoryEvidence.SnapshotType, Summary = summary }],
+                default);
+
+            foreach (var family in fixture.GetProperty("observed_families").EnumerateArray().Select(item => item.GetString()!))
+            {
+                await runtime.RecordCollectedAsync(NormalizeFixture(journalFixtures, family, normalizer, options), default);
+            }
+
+            var snapshot = runtime.Snapshot();
+            var manifest = Assert.Single(snapshot.Manifest, item => item.SourceId == LinuxTelemetrySourceIds.Firewall);
+            var health = Assert.Single(snapshot.Health, item => item.SourceId == LinuxTelemetrySourceIds.Firewall);
+            Assert.Equal(expected.GetProperty("applicability").GetString(), manifest.Applicability);
+            Assert.Equal(manifest.Applicability, health.Applicability);
+            Assert.Equal(expected.GetProperty("status").GetString(), health.Status);
+            Assert.Equal(expected.GetProperty("error_code").GetString(), health.ErrorCode);
+            Assert.Equal(expected.GetProperty("firewall_state").GetString(), health.Details!["firewall_inventory_state"]);
+            Assert.Equal(expected.GetProperty("producer").GetString(), health.Details["firewall_producer"]);
+            Assert.Equal(expected.GetProperty("systemd_journal_readable").GetString(),
+                health.PrerequisiteStatuses!["systemd_journal_readable"]);
+            Assert.Equal(expected.GetProperty("firewall_logging_already_enabled").GetString(),
+                health.PrerequisiteStatuses["firewall_logging_already_enabled"]);
+            foreach (var family in new[] { "firewall_allow", "firewall_deny", "firewall_change" })
+            {
+                Assert.Equal(expected.GetProperty(family).GetString(), health.EventFamilyStatuses![family]);
+            }
+            Assert.DoesNotContain(health.Details.Keys, key => key is "raw" or "message" or "journal_record");
+        }
+    }
+
+    [Fact]
+    public async Task NewerFirewallInventoryOverridesOlderEventUntilFreshStructuredEvidenceArrives()
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.Path),
+            new FixedTimeProvider(now));
+        await runtime.InitializeAsync("1.11.9-test", "synthetic-config", default);
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+
+        await runtime.RecordCollectedAsync(
+            NormalizeFixture(fixtures, "firewall_deny", normalizer, options),
+            default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+        Assert.Equal(SourceHealthStatuses.Healthy, FirewallHealth(runtime).Status);
+
+        await runtime.ObserveInventoryAsync(
+            [FirewallEvidenceSnapshot(
+                new LinuxFirewallInventoryEvidence(
+                    LinuxFirewallInventoryStates.LoggingDisabled,
+                    "ufw",
+                    "firewall_logging_disabled"),
+                now)],
+            default);
+
+        var disabled = FirewallHealth(runtime);
+        Assert.Equal(SourceHealthStatuses.Disabled, disabled.Status);
+        Assert.Equal("firewall_logging_disabled", disabled.ErrorCode);
+        Assert.Equal(SourceEvidenceStatuses.Observed, disabled.EventFamilyStatuses!["firewall_deny"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, disabled.EventFamilyStatuses["firewall_allow"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, disabled.EventFamilyStatuses["firewall_change"]);
+
+        // A record read late does not become newer evidence merely because it was ingested later.
+        await runtime.RecordCollectedAsync(
+            NormalizeFixture(fixtures, "firewall_allow", normalizer, options),
+            default);
+        Assert.Equal(SourceHealthStatuses.Disabled, FirewallHealth(runtime).Status);
+
+        await runtime.RecordCollectedAsync(
+            At(NormalizeFixture(fixtures, "firewall_allow", normalizer, options), now.AddSeconds(1)),
+            default);
+
+        var recovered = FirewallHealth(runtime);
+        Assert.Equal(SourceHealthStatuses.Healthy, recovered.Status);
+        Assert.Equal(SourceEvidenceStatuses.Observed, recovered.EventFamilyStatuses!["firewall_allow"]);
+        Assert.Equal("observed", recovered.Details!["firewall_journal_visibility"]);
+
+        await runtime.RecordCollectedAsync(
+            NormalizeFixture(fixtures, "firewall_deny", normalizer, options),
+            default);
+        var stableAfterLateOldRecord = FirewallHealth(runtime);
+        Assert.Equal(SourceHealthStatuses.Healthy, stableAfterLateOldRecord.Status);
+        Assert.Equal("observed", stableAfterLateOldRecord.Details!["firewall_journal_visibility"]);
+    }
+
+    [Fact]
+    public async Task RestartedHistoricalFirewallEvidenceCannotOverrideCurrentDisabledInventory()
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var store = new LinuxStateStore(temporary.Path);
+        var runtime = new LinuxJournalRuntime(Options.Create(options), store, new FixedTimeProvider(now));
+        await runtime.InitializeAsync("1.11.9-test", "synthetic-config", default);
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+        await runtime.RecordCollectedAsync(
+            NormalizeFixture(fixtures, "firewall_deny", normalizer, options),
+            default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var restartedAt = now.AddHours(1);
+        var restarted = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.Path),
+            new FixedTimeProvider(restartedAt));
+        await restarted.InitializeAsync("1.11.9-test", "synthetic-config", default);
+        restarted.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await restarted.RecordSuccessfulReadObservationAsync(default);
+
+        var unresolved = FirewallHealth(restarted);
+        Assert.Equal(SourceApplicabilityStatuses.Unknown, unresolved.Applicability);
+        Assert.Equal(SourceHealthStatuses.Degraded, unresolved.Status);
+
+        await restarted.ObserveInventoryAsync(
+            [FirewallEvidenceSnapshot(
+                new LinuxFirewallInventoryEvidence(
+                    LinuxFirewallInventoryStates.LoggingDisabled,
+                    "nftables",
+                    "firewall_logging_disabled"),
+                restartedAt)],
+            default);
+
+        var disabled = FirewallHealth(restarted);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, disabled.Applicability);
+        Assert.Equal(SourceHealthStatuses.Disabled, disabled.Status);
+        Assert.Equal(SourceEvidenceStatuses.Disabled,
+            disabled.PrerequisiteStatuses!["firewall_logging_already_enabled"]);
+        Assert.Equal("unverified", disabled.Details!["firewall_journal_visibility"]);
     }
 
     [Theory]
@@ -753,6 +1253,180 @@ public sealed class LinuxL2JournalTests
         "malformed" => InventorySourceState.Malformed,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported synthetic inventory state.")
     };
+
+    private static IReadOnlyList<AssetInventorySnapshot> SshEvidenceSnapshots(JsonElement inventory)
+    {
+        var serviceItems = new List<InventoryItem>();
+        if (inventory.GetProperty("service_name").GetString() is { } serviceName)
+        {
+            serviceItems.Add(new InventoryItem
+            {
+                Kind = "service",
+                Name = serviceName,
+                Status = inventory.GetProperty("service_status").GetString(),
+                Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["load_state"] = "loaded",
+                    ["sub_state"] = inventory.GetProperty("service_status").GetString() ?? "unknown"
+                }
+            });
+        }
+
+        var sshItems = inventory.GetProperty("ssh_item").GetBoolean()
+            ? new[]
+            {
+                new InventoryItem
+                {
+                    Kind = "ssh",
+                    Name = "sshd",
+                    Status = "observed_primary_config",
+                    Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["passwordauthentication"] = "no"
+                    }
+                }
+            }
+            : Array.Empty<InventoryItem>();
+
+        return
+        [
+            new AssetInventorySnapshot
+            {
+                SnapshotType = LinuxSshInventoryEvidence.ServiceSnapshotType,
+                Items = serviceItems,
+                Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["state"] = inventory.GetProperty("service_state").GetString()!,
+                    ["error_code"] = inventory.GetProperty("service_error").GetString()!,
+                    ["truncated"] = inventory.TryGetProperty("service_truncated", out var truncated)
+                        && truncated.GetBoolean()
+                            ? "true"
+                            : "false"
+                }
+            },
+            new AssetInventorySnapshot
+            {
+                SnapshotType = LinuxSshInventoryEvidence.SshSnapshotType,
+                Items = sshItems,
+                Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["state"] = inventory.GetProperty("ssh_state").GetString()!,
+                    ["error_code"] = inventory.GetProperty("ssh_error").GetString()!
+                }
+            }
+        ];
+    }
+
+    private static AssetInventorySnapshot FirewallEvidenceSnapshot(
+        LinuxFirewallInventoryEvidence evidence,
+        DateTimeOffset collectedAt) => new()
+        {
+            SnapshotType = LinuxFirewallInventoryEvidence.SnapshotType,
+            CollectedAt = collectedAt,
+            Summary = evidence.AddTo(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["state"] = "success",
+                ["error_code"] = "none",
+                ["item_count"] = "0",
+                ["truncated"] = "false"
+            })
+        };
+
+    private static SourceHealthReport FirewallHealth(LinuxJournalRuntime runtime) =>
+        Assert.Single(runtime.Snapshot().Health, item => item.SourceId == LinuxTelemetrySourceIds.Firewall);
+
+    private static IReadOnlyList<AssetInventorySnapshot> SshTransitionSnapshots(
+        string inventoryState,
+        DateTimeOffset collectedAt)
+    {
+        var serviceItems = inventoryState is LinuxSshInventoryStates.SupportedActive or LinuxSshInventoryStates.SupportedInactive
+            ? new[]
+            {
+                new InventoryItem
+                {
+                    Kind = "service",
+                    Name = "sshd.service",
+                    Status = inventoryState == LinuxSshInventoryStates.SupportedActive ? "active" : "inactive",
+                    Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["load_state"] = "loaded",
+                        ["sub_state"] = inventoryState == LinuxSshInventoryStates.SupportedActive ? "running" : "inactive"
+                    }
+                }
+            }
+            : Array.Empty<InventoryItem>();
+        var serviceState = inventoryState switch
+        {
+            LinuxSshInventoryStates.PermissionDenied => "permission_denied",
+            LinuxSshInventoryStates.Malformed => "malformed",
+            LinuxSshInventoryStates.Unknown => "unavailable",
+            _ => "success"
+        };
+        var sshState = inventoryState == LinuxSshInventoryStates.Unsupported
+            ? "unavailable"
+            : "success";
+        var sshItems = inventoryState == LinuxSshInventoryStates.Unsupported
+            ? Array.Empty<InventoryItem>()
+            : new[]
+            {
+                new InventoryItem
+                {
+                    Kind = "ssh",
+                    Name = "sshd",
+                    Status = "observed_primary_config"
+                }
+            };
+        return
+        [
+            new AssetInventorySnapshot
+            {
+                SnapshotType = LinuxSshInventoryEvidence.ServiceSnapshotType,
+                CollectedAt = collectedAt,
+                Items = serviceItems,
+                Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["state"] = serviceState,
+                    ["error_code"] = serviceState == "success" ? "none" : $"synthetic_{serviceState}",
+                    ["truncated"] = "false"
+                }
+            },
+            new AssetInventorySnapshot
+            {
+                SnapshotType = LinuxSshInventoryEvidence.SshSnapshotType,
+                CollectedAt = collectedAt,
+                Items = sshItems,
+                Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["state"] = sshState,
+                    ["error_code"] = sshState == "unavailable" ? "file_missing" : "none"
+                }
+            }
+        ];
+    }
+
+    private static NormalizedJournalRecord At(NormalizedJournalRecord record, DateTimeOffset eventTime) =>
+        record with { Envelope = record.Envelope with { EventTime = eventTime } };
+
+    private static void AssertSshInventoryOverride(
+        LinuxJournalRuntime runtime,
+        string expectedApplicability,
+        string expectedStatus,
+        string expectedPrerequisite,
+        string? expectedError,
+        string expectedVisibility)
+    {
+        var snapshot = runtime.Snapshot();
+        var manifest = Assert.Single(snapshot.Manifest,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        var health = Assert.Single(snapshot.Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Ssh);
+        Assert.Equal(expectedApplicability, manifest.Applicability);
+        Assert.Equal(expectedApplicability, health.Applicability);
+        Assert.Equal(expectedStatus, health.Status);
+        Assert.Equal(expectedPrerequisite, health.PrerequisiteStatuses!["sshd_journal_visibility"]);
+        Assert.Equal(expectedError, health.ErrorCode);
+        Assert.Equal(expectedVisibility, health.Details!["ssh_journal_visibility"]);
+    }
 
     private sealed class TemporaryState : IDisposable
     {

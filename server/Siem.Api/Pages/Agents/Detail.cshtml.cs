@@ -124,21 +124,58 @@ public sealed class DetailModel(
         _ => "Capacity is below the 70% warning threshold."
     };
 
-    public static string SourceStateGuidance(SourceTelemetryCoverage source) => source.Status switch
+    public static string SourceStateGuidance(SourceTelemetryCoverage source) =>
+        FirewallStateGuidance(source) ?? source.Status switch
+        {
+            SourceHealthStatuses.Missing => "Expected telemetry is absent. Verify agent/source configuration and prerequisites through an approved runbook; do not treat absence as clean evidence.",
+            SourceHealthStatuses.Unsupported when !IsMandatoryForCoverage(source) => "This optional capability is not supported by the current collector set. It remains visible for capability review but does not degrade aggregate health or create a completeness gap.",
+            SourceHealthStatuses.Unsupported => "This required source is not supported by the current collector set. Track it as a visibility gap unless a future approved collector is added.",
+            SourceHealthStatuses.NotApplicable => "The declared platform or role makes this source not applicable. Keep the reason visible for review.",
+            SourceHealthStatuses.Excepted => "An approved coverage exception is active. Review exception scope and expiry outside this page.",
+            SourceHealthStatuses.Disabled => "The source is explicitly disabled. Follow configuration/change-control runbooks; this UI does not enable it.",
+            SourceHealthStatuses.PermissionDenied => "Access was denied. Review least-privilege prerequisites; this UI does not change host permissions.",
+            SourceHealthStatuses.Stale => "Last evidence is older than expected. Compare heartbeat, queue, and source timestamps before assuming quiet activity.",
+            SourceHealthStatuses.Degraded => source.TransitionState == HealthTransitionStates.Degraded ? "Source is degraded and may be throttled. Review queue pressure and collector limits." : "Source is degraded or applicability is uncertain. Treat findings as partial.",
+            SourceHealthStatuses.Error => "Collector or processing error reported. Use safe diagnostics; do not clear logs or mutate policy from the console.",
+            _ when source.RecentEventCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "A current successful bounded source observation establishes readiness even when the source produced no new event.",
+            _ => source.RecentEventCount == 0 ? "Health is reported but no recent events were observed in the lookback; evidence may be quiet or incomplete." : "Recent source evidence is present."
+        };
+
+    private static string? FirewallStateGuidance(SourceTelemetryCoverage source)
     {
-        SourceHealthStatuses.Missing => "Expected telemetry is absent. Verify agent/source configuration and prerequisites through an approved runbook; do not treat absence as clean evidence.",
-        SourceHealthStatuses.Unsupported when !IsMandatoryForCoverage(source) => "This optional capability is not supported by the current collector set. It remains visible for capability review but does not degrade aggregate health or create a completeness gap.",
-        SourceHealthStatuses.Unsupported => "This required source is not supported by the current collector set. Track it as a visibility gap unless a future approved collector is added.",
-        SourceHealthStatuses.NotApplicable => "The declared platform or role makes this source not applicable. Keep the reason visible for review.",
-        SourceHealthStatuses.Excepted => "An approved coverage exception is active. Review exception scope and expiry outside this page.",
-        SourceHealthStatuses.Disabled => "The source is explicitly disabled. Follow configuration/change-control runbooks; this UI does not enable it.",
-        SourceHealthStatuses.PermissionDenied => "Access was denied. Review least-privilege prerequisites; this UI does not change host permissions.",
-        SourceHealthStatuses.Stale => "Last evidence is older than expected. Compare heartbeat, queue, and source timestamps before assuming quiet activity.",
-        SourceHealthStatuses.Degraded => source.TransitionState == HealthTransitionStates.Degraded ? "Source is degraded and may be throttled. Review queue pressure and collector limits." : "Source is degraded or applicability is uncertain. Treat findings as partial.",
-        SourceHealthStatuses.Error => "Collector or processing error reported. Use safe diagnostics; do not clear logs or mutate policy from the console.",
-        _ when source.RecentEventCount == 0 && SourceHealthRules.IsSuccessfulPollingSource(source.SourceId) => "A current successful bounded source observation establishes readiness even when the source produced no new event.",
-        _ => source.RecentEventCount == 0 ? "Health is reported but no recent events were observed in the lookback; evidence may be quiet or incomplete." : "Recent source evidence is present."
-    };
+        if (!string.Equals(source.SourceId, LinuxTelemetrySourceIds.Firewall, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (string.Equals(
+                source.Details.GetValueOrDefault("firewall_journal_visibility"),
+                "observed",
+                StringComparison.Ordinal))
+        {
+            if (source.Status != SourceHealthStatuses.Healthy)
+            {
+                return "Structured firewall evidence exists, but current source health is not healthy. Resolve the reported journal condition without exposing raw rules or changing firewall policy.";
+            }
+            return source.RecentEventCount == 0
+                ? "Structured firewall evidence newer than the last inventory observation established direct visibility, but no matching event is in this lookback. Review timestamps without exposing raw rules or changing firewall policy."
+                : "Structured firewall evidence newer than the last inventory observation established direct visibility. Review normalized events without exposing raw rules or changing firewall policy.";
+        }
+
+        return source.Details.GetValueOrDefault("firewall_inventory_state") switch
+        {
+            "absent" => "No supported nftables, firewalld, or UFW producer was found by bounded inventory. Do not install or enable a firewall solely to change this optional telemetry row.",
+            "logging_disabled" => "A supported firewall is present but logging is disabled. Use a separately approved firewall runbook if visibility is required; this page never enables or reconfigures logging.",
+            "logging_enabled" when source.Status == SourceHealthStatuses.Healthy && source.RecentEventCount == 0 => "Already-enabled firewall logging and a current journal observation establish quiet visibility. No event is not proof of clean traffic; raw rules and records are not shown here.",
+            "logging_enabled" when source.RecentEventCount > 0 => "Already-enabled firewall logging produced recent structured evidence. Review it without changing firewall policy from this page.",
+            "logging_enabled" => "Bounded inventory reports firewall logging already enabled, but current source health is not healthy. Resolve the reported journal health condition without exposing raw rules or changing firewall policy.",
+            "unsupported" => "An out-of-scope firewall producer was found. Keep the optional capability visible; do not replace or reconfigure the host firewall merely to make it supported.",
+            "permission_denied" => "The bounded firewall probe was denied. Review existing least-privilege access through an approved runbook; this page does not elevate access or mutate policy.",
+            "timeout" => "The bounded firewall probe timed out. Retry safe diagnostics before any host change.",
+            "malformed" => "Bounded firewall state could not be parsed. Validate the supported producer/version without exposing raw rules or changing policy.",
+            _ => "Firewall applicability is unresolved because bounded producer/logging evidence has not arrived. This optional unknown stays visible without proving coverage."
+        };
+    }
 
     public static string SourceStatusBadgeClass(SourceTelemetryCoverage source)
     {

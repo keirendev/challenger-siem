@@ -78,7 +78,7 @@ public sealed class LinuxPassiveTelemetryCollector(
                 new(
                     LinuxTelemetrySourceIds.ProcessSnapshotDiff,
                     ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe"],
-                    "Polling-honest baseline, observed, disappeared, and changed process snapshot differences; no exact exec/exit claim.",
+                    "Polling-honest baseline, observed, disappeared, and changed process snapshot differences; expected PID disappearance/identity races are counted separately from denied, malformed, truncated, or bounded coverage gaps; no exact exec/exit claim.",
                     "High-sensitivity process metadata. Command lines are bounded, common credential forms are redacted, and malformed/truncated sensitive text fails closed before queueing; this is not a guarantee that arbitrary unlabeled secrets can be identified. Raw procfs records are not retained.",
                     $"{settings.MaxProcessesPerScan} processes, {settings.MaxProcessReadBytesPerScan} read bytes, {settings.MaxEventsPerScan} events, {settings.ScanTimeoutSeconds}s deadline."),
                 new(
@@ -730,7 +730,8 @@ public sealed class LinuxPassiveTelemetryCollector(
         };
         if (details.Remove(LinuxBootIdentity.DetailKey)) details["boot_epoch"] = "observed_hashed_locally";
         return new(sourceId, events, state, health, error, gaps,
-            read.SkippedCount, 0, dropped, sampled, health != SourceHealthStatuses.Healthy, details);
+            read.SkippedCount, 0, dropped, sampled, health != SourceHealthStatuses.Healthy, details,
+            read.ExpectedRaceSkipCount, read.CoverageGapReadSkipCount);
     }
 
     private static PassiveCollectionResult NoDataResult<T>(
@@ -758,7 +759,8 @@ public sealed class LinuxPassiveTelemetryCollector(
         return new(sourceId, Array.Empty<EventEnvelope>(), updated, health, read.ErrorCode,
             health == SourceHealthStatuses.Healthy ? 0 : Math.Max(1, read.VisibilityGapCount),
             read.SkippedCount, 0, 0, 0, health != SourceHealthStatuses.Healthy,
-            read.Details ?? new Dictionary<string, string>(StringComparer.Ordinal));
+            read.Details ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            read.ExpectedRaceSkipCount, read.CoverageGapReadSkipCount);
     }
 
     private static bool TryGetBootIdentity<T>(PassiveReadResult<T> read, out string bootIdentitySha256)

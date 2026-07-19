@@ -1,0 +1,148 @@
+[
+  {
+    "case": "absent",
+    "probes": [
+      { "producer": "nftables", "supported": true, "state": "unavailable", "present": false, "active": false, "logging_enabled": null, "error_code": "command_missing" },
+      { "producer": "firewalld", "supported": true, "state": "unavailable", "present": false, "active": false, "logging_enabled": null, "error_code": "command_missing" },
+      { "producer": "ufw", "supported": true, "state": "unavailable", "present": false, "active": false, "logging_enabled": null, "error_code": "command_missing" },
+      { "producer": "iptables", "supported": false, "state": "unavailable", "present": false, "active": false, "logging_enabled": null, "error_code": "command_missing" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "absent",
+      "producer": "none",
+      "applicability": "not_applicable",
+      "status": "not_applicable",
+      "error_code": null,
+      "firewall_state": "absent",
+      "systemd_journal_readable": "not_applicable",
+      "firewall_logging_already_enabled": "not_applicable",
+      "firewall_allow": "not_applicable",
+      "firewall_deny": "not_applicable",
+      "firewall_change": "not_applicable"
+    }
+  },
+  {
+    "case": "present_logging_disabled",
+    "probes": [
+      { "producer": "ufw", "supported": true, "state": "success", "present": true, "active": true, "logging_enabled": false, "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "logging_disabled",
+      "producer": "ufw",
+      "applicability": "applicable",
+      "status": "disabled",
+      "error_code": "firewall_logging_disabled",
+      "firewall_state": "logging_disabled",
+      "systemd_journal_readable": "satisfied",
+      "firewall_logging_already_enabled": "disabled",
+      "firewall_allow": "not_observed",
+      "firewall_deny": "not_observed",
+      "firewall_change": "not_observed"
+    }
+  },
+  {
+    "case": "present_quiet_logging_enabled",
+    "probes": [
+      { "producer": "nftables", "supported": true, "state": "success", "present": true, "active": true, "logging_enabled": true, "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "logging_enabled",
+      "producer": "nftables",
+      "applicability": "applicable",
+      "status": "healthy",
+      "error_code": null,
+      "firewall_state": "logging_enabled",
+      "systemd_journal_readable": "satisfied",
+      "firewall_logging_already_enabled": "satisfied",
+      "firewall_allow": "not_observed",
+      "firewall_deny": "not_observed",
+      "firewall_change": "not_observed"
+    }
+  },
+  {
+    "case": "nflog_only_not_journal_visible",
+    "probes": [
+      { "producer": "nftables", "supported": true, "state": "success", "present": true, "active": true, "logging_enabled": false, "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "logging_disabled",
+      "producer": "nftables",
+      "applicability": "applicable",
+      "status": "disabled",
+      "error_code": "firewall_logging_disabled",
+      "firewall_state": "logging_disabled",
+      "systemd_journal_readable": "satisfied",
+      "firewall_logging_already_enabled": "disabled",
+      "firewall_allow": "not_observed",
+      "firewall_deny": "not_observed",
+      "firewall_change": "not_observed"
+    }
+  },
+  {
+    "case": "enabled_observed",
+    "probes": [
+      { "producer": "firewalld", "supported": true, "state": "success", "present": true, "active": true, "logging_enabled": null, "error_code": "none" },
+      { "producer": "firewalld", "supported": true, "state": "success", "present": true, "active": true, "logging_enabled": true, "error_code": "none" }
+    ],
+    "observed_families": ["firewall_deny"],
+    "expected": {
+      "inventory_state": "logging_enabled",
+      "producer": "firewalld",
+      "applicability": "applicable",
+      "status": "healthy",
+      "error_code": null,
+      "firewall_state": "logging_enabled",
+      "systemd_journal_readable": "satisfied",
+      "firewall_logging_already_enabled": "satisfied",
+      "firewall_allow": "not_observed",
+      "firewall_deny": "observed",
+      "firewall_change": "not_observed"
+    }
+  },
+  {
+    "case": "unsupported_producer",
+    "probes": [
+      { "producer": "iptables", "supported": false, "state": "success", "present": true, "active": true, "logging_enabled": null, "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "unsupported",
+      "producer": "iptables",
+      "applicability": "unsupported",
+      "status": "unsupported",
+      "error_code": "firewall_producer_out_of_scope",
+      "firewall_state": "unsupported",
+      "systemd_journal_readable": "unsupported",
+      "firewall_logging_already_enabled": "unsupported",
+      "firewall_allow": "unsupported",
+      "firewall_deny": "unsupported",
+      "firewall_change": "unsupported"
+    }
+  },
+  {
+    "case": "permission_denied",
+    "probes": [
+      { "producer": "nftables", "supported": true, "state": "permission_denied", "present": false, "active": false, "logging_enabled": null, "error_code": "command_permission_denied" },
+      { "producer": "firewalld", "supported": true, "state": "unavailable", "present": false, "active": false, "logging_enabled": null, "error_code": "command_missing" },
+      { "producer": "ufw", "supported": true, "state": "success", "present": true, "active": false, "logging_enabled": false, "error_code": "none" }
+    ],
+    "observed_families": [],
+    "expected": {
+      "inventory_state": "permission_denied",
+      "producer": "nftables",
+      "applicability": "unknown",
+      "status": "permission_denied",
+      "error_code": "firewall_inventory_permission_denied",
+      "firewall_state": "permission_denied",
+      "systemd_journal_readable": "permission_denied",
+      "firewall_logging_already_enabled": "permission_denied",
+      "firewall_allow": "permission_denied",
+      "firewall_deny": "permission_denied",
+      "firewall_change": "permission_denied"
+    }
+  }
+]

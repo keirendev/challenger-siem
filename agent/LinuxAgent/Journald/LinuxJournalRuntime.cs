@@ -20,6 +20,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     private readonly Dictionary<string, DateTimeOffset> latestBySource = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> observedFamilies = new(StringComparer.Ordinal);
     private readonly HashSet<string> observedSources = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, EvidenceObservation> currentProducerObservations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, EvidenceObservation> inventoryObservations = new(StringComparer.Ordinal);
+    private long evidenceObservationSequence;
     private JournalCheckpointState checkpoint = new();
     private string status = SourceHealthStatuses.Missing;
     private string? errorCode;
@@ -51,6 +54,11 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         LinuxPackageManagementInventoryStates.Unknown,
         "unknown",
         "package_manager_inventory_not_observed");
+    private LinuxFirewallInventoryEvidence firewallInventory = new(
+        LinuxFirewallInventoryStates.Unknown,
+        "unknown",
+        "firewall_inventory_not_observed");
+    private LinuxSshInventoryEvidence sshInventory = LinuxSshInventoryEvidence.Unknown;
 
     public async Task InitializeAsync(string sourceVersion, string sourceConfigHash, CancellationToken cancellationToken)
     {
@@ -169,6 +177,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 latestBySource[record.Envelope.SourceId!] = record.Envelope.EventTime;
             }
             observedSources.Add(record.Envelope.SourceId!);
+            RecordCurrentProducerObservation(record.Envelope.SourceId!, record.Envelope.EventTime);
             if (!observedFamilies.TryGetValue(record.Envelope.SourceId!, out var families))
             {
                 families = new HashSet<string>(StringComparer.Ordinal);
@@ -178,6 +187,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             foreach (var evidence in record.AdditionalEvidence ?? Array.Empty<JournalSourceEvidence>())
             {
                 observedSources.Add(evidence.SourceId);
+                RecordCurrentProducerObservation(evidence.SourceId, record.Envelope.EventTime);
                 if (!observedFamilies.TryGetValue(evidence.SourceId, out var additionalFamilies))
                     observedFamilies[evidence.SourceId] = additionalFamilies = new(StringComparer.Ordinal);
                 additionalFamilies.Add(evidence.EventFamily);
@@ -225,8 +235,29 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     public Task ObserveInventoryAsync(IReadOnlyList<AssetInventorySnapshot> snapshots, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var evidence = LinuxPackageManagementInventoryEvidence.FromSnapshots(snapshots);
-        lock (sync) packageManagementInventory = evidence;
+        var packageEvidence = LinuxPackageManagementInventoryEvidence.FromSnapshots(snapshots);
+        var firewallEvidence = LinuxFirewallInventoryEvidence.FromSnapshots(snapshots);
+        var sshEvidence = LinuxSshInventoryEvidence.FromSnapshots(snapshots);
+        var observedAt = timeProvider.GetUtcNow();
+        var batchObservedAt = SnapshotObservationTime(snapshots, observedAt);
+        var firewallObservedAt = SnapshotObservationTime(
+            snapshots.Where(snapshot => string.Equals(
+                snapshot.SnapshotType,
+                LinuxFirewallInventoryEvidence.SnapshotType,
+                StringComparison.Ordinal)),
+            batchObservedAt);
+        var sshObservedAt = SnapshotObservationTime(
+            snapshots.Where(snapshot => snapshot.SnapshotType is
+                LinuxSshInventoryEvidence.SshSnapshotType or LinuxSshInventoryEvidence.ServiceSnapshotType),
+            batchObservedAt);
+        lock (sync)
+        {
+            packageManagementInventory = packageEvidence;
+            firewallInventory = firewallEvidence;
+            sshInventory = sshEvidence;
+            RecordInventoryObservation(LinuxTelemetrySourceIds.Firewall, firewallObservedAt);
+            RecordInventoryObservation(LinuxTelemetrySourceIds.Ssh, sshObservedAt);
+        }
         return Task.CompletedTask;
     }
 
@@ -443,10 +474,14 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         lock (sync)
         {
             var targetLevel = options.Journal.TargetCoverageLevel;
+            var currentApplicabilityEvidence = observedSources
+                .Where(sourceId => sourceId is not LinuxTelemetrySourceIds.Firewall and not LinuxTelemetrySourceIds.Ssh
+                    || HasNewerDirectProducerEvidence(sourceId))
+                .ToHashSet(StringComparer.Ordinal);
             var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
                     targetLevel,
                     options.Journal.DeclaredRoles,
-                    observedSources)
+                    currentApplicabilityEvidence)
                 .Select(ResolveInventoryApplicability)
                 .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
                 .ToArray();
@@ -506,6 +541,25 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 : "unverified";
             details["package_management_state"] = PackageManagementState();
         }
+        if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall)
+        {
+            details["firewall_inventory_state"] = firewallInventory.State;
+            details["firewall_producer"] = firewallInventory.Producer;
+            details["firewall_inventory_reason"] = firewallInventory.Reason;
+            details["firewall_logging"] = firewallInventory.PrerequisiteStatus;
+            details["firewall_journal_visibility"] = HasNewerDirectProducerEvidence(manifest.SourceId)
+                ? "observed"
+                : firewallInventory.State == LinuxFirewallInventoryStates.LoggingEnabled && lastSuccessfulReadAt.HasValue
+                    ? "supported_quiet"
+                    : "unverified";
+        }
+        if (manifest.SourceId == LinuxTelemetrySourceIds.Ssh)
+        {
+            details["ssh_inventory_state"] = sshInventory.State;
+            details["ssh_inventory_producer"] = sshInventory.Producer;
+            details["ssh_inventory_reason"] = sshInventory.Reason;
+            details["ssh_journal_visibility"] = SshJournalVisibilityDetail(manifest);
+        }
         if (LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId))
         {
             details["freshness_basis"] = "successful_journal_read";
@@ -561,19 +615,65 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 
     private SourceManifestEntry ResolveInventoryApplicability(SourceManifestEntry manifest)
     {
-        if (manifest.SourceId != LinuxTelemetrySourceIds.PackageManagement
-            || observedSources.Contains(manifest.SourceId))
+        if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement)
+        {
+            if (observedSources.Contains(manifest.SourceId)) return manifest;
+            return manifest with
+            {
+                Applicability = packageManagementInventory.Applicability,
+                ApplicabilityReason = packageManagementInventory.Applicability == SourceApplicabilityStatuses.Applicable
+                    ? null
+                    : packageManagementInventory.Reason
+            };
+        }
+
+        if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall)
+        {
+            if (HasNewerDirectProducerEvidence(manifest.SourceId)) return manifest;
+            return manifest with
+            {
+                Applicability = firewallInventory.Applicability,
+                ApplicabilityReason = firewallInventory.Applicability == SourceApplicabilityStatuses.Applicable
+                    ? null
+                    : firewallInventory.Reason
+            };
+        }
+
+        if (manifest.SourceId != LinuxTelemetrySourceIds.Ssh)
         {
             return manifest;
         }
 
-        return manifest with
+        // Explicit non-SSH role declarations remain authoritative even when durable history
+        // contains an older SSH record.
+        if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return manifest;
+        if (HasNewerDirectProducerEvidence(manifest.SourceId)) return manifest;
+
+        if (options.Journal.DeclaredRoles.Length == 0)
         {
-            Applicability = packageManagementInventory.Applicability,
-            ApplicabilityReason = packageManagementInventory.Applicability == SourceApplicabilityStatuses.Applicable
-                ? null
-                : packageManagementInventory.Reason
-        };
+            var applicability = sshInventory.ApplicabilityWithoutDeclaredRole;
+            return manifest with
+            {
+                Applicability = applicability,
+                ApplicabilityReason = applicability switch
+                {
+                    SourceApplicabilityStatuses.Applicable => null,
+                    SourceApplicabilityStatuses.Unsupported => sshInventory.Reason,
+                    _ => "host_role_not_declared"
+                }
+            };
+        }
+
+        if (sshInventory.ApplicabilityWithoutDeclaredRole == SourceApplicabilityStatuses.Unsupported)
+        {
+            return manifest with
+            {
+                Applicability = SourceApplicabilityStatuses.Unsupported,
+                ApplicabilityReason = sshInventory.Reason
+            };
+        }
+
+        return manifest;
     }
 
     private string PackageManagementState()
@@ -582,6 +682,22 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         return packageManagementInventory.State == LinuxPackageManagementInventoryStates.Supported
             ? "supported_quiet_visibility_unverified"
             : packageManagementInventory.State;
+    }
+
+    private string SshJournalVisibilityDetail(SourceManifestEntry manifest)
+    {
+        if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return "not_applicable";
+        if (manifest.Applicability == SourceApplicabilityStatuses.Unsupported) return "unsupported";
+        if (HasNewerDirectProducerEvidence(manifest.SourceId)) return "observed";
+        if (sshInventory.SupportsQuietJournalObservation && lastSuccessfulReadAt.HasValue) return "supported_quiet";
+        return sshInventory.State switch
+        {
+            LinuxSshInventoryStates.SupportedInactive => "producer_inactive",
+            LinuxSshInventoryStates.PermissionDenied => "permission_denied",
+            LinuxSshInventoryStates.Timeout => "stale",
+            LinuxSshInventoryStates.Malformed => "degraded",
+            _ => "unverified"
+        };
     }
 
     private decimal? EventRatePerMinute(DateTimeOffset now)
@@ -625,6 +741,34 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             };
             if (visibilityStatus != SourceHealthStatuses.Healthy) return visibilityStatus;
         }
+        if (status == SourceHealthStatuses.Healthy
+            && manifest.SourceId == LinuxTelemetrySourceIds.Firewall
+            && !HasNewerDirectProducerEvidence(manifest.SourceId))
+        {
+            var firewallStatus = firewallInventory.State switch
+            {
+                LinuxFirewallInventoryStates.LoggingDisabled => SourceHealthStatuses.Disabled,
+                LinuxFirewallInventoryStates.PermissionDenied => SourceHealthStatuses.PermissionDenied,
+                LinuxFirewallInventoryStates.Timeout => SourceHealthStatuses.Stale,
+                LinuxFirewallInventoryStates.Malformed or LinuxFirewallInventoryStates.Unknown => SourceHealthStatuses.Degraded,
+                _ => SourceHealthStatuses.Healthy
+            };
+            if (firewallStatus != SourceHealthStatuses.Healthy) return firewallStatus;
+        }
+        if (status == SourceHealthStatuses.Healthy
+            && manifest.SourceId == LinuxTelemetrySourceIds.Ssh
+            && !HasNewerDirectProducerEvidence(manifest.SourceId))
+        {
+            var sshStatus = sshInventory.State switch
+            {
+                LinuxSshInventoryStates.Unsupported => SourceHealthStatuses.Unsupported,
+                LinuxSshInventoryStates.PermissionDenied => SourceHealthStatuses.PermissionDenied,
+                LinuxSshInventoryStates.Timeout => SourceHealthStatuses.Stale,
+                LinuxSshInventoryStates.SupportedInactive or LinuxSshInventoryStates.Malformed or LinuxSshInventoryStates.Unknown => SourceHealthStatuses.Degraded,
+                _ => SourceHealthStatuses.Healthy
+            };
+            if (sshStatus != SourceHealthStatuses.Healthy) return sshStatus;
+        }
         if (manifest.Applicability == SourceApplicabilityStatuses.Unknown)
         {
             return SourceHealthStatuses.Degraded;
@@ -634,12 +778,55 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
             && (!LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
                 || LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Contains(manifest.SourceId))
-            && !observedSources.Contains(manifest.SourceId))
+            && !HasProducerEvidence(manifest.SourceId))
         {
             return SourceHealthStatuses.Degraded;
         }
         return status;
     }
+
+    private bool HasProducerEvidence(string sourceId)
+    {
+        return sourceId switch
+        {
+            LinuxTelemetrySourceIds.Firewall => HasNewerDirectProducerEvidence(sourceId)
+                || firewallInventory.State == LinuxFirewallInventoryStates.LoggingEnabled,
+            LinuxTelemetrySourceIds.Ssh => HasNewerDirectProducerEvidence(sourceId)
+                || sshInventory.SupportsQuietJournalObservation,
+            _ => observedSources.Contains(sourceId)
+        };
+    }
+
+    private bool HasNewerDirectProducerEvidence(string sourceId)
+    {
+        if (!currentProducerObservations.TryGetValue(sourceId, out var direct)) return false;
+        if (!inventoryObservations.TryGetValue(sourceId, out var inventory)) return true;
+        var timeOrder = direct.ObservedAt.CompareTo(inventory.ObservedAt);
+        return timeOrder > 0 || timeOrder == 0 && direct.Sequence > inventory.Sequence;
+    }
+
+    private void RecordCurrentProducerObservation(string sourceId, DateTimeOffset observedAt)
+    {
+        if (sourceId is not LinuxTelemetrySourceIds.Firewall and not LinuxTelemetrySourceIds.Ssh) return;
+        var candidate = new EvidenceObservation(observedAt, ++evidenceObservationSequence);
+        if (!currentProducerObservations.TryGetValue(sourceId, out var current)
+            || candidate.ObservedAt > current.ObservedAt
+            || candidate.ObservedAt == current.ObservedAt && candidate.Sequence > current.Sequence)
+        {
+            currentProducerObservations[sourceId] = candidate;
+        }
+    }
+
+    private void RecordInventoryObservation(string sourceId, DateTimeOffset observedAt) =>
+        inventoryObservations[sourceId] = new(observedAt, ++evidenceObservationSequence);
+
+    private static DateTimeOffset SnapshotObservationTime(
+        IEnumerable<AssetInventorySnapshot> snapshots,
+        DateTimeOffset fallback) => snapshots
+        .Select(snapshot => snapshot.CollectedAt)
+        .Where(collectedAt => collectedAt != default)
+        .DefaultIfEmpty(fallback)
+        .Max();
 
     private string? ErrorFor(SourceManifestEntry manifest, string effectiveStatus)
     {
@@ -659,9 +846,41 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             {
                 return "package_manager_journal_visibility_unverified";
             }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall
+                && !HasNewerDirectProducerEvidence(manifest.SourceId))
+            {
+                return firewallInventory.Reason;
+            }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.Ssh
+                && !HasNewerDirectProducerEvidence(manifest.SourceId)
+                && manifest.Applicability == SourceApplicabilityStatuses.Applicable)
+            {
+                return sshInventory.Reason;
+            }
             return manifest.Applicability == SourceApplicabilityStatuses.Unknown
                 ? manifest.ApplicabilityReason ?? "source_applicability_unknown"
                 : "source_event_family_not_observed";
+        }
+        if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall
+            && !HasNewerDirectProducerEvidence(manifest.SourceId)
+            && manifest.CoverageLevel <= options.Journal.TargetCoverageLevel
+            && (effectiveStatus == SourceHealthStatuses.Disabled
+                && firewallInventory.State == LinuxFirewallInventoryStates.LoggingDisabled
+                || effectiveStatus == SourceHealthStatuses.PermissionDenied
+                && firewallInventory.State == LinuxFirewallInventoryStates.PermissionDenied
+                || effectiveStatus == SourceHealthStatuses.Stale
+                && firewallInventory.State == LinuxFirewallInventoryStates.Timeout))
+        {
+            return firewallInventory.Reason;
+        }
+        if (manifest.SourceId == LinuxTelemetrySourceIds.Ssh
+            && !HasNewerDirectProducerEvidence(manifest.SourceId)
+            && (effectiveStatus == SourceHealthStatuses.PermissionDenied
+                && sshInventory.State == LinuxSshInventoryStates.PermissionDenied
+                || effectiveStatus == SourceHealthStatuses.Stale
+                && sshInventory.State == LinuxSshInventoryStates.Timeout))
+        {
+            return sshInventory.Reason;
         }
         if (effectiveStatus == SourceHealthStatuses.Disabled && manifest.CoverageLevel > options.Journal.TargetCoverageLevel)
         {
@@ -708,6 +927,18 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
                 && prerequisite == "package_manager_journal_visibility")
             {
                 values[prerequisite] = PackageManagementPrerequisiteEvidence(enabled, effectiveStatus);
+                continue;
+            }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall
+                && prerequisite == "firewall_logging_already_enabled")
+            {
+                values[prerequisite] = FirewallPrerequisiteEvidence(enabled, effectiveStatus);
+                continue;
+            }
+            if (manifest.SourceId == LinuxTelemetrySourceIds.Ssh
+                && prerequisite == "sshd_journal_visibility")
+            {
+                values[prerequisite] = SshPrerequisiteEvidence(enabled, effectiveStatus);
                 continue;
             }
             if (manifest.SourceId == LinuxTelemetrySourceIds.AgentLogTamper
@@ -774,11 +1005,39 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         return packageManagementInventory.PrerequisiteStatus;
     }
 
-    private string SystemVisibilityEvidence(bool enabled, string effectiveStatus)
+    private string SshPrerequisiteEvidence(bool enabled, string effectiveStatus)
     {
         if (effectiveStatus == SourceHealthStatuses.Unsupported) return SourceEvidenceStatuses.Unsupported;
         if (effectiveStatus == SourceHealthStatuses.NotApplicable) return SourceEvidenceStatuses.NotApplicable;
         if (!enabled || effectiveStatus == SourceHealthStatuses.Disabled) return SourceEvidenceStatuses.Disabled;
+        if (effectiveStatus == SourceHealthStatuses.PermissionDenied) return SourceEvidenceStatuses.PermissionDenied;
+        if (effectiveStatus == SourceHealthStatuses.Stale) return SourceEvidenceStatuses.Stale;
+        if (effectiveStatus == SourceHealthStatuses.Missing) return SourceEvidenceStatuses.Missing;
+        if (gap || throttled || status == SourceHealthStatuses.Error) return SourceEvidenceStatuses.Degraded;
+        if (HasNewerDirectProducerEvidence(LinuxTelemetrySourceIds.Ssh)) return SourceEvidenceStatuses.Satisfied;
+        if (!lastSuccessfulReadAt.HasValue) return SourceEvidenceStatuses.Unknown;
+        return sshInventory.PrerequisiteStatus;
+    }
+
+    private string FirewallPrerequisiteEvidence(bool enabled, string effectiveStatus)
+    {
+        if (effectiveStatus == SourceHealthStatuses.Unsupported) return SourceEvidenceStatuses.Unsupported;
+        if (effectiveStatus == SourceHealthStatuses.NotApplicable) return SourceEvidenceStatuses.NotApplicable;
+        if (!enabled) return SourceEvidenceStatuses.Disabled;
+        if (effectiveStatus == SourceHealthStatuses.PermissionDenied) return SourceEvidenceStatuses.PermissionDenied;
+        if (effectiveStatus == SourceHealthStatuses.Stale) return SourceEvidenceStatuses.Stale;
+        if (effectiveStatus == SourceHealthStatuses.Missing) return SourceEvidenceStatuses.Missing;
+        if (gap || throttled || status == SourceHealthStatuses.Error) return SourceEvidenceStatuses.Degraded;
+        if (HasNewerDirectProducerEvidence(LinuxTelemetrySourceIds.Firewall)) return SourceEvidenceStatuses.Satisfied;
+        if (!lastSuccessfulReadAt.HasValue) return SourceEvidenceStatuses.Unknown;
+        return firewallInventory.PrerequisiteStatus;
+    }
+
+    private string SystemVisibilityEvidence(bool enabled, string effectiveStatus)
+    {
+        if (effectiveStatus == SourceHealthStatuses.Unsupported) return SourceEvidenceStatuses.Unsupported;
+        if (effectiveStatus == SourceHealthStatuses.NotApplicable) return SourceEvidenceStatuses.NotApplicable;
+        if (!enabled) return SourceEvidenceStatuses.Disabled;
         if (!options.Journal.IncludeAccessibleUserJournals)
         {
             return effectiveStatus switch
@@ -813,6 +1072,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         observedSources.Clear();
         observedFamilies.Clear();
         latestBySource.Clear();
+        currentProducerObservations.Clear();
         if (latestEvent.HasValue) latestBySource[LinuxTelemetrySourceIds.JournalL1] = latestEvent.Value;
     }
 
@@ -854,4 +1114,6 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         JournalGapKind.InvalidCursor => "invalid_cursor",
         _ => "none"
     };
+
+    private sealed record EvidenceObservation(DateTimeOffset ObservedAt, long Sequence);
 }

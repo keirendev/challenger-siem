@@ -28,7 +28,9 @@ public enum LinuxInventoryOperation
     Mounts,
     Nftables,
     Firewalld,
+    FirewalldLogging,
     Ufw,
+    Iptables,
     SshConfig,
     AppArmor,
     Selinux,
@@ -117,9 +119,11 @@ public static class LinuxInventoryCatalog
         Command(LinuxInventoryOperation.Interfaces, new[] { "/usr/sbin/ip", "/usr/bin/ip", "/sbin/ip" }, new[] { "-o", "link", "show" });
         Command(LinuxInventoryOperation.Listeners, new[] { "/usr/sbin/ss", "/usr/bin/ss", "/sbin/ss" }, new[] { "-H", "-lntu" });
         Command(LinuxInventoryOperation.Mounts, new[] { "/usr/bin/findmnt", "/bin/findmnt" }, new[] { "--raw", "--noheadings", "--output", "FSTYPE" });
-        Command(LinuxInventoryOperation.Nftables, new[] { "/usr/sbin/nft", "/sbin/nft" }, new[] { "list", "tables" });
-        Command(LinuxInventoryOperation.Firewalld, new[] { "/usr/bin/firewall-cmd", "/bin/firewall-cmd" }, new[] { "--state" }, small);
+        Command(LinuxInventoryOperation.Nftables, new[] { "/usr/sbin/nft", "/sbin/nft" }, new[] { "-j", "list", "ruleset" });
+        Command(LinuxInventoryOperation.Firewalld, new[] { "/usr/bin/firewall-cmd", "/bin/firewall-cmd" }, new[] { "--state" }, small, 10, 0, 252);
+        Command(LinuxInventoryOperation.FirewalldLogging, new[] { "/usr/bin/firewall-cmd", "/bin/firewall-cmd" }, new[] { "--get-log-denied" }, small);
         Command(LinuxInventoryOperation.Ufw, new[] { "/usr/sbin/ufw", "/sbin/ufw" }, new[] { "status" }, small);
+        Command(LinuxInventoryOperation.Iptables, new[] { "/usr/sbin/iptables", "/sbin/iptables" }, new[] { "-S" }, small);
         File(LinuxInventoryOperation.SshConfig, "/etc/ssh/sshd_config");
         Command(LinuxInventoryOperation.AppArmor, new[] { "/usr/sbin/aa-status", "/sbin/aa-status" }, new[] { "--enabled" }, small, 5, 0, 1);
         Command(LinuxInventoryOperation.Selinux, new[] { "/usr/sbin/getenforce", "/sbin/getenforce" }, Array.Empty<string>(), small);
@@ -326,11 +330,20 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
     internal static InventorySourceState ClassifyCommandFailure(LinuxInventoryOperation operation, int exitCode, string boundedStandardError)
     {
         if (exitCode is 13 or 126) return InventorySourceState.PermissionDenied;
+        if ((operation is LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging)
+            && exitCode == 253)
+        {
+            return InventorySourceState.PermissionDenied;
+        }
         var permissionMarker = operation switch
         {
-            LinuxInventoryOperation.Nftables => boundedStandardError.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase),
+            LinuxInventoryOperation.Nftables => boundedStandardError.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase)
+                || boundedStandardError.Contains("Permission denied", StringComparison.OrdinalIgnoreCase),
             LinuxInventoryOperation.Ufw => boundedStandardError.Contains("need to be root", StringComparison.OrdinalIgnoreCase),
-            LinuxInventoryOperation.Firewalld => boundedStandardError.Contains("authorization failed", StringComparison.OrdinalIgnoreCase),
+            LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging =>
+                boundedStandardError.Contains("authorization failed", StringComparison.OrdinalIgnoreCase),
+            LinuxInventoryOperation.Iptables => boundedStandardError.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
+                || boundedStandardError.Contains("you must be root", StringComparison.OrdinalIgnoreCase),
             _ => false
         };
         return permissionMarker ? InventorySourceState.PermissionDenied : InventorySourceState.Unavailable;

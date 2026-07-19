@@ -80,8 +80,22 @@ public sealed class LinuxInventory(
         snapshots.Add(Create("linux_interfaces", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Interfaces, token, cancellationToken)));
         snapshots.Add(Create("linux_listeners", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Listeners, token, cancellationToken)));
         snapshots.Add(Create("linux_mounts", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.Mounts, token, cancellationToken)));
-        snapshots.Add(Create("linux_firewall", agentId, hostname, collectedAt,
-            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.Nftables, LinuxInventoryOperation.Firewalld, LinuxInventoryOperation.Ufw)));
+        var firewallAttempts = await ReadAllAsync(
+            token,
+            cancellationToken,
+            LinuxInventoryOperation.Nftables,
+            LinuxInventoryOperation.Firewalld,
+            LinuxInventoryOperation.FirewalldLogging,
+            LinuxInventoryOperation.Ufw,
+            LinuxInventoryOperation.Iptables);
+        var firewallEvidence = LinuxFirewallInventoryEvidence.Evaluate(firewallAttempts.Select(FirewallProbe).ToArray());
+        var firewallSnapshot = Create(
+            LinuxFirewallInventoryEvidence.SnapshotType,
+            agentId,
+            hostname,
+            collectedAt,
+            SelectFirewallSnapshot(firewallAttempts, firewallEvidence));
+        snapshots.Add(firewallSnapshot with { Summary = firewallEvidence.AddTo(firewallSnapshot.Summary) });
         snapshots.Add(Create("linux_ssh", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.SshConfig, token, cancellationToken)));
 
         var appArmor = await ReadAsync(LinuxInventoryOperation.AppArmor, token, cancellationToken);
@@ -119,6 +133,19 @@ public sealed class LinuxInventory(
             if (strongest is null || StatePriority(result.State) > StatePriority(strongest.State)) strongest = result;
         }
         return new(strongest!, attempts);
+    }
+
+    private async Task<IReadOnlyList<Parsed>> ReadAllAsync(
+        CancellationToken token,
+        CancellationToken caller,
+        params LinuxInventoryOperation[] operations)
+    {
+        var attempts = new List<Parsed>(operations.Length);
+        foreach (var operation in operations)
+        {
+            attempts.Add(await ReadAsync(operation, token, caller));
+        }
+        return attempts;
     }
 
     private async Task<Parsed> ReadAsync(LinuxInventoryOperation operation, CancellationToken token, CancellationToken caller, bool parse = true)
@@ -222,6 +249,62 @@ public sealed class LinuxInventory(
         LinuxInventoryOperation.DpkgPackages => "dpkg",
         LinuxInventoryOperation.RpmPackages => "rpm",
         LinuxInventoryOperation.PacmanPackages => "pacman",
+        _ => "unknown"
+    };
+
+    private static LinuxFirewallInventoryProbe FirewallProbe(Parsed parsed)
+    {
+        var item = parsed.Items.FirstOrDefault(entry => entry.Kind == "firewall");
+        var producer = FirewallProducer(parsed.Operation);
+        var state = parsed.Truncated ? InventorySourceState.Malformed : parsed.State;
+        var present = state == InventorySourceState.Success && parsed.Operation switch
+        {
+            LinuxInventoryOperation.Nftables or LinuxInventoryOperation.Iptables => item?.Status == "active",
+            LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging or LinuxInventoryOperation.Ufw => item is not null,
+            _ => false
+        };
+        var active = state == InventorySourceState.Success
+            && item?.Status is "active" or "running";
+        var logging = item?.Metadata.GetValueOrDefault("logging") switch
+        {
+            "enabled" => true,
+            "disabled" => false,
+            _ => (bool?)null
+        };
+        return new(
+            producer,
+            parsed.Operation != LinuxInventoryOperation.Iptables,
+            state,
+            present,
+            active,
+            logging,
+            parsed.Truncated ? "firewall_inventory_output_truncated" : parsed.ErrorCode);
+    }
+
+    private static Parsed SelectFirewallSnapshot(
+        IReadOnlyList<Parsed> attempts,
+        LinuxFirewallInventoryEvidence evidence)
+    {
+        var complete = attempts.Where(attempt => !attempt.Truncated).ToArray();
+        var matching = complete.FirstOrDefault(attempt =>
+            string.Equals(FirewallProducer(attempt.Operation), evidence.Producer, StringComparison.Ordinal)
+            && attempt.Items.Any(item => item.Kind == "firewall"));
+        if (matching is not null) return matching;
+        if (complete.Length > 0) return complete.OrderByDescending(attempt => StatePriority(attempt.State)).First();
+        return attempts[0] with
+        {
+            State = InventorySourceState.Malformed,
+            Items = Array.Empty<InventoryItem>(),
+            ErrorCode = "firewall_inventory_output_truncated"
+        };
+    }
+
+    private static string FirewallProducer(LinuxInventoryOperation operation) => operation switch
+    {
+        LinuxInventoryOperation.Nftables => "nftables",
+        LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging => "firewalld",
+        LinuxInventoryOperation.Ufw => "ufw",
+        LinuxInventoryOperation.Iptables => "iptables",
         _ => "unknown"
     };
 

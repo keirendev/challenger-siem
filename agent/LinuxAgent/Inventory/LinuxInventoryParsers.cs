@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Challenger.Siem.Contracts.V1;
 
 namespace Challenger.Siem.LinuxAgent.Inventory;
@@ -36,7 +37,9 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.Mounts => ParseMounts(source.Content),
             LinuxInventoryOperation.Nftables => ParseNftables(source.Content),
             LinuxInventoryOperation.Firewalld => ParseFixedState(source.Content, "firewall", "firewalld", new[] { "running", "not running" }),
+            LinuxInventoryOperation.FirewalldLogging => ParseFirewalldLogging(source.Content),
             LinuxInventoryOperation.Ufw => ParseUfw(source.Content),
+            LinuxInventoryOperation.Iptables => ParseIptables(source.Content),
             LinuxInventoryOperation.SshConfig => ParseSsh(source.Content),
             LinuxInventoryOperation.AppArmor => new[] { Item("mandatory_access_control", "apparmor", source.ExitCode == 1 ? "disabled" : "enabled") },
             LinuxInventoryOperation.Selinux => ParseFixedState(source.Content, "mandatory_access_control", "selinux", new[] { "enforcing", "permissive", "disabled" }),
@@ -273,8 +276,77 @@ public static class LinuxInventoryParsers
     private static IReadOnlyList<InventoryItem>? ParseNftables(string? content)
     {
         if (content is null) return null;
-        var count = Lines(content).Count(line => line.StartsWith("table ", StringComparison.Ordinal));
-        return new[] { Item("firewall", "nftables", count > 0 ? "enabled" : "no_tables", new Dictionary<string, string> { ["table_count"] = count.ToString(CultureInfo.InvariantCulture) }) };
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("nftables", out var nftables)
+                || nftables.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var tableCount = 0;
+            var loggingEnabled = false;
+            foreach (var entry in nftables.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object) continue;
+                if (entry.TryGetProperty("table", out _)) tableCount++;
+                if (!entry.TryGetProperty("rule", out var rule)
+                    || rule.ValueKind != JsonValueKind.Object
+                    || !rule.TryGetProperty("expr", out var expressions)
+                    || expressions.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                loggingEnabled |= expressions.EnumerateArray().Any(expression =>
+                {
+                    if (expression.ValueKind != JsonValueKind.Object
+                        || !expression.TryGetProperty("log", out var log))
+                    {
+                        return false;
+                    }
+
+                    // `log group N` targets NFLOG userspace delivery rather than the kernel log
+                    // consumed by journald, so it cannot establish journal visibility.
+                    return log.ValueKind == JsonValueKind.Object
+                        && !log.TryGetProperty("group", out _);
+                });
+            }
+
+            return new[]
+            {
+                Item(
+                    "firewall",
+                    "nftables",
+                    tableCount > 0 ? "active" : "inactive",
+                    new Dictionary<string, string>
+                    {
+                        ["table_count"] = tableCount.ToString(CultureInfo.InvariantCulture),
+                        ["logging"] = loggingEnabled ? "enabled" : "disabled"
+                    })
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<InventoryItem>? ParseFirewalldLogging(string? content)
+    {
+        if (content is null) return null;
+        var value = SafeEnum(content.Trim(), "off", "all", "unicast", "broadcast", "multicast");
+        if (value is null) return null;
+        return new[]
+        {
+            Item(
+                "firewall",
+                "firewalld",
+                "running",
+                new Dictionary<string, string> { ["logging"] = value == "off" ? "disabled" : "enabled" })
+        };
     }
 
     private static IReadOnlyList<InventoryItem>? ParseUfw(string? content)
@@ -283,7 +355,48 @@ public static class LinuxInventoryParsers
         var first = Lines(content).FirstOrDefault();
         if (first is null || !first.StartsWith("Status:", StringComparison.Ordinal)) return null;
         var state = SafeEnum(first[7..].Trim(), "active", "inactive");
-        return state is null ? null : new[] { Item("firewall", "ufw", state) };
+        if (state is null) return null;
+        var logging = state == "inactive"
+            ? "disabled"
+            : Lines(content)
+                .Where(line => line.StartsWith("Logging:", StringComparison.Ordinal))
+                .Select(line => line[8..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault())
+                .Select(value => SafeEnum(value, "on", "off"))
+                .FirstOrDefault() switch
+                {
+                    "on" => "enabled",
+                    "off" => "disabled",
+                    _ => null
+                };
+        return logging is null
+            ? null
+            : new[] { Item("firewall", "ufw", state, new Dictionary<string, string> { ["logging"] = logging }) };
+    }
+
+    private static IReadOnlyList<InventoryItem>? ParseIptables(string? content)
+    {
+        if (content is null) return null;
+        var lines = Lines(content).ToArray();
+        if (lines.Length == 0 || lines.Any(line =>
+                !line.StartsWith("-P ", StringComparison.Ordinal)
+                && !line.StartsWith("-N ", StringComparison.Ordinal)
+                && !line.StartsWith("-A ", StringComparison.Ordinal)))
+        {
+            return null;
+        }
+        var ruleCount = lines.Count(line => line.StartsWith("-A ", StringComparison.Ordinal)
+            || line.StartsWith("-N ", StringComparison.Ordinal));
+        var restrictivePolicy = lines.Any(line =>
+            line.StartsWith("-P ", StringComparison.Ordinal)
+            && !line.EndsWith(" ACCEPT", StringComparison.Ordinal));
+        return new[]
+        {
+            Item(
+                "firewall",
+                "iptables",
+                ruleCount > 0 || restrictivePolicy ? "active" : "inactive",
+                new Dictionary<string, string> { ["rule_count"] = ruleCount.ToString(CultureInfo.InvariantCulture) })
+        };
     }
 
     private static IReadOnlyList<InventoryItem>? ParseSsh(string? content)

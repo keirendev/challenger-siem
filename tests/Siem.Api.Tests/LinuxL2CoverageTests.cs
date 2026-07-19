@@ -32,6 +32,7 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceHealthStatuses.Degraded, ssh.Status);
         var firewall = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.Firewall);
         Assert.Equal(SourceRequirementKinds.Optional, firewall.Requirement);
+        Assert.Equal(SourceApplicabilityStatuses.Unknown, firewall.Applicability);
         Assert.Equal(SourceHealthStatuses.Degraded, firewall.Status);
         var audit = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
         Assert.Equal(SourceApplicabilityStatuses.Unsupported, audit.Applicability);
@@ -79,6 +80,157 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceApplicabilityStatuses.Applicable, canonicalLogin.Applicability);
         Assert.Equal(SourceHealthStatuses.Degraded, canonicalLogin.Status);
         Assert.All(canonicalLogin.PrerequisiteStatuses!.Values, state => Assert.Equal(SourceEvidenceStatuses.Degraded, state));
+    }
+
+    [Theory]
+    [InlineData(SourceHealthStatuses.Degraded)]
+    [InlineData(SourceHealthStatuses.PermissionDenied)]
+    [InlineData(SourceHealthStatuses.Stale)]
+    [InlineData(SourceHealthStatuses.Error)]
+    public void OptionalUnknownFirewallRemainsVisibleWithoutDegradingAggregateHealth(string rowStatus)
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var l1 = Report(LinuxTelemetrySourceCatalog.L1.Single(), now);
+        var firewallManifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry =>
+            entry.SourceId == LinuxTelemetrySourceIds.Firewall);
+        var unresolved = Report(firewallManifest, now) with { Status = rowStatus };
+
+        Assert.Equal(SourceRequirementKinds.Optional, unresolved.Requirement);
+        Assert.Equal(SourceApplicabilityStatuses.Unknown, unresolved.Applicability);
+        Assert.Equal(rowStatus, unresolved.Status);
+        Assert.Equal(SourceHealthStatuses.Healthy,
+            TelemetryCoverageEvaluator.CalculateOverallStatus([l1, unresolved]));
+        Assert.Equal(rowStatus,
+            TelemetryCoverageEvaluator.CalculateOverallStatus(
+            [
+                l1,
+                unresolved with
+                {
+                    Applicability = SourceApplicabilityStatuses.Applicable,
+                    ApplicabilityReason = null
+                }
+            ]));
+        Assert.Equal(rowStatus,
+            TelemetryCoverageEvaluator.CalculateOverallStatus(
+            [
+                l1,
+                unresolved with
+                {
+                    Applicability = null,
+                    ApplicabilityReason = null
+                }
+            ]));
+    }
+
+    [Fact]
+    public void FirewallApiAndWebGuidanceUsesBoundedStatesWithoutPolicyMutation()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var manifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry =>
+            entry.SourceId == LinuxTelemetrySourceIds.Firewall);
+        var quiet = Report(manifest, now) with
+        {
+            Applicability = SourceApplicabilityStatuses.Applicable,
+            ApplicabilityReason = null,
+            Status = SourceHealthStatuses.Healthy,
+            Enabled = true,
+            LastEventTime = null,
+            ObservedAt = now,
+            PrerequisiteStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["systemd_journal_readable"] = SourceEvidenceStatuses.Satisfied,
+                ["firewall_logging_already_enabled"] = SourceEvidenceStatuses.Satisfied
+            },
+            EventFamilyStatuses = manifest.EventFamilies.ToDictionary(
+                family => family,
+                _ => SourceEvidenceStatuses.NotObserved,
+                StringComparer.Ordinal),
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["firewall_inventory_state"] = "logging_enabled",
+                ["firewall_producer"] = "nftables",
+                ["firewall_inventory_reason"] = "firewall_logging_enabled"
+            }
+        };
+
+        Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(quiet, now));
+        var quietCoverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-firewall-agent",
+            quiet,
+            now.AddHours(-24),
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            null);
+        Assert.Contains("current journal observation was quiet", quietCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.Contains("no raw rules or records", quietCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.Contains("never enables or reconfigures logging", DetailModel.SourceStateGuidance(quietCoverage with
+        {
+            Status = SourceHealthStatuses.Disabled,
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["firewall_inventory_state"] = "logging_disabled"
+            }
+        }), StringComparison.Ordinal);
+
+        var unhealthyEnabledCoverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-firewall-agent",
+            quiet with { Status = SourceHealthStatuses.Stale },
+            now.AddHours(-24),
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            null);
+        Assert.Contains("current source health is not healthy", unhealthyEnabledCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("current journal observation was quiet", unhealthyEnabledCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.Contains("current source health is not healthy", DetailModel.SourceStateGuidance(unhealthyEnabledCoverage), StringComparison.Ordinal);
+
+        var directEvidenceCoverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-firewall-agent",
+            quiet with
+            {
+                Details = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["firewall_inventory_state"] = "logging_disabled",
+                    ["firewall_producer"] = "ufw",
+                    ["firewall_journal_visibility"] = "observed"
+                }
+            },
+            now.AddHours(-24),
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            null);
+        Assert.Contains("newer than the last inventory observation", directEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.Contains("newer than the last inventory observation", DetailModel.SourceStateGuidance(directEvidenceCoverage), StringComparison.Ordinal);
+        Assert.DoesNotContain("SYNTHETIC_PRIVATE_FIREWALL_RECORD", directEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
+        Assert.Contains(
+            "current source health is not healthy",
+            DetailModel.SourceStateGuidance(directEvidenceCoverage with { Status = SourceHealthStatuses.PermissionDenied }),
+            StringComparison.Ordinal);
+
+        foreach (var (state, status, applicability, expected) in new[]
+        {
+            ("absent", SourceHealthStatuses.NotApplicable, SourceApplicabilityStatuses.NotApplicable, "Do not install or enable"),
+            ("logging_disabled", SourceHealthStatuses.Disabled, SourceApplicabilityStatuses.Applicable, "separately approved firewall change runbook"),
+            ("unsupported", SourceHealthStatuses.Unsupported, SourceApplicabilityStatuses.Unsupported, "do not replace or reconfigure"),
+            ("permission_denied", SourceHealthStatuses.PermissionDenied, SourceApplicabilityStatuses.Unknown, "does not elevate or mutate host policy")
+        })
+        {
+            var source = quiet with
+            {
+                Status = status,
+                Applicability = applicability,
+                Enabled = applicability == SourceApplicabilityStatuses.Applicable,
+                Details = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["firewall_inventory_state"] = state,
+                    ["firewall_producer"] = state == "unsupported" ? "iptables" : "unknown"
+                }
+            };
+            var coverage = TelemetryCoverageRepository.ToSourceCoverage(
+                "synthetic-firewall-agent",
+                source,
+                now.AddHours(-24),
+                new Dictionary<string, int>(StringComparer.Ordinal),
+                null);
+            Assert.Contains(expected, coverage.StateGuidance, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("SYNTHETIC_PRIVATE_FIREWALL_RECORD", coverage.StateGuidance, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -223,7 +375,7 @@ public sealed class LinuxL2CoverageTests
             TelemetryPlatforms.Linux);
         var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, baseline, WindowsCoverageLevel.L2);
         Assert.Equal(WindowsCoverageLevel.L2, summary.CurrentLevel);
-        Assert.Equal(SourceHealthStatuses.Degraded, summary.OverallStatus);
+        Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(1, summary.DegradedSources);
         Assert.Equal(1, summary.UnsupportedSources);
         Assert.Equal(1, summary.NotApplicableSources);
@@ -924,6 +1076,17 @@ public sealed class LinuxL2CoverageTests
             Assert.Contains("linux_l3_required_source_ids", implementation, StringComparison.Ordinal);
             Assert.Contains("linux_l3_required_source_count", implementation, StringComparison.Ordinal);
             Assert.Contains("count(distinct lower(source_id))", implementation, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("coalesce(applicability, '') = 'unknown'", implementation, StringComparison.Ordinal);
+            foreach (var aggregate in new[]
+            {
+                "aggregate_error_sources",
+                "aggregate_stale_sources",
+                "aggregate_permission_denied_sources",
+                "aggregate_degraded_sources"
+            })
+            {
+                Assert.Contains(aggregate, implementation, StringComparison.Ordinal);
+            }
         }
         Assert.Contains("l3_canonical_covered_sources", sourceHealth, StringComparison.Ordinal);
         Assert.Contains("l3_canonical_present_sources", sourceHealth, StringComparison.Ordinal);
@@ -939,6 +1102,45 @@ public sealed class LinuxL2CoverageTests
         Assert.Contains("@linux_l3_required_source_count", review, StringComparison.Ordinal);
         Assert.Contains("count(distinct lower(source_id))", review, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("greatest(", review, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SqlCoverageOverallStatusPrecedenceMatchesTheInMemoryEvaluator()
+    {
+        foreach (var implementation in new[]
+        {
+            File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "SourceHealthRepository.cs")),
+            File.ReadAllText(RepositoryFile("server", "Siem.Api", "Review", "ReviewRepository.cs"))
+        })
+        {
+            var statusCaseStart = implementation.IndexOf(
+                "when coalesce(h.aggregate_error_sources",
+                StringComparison.Ordinal);
+            if (statusCaseStart < 0)
+            {
+                statusCaseStart = implementation.IndexOf(
+                    "when coalesce(sh.aggregate_error_sources",
+                    StringComparison.Ordinal);
+            }
+            Assert.True(statusCaseStart >= 0, "Coverage status CASE expression was not found.");
+            var statusCase = implementation[statusCaseStart..];
+            var prior = -1;
+            foreach (var aggregate in new[]
+            {
+                "aggregate_error_sources",
+                "mandatory_permission_denied_sources",
+                "mandatory_unsupported_sources",
+                "missing_mandatory_sources",
+                "aggregate_stale_sources",
+                "aggregate_permission_denied_sources",
+                "aggregate_degraded_sources"
+            })
+            {
+                var current = statusCase.IndexOf(aggregate, prior + 1, StringComparison.Ordinal);
+                Assert.True(current > prior, $"{aggregate} is missing or out of precedence order.");
+                prior = current;
+            }
+        }
     }
 
     [Fact]

@@ -53,6 +53,14 @@ public sealed class LinuxInventoryTests
         Assert.True(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 0, 0));
         Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 0, 1));
         Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(pacmanUpdates, 1, 1, 0));
+        Assert.Equal(new[] { "-j", "list", "ruleset" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.Nftables).Arguments);
+        var firewalld = LinuxInventoryCatalog.Get(LinuxInventoryOperation.Firewalld);
+        Assert.Equal(new[] { "--state" }, firewalld.Arguments);
+        Assert.True(LinuxInventorySource.IsAcceptedCommandCompletion(firewalld, 252, 12, 0));
+        Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(firewalld, 251, 12, 0));
+        Assert.Equal(new[] { "--get-log-denied" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.FirewalldLogging).Arguments);
+        Assert.Equal(new[] { "status" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.Ufw).Arguments);
+        Assert.Equal(new[] { "-S" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.Iptables).Arguments);
     }
 
     [Fact]
@@ -133,6 +141,10 @@ public sealed class LinuxInventoryTests
         var packages = Assert.Single(snapshots, snapshot => snapshot.SnapshotType == "linux_packages");
         Assert.Equal("supported", packages.Summary[LinuxPackageManagementInventoryEvidence.StateKey]);
         Assert.Equal("dpkg", packages.Summary[LinuxPackageManagementInventoryEvidence.ProducerKey]);
+        var firewall = Assert.Single(snapshots, snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+        Assert.Equal(LinuxFirewallInventoryStates.LoggingEnabled, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("nftables", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("enabled", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_users").Items, item => item.Name == "synthetic-user" && item.Metadata["uid"] == "1001");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_services").Items, item => item.Name == "synthetic-api.service" && item.Status == "active");
         Assert.Contains(snapshots.Single(x => x.SnapshotType == "linux_units").Items, item => item.Name == "synthetic-failed.service" && item.Status == "failed");
@@ -147,6 +159,9 @@ public sealed class LinuxInventoryTests
     [InlineData(LinuxInventoryOperation.Nftables, 1, "netlink: Operation not permitted", InventorySourceState.PermissionDenied)]
     [InlineData(LinuxInventoryOperation.Ufw, 1, "ERROR: You need to be root", InventorySourceState.PermissionDenied)]
     [InlineData(LinuxInventoryOperation.Firewalld, 1, "Authorization failed", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.Firewalld, 253, "", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.FirewalldLogging, 1, "Authorization failed", InventorySourceState.PermissionDenied)]
+    [InlineData(LinuxInventoryOperation.Iptables, 4, "Permission denied (you must be root)", InventorySourceState.PermissionDenied)]
     [InlineData(LinuxInventoryOperation.Nftables, 1, "synthetic parse failure", InventorySourceState.Unavailable)]
     [InlineData(LinuxInventoryOperation.Users, 2, "synthetic lookup failure", InventorySourceState.Unavailable)]
     public void CommandFailureClassificationRequiresAnExplicitPermissionSignal(
@@ -159,12 +174,46 @@ public sealed class LinuxInventoryTests
     public async Task MissingCommandsAndFilesAreExplicitlyUnavailable()
     {
         var snapshots = await Collector(new SyntheticSource()).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
-        Assert.All(snapshots, snapshot =>
+        var firewall = Assert.Single(snapshots, snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+        Assert.Equal("not_applicable", firewall.Summary["state"]);
+        Assert.Equal(LinuxFirewallInventoryStates.Absent, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("none", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Empty(firewall.Items);
+        Assert.All(snapshots.Where(snapshot => snapshot.SnapshotType != LinuxFirewallInventoryEvidence.SnapshotType), snapshot =>
         {
             Assert.Equal("unavailable", snapshot.Summary["state"]);
             Assert.Empty(snapshot.Items);
             Assert.NotEqual("none", snapshot.Summary["error_code"]);
         });
+    }
+
+    [Fact]
+    public async Task GenericFirewallCommandFailureDoesNotMasqueradeAsProducerAbsence()
+    {
+        var source = new SyntheticSource();
+        source.Set(LinuxInventoryOperation.Nftables, new(InventorySourceState.Unavailable, "command_failed"));
+
+        var firewall = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.Malformed, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("unknown", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+        Assert.NotEqual("not_applicable", firewall.Summary["state"]);
+    }
+
+    [Fact]
+    public async Task InstalledInactiveFirewalldIsDistinctFromProducerAbsence()
+    {
+        var source = new SyntheticSource();
+        source.Set(LinuxInventoryOperation.Firewalld, InventorySourceResult.Success("not running\n", exitCode: 252));
+        source.Set(LinuxInventoryOperation.FirewalldLogging, new(InventorySourceState.Unavailable, "command_failed"));
+
+        var firewall = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.LoggingDisabled, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("firewalld", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("disabled", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
     }
 
     [Fact]
@@ -216,6 +265,115 @@ public sealed class LinuxInventoryTests
             .Single(x => x.SnapshotType == "linux_services");
         Assert.Equal("malformed", snapshot.Summary["state"]);
         Assert.Equal("malformed_output", snapshot.Summary["error_code"]);
+    }
+
+    [Fact]
+    public async Task NonObjectNftablesJsonIsBoundedlyReportedAsMalformed()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success("[]"));
+
+        var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(x => x.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal("malformed", snapshot.Summary["state"]);
+        Assert.Equal(LinuxFirewallInventoryStates.Malformed, snapshot.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Empty(snapshot.Items);
+    }
+
+    [Fact]
+    public async Task TruncatedFirewallInventoryCannotClaimLoggingEvidence()
+    {
+        var source = CompleteSource();
+        source.Set(
+            LinuxInventoryOperation.Nftables,
+            InventorySourceResult.Success(
+                "{\"nftables\":[{\"table\":{\"family\":\"inet\",\"name\":\"synthetic\"}},{\"rule\":{\"expr\":[{\"log\":{}}]}}]}",
+                truncated: true));
+
+        var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(x => x.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.Malformed, snapshot.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("unknown", snapshot.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+        Assert.Empty(snapshot.Items);
+    }
+
+    [Fact]
+    public async Task NflogOnlyNftablesRulesCannotEstablishJournalVisibility()
+    {
+        var source = CompleteSource();
+        source.Set(
+            LinuxInventoryOperation.Nftables,
+            InventorySourceResult.Success(
+                "{\"nftables\":[{\"table\":{\"family\":\"inet\",\"name\":\"synthetic\"}},{\"rule\":{\"expr\":[{\"log\":{\"group\":2}}]}}]}"));
+
+        var firewall = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.LoggingDisabled, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("nftables", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("disabled", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+    }
+
+    [Theory]
+    [InlineData("\"synthetic-invalid\"")]
+    [InlineData("null")]
+    [InlineData("[]")]
+    public async Task NonObjectNftablesLogExpressionsCannotEstablishJournalVisibility(string logExpression)
+    {
+        var source = CompleteSource();
+        source.Set(
+            LinuxInventoryOperation.Nftables,
+            InventorySourceResult.Success(
+                $"{{\"nftables\":[{{\"table\":{{\"family\":\"inet\",\"name\":\"synthetic\"}}}},{{\"rule\":{{\"expr\":[{{\"log\":{logExpression}}}]}}}}]}}"));
+
+        var firewall = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.LoggingDisabled, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("nftables", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("disabled", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+    }
+
+    [Fact]
+    public async Task MalformedIptablesOutputCannotMasqueradeAsFirewallAbsence()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.Nftables, new(InventorySourceState.Unavailable, "command_missing"));
+        source.Set(LinuxInventoryOperation.Iptables, InventorySourceResult.Success("synthetic-unrecognized-output\n"));
+
+        var firewall = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+
+        Assert.Equal(LinuxFirewallInventoryStates.Malformed, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("iptables", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("firewall_inventory_malformed", firewall.Summary[LinuxFirewallInventoryEvidence.ReasonKey]);
+        Assert.Equal("unknown", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+        Assert.Empty(firewall.Items);
+    }
+
+    [Fact]
+    public void FirewallEvidenceRejectsUnapprovedReasonText()
+    {
+        var evidence = LinuxFirewallInventoryEvidence.FromSnapshots(
+        [
+            new AssetInventorySnapshot
+            {
+                SnapshotType = LinuxFirewallInventoryEvidence.SnapshotType,
+                Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [LinuxFirewallInventoryEvidence.StateKey] = LinuxFirewallInventoryStates.LoggingEnabled,
+                    [LinuxFirewallInventoryEvidence.ProducerKey] = "nftables",
+                    [LinuxFirewallInventoryEvidence.ReasonKey] = "SYNTHETIC_UNAPPROVED_RULE_TEXT",
+                    [LinuxFirewallInventoryEvidence.LoggingKey] = "enabled"
+                }
+            }
+        ]);
+
+        Assert.Equal(LinuxFirewallInventoryStates.Malformed, evidence.State);
+        Assert.Equal("firewall_inventory_evidence_malformed", evidence.Reason);
+        Assert.DoesNotContain("SYNTHETIC_UNAPPROVED_RULE_TEXT", evidence.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -300,7 +458,9 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Users, InventorySourceResult.Success($"synthetic-user:x:1001:1001:{canary}:/home/{canary}:/bin/bash\n"));
         source.Set(LinuxInventoryOperation.Groups, InventorySourceResult.Success($"synthetic-group:x:1001:synthetic-user,{canary}\n"));
         source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success($"PasswordAuthentication no\nPasswordAuthentication yes\nProxyCommand {canary}\nMatch User {canary}\nPasswordAuthentication yes\n"));
-        source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success($"table inet synthetic\nchain input {{ comment {canary}; }}\n"));
+        source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success(
+            "{\"nftables\":[{\"table\":{\"family\":\"inet\",\"name\":\"synthetic\"}},{\"rule\":{\"expr\":[{\"log\":{\"prefix\":\"SYNTHETIC_SECRET_CANARY\"}}]}}]}"
+                .Replace("SYNTHETIC_SECRET_CANARY", canary, StringComparison.Ordinal)));
 
         var snapshots = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
         var json = JsonSerializer.Serialize(snapshots);
@@ -447,7 +607,8 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Interfaces, InventorySourceResult.Success("1: lo: <LOOPBACK,UP> mtu 65536 state UNKNOWN mode DEFAULT\n2: synthetic0: <BROADCAST,UP> mtu 1500 state UP mode DEFAULT\n"));
         source.Set(LinuxInventoryOperation.Listeners, InventorySourceResult.Success("tcp LISTEN 0 128 192.0.2.10:8443 0.0.0.0:*\nudp UNCONN 0 0 192.0.2.10:5353 0.0.0.0:*\n"));
         source.Set(LinuxInventoryOperation.Mounts, InventorySourceResult.Success("ext4\next4\ntmpfs\n"));
-        source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success("table inet synthetic\n"));
+        source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success(
+            "{\"nftables\":[{\"table\":{\"family\":\"inet\",\"name\":\"synthetic\"}},{\"rule\":{\"expr\":[{\"log\":{}}]}}]}"));
         source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("PermitRootLogin no\nPasswordAuthentication no\nPubkeyAuthentication yes\n"));
         source.Set(LinuxInventoryOperation.AppArmor, InventorySourceResult.Success());
         source.Set(LinuxInventoryOperation.Selinux, InventorySourceResult.Success("Disabled\n"));
