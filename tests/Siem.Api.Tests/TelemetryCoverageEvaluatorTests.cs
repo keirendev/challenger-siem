@@ -92,6 +92,28 @@ public sealed class TelemetryCoverageEvaluatorTests
     }
 
     [Fact]
+    public void QuietSchedulerObservationDoesNotReplaceRecentSchedulerEventEvidence()
+    {
+        var rule = Rule("synthetic.scheduler", LinuxTelemetrySourceIds.Scheduler);
+        var source = Source(
+            LinuxTelemetrySourceIds.Scheduler,
+            TelemetrySourceKinds.LinuxJournal,
+            recentEventCount: 0,
+            observedAt: DateTimeOffset.Parse("2026-07-19T01:00:00Z"),
+            coverageLevel: WindowsCoverageLevel.L2);
+
+        var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
+            [rule],
+            [source],
+            new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
+            WindowsCoverageLevel.L2));
+
+        Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
+        Assert.Contains(LinuxTelemetrySourceIds.Scheduler, result.HealthySources);
+        Assert.Empty(result.RecentEventSources);
+    }
+
+    [Fact]
     public void HealthyAnyOfAlternativeDoesNotReportSiblingAlternativesAsMissing()
     {
         var rule = Rule(

@@ -770,6 +770,119 @@ public sealed class LinuxL2CoverageTests
                 now));
     }
 
+    [Theory]
+    [InlineData("no_evidence", SourceHealthStatuses.Degraded)]
+    [InlineData("cron_only", SourceHealthStatuses.Healthy)]
+    [InlineData("timer_only", SourceHealthStatuses.Healthy)]
+    [InlineData("mixed", SourceHealthStatuses.Healthy)]
+    public void SchedulerFreshnessUsesCurrentJournalObservationAfterProducerEvidence(
+        string evidenceState,
+        string expectedStatus)
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        var cronObserved = evidenceState is "cron_only" or "mixed";
+        var timerObserved = evidenceState is "timer_only" or "mixed";
+        var report = Report(entry, now) with
+        {
+            LastEventTime = cronObserved || timerObserved ? now.Subtract(TimeSpan.FromDays(2)) : null,
+            ObservedAt = now.Subtract(TimeSpan.FromMinutes(5)),
+            EventFamilyStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["cron"] = cronObserved ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+                ["systemd_timer"] = timerObserved ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved
+            }
+        };
+
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, report.Applicability);
+        Assert.Equal(expectedStatus, SourceHealthRules.EffectiveStatus(report, now));
+        Assert.Equal(cronObserved ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            report.EventFamilyStatuses!["cron"]);
+        Assert.Equal(timerObserved ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            report.EventFamilyStatuses["systemd_timer"]);
+    }
+
+    [Fact]
+    public void SchedulerObservationExpiryAndVisibilityFailuresRemainFailClosed()
+    {
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var entry = LinuxTelemetrySourceCatalog.L2Security.Single(
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        var report = Report(entry, now) with
+        {
+            LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
+            ObservedAt = now,
+            EventFamilyStatuses = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["cron"] = SourceEvidenceStatuses.Observed,
+                ["systemd_timer"] = SourceEvidenceStatuses.NotObserved
+            }
+        };
+
+        Assert.Equal(
+            SourceHealthStatuses.Healthy,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Stale,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with { ObservedAt = now.Add(SourceHealthRules.MaximumFutureObservationSkew).AddSeconds(1) },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Missing,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    Status = SourceHealthStatuses.Missing,
+                    ErrorCode = "scheduler_journal_unavailable",
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.Missing,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Degraded,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Key == "cron_or_systemd_timer_visibility"
+                            ? SourceEvidenceStatuses.Degraded
+                            : pair.Value,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.PermissionDenied,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    PrerequisiteStatuses = report.PrerequisiteStatuses!.ToDictionary(
+                        pair => pair.Key,
+                        _ => SourceEvidenceStatuses.PermissionDenied,
+                        StringComparer.Ordinal)
+                },
+                now));
+        Assert.Equal(
+            SourceHealthStatuses.Error,
+            SourceHealthRules.EffectiveStatus(
+                report with
+                {
+                    ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1),
+                    GapDetected = true
+                },
+                now));
+    }
+
     [Fact]
     public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
     {

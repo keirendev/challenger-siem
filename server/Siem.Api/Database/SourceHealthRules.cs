@@ -84,6 +84,13 @@ public static class SourceHealthRules
             return SourceHealthStatuses.Stale;
         }
 
+        if (LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Contains(report.SourceId)
+            && report.EventFamilyStatuses is { Count: > 0 }
+            && report.EventFamilyStatuses.Values.All(value => value == SourceEvidenceStatuses.NotObserved))
+        {
+            return SourceHealthStatuses.Degraded;
+        }
+
         // Snapshot-diff, metrics, and quiet event-driven journal sources can be observed
         // successfully without emitting a new event. Their agent-reported source observation,
         // rather than production activity, is the freshness signal.

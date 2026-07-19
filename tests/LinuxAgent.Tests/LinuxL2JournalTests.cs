@@ -55,9 +55,13 @@ public sealed class LinuxL2JournalTests
             {
                 LinuxTelemetrySourceIds.AgentLogTamper,
                 LinuxTelemetrySourceIds.KernelSecurity,
-                LinuxTelemetrySourceIds.LoginSession
+                LinuxTelemetrySourceIds.LoginSession,
+                LinuxTelemetrySourceIds.Scheduler
             }.Order(StringComparer.Ordinal),
             LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[] { LinuxTelemetrySourceIds.Scheduler },
+            LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds);
         Assert.Equal(SourceApplicabilityStatuses.Unsupported, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.Applicability);
         Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.SourceKind);
 
@@ -401,6 +405,128 @@ public sealed class LinuxL2JournalTests
                 Assert.Equal(expected.GetProperty(family).GetString(), health.EventFamilyStatuses![family]);
             }
         }
+    }
+
+    [Theory]
+    [InlineData("no_evidence", false, false, SourceHealthStatuses.Degraded)]
+    [InlineData("cron_only", true, false, SourceHealthStatuses.Healthy)]
+    [InlineData("timer_only", false, true, SourceHealthStatuses.Healthy)]
+    [InlineData("mixed", true, true, SourceHealthStatuses.Healthy)]
+    public async Task RuntimeUsesEvidenceGatedSuccessfulJournalObservationForSchedulerFamilies(
+        string scenario,
+        bool observeCron,
+        bool observeTimer,
+        string expectedStatus)
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var clock = new FixedTimeProvider(now);
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
+        await runtime.InitializeAsync("1.11.7-test", "synthetic-config", default);
+
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+        await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "session", normalizer, options), default);
+        if (observeCron)
+            await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "cron", normalizer, options), default);
+        if (observeTimer)
+            await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "systemd_timer", normalizer, options), default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var scheduler = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, scheduler.Applicability);
+        Assert.Equal(expectedStatus, scheduler.Status);
+        Assert.Equal(now, scheduler.ObservedAt);
+        Assert.Equal(observeCron || observeTimer ? SourceEvidenceStatuses.Satisfied : SourceEvidenceStatuses.Unknown,
+            scheduler.PrerequisiteStatuses!["cron_or_systemd_timer_visibility"]);
+        Assert.Equal(observeCron ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            scheduler.EventFamilyStatuses!["cron"]);
+        Assert.Equal(observeTimer ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            scheduler.EventFamilyStatuses["systemd_timer"]);
+        Assert.Equal(observeCron || observeTimer ? null : "source_event_family_not_observed", scheduler.ErrorCode);
+        Assert.Equal("successful_journal_read", scheduler.Details!["freshness_basis"]);
+        Assert.Equal("independent_observation_state", scheduler.Details["event_family_freshness"]);
+        Assert.Equal(scenario == "no_evidence", scheduler.LastEventTime is null);
+    }
+
+    [Fact]
+    public async Task SchedulerProducerEvidencePersistsAcrossRestart()
+    {
+        using var temporary = new TemporaryState();
+        var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
+        var clock = new FixedTimeProvider(now);
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var store = new LinuxStateStore(temporary.Path);
+        var runtime = new LinuxJournalRuntime(Options.Create(options), store, clock);
+        await runtime.InitializeAsync("1.11.7-test", "synthetic-config", default);
+
+        var fixtures = FixtureCases();
+        var normalizer = new LinuxJournalNormalizer();
+        await runtime.RecordCollectedAsync(NormalizeFixture(fixtures, "cron", normalizer, options), default);
+        runtime.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await runtime.RecordSuccessfulReadObservationAsync(default);
+
+        var restartedAt = now.AddHours(1);
+        var restartedClock = new FixedTimeProvider(restartedAt);
+        var restarted = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), restartedClock);
+        await restarted.InitializeAsync("1.11.7-test", "synthetic-config", default);
+        restarted.RecordReadResult(new JournalReadResult(JournalReadStatus.Success, Array.Empty<string>()));
+        await restarted.RecordSuccessfulReadObservationAsync(default);
+
+        var scheduler = Assert.Single(restarted.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        Assert.Equal(SourceHealthStatuses.Healthy, scheduler.Status);
+        Assert.Equal(restartedAt, scheduler.ObservedAt);
+        Assert.Equal(SourceEvidenceStatuses.Observed, scheduler.EventFamilyStatuses!["cron"]);
+        Assert.Equal(SourceEvidenceStatuses.NotObserved, scheduler.EventFamilyStatuses["systemd_timer"]);
+    }
+
+    [Fact]
+    public async Task RuntimeSchedulerCollectorFailuresRemainExplicitAfterProducerEvidence()
+    {
+        using var temporary = new TemporaryState();
+        var options = TestOptions(WindowsCoverageLevel.L2);
+        options.State.Path = temporary.Path;
+        var runtime = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.Path),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-19T12:00:00Z")));
+        await runtime.InitializeAsync("1.11.7-test", "synthetic-config", default);
+
+        await runtime.RecordCollectedAsync(
+            NormalizeFixture(FixtureCases(), "cron", new LinuxJournalNormalizer(), options),
+            default);
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.Unavailable,
+            Array.Empty<string>(),
+            ErrorCode: "journal_unavailable"));
+        var unavailable = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        Assert.Equal(SourceHealthStatuses.Missing, unavailable.Status);
+        Assert.All(unavailable.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.Missing, value));
+
+        runtime.RecordReadResult(new JournalReadResult(
+            JournalReadStatus.PermissionDenied,
+            Array.Empty<string>(),
+            ErrorCode: "journal_permission_denied"));
+        var denied = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        Assert.Equal(SourceHealthStatuses.PermissionDenied, denied.Status);
+        Assert.All(denied.PrerequisiteStatuses!.Values,
+            value => Assert.Equal(SourceEvidenceStatuses.PermissionDenied, value));
+
+        runtime.RecordGap("rotation");
+        var gap = Assert.Single(runtime.Snapshot().Health,
+            item => item.SourceId == LinuxTelemetrySourceIds.Scheduler);
+        Assert.Equal(SourceHealthStatuses.Error, gap.Status);
+        Assert.True(gap.GapDetected);
     }
 
     [Fact]

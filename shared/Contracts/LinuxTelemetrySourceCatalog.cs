@@ -51,7 +51,18 @@ public static class LinuxTelemetrySourceCatalog
         {
             LinuxTelemetrySourceIds.AgentLogTamper,
             LinuxTelemetrySourceIds.KernelSecurity,
-            LinuxTelemetrySourceIds.LoginSession
+            LinuxTelemetrySourceIds.LoginSession,
+            LinuxTelemetrySourceIds.Scheduler
+        };
+
+    /// <summary>
+    /// Quiet sources that require durable matching producer evidence before a successful shared
+    /// journal observation can establish healthy source visibility.
+    /// </summary>
+    public static IReadOnlySet<string> JournalObservationRequiresProducerEvidenceSourceIds { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            LinuxTelemetrySourceIds.Scheduler
         };
 
     public static readonly IReadOnlyList<SourceManifestEntry> L1 =

@@ -632,7 +632,8 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         if (status == SourceHealthStatuses.Healthy
             && manifest.CoverageLevel == WindowsCoverageLevel.L2
             && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
-            && !LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
+            && (!LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
+                || LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Contains(manifest.SourceId))
             && !observedSources.Contains(manifest.SourceId))
         {
             return SourceHealthStatuses.Degraded;

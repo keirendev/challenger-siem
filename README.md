@@ -7,7 +7,7 @@
 
 Challenger SIEM is an open-source security telemetry pipeline under active development. It combines custom .NET endpoint agents, an ASP.NET Core ingestion and review server, PostgreSQL storage, and a server-hosted Razor web console. Windows is the most developed endpoint path; Linux collection is implemented in bounded tiers with higher-visibility sources kept behind explicit opt-in and approval gates.
 
-The current project version is `1.11.6`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
+The current project version is `1.11.7`, which remains on the unreleased development line. See the [changelog](CHANGELOG.md) and [release-readiness checklist](docs/release-readiness.md) for the evidence still required.
 
 ## Current state
 
