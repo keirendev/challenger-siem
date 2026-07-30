@@ -4,6 +4,7 @@ using System.Text.Json;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Contracts.V2;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace Challenger.Siem.Api.Database;
 
@@ -528,8 +529,10 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("start_time", envelope.EventTime.Subtract(window).ToUniversalTime());
         command.Parameters.AddWithValue("end_time", end.ToUniversalTime());
         command.Parameters.AddWithValue("outcome", outcome);
-        command.Parameters.AddWithValue("source_ip", string.IsNullOrWhiteSpace(envelope.Normalized?.SourceIp) ? DBNull.Value : envelope.Normalized.SourceIp);
-        command.Parameters.AddWithValue("target_user_name", string.IsNullOrWhiteSpace(envelope.Normalized?.TargetUserName) ? DBNull.Value : envelope.Normalized.TargetUserName);
+        command.Parameters.Add("source_ip", NpgsqlDbType.Text).Value =
+            string.IsNullOrWhiteSpace(envelope.Normalized?.SourceIp) ? DBNull.Value : envelope.Normalized.SourceIp;
+        command.Parameters.Add("target_user_name", NpgsqlDbType.Text).Value =
+            string.IsNullOrWhiteSpace(envelope.Normalized?.TargetUserName) ? DBNull.Value : envelope.Normalized.TargetUserName;
 
         var results = new List<Guid>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

@@ -12,6 +12,10 @@ public static class ServiceAuthentication
     public const string PrincipalName = "service";
     public static readonly Guid ServiceId = Guid.Empty;
 
+    internal static bool UsesAgentCredential(PathString path) =>
+        path.StartsWithSegments("/api/v2/agents", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWithSegments("/api/v2/ingest", StringComparison.OrdinalIgnoreCase);
+
     public static ClaimsPrincipal Principal()
     {
         var identity = new ClaimsIdentity(
@@ -36,6 +40,14 @@ public sealed class ServiceBearerHandler(
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // Agent routes validate their per-agent bearer (or enrollment header) inside the
+        // endpoint-specific authenticator. Treating that bearer as a failed service token
+        // would create false security-audit failures for every healthy agent request.
+        if (ServiceAuthentication.UsesAgentCredential(Context.Request.Path))
+        {
+            return AuthenticateResult.NoResult();
+        }
+
         var token = tokens.GetBearerToken(Context);
         if (token is null)
         {

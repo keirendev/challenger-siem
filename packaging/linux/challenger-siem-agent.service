@@ -30,7 +30,6 @@ ProtectClock=yes
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 ReadWritePaths=/etc/challenger-siem-agent /var/lib/challenger-siem-agent

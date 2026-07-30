@@ -71,7 +71,7 @@ public static partial class SiemMcpInventoryPolicy
         return UserInfoPattern().Replace(redacted, "${scheme}<redacted>@");
     }
 
-    private static bool IsSensitiveKey(string key)
+    internal static bool IsSensitiveKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
         {

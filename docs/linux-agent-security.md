@@ -1,6 +1,6 @@
 # Linux agent security and privacy design
 
-Status: bounded read-only L1-L2 with default system-only and opt-in all-accessible-local journal scopes, approval-gated L3 snapshots, and approval-gated L4 posture/SLO/role-journal sources implemented; private L4 VM validation remains outstanding and audit/eBPF/broad file collectors remain deferred
+Status: bounded read-only L1-L2 with default system-only and opt-in all-accessible-local journal scopes, approval-gated L3 snapshots, and approval-gated L4 posture/SLO/role-journal sources implemented; bounded functional L1-L4 VM validation passed for one declared role, long-duration private soaks remain outstanding, and audit/eBPF/broad file collectors remain deferred
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
@@ -64,7 +64,9 @@ Requirements for future implementation:
 - Agent directories must be root-owned where needed and inaccessible to unrelated users. The service identity receives only the minimum read/write access: read approved sources/config, write its private queue/state/runtime logs, and no write access to source logs or security policy.
 - Queue databases, checkpoints, config, credentials, and diagnostic logs require restrictive ownership/modes and symlink-safe, atomic file handling. Secrets must use an OS-appropriate protected credential mechanism; plaintext command-line arguments and environment-value dumps are forbidden.
 - Package/update artifacts must be signed and verified before privileged installation. Downgrades and unexpected publisher/config changes must be explicit operator actions.
-- systemd hardening (or init-system equivalent) should deny privilege escalation, restrict namespaces/filesystems/devices/syscalls, isolate temporary paths, and bound CPU/memory/tasks/files, subject to validation against required collectors.
+- systemd hardening (or init-system equivalent) denies privilege escalation, empties capability sets, restricts namespaces/filesystems/devices/syscalls, isolates temporary paths, and bounds memory/tasks, subject to validation against required collectors. The .NET JIT requires executable-memory transitions, so `MemoryDenyWriteExecute` is intentionally not set; disposable Debian validation proved that directive crashes the otherwise healthy self-contained service. This residual runtime boundary does not grant a Linux capability or writable executable file path.
+- Routine `System.Net.Http.HttpClient` information logs are suppressed inside the endpoint process while warnings/errors remain visible. Otherwise a journal-reading agent would recollect its own successful heartbeat/ingest request logs, produce more requests, and sustain a queue/event feedback loop.
+- Repeated transport and journal-cycle failures are represented continuously in queue/source-health state but emit at most one warning per minute per loop. Queue-allocation warnings are limited to once per five minutes. This preserves diagnostics without turning an outage or full queue into its own high-rate journal source.
 
 ## Implemented L1/L2 journal controls
 

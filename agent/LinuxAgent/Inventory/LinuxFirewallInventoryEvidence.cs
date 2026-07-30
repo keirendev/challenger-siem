@@ -244,7 +244,8 @@ public sealed record LinuxFirewallInventoryEvidence(
             .Where(probe => probe.State != InventorySourceState.Success
                 && probe.State != InventorySourceState.NotApplicable
                 && (probe.State != InventorySourceState.Unavailable
-                    || !string.Equals(probe.ErrorCode, "command_missing", StringComparison.Ordinal)))
+                    || (!string.Equals(probe.ErrorCode, "command_missing", StringComparison.Ordinal)
+                        && !string.Equals(probe.ErrorCode, "file_missing", StringComparison.Ordinal))))
             .OrderByDescending(probe => StatePriority(probe.State))
             .FirstOrDefault();
         return new(

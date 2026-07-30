@@ -2,6 +2,7 @@ using System.Reflection;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.LinuxAgent.Config;
+using Challenger.Siem.LinuxAgent.Services;
 using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Journal;
@@ -15,7 +16,9 @@ public sealed class LinuxJournalService(
     TimeProvider timeProvider,
     ILogger<LinuxJournalService> logger) : BackgroundService
 {
+    private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(1);
     private readonly LinuxAgentOptions options = configured.Value;
+    private readonly RuntimeWarningThrottle failureLog = new(timeProvider, FailureLogInterval);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -37,7 +40,10 @@ public sealed class LinuxJournalService(
             catch (Exception ex)
             {
                 runtime.RecordThrottle("journal_collector_failure");
-                logger.LogWarning("Journal collection cycle failed ({ErrorType}); cursor was not advanced.", ex.GetType().Name);
+                if (failureLog.TryAcquire())
+                {
+                    logger.LogWarning("Journal collection cycle failed ({ErrorType}); cursor was not advanced.", ex.GetType().Name);
+                }
             }
             await Task.Delay(TimeSpan.FromSeconds(options.Journal.PollIntervalSeconds), stoppingToken);
         }

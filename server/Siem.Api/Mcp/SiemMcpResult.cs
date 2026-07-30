@@ -62,17 +62,29 @@ public static class SiemMcpResults
         bool truncated = false,
         IReadOnlyList<SiemMcpCitation>? citations = null,
         IReadOnlyList<string>? warnings = null,
-        string dataClassification = "siem_sensitive") => new()
+        string dataClassification = "siem_sensitive",
+        bool omitRawFields = false)
+    {
+        var filtered = SiemMcpContentPolicy.Apply(data, omitRawFields);
+        var filteredCitations = SiemMcpContentPolicy.Apply(
+            citations ?? Array.Empty<SiemMcpCitation>());
+        var filteredWarnings = SiemMcpContentPolicy.Apply(
+            warnings ?? Array.Empty<string>());
+        var policyLabel = filtered.RawOmitted
+            ? "mcp_raw_omitted_secret_shape_filter"
+            : "mcp_secret_shape_filter";
+        return new()
         {
             Kind = kind,
-            Data = data,
+            Data = filtered.Value,
             RowCount = Math.Max(0, rowCount),
-            Redaction = redaction,
+            Redaction = $"{redaction};{policyLabel}",
             Truncated = truncated,
-            Citations = citations ?? Array.Empty<SiemMcpCitation>(),
-            Warnings = warnings ?? Array.Empty<string>(),
+            Citations = filteredCitations.Value,
+            Warnings = filteredWarnings.Value,
             DataClassification = dataClassification
         };
+    }
 }
 
 public static class SiemMcpJson

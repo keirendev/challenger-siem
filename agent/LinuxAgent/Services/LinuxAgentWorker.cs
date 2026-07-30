@@ -25,9 +25,12 @@ public sealed class LinuxAgentWorker(
     LinuxSelfIntegrityRuntime selfIntegrityRuntime,
     LinuxPassiveTelemetryRuntime passiveTelemetryRuntime,
     LinuxL4TelemetryRuntime l4TelemetryRuntime,
+    TimeProvider timeProvider,
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
+    private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(1);
     private readonly LinuxAgentOptions options = configured.Value;
+    private readonly RuntimeWarningThrottle failureLog = new(timeProvider, FailureLogInterval);
     private readonly string version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
@@ -74,7 +77,10 @@ public sealed class LinuxAgentWorker(
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                logger.LogWarning("Agent transport cycle failed ({ErrorType}); queued data remains durable.", ex.GetType().Name);
+                if (failureLog.TryAcquire())
+                {
+                    logger.LogWarning("Agent transport cycle failed ({ErrorType}); queued data remains durable.", ex.GetType().Name);
+                }
                 await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
             }
         }

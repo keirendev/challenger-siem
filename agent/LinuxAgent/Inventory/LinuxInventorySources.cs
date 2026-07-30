@@ -30,11 +30,15 @@ public enum LinuxInventoryOperation
     Firewalld,
     FirewalldLogging,
     Ufw,
+    UfwConfiguration,
     Iptables,
     SshConfig,
+    SshArchDropIn,
     AppArmor,
+    AppArmorKernel,
     Selinux,
     SecureBoot,
+    SecureBootEfiVariable,
     AgentConfig,
     AgentExecutable
 }
@@ -123,11 +127,16 @@ public static class LinuxInventoryCatalog
         Command(LinuxInventoryOperation.Firewalld, new[] { "/usr/bin/firewall-cmd", "/bin/firewall-cmd" }, new[] { "--state" }, small, 10, 0, 252);
         Command(LinuxInventoryOperation.FirewalldLogging, new[] { "/usr/bin/firewall-cmd", "/bin/firewall-cmd" }, new[] { "--get-log-denied" }, small);
         Command(LinuxInventoryOperation.Ufw, new[] { "/usr/sbin/ufw", "/sbin/ufw" }, new[] { "status" }, small);
+        File(LinuxInventoryOperation.UfwConfiguration, "/etc/ufw/ufw.conf");
         Command(LinuxInventoryOperation.Iptables, new[] { "/usr/sbin/iptables", "/sbin/iptables" }, new[] { "-S" }, small);
         File(LinuxInventoryOperation.SshConfig, "/etc/ssh/sshd_config");
+        File(LinuxInventoryOperation.SshArchDropIn, "/etc/ssh/sshd_config.d/99-archlinux.conf");
         Command(LinuxInventoryOperation.AppArmor, new[] { "/usr/sbin/aa-status", "/sbin/aa-status" }, new[] { "--enabled" }, small, 5, 0, 1);
+        // sysfs reports a page-sized metadata length for this two-byte flag on some kernels.
+        File(LinuxInventoryOperation.AppArmorKernel, "/sys/module/apparmor/parameters/enabled", bytes: 4096);
         Command(LinuxInventoryOperation.Selinux, new[] { "/usr/sbin/getenforce", "/sbin/getenforce" }, Array.Empty<string>(), small);
         Command(LinuxInventoryOperation.SecureBoot, new[] { "/usr/bin/mokutil", "/bin/mokutil" }, new[] { "--sb-state" }, small, 5, 0, 1);
+        File(LinuxInventoryOperation.SecureBootEfiVariable, "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", bytes: 16);
         File(LinuxInventoryOperation.AgentConfig, "/etc/challenger-siem-agent/agentsettings.json", bytes: 64 * 1024, metadata: true);
         File(LinuxInventoryOperation.AgentExecutable, "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", bytes: 64 * 1024 * 1024, metadata: true);
         return result;
@@ -217,13 +226,41 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
         var output = await stdout;
         var errorOutput = await stderr;
         var truncated = output.Truncated || errorOutput.Truncated;
+        var outputText = Encoding.UTF8.GetString(output.Bytes);
+        var errorText = Encoding.UTF8.GetString(errorOutput.Bytes);
+        var knownResult = ClassifyKnownAcceptedCommandResult(
+            policy.Operation,
+            process.ExitCode,
+            outputText,
+            errorText,
+            truncated);
+        if (knownResult is not null) return knownResult;
         if (!IsAcceptedCommandCompletion(policy, process.ExitCode, output.Bytes.Length, errorOutput.Bytes.Length) && !truncated)
         {
-            return ClassifyCommandFailure(policy.Operation, process.ExitCode, Encoding.UTF8.GetString(errorOutput.Bytes)) == InventorySourceState.PermissionDenied
+            return ClassifyCommandFailure(policy.Operation, process.ExitCode, errorText) == InventorySourceState.PermissionDenied
                 ? new(InventorySourceState.PermissionDenied, "command_permission_denied")
                 : new(InventorySourceState.Unavailable, "command_failed");
         }
-        return InventorySourceResult.Success(Encoding.UTF8.GetString(output.Bytes), truncated, exitCode: process.ExitCode);
+        return InventorySourceResult.Success(outputText, truncated, exitCode: process.ExitCode);
+    }
+
+    internal static InventorySourceResult? ClassifyKnownAcceptedCommandResult(
+        LinuxInventoryOperation operation,
+        int exitCode,
+        string stdout,
+        string stderr,
+        bool truncated)
+    {
+        if (!truncated
+            && operation == LinuxInventoryOperation.SecureBoot
+            && exitCode == 1
+            && string.IsNullOrWhiteSpace(stdout)
+            && stderr.Trim().Equals("EFI variables are not supported on this system", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(InventorySourceState.NotApplicable, "non_efi_host", ExitCode: exitCode);
+        }
+
+        return null;
     }
 
     internal static bool IsAcceptedCommandCompletion(InventorySourcePolicy policy, int exitCode, int stdoutBytes, int stderrBytes) =>

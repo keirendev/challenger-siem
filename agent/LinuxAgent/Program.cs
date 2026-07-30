@@ -19,6 +19,10 @@ if (!OperatingSystem.IsLinux())
 }
 
 var builder = Host.CreateApplicationBuilder(args);
+// The agent reads the system journal. Per-request HttpClient information logs would therefore
+// be recollected as new events and create a feedback loop after every successful drain.
+// Keep transport failures visible while suppressing routine request/response chatter.
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 var path = Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json";
 builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: true).AddEnvironmentVariables("CHALLENGER_SIEM_AGENT_");
 builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetSection(LinuxAgentOptions.SectionName))

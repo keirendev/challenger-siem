@@ -87,6 +87,7 @@ public sealed class LinuxInventory(
             LinuxInventoryOperation.Firewalld,
             LinuxInventoryOperation.FirewalldLogging,
             LinuxInventoryOperation.Ufw,
+            LinuxInventoryOperation.UfwConfiguration,
             LinuxInventoryOperation.Iptables);
         var firewallEvidence = LinuxFirewallInventoryEvidence.Evaluate(firewallAttempts.Select(FirewallProbe).ToArray());
         var firewallSnapshot = Create(
@@ -96,12 +97,13 @@ public sealed class LinuxInventory(
             collectedAt,
             SelectFirewallSnapshot(firewallAttempts, firewallEvidence));
         snapshots.Add(firewallSnapshot with { Summary = firewallEvidence.AddTo(firewallSnapshot.Summary) });
-        snapshots.Add(Create("linux_ssh", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.SshConfig, token, cancellationToken)));
+        snapshots.Add(Create("linux_ssh", agentId, hostname, collectedAt, await ReadSshAsync(token, cancellationToken)));
 
-        var appArmor = await ReadAsync(LinuxInventoryOperation.AppArmor, token, cancellationToken);
+        var appArmor = await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.AppArmor, LinuxInventoryOperation.AppArmorKernel);
         var selinux = await ReadAsync(LinuxInventoryOperation.Selinux, token, cancellationToken);
         snapshots.Add(Combine("linux_mandatory_access_control", agentId, hostname, collectedAt, appArmor, selinux));
-        snapshots.Add(Create("linux_secure_boot", agentId, hostname, collectedAt, await ReadAsync(LinuxInventoryOperation.SecureBoot, token, cancellationToken)));
+        snapshots.Add(Create("linux_secure_boot", agentId, hostname, collectedAt,
+            await ReadPreferredAsync(token, cancellationToken, LinuxInventoryOperation.SecureBoot, LinuxInventoryOperation.SecureBootEfiVariable)));
 
         var config = await ReadAsync(LinuxInventoryOperation.AgentConfig, token, cancellationToken);
         var executable = await ReadAsync(LinuxInventoryOperation.AgentExecutable, token, cancellationToken);
@@ -116,6 +118,23 @@ public sealed class LinuxInventory(
 
     private async Task<Parsed> ReadPreferredAsync(CancellationToken token, CancellationToken caller, params LinuxInventoryOperation[] operations) =>
         (await ReadPreferredWithAttemptsAsync(token, caller, operations)).Selected;
+
+    private async Task<Parsed> ReadSshAsync(CancellationToken token, CancellationToken caller)
+    {
+        var primary = await ReadAsync(LinuxInventoryOperation.SshConfig, token, caller, parse: false);
+        if (primary.State != InventorySourceState.Success)
+            return primary;
+        var archDropIn = await ReadAsync(LinuxInventoryOperation.SshArchDropIn, token, caller, parse: false);
+        if (archDropIn.State is not (InventorySourceState.Success or InventorySourceState.Unavailable))
+            return archDropIn;
+        if (archDropIn.State == InventorySourceState.Unavailable && archDropIn.ErrorCode != "file_missing")
+            return archDropIn;
+        var combined = InventorySourceResult.Success(
+            string.Concat(primary.Source.Content, "\n", archDropIn.State == InventorySourceState.Success ? archDropIn.Source.Content : string.Empty),
+            primary.Truncated || archDropIn.Truncated);
+        var parsed = LinuxInventoryParsers.Parse(LinuxInventoryOperation.SshConfig, combined);
+        return new(LinuxInventoryOperation.SshConfig, parsed.State, parsed.Items, parsed.Truncated, parsed.ErrorCode, combined);
+    }
 
     private async Task<PreferredRead> ReadPreferredWithAttemptsAsync(
         CancellationToken token,
@@ -260,7 +279,8 @@ public sealed class LinuxInventory(
         var present = state == InventorySourceState.Success && parsed.Operation switch
         {
             LinuxInventoryOperation.Nftables or LinuxInventoryOperation.Iptables => item?.Status == "active",
-            LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging or LinuxInventoryOperation.Ufw => item is not null,
+            LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging
+                or LinuxInventoryOperation.Ufw or LinuxInventoryOperation.UfwConfiguration => item is not null,
             _ => false
         };
         var active = state == InventorySourceState.Success
@@ -303,7 +323,7 @@ public sealed class LinuxInventory(
     {
         LinuxInventoryOperation.Nftables => "nftables",
         LinuxInventoryOperation.Firewalld or LinuxInventoryOperation.FirewalldLogging => "firewalld",
-        LinuxInventoryOperation.Ufw => "ufw",
+        LinuxInventoryOperation.Ufw or LinuxInventoryOperation.UfwConfiguration => "ufw",
         LinuxInventoryOperation.Iptables => "iptables",
         _ => "unknown"
     };

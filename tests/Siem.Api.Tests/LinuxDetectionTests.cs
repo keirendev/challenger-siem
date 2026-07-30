@@ -616,6 +616,39 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     }
 
     [PostgresFact]
+    public async Task AuthenticationCorrelationAcceptsNullOptionalDimensions()
+    {
+        var connectionString = database.RequireConnectionString();
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        var agentId = $"linux-detect-null-dimensions-{Guid.NewGuid():N}";
+        const string hostname = "SYNTHETIC-LINUX-NULL-DIMENSIONS";
+        await InsertLinuxAgentAsync(dataSource, agentId, hostname);
+        await StoreHealthyHeartbeatAsync(dataSource, agentId, hostname, LinuxTelemetrySourceIds.Ssh);
+        await EnableDetectionRuleAsync(dataSource, "auth.bruteforce.linux", 1);
+
+        var eventRepository = new EventRepository(dataSource);
+        var syntheticEvent = LinuxJournalEvent(
+            LinuxTelemetrySourceIds.Ssh,
+            "authentication",
+            "authenticate",
+            "failure") with
+        {
+            AgentId = agentId,
+            Hostname = hostname
+        };
+        var stored = await eventRepository.StoreEventsAsync(new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = DateTimeOffset.UtcNow,
+            Events = [syntheticEvent]
+        }, CancellationToken.None);
+        var canonical = await eventRepository.LoadStoredEventsAsync(agentId, stored.AcceptedEventIds, CancellationToken.None);
+
+        await new AlertRepository(dataSource).RunLinuxDetectionsAsync(canonical, new DetectionEngine(), CancellationToken.None);
+    }
+
+    [PostgresFact]
     public async Task CoalescedLinuxDetectionEvidenceIsTransactionallyBounded()
     {
         var connectionString = database.RequireConnectionString();

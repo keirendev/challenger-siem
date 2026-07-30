@@ -60,7 +60,13 @@ public sealed class LinuxInventoryTests
         Assert.False(LinuxInventorySource.IsAcceptedCommandCompletion(firewalld, 251, 12, 0));
         Assert.Equal(new[] { "--get-log-denied" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.FirewalldLogging).Arguments);
         Assert.Equal(new[] { "status" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.Ufw).Arguments);
+        Assert.Equal("/etc/ufw/ufw.conf", LinuxInventoryCatalog.Get(LinuxInventoryOperation.UfwConfiguration).FilePath);
         Assert.Equal(new[] { "-S" }, LinuxInventoryCatalog.Get(LinuxInventoryOperation.Iptables).Arguments);
+        Assert.Equal("/etc/ssh/sshd_config.d/99-archlinux.conf", LinuxInventoryCatalog.Get(LinuxInventoryOperation.SshArchDropIn).FilePath);
+        Assert.Equal("/sys/module/apparmor/parameters/enabled", LinuxInventoryCatalog.Get(LinuxInventoryOperation.AppArmorKernel).FilePath);
+        Assert.Equal(
+            "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c",
+            LinuxInventoryCatalog.Get(LinuxInventoryOperation.SecureBootEfiVariable).FilePath);
     }
 
     [Fact]
@@ -173,7 +179,9 @@ public sealed class LinuxInventoryTests
     [Fact]
     public async Task MissingCommandsAndFilesAreExplicitlyUnavailable()
     {
-        var snapshots = await Collector(new SyntheticSource()).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        var source = new SyntheticSource();
+        source.Set(LinuxInventoryOperation.UfwConfiguration, new(InventorySourceState.Unavailable, "file_missing"));
+        var snapshots = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
         var firewall = Assert.Single(snapshots, snapshot => snapshot.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
         Assert.Equal("not_applicable", firewall.Summary["state"]);
         Assert.Equal(LinuxFirewallInventoryStates.Absent, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
@@ -239,6 +247,34 @@ public sealed class LinuxInventoryTests
             .Single(x => x.SnapshotType == "linux_secure_boot");
         Assert.Equal("not_applicable", snapshot.Summary["state"]);
         Assert.Equal("non_efi_host", snapshot.Summary["error_code"]);
+    }
+
+    [Fact]
+    public void NonEfiSecureBootStderrIsClassifiedAtCommandBoundary()
+    {
+        var result = LinuxInventorySource.ClassifyKnownAcceptedCommandResult(
+            LinuxInventoryOperation.SecureBoot,
+            1,
+            string.Empty,
+            "EFI variables are not supported on this system\n",
+            truncated: false);
+
+        Assert.NotNull(result);
+        Assert.Equal(InventorySourceState.NotApplicable, result.State);
+        Assert.Equal("non_efi_host", result.ErrorCode);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Null(LinuxInventorySource.ClassifyKnownAcceptedCommandResult(
+            LinuxInventoryOperation.SecureBoot,
+            1,
+            string.Empty,
+            "synthetic unexpected failure\n",
+            truncated: false));
+        Assert.Null(LinuxInventorySource.ClassifyKnownAcceptedCommandResult(
+            LinuxInventoryOperation.SecureBoot,
+            1,
+            string.Empty,
+            "EFI variables are not supported on this system\n",
+            truncated: true));
     }
 
     [Theory]
@@ -472,12 +508,63 @@ public sealed class LinuxInventoryTests
     }
 
     [Fact]
-    public async Task EmptyApprovedSshPostureIsMalformedRatherThanHealthy()
+    public async Task EmptyApprovedSshPostureUsesBoundedOpenSshDefaults()
     {
         var source = CompleteSource();
         source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("Include /etc/ssh/sshd_config.d/*.conf\n"));
         var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
             .Single(x => x.SnapshotType == "linux_ssh");
+        Assert.Equal("success", snapshot.Summary["state"]);
+        var item = Assert.Single(snapshot.Items);
+        Assert.Equal("observed_effective_defaults", item.Status);
+        Assert.Equal("prohibit-password", item.Metadata["permitrootlogin"]);
+        Assert.Equal("yes", item.Metadata["passwordauthentication"]);
+        Assert.Equal("yes", item.Metadata["pubkeyauthentication"]);
+    }
+
+    [Fact]
+    public async Task CachyOsFixedFileFallbacksProduceBoundedPostureWithoutPrivilege()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.Nftables, new(InventorySourceState.PermissionDenied, "command_permission_denied"));
+        source.Set(LinuxInventoryOperation.Ufw, new(InventorySourceState.PermissionDenied, "command_permission_denied"));
+        source.Set(LinuxInventoryOperation.Iptables, new(InventorySourceState.PermissionDenied, "command_permission_denied"));
+        source.Set(LinuxInventoryOperation.UfwConfiguration, InventorySourceResult.Success("ENABLED=yes\nLOGLEVEL=low\n"));
+        source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("Include /etc/ssh/sshd_config.d/*.conf\n"));
+        source.Set(LinuxInventoryOperation.SshArchDropIn, InventorySourceResult.Success("# Arch-family defaults only\n"));
+        source.Set(LinuxInventoryOperation.AppArmor, new(InventorySourceState.Unavailable, "command_missing"));
+        source.Set(LinuxInventoryOperation.AppArmorKernel, InventorySourceResult.Success("N\n"));
+        source.Set(LinuxInventoryOperation.SecureBoot, new(InventorySourceState.Unavailable, "command_missing"));
+        source.Set(LinuxInventoryOperation.SecureBootEfiVariable, InventorySourceResult.Success("\u0007\0\0\0\u0001"));
+
+        var snapshots = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
+
+        var firewall = snapshots.Single(item => item.SnapshotType == LinuxFirewallInventoryEvidence.SnapshotType);
+        Assert.Equal("success", firewall.Summary["state"]);
+        Assert.Equal(LinuxFirewallInventoryStates.LoggingEnabled, firewall.Summary[LinuxFirewallInventoryEvidence.StateKey]);
+        Assert.Equal("ufw", firewall.Summary[LinuxFirewallInventoryEvidence.ProducerKey]);
+        Assert.Equal("enabled", firewall.Summary[LinuxFirewallInventoryEvidence.LoggingKey]);
+
+        var ssh = snapshots.Single(item => item.SnapshotType == "linux_ssh");
+        Assert.Equal("success", ssh.Summary["state"]);
+        Assert.Equal("observed_effective_defaults", Assert.Single(ssh.Items).Status);
+
+        var mac = snapshots.Single(item => item.SnapshotType == "linux_mandatory_access_control");
+        Assert.Equal("success", mac.Summary["state"]);
+        Assert.Contains(mac.Items, item => item.Name == "apparmor" && item.Status == "disabled");
+
+        var secureBoot = snapshots.Single(item => item.SnapshotType == "linux_secure_boot");
+        Assert.Equal("success", secureBoot.Summary["state"]);
+        Assert.Equal("enabled", Assert.Single(secureBoot.Items).Status);
+    }
+
+    [Fact]
+    public async Task UnrecognizedApprovedSshDirectiveFailsClosed()
+    {
+        var source = CompleteSource();
+        source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("PermitRootLogin synthetic-invalid\n"));
+        var snapshot = (await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default))
+            .Single(item => item.SnapshotType == "linux_ssh");
         Assert.Equal("malformed", snapshot.Summary["state"]);
         Assert.Empty(snapshot.Items);
     }
@@ -609,10 +696,14 @@ public sealed class LinuxInventoryTests
         source.Set(LinuxInventoryOperation.Mounts, InventorySourceResult.Success("ext4\next4\ntmpfs\n"));
         source.Set(LinuxInventoryOperation.Nftables, InventorySourceResult.Success(
             "{\"nftables\":[{\"table\":{\"family\":\"inet\",\"name\":\"synthetic\"}},{\"rule\":{\"expr\":[{\"log\":{}}]}}]}"));
+        source.Set(LinuxInventoryOperation.UfwConfiguration, new(InventorySourceState.Unavailable, "file_missing"));
         source.Set(LinuxInventoryOperation.SshConfig, InventorySourceResult.Success("PermitRootLogin no\nPasswordAuthentication no\nPubkeyAuthentication yes\n"));
+        source.Set(LinuxInventoryOperation.SshArchDropIn, new(InventorySourceState.Unavailable, "file_missing"));
         source.Set(LinuxInventoryOperation.AppArmor, InventorySourceResult.Success());
+        source.Set(LinuxInventoryOperation.AppArmorKernel, new(InventorySourceState.Unavailable, "file_missing"));
         source.Set(LinuxInventoryOperation.Selinux, InventorySourceResult.Success("Disabled\n"));
         source.Set(LinuxInventoryOperation.SecureBoot, InventorySourceResult.Success("SecureBoot enabled\n"));
+        source.Set(LinuxInventoryOperation.SecureBootEfiVariable, new(InventorySourceState.Unavailable, "file_missing"));
         var syntheticHash = new string('a', 64);
         source.Set(LinuxInventoryOperation.AgentConfig, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite, size: 512, ownerId: 1001));
         source.Set(LinuxInventoryOperation.AgentExecutable, InventorySourceResult.Success(mode: UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, size: 4096, ownerId: 0, sha256: syntheticHash));

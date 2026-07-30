@@ -1,10 +1,12 @@
 # Linux L4 full-target coverage
 
-Status: implementation available for controlled deployment; private Linux VM validation, soak, and performance evidence have not yet passed
+Status: bounded functional Linux VM validation passed for one declared role; the required long-duration private soak and full performance matrix remain pending
 
 Linux L4 is Challenger SIEM's highest defined Linux coverage level. It extends the healthy L1/L2 journal baseline and approval-gated L3 process, network, and host-behaviour sources with two mandatory assurance sources and each applicable role-specific journal pack. The journal remains system-only by default; the optional all-accessible-local scope is a separately reviewed, plan-bound input that grants no new access. L4 is deliberately strict: it is a reviewed high-value-host target, not a default installation mode or a promise that every possible Linux telemetry source is collected.
 
 The implementation remains passive and read-only. It does not install or configure Linux Audit Framework rules, load eBPF programs, enable application logging, change firewall or authentication policy, alter kernel or mandatory-access-control settings, or add privileges to make a source appear healthy. Missing prerequisites remain visible coverage gaps.
+
+On CachyOS and Arch-family hosts, fixed unprivileged fallbacks can observe the bounded UFW enabled/logging state from `/etc/ufw/ufw.conf`, AppArmor enablement from `/sys/module/apparmor/parameters/enabled`, Secure Boot from the fixed UEFI `SecureBoot` variable, and the global OpenSSH posture from `/etc/ssh/sshd_config` plus the fixed `99-archlinux.conf` drop-in. Only approved aggregate states are retained. These fallbacks do not read firewall rules, arbitrary SSH fragments, EFI variables other than Secure Boot, or application/file payloads; they do not replace genuine package-manager journal evidence or authorize a host-policy change.
 
 ## Current implementation
 

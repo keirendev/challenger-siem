@@ -10,9 +10,11 @@ namespace Challenger.Siem.Agent.Core.Queue;
 
 public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEventQueue> logger) : IEventQueue
 {
+    private static readonly TimeSpan QueueWarningInterval = TimeSpan.FromMinutes(5);
     private readonly SemaphoreSlim gate = new(1, 1);
 
     private bool initialized;
+    private DateTimeOffset lastQueueWarningAt = DateTimeOffset.MinValue;
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -405,22 +407,56 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         }
 
         var maxBytes = options.MaxSizeMb * 1024L * 1024L;
-        var currentBytes = new FileInfo(options.Path).Length;
+        var currentBytes = QueueFileBytes();
         if (currentBytes <= maxBytes)
         {
-            var warnAtBytes = maxBytes * Math.Clamp(options.WarningSizePercent, 1, 100) / 100;
-            if (currentBytes >= warnAtBytes)
-            {
-                logger.LogWarning(
-                    "Agent queue file is at {CurrentBytes} bytes, approaching configured limit of {MaxBytes} bytes.",
-                    currentBytes,
-                    maxBytes);
-            }
+            WarnOnQueuePressure(currentBytes, maxBytes);
+            return;
+        }
 
+        // WAL can temporarily account for most allocated bytes. Checkpoint it before deciding
+        // that the hard bound is exhausted. SQLite does not shrink the main file after deletes;
+        // free pages are safe to reuse without increasing physical allocation, so a recovered
+        // empty/drained queue must not become permanently unable to collect.
+        var reusablePages = CheckpointAndGetReusablePageCount();
+        currentBytes = QueueFileBytes();
+        if (currentBytes <= maxBytes || reusablePages > 0)
+        {
+            WarnOnQueuePressure(currentBytes, maxBytes);
             return;
         }
 
         throw new InvalidOperationException($"Agent queue has exceeded its configured size limit of {options.MaxSizeMb} MB.");
+    }
+
+    private long CheckpointAndGetReusablePageCount()
+    {
+        using var connection = OpenConnection();
+        using (var checkpoint = connection.CreateCommand())
+        {
+            checkpoint.CommandText = "pragma wal_checkpoint(truncate);";
+            checkpoint.ExecuteNonQuery();
+        }
+
+        using var freePages = connection.CreateCommand();
+        freePages.CommandText = "pragma freelist_count;";
+        return Convert.ToInt64(freePages.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private void WarnOnQueuePressure(long currentBytes, long maxBytes)
+    {
+        var warnAtBytes = maxBytes * Math.Clamp(options.WarningSizePercent, 1, 100) / 100;
+        var now = DateTimeOffset.UtcNow;
+        if (currentBytes < warnAtBytes || now - lastQueueWarningAt < QueueWarningInterval)
+        {
+            return;
+        }
+
+        lastQueueWarningAt = now;
+        logger.LogWarning(
+            "Agent queue allocation is at {CurrentBytes} bytes, approaching configured limit of {MaxBytes} bytes.",
+            currentBytes,
+            maxBytes);
     }
 
     private static bool IsReadyForAttempt(int sendAttempts, DateTimeOffset? lastAttemptAt, int maxBackoffSeconds, DateTimeOffset now)

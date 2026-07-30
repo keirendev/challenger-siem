@@ -196,7 +196,7 @@ Stop immediately on any privacy, unauthorized mutation, host-impact, silent-loss
 
 ## L4 private VM canary
 
-Purpose: validate the highest implemented Linux level without turning implementation availability into a rollout claim. The L4 VM gate has not yet been run.
+Purpose: validate the highest implemented Linux level without turning implementation availability into a rollout claim. A bounded functional exact-2.0.2 L4 campaign passed for one declared web role; the long-duration gate defined below has not yet been run.
 
 Use at least 24 continuous hours after the mandatory rolling-SLO window reaches steady state, in addition to the prerequisite L1 24-hour, L1+L2 seven-day, and requested L3 validation evidence. A materially different build, distribution/kernel/init combination, configuration, posture baseline, or role set requires a new applicable decision.
 

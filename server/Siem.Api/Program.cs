@@ -508,6 +508,7 @@ app.MapPost("/api/v2/storage/retention/run", async Task<IResult> (
     TokenService tokens,
     IOptions<ManagedRetentionOptions> retentionOptions,
     AdminRepository admin,
+    SecurityAuditRepository audit,
     CancellationToken cancellationToken) =>
 {
     if (!tokens.HasServiceAccess(context))
@@ -529,8 +530,52 @@ app.MapPost("/api/v2/storage/retention/run", async Task<IResult> (
         }, cancellationToken) ?? new RetentionRunRequest();
     }
 
+    if (!request.HasRequiredManualConfirmation())
+    {
+        await audit.RecordAsync(
+            ServiceAuthentication.ServiceId,
+            context.User.Identity?.Name,
+            "storage.retention.run",
+            "denied",
+            "managed_telemetry",
+            null,
+            context,
+            new Dictionary<string, object?>
+            {
+                ["mode"] = "execute",
+                ["reason"] = "confirmation_missing",
+                ["emergency"] = request.Emergency,
+                ["max_batches"] = request.MaxBatches
+            },
+            cancellationToken);
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["confirm_impact"] = new[] { $"Type {RetentionRunRequest.ExecutionConfirmation} to execute managed telemetry deletion." }
+        });
+    }
+
     var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
     var result = await retention.RunAsync(effectiveOptions, request, cancellationToken);
+    await audit.RecordAsync(
+        ServiceAuthentication.ServiceId,
+        context.User.Identity?.Name,
+        "storage.retention.run",
+        result.Status is "completed" or "disabled" ? "success" : "failure",
+        "managed_telemetry",
+        result.RunId.ToString(),
+        context,
+        new Dictionary<string, object?>
+        {
+            ["mode"] = result.Mode,
+            ["status"] = result.Status,
+            ["trigger"] = result.Trigger,
+            ["emergency"] = request.Emergency,
+            ["max_batches"] = request.MaxBatches,
+            ["removed_rows"] = result.RemovedRows,
+            ["removed_event_rows"] = result.RemovedEventRows,
+            ["lock_acquired"] = result.AdvisoryLockAcquired
+        },
+        cancellationToken);
     return result.Status == "lock_not_acquired" ? Results.Conflict(result) : Results.Ok(result);
 });
 

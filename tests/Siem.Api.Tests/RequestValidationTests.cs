@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
@@ -6,6 +7,7 @@ using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.State;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -13,6 +15,29 @@ namespace Challenger.Siem.Api.Tests;
 
 public sealed class RequestValidationTests
 {
+    [Theory]
+    [InlineData("/api/v2/agents/register", true)]
+    [InlineData("/api/v2/agents/heartbeat", true)]
+    [InlineData("/API/V2/INGEST/EVENTS", true)]
+    [InlineData("/api/v2/agents-not-a-route", false)]
+    [InlineData("/api/v2/events", false)]
+    [InlineData("/mcp", false)]
+    public void ServiceAuthenticationDoesNotMisclassifyAgentCredentialRoutes(string path, bool expected)
+    {
+        Assert.Equal(expected, ServiceAuthentication.UsesAgentCredential(new PathString(path)));
+    }
+
+    [Fact]
+    public void ManualRetentionExecutionRequiresExactConfirmationWhileDryRunDoesNot()
+    {
+        Assert.True(new RetentionRunRequest().HasRequiredManualConfirmation());
+        Assert.False(new RetentionRunRequest(DryRun: false).HasRequiredManualConfirmation());
+        Assert.False(new RetentionRunRequest(DryRun: false, ConfirmImpact: "confirm retention delete").HasRequiredManualConfirmation());
+        Assert.True(new RetentionRunRequest(
+            DryRun: false,
+            ConfirmImpact: RetentionRunRequest.ExecutionConfirmation).HasRequiredManualConfirmation());
+    }
+
     [Theory]
     [InlineData(69, "normal")]
     [InlineData(70, "warning_70")]

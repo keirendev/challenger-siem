@@ -23,4 +23,4 @@ dotnet run --project server/Siem.Api
 
 Required configuration keys are `ConnectionStrings__SiemDatabase`, `Auth__EnrollmentToken`, and `Auth__ServiceToken`. Production traffic must use HTTPS.
 
-The REST API is under `/api/v2`; MCP is exposed at `/mcp`. See [documentation](docs/index.md), [API](docs/api.md), [authentication](docs/auth.md), and [MCP](docs/mcp.md).
+The REST API is under `/api/v2`; MCP is exposed at `/mcp`. See [documentation](docs/index.md), [single-user deployment](docs/deployment-single-user.md), [coverage](docs/coverage-matrix.md), [API](docs/api.md), [authentication](docs/auth.md), and [MCP](docs/mcp.md).

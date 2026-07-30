@@ -947,9 +947,9 @@ public sealed partial class LinuxJournalNormalizer
         "allow" or "allowed" or "accept" or "accepted" => "allow",
         "deny" or "denied" or "block" or "blocked" or "drop" or "dropped" or "reject" or "rejected" => "deny",
         "change" or "changed" or "policy_change" => "policy_change",
-        "install" or "installed" => "install",
-        "upgrade" or "upgraded" or "update" or "updated" => "update",
-        "remove" or "removed" or "erase" or "erased" or "uninstall" or "uninstalled" => "remove",
+        "install" or "installed" or "installing" => "install",
+        "upgrade" or "upgraded" or "upgrading" or "update" or "updated" => "update",
+        "remove" or "removed" or "removing" or "erase" or "erased" or "uninstall" or "uninstalled" => "remove",
         "open_session" => "session_start",
         "close_session" => "session_end",
         "authenticate" or "authentication" => "authenticate",
@@ -1231,7 +1231,7 @@ public sealed partial class LinuxJournalNormalizer
     [GeneratedRegex("^\\((?<user>[A-Za-z0-9._@-]{1,512})\\)\\s+(?<verb>CMD|RELOAD)(?:\\s+\\((?<command>.{1,4096})\\))?$", RegexOptions.CultureInvariant, 50)]
     private static partial Regex CronPattern();
 
-    [GeneratedRegex("^(?:\\[ALPM\\]\\s+)?(?<verb>install|installed|upgrade|upgraded|update|updated|remove|removed|erase|erased|uninstall|uninstalled)\\s+(?<package>[A-Za-z0-9.+:_-]{1,512})(?:\\s|$)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, 50)]
+    [GeneratedRegex("^(?:\\[ALPM\\]\\s+)?(?<verb>install|installed|installing|upgrade|upgraded|upgrading|update|updated|remove|removed|removing|erase|erased|uninstall|uninstalled)\\s+(?<package>[A-Za-z0-9.+:_-]{1,512}?)(?:\\.{3})?(?:\\s|$)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, 50)]
     private static partial Regex PackagePattern();
 
     [GeneratedRegex("^(?<verb>Started|Starting|Stopped|Stopping|Reloaded|Failed)(?: to start)?\\s+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, 50)]

@@ -14,7 +14,7 @@ Use service-authenticated REST or read-only MCP to review events, source health,
 
 ## Retention
 
-Review storage accounting and perform a dry run before executing managed retention. The allowlist is limited to events, heartbeat history, inventory snapshots, and ingestion errors. Current source state, alerts/evidence, cases, graphs, detection metadata, audit, and agents are protected.
+Review storage accounting and perform a dry run before executing managed retention. Manual execution requires the exact `CONFIRM RETENTION DELETE` confirmation and is security-audited. The allowlist is limited to events, heartbeat history, inventory snapshots, and ingestion errors. Current source state, alerts/evidence, cases, graphs, detection metadata, audit, and agents are protected.
 
 ## Incident safety
 

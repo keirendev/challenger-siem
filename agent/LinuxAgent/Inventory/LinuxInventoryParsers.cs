@@ -39,11 +39,14 @@ public static class LinuxInventoryParsers
             LinuxInventoryOperation.Firewalld => ParseFixedState(source.Content, "firewall", "firewalld", new[] { "running", "not running" }),
             LinuxInventoryOperation.FirewalldLogging => ParseFirewalldLogging(source.Content),
             LinuxInventoryOperation.Ufw => ParseUfw(source.Content),
+            LinuxInventoryOperation.UfwConfiguration => ParseUfwConfiguration(source.Content),
             LinuxInventoryOperation.Iptables => ParseIptables(source.Content),
-            LinuxInventoryOperation.SshConfig => ParseSsh(source.Content),
+            LinuxInventoryOperation.SshConfig or LinuxInventoryOperation.SshArchDropIn => ParseSsh(source.Content),
             LinuxInventoryOperation.AppArmor => new[] { Item("mandatory_access_control", "apparmor", source.ExitCode == 1 ? "disabled" : "enabled") },
+            LinuxInventoryOperation.AppArmorKernel => ParseAppArmorKernel(source.Content),
             LinuxInventoryOperation.Selinux => ParseFixedState(source.Content, "mandatory_access_control", "selinux", new[] { "enforcing", "permissive", "disabled" }),
             LinuxInventoryOperation.SecureBoot => ParseSecureBoot(source.Content),
+            LinuxInventoryOperation.SecureBootEfiVariable => ParseSecureBootEfiVariable(source.Content),
             LinuxInventoryOperation.AgentConfig => ParseAgentFile("configuration", source, UnixFileMode.UserRead | UnixFileMode.UserWrite, ownerMustBeRoot: false, requireFingerprint: false),
             LinuxInventoryOperation.AgentExecutable => ParseAgentFile("executable", source, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, ownerMustBeRoot: true, requireFingerprint: true),
             _ => null
@@ -373,6 +376,36 @@ public static class LinuxInventoryParsers
             : new[] { Item("firewall", "ufw", state, new Dictionary<string, string> { ["logging"] = logging }) };
     }
 
+    private static IReadOnlyList<InventoryItem>? ParseUfwConfiguration(string? content)
+    {
+        if (content is null) return null;
+        string? enabled = null;
+        string? logLevel = null;
+        foreach (var raw in Lines(content))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#') continue;
+            var separator = line.IndexOf('=');
+            if (separator <= 0) continue;
+            var key = line[..separator].Trim();
+            var value = line[(separator + 1)..].Trim().Trim('"').ToLowerInvariant();
+            if (key.Equals("ENABLED", StringComparison.OrdinalIgnoreCase) && value is "yes" or "no") enabled ??= value;
+            if (key.Equals("LOGLEVEL", StringComparison.OrdinalIgnoreCase)
+                && value is "off" or "low" or "medium" or "high" or "full") logLevel ??= value;
+        }
+        if (enabled is null || logLevel is null) return null;
+        var active = enabled == "yes";
+        var logging = active && logLevel != "off" ? "enabled" : "disabled";
+        return new[]
+        {
+            Item(
+                "firewall",
+                "ufw",
+                active ? "active" : "inactive",
+                new Dictionary<string, string> { ["logging"] = logging })
+        };
+    }
+
     private static IReadOnlyList<InventoryItem>? ParseIptables(string? content)
     {
         if (content is null) return null;
@@ -409,6 +442,7 @@ public static class LinuxInventoryParsers
             ["pubkeyauthentication"] = new(StringComparer.OrdinalIgnoreCase) { "yes", "no" }
         };
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        var approvedDirectiveSeen = false;
         foreach (var raw in Lines(content))
         {
             var line = raw.Trim();
@@ -416,16 +450,52 @@ public static class LinuxInventoryParsers
             var fields = SplitFields(line);
             if (fields.Length < 2) continue;
             if (fields[0].Equals("Match", StringComparison.OrdinalIgnoreCase)) break;
-            if (accepted.TryGetValue(fields[0], out var values) && values.Contains(fields[1]))
-                metadata.TryAdd(fields[0].ToLowerInvariant(), fields[1].ToLowerInvariant());
+            if (!accepted.TryGetValue(fields[0], out var values)) continue;
+            approvedDirectiveSeen = true;
+            if (!values.Contains(fields[1])) return null;
+            metadata.TryAdd(fields[0].ToLowerInvariant(), fields[1].ToLowerInvariant());
         }
-        return metadata.Count == 0 ? null : new[] { Item("ssh", "sshd", "observed_primary_config", metadata) };
+        if (!approvedDirectiveSeen)
+        {
+            // OpenSSH applies these documented defaults when the bounded global configuration
+            // and the fixed Arch-family drop-in do not set them. This records only the three
+            // approved posture values; it never emits Include paths or unrelated directives.
+            metadata["permitrootlogin"] = "prohibit-password";
+            metadata["passwordauthentication"] = "yes";
+            metadata["pubkeyauthentication"] = "yes";
+        }
+        return new[] { Item("ssh", "sshd", approvedDirectiveSeen ? "observed_primary_config" : "observed_effective_defaults", metadata) };
+    }
+
+    private static IReadOnlyList<InventoryItem>? ParseAppArmorKernel(string? content)
+    {
+        var value = content?.Trim();
+        var state = value switch
+        {
+            "Y" or "y" or "1" => "enabled",
+            "N" or "n" or "0" => "disabled",
+            _ => null
+        };
+        return state is null ? null : new[] { Item("mandatory_access_control", "apparmor", state) };
     }
 
     private static IReadOnlyList<InventoryItem>? ParseSecureBoot(string? content)
     {
         var value = content?.Trim().ToLowerInvariant();
         var state = value switch { "secureboot enabled" => "enabled", "secureboot disabled" => "disabled", _ => null };
+        return state is null ? null : new[] { Item("secure_boot", "uefi_secure_boot", state) };
+    }
+
+    private static IReadOnlyList<InventoryItem>? ParseSecureBootEfiVariable(string? content)
+    {
+        // efivarfs exposes four attribute bytes followed by the one-byte UEFI Boolean value.
+        if (content is null || content.Length != 5) return null;
+        var state = content[4] switch
+        {
+            '\0' => "disabled",
+            '\u0001' => "enabled",
+            _ => null
+        };
         return state is null ? null : new[] { Item("secure_boot", "uefi_secure_boot", state) };
     }
 

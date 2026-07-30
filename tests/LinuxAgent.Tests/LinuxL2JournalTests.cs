@@ -234,6 +234,41 @@ public sealed class LinuxL2JournalTests
         Assert.Null(ignored.Envelope.Normalized?.Action);
     }
 
+    [Theory]
+    [InlineData("installing synthetic-package...", "package_install", "install")]
+    [InlineData("upgrading synthetic-package...", "package_update", "update")]
+    [InlineData("removing synthetic-package...", "package_remove", "remove")]
+    public void PacmanTransactionProgressIsClassifiedWithoutRetainingTheProgressSuffix(
+        string message,
+        string expectedFamily,
+        string expectedAction)
+    {
+        var normalizer = new LinuxJournalNormalizer();
+        var options = TestOptions(CoverageLevel.L2);
+        var record = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = $"s=synthetic-pacman;i={expectedAction};b=fake",
+            ["__REALTIME_TIMESTAMP"] = "1783944100000052",
+            ["_BOOT_ID"] = "00000000000000000000000000000002",
+            ["_TRANSPORT"] = "journal",
+            ["SYSLOG_IDENTIFIER"] = "pacman",
+            ["PRIORITY"] = "6",
+            ["MESSAGE"] = message
+        });
+
+        Assert.True(normalizer.TryNormalize(
+            record,
+            options,
+            DateTimeOffset.Parse("2026-07-13T12:00:00Z"),
+            out var normalized,
+            out var error), error);
+        Assert.NotNull(normalized);
+        Assert.Equal(LinuxTelemetrySourceIds.PackageManagement, normalized.Envelope.SourceId);
+        Assert.Equal(expectedFamily, normalized.EventFamily);
+        Assert.Equal(expectedAction, normalized.Envelope.Normalized?.Action);
+        Assert.Equal("synthetic-package", normalized.Envelope.Normalized?.PackageName);
+    }
+
     [Fact]
     public void MalformedAmbiguousSecretAndOversizedInputsRemainBounded()
     {

@@ -58,7 +58,14 @@ public sealed record RetentionStatusResponse(
 public sealed record RetentionRunRequest(
     [property: JsonPropertyName("dry_run")] bool DryRun = true,
     [property: JsonPropertyName("emergency")] bool Emergency = false,
-    [property: JsonPropertyName("max_batches")] int? MaxBatches = null);
+    [property: JsonPropertyName("max_batches")] int? MaxBatches = null,
+    [property: JsonPropertyName("confirm_impact")] string? ConfirmImpact = null)
+{
+    public const string ExecutionConfirmation = "CONFIRM RETENTION DELETE";
+
+    public bool HasRequiredManualConfirmation() => DryRun
+        || string.Equals(ConfirmImpact, ExecutionConfirmation, StringComparison.Ordinal);
+}
 
 public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventRepository events)
 {
