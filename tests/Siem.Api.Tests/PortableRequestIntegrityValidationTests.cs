@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Ingestion;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Passive;
 using Microsoft.Extensions.Options;
@@ -129,45 +129,6 @@ public sealed class PortableRequestIntegrityValidationTests
     }
 
     [Fact]
-    public void LegacyWindowsEventsRetainConflictingDuplicateRepresentationCompatibility()
-    {
-        var normalized = new NormalizedEventFields
-        {
-            ProcessId = "4242",
-            ProcessImage = "C:\\Synthetic\\a.exe",
-            SourceIp = "192.0.2.10",
-            SourcePort = "443",
-            FilePath = "C:\\Synthetic\\a.conf",
-            Hash = new string('a', 64),
-            Process = new ProcessTelemetryConcept { Pid = "4243", Executable = "C:\\Synthetic\\b.exe" },
-            Network = new NetworkTelemetryConcept { SourceIp = "192.0.2.11", SourcePort = 444 },
-            File = new FileTelemetryConcept { Path = "C:\\Synthetic\\b.conf", Sha256 = new string('b', 64) }
-        };
-        var windowsEvent = CreateWindowsEvent(normalized);
-
-        var errors = RequestValidation.ValidateBatch(
-            CreateBatch(windowsEvent),
-            maxEventsPerBatch: 500,
-            receivedAt: ReceivedAt);
-
-        Assert.Empty(errors);
-    }
-
-    [Fact]
-    public void DuplicateEventIdsAreAlsoRejectedForLegacyWindowsBatches()
-    {
-        var windowsEvent = CreateWindowsEvent();
-
-        var errors = RequestValidation.ValidateBatch(
-            CreateBatch(windowsEvent, windowsEvent),
-            maxEventsPerBatch: 500,
-            receivedAt: ReceivedAt);
-
-        Assert.Contains("events[0].event_id", errors.Keys);
-        Assert.Contains("events[1].event_id", errors.Keys);
-    }
-
-    [Fact]
     public void DuplicatePortableEventIdsAreRejectedBeforeDetectionCanRun()
     {
         var envelope = CreatePortableEvent();
@@ -198,8 +159,8 @@ public sealed class PortableRequestIntegrityValidationTests
         var kindErrors = RequestValidation.ValidateBatch(CreateBatch(wrongKind), 500, ReceivedAt);
         Assert.Contains("events[0].source", kindErrors.Keys);
 
-        var wrongPlatform = valid with { Platform = TelemetryPlatforms.Windows };
-        var platformErrors = RequestValidation.ValidateBatch(CreateBatch(wrongPlatform), 500, ReceivedAt);
+        var unsupportedPlatform = valid with { Platform = "unsupported-platform" };
+        var platformErrors = RequestValidation.ValidateBatch(CreateBatch(unsupportedPlatform), 500, ReceivedAt);
         Assert.Contains("events[0].platform", platformErrors.Keys);
 
         var wrongCheckpointWithoutId = valid with
@@ -468,23 +429,6 @@ public sealed class PortableRequestIntegrityValidationTests
 
     private static EventEnvelope WithDeterministicId(EventEnvelope envelope) =>
         envelope with { EventId = DeterministicEventIdentity.ComputeSha256Uuid(envelope) };
-
-    private static EventEnvelope CreateWindowsEvent(NormalizedEventFields? normalized = null) => new()
-    {
-        EventId = Guid.Parse("00000000-0000-4000-8000-000000000050"),
-        AgentId = "synthetic-agent",
-        Hostname = "SYNTHETIC-WINDOWS",
-        Source = EventSources.WindowsEventLog,
-        Channel = "Security",
-        Provider = "Synthetic-Provider",
-        WindowsEventId = 4688,
-        RecordId = 50,
-        EventTime = ReceivedAt,
-        Severity = "information",
-        Message = "Synthetic legacy request-integrity fixture.",
-        Normalized = normalized,
-        Raw = JsonSerializer.SerializeToElement(new { synthetic = true })
-    };
 
     private static HeartbeatRequest CreateCanonicalHeartbeat(
         DateTimeOffset observedAt,

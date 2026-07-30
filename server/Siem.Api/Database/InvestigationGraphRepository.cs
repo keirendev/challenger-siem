@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -205,10 +205,10 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
         return edge;
     }
 
-    public async Task<InvestigationGraphProposal> CreateSocAgentProposalAsync(Guid graphId, string instruction, string? actor, CancellationToken cancellationToken)
+    public async Task<InvestigationGraphProposal> CreateServiceProposalAsync(Guid graphId, string instruction, string? actor, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(instruction) || instruction.Length > InvestigationGraphLimits.MaxNotesLength) throw new ArgumentException("Instruction is required and bounded.");
-        var node = new InvestigationGraphNodeRequest { NodeType = "note", Label = "soc-agent proposal", Notes = instruction.Trim() };
+        var node = new InvestigationGraphNodeRequest { NodeType = "note", Label = "service proposal", Notes = instruction.Trim() };
         var proposalId = Guid.NewGuid();
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -220,7 +220,7 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("proposal_id", proposalId);
         command.Parameters.AddWithValue("graph_id", graphId);
         command.Parameters.AddWithValue("instruction", instruction.Trim());
-        command.Parameters.AddWithValue("rationale", "soc-agent proposed a bounded note node. Review and apply explicitly to mutate the graph.");
+        command.Parameters.AddWithValue("rationale", "service proposed a bounded note node. Review and apply explicitly to mutate the graph.");
         AddJsonb(command, "proposed_nodes", new[] { node });
         command.Parameters.AddWithValue("created_by", StringOrDbNull(actor));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -254,7 +254,7 @@ public sealed class InvestigationGraphRepository(NpgsqlDataSource dataSource)
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
         await TouchGraphAsync(connection, transaction, graphId, cancellationToken);
-        await AddAuditAsync(connection, transaction, graphId, "apply_proposal", actor, "Applied soc-agent graph proposal.", cancellationToken);
+        await AddAuditAsync(connection, transaction, graphId, "apply_proposal", actor, "Applied service graph proposal.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (await GetDetailAsync(graphId, cancellationToken))?.Proposals.FirstOrDefault(p => p.ProposalId == proposalId);
     }

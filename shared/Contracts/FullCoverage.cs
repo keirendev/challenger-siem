@@ -1,13 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Challenger.Siem.Contracts.V1;
+namespace Challenger.Siem.Contracts.V2;
 
-/// <summary>
-/// Windows host coverage levels used by the full-coverage model.
-/// </summary>
+/// <summary>Linux host coverage levels used by the full-coverage model.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
-public enum WindowsCoverageLevel
+public enum CoverageLevel
 {
     L0,
     L1,
@@ -145,10 +143,6 @@ public sealed record SourceManifestEntry
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceKind { get; init; }
 
-    [JsonPropertyName("channel")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Channel { get; init; }
-
     [JsonPropertyName("source_namespace")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceNamespace { get; init; }
@@ -177,7 +171,7 @@ public sealed record SourceManifestEntry
     public string DisplayName { get; init; } = string.Empty;
 
     [JsonPropertyName("coverage_level")]
-    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+    public CoverageLevel CoverageLevel { get; init; } = CoverageLevel.L1;
 
     [JsonPropertyName("required")]
     public bool Required { get; init; }
@@ -194,7 +188,7 @@ public sealed record SourceManifestEntry
     public bool EnabledByDefault { get; init; } = true;
 
     [JsonPropertyName("source_pack")]
-    public string SourcePack { get; init; } = "windows-l2";
+    public string SourcePack { get; init; } = "linux-l1-journal";
 
     [JsonPropertyName("parser_id")]
     public string ParserId { get; init; } = string.Empty;
@@ -231,10 +225,6 @@ public sealed record SourceHealthReport
     [JsonPropertyName("display_name")]
     public string DisplayName { get; init; } = string.Empty;
 
-    [JsonPropertyName("channel")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Channel { get; init; }
-
     [JsonPropertyName("source_namespace")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceNamespace { get; init; }
@@ -256,7 +246,7 @@ public sealed record SourceHealthReport
     public string? ApplicabilityReason { get; init; }
 
     [JsonPropertyName("coverage_level")]
-    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+    public CoverageLevel CoverageLevel { get; init; } = CoverageLevel.L1;
 
     [JsonPropertyName("status")]
     public string Status { get; init; } = SourceHealthStatuses.Healthy;
@@ -284,18 +274,6 @@ public sealed record SourceHealthReport
 
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
-
-    [JsonPropertyName("last_record_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? LastRecordId { get; init; }
-
-    [JsonPropertyName("oldest_record_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? OldestRecordId { get; init; }
-
-    [JsonPropertyName("newest_record_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? NewestRecordId { get; init; }
 
     [JsonPropertyName("collected_checkpoint")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -481,10 +459,10 @@ public sealed record CoverageSummary
     public string? Platform { get; init; }
 
     [JsonPropertyName("target_level")]
-    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+    public CoverageLevel TargetLevel { get; init; } = CoverageLevel.L2;
 
     [JsonPropertyName("current_level")]
-    public WindowsCoverageLevel CurrentLevel { get; init; } = WindowsCoverageLevel.L0;
+    public CoverageLevel CurrentLevel { get; init; } = CoverageLevel.L0;
 
     [JsonPropertyName("overall_status")]
     public string OverallStatus { get; init; } = SourceHealthStatuses.Missing;
@@ -553,7 +531,7 @@ public sealed record TelemetryCoverageResponse
     public int LookbackHours { get; init; } = 24;
 
     [JsonPropertyName("target_level")]
-    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+    public CoverageLevel TargetLevel { get; init; } = CoverageLevel.L2;
 
     [JsonPropertyName("agents")]
     public IReadOnlyList<AgentTelemetryCoverage> Agents { get; init; } = Array.Empty<AgentTelemetryCoverage>();
@@ -581,10 +559,10 @@ public sealed record AgentTelemetryCoverage
     public string? Platform { get; init; }
 
     [JsonPropertyName("target_level")]
-    public WindowsCoverageLevel TargetLevel { get; init; } = WindowsCoverageLevel.L2;
+    public CoverageLevel TargetLevel { get; init; } = CoverageLevel.L2;
 
     [JsonPropertyName("current_level")]
-    public WindowsCoverageLevel CurrentLevel { get; init; } = WindowsCoverageLevel.L0;
+    public CoverageLevel CurrentLevel { get; init; } = CoverageLevel.L0;
 
     [JsonPropertyName("overall_status")]
     public string OverallStatus { get; init; } = SourceHealthStatuses.Missing;
@@ -673,9 +651,6 @@ public sealed record SourceTelemetryCoverage
     [JsonPropertyName("display_name")]
     public string DisplayName { get; init; } = string.Empty;
 
-    [JsonPropertyName("channel")]
-    public string Channel { get; init; } = string.Empty;
-
     [JsonPropertyName("platform")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Platform { get; init; }
@@ -713,7 +688,7 @@ public sealed record SourceTelemetryCoverage
     public IReadOnlyDictionary<string, string>? EventFamilyStatuses { get; init; }
 
     [JsonPropertyName("coverage_level")]
-    public WindowsCoverageLevel CoverageLevel { get; init; } = WindowsCoverageLevel.L1;
+    public CoverageLevel CoverageLevel { get; init; } = CoverageLevel.L1;
 
     [JsonPropertyName("required")]
     public bool Required { get; init; }
@@ -1253,12 +1228,6 @@ public sealed record AlertEvidenceRecord
 
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
-
-    [JsonPropertyName("channel")]
-    public string? Channel { get; init; }
-
-    [JsonPropertyName("windows_event_id")]
-    public int? WindowsEventId { get; init; }
 
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;

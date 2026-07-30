@@ -1,6 +1,6 @@
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Coverage;
 
@@ -20,7 +20,7 @@ public static class TelemetryCoverageEvaluator
 
     public static IReadOnlyList<SourceHealthReport> MergeExpectedSources(
         IReadOnlyList<SourceHealthReport> reportedSources,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         IReadOnlySet<string> exceptedSourceIds,
         DateTimeOffset now) => MergeExpectedSources(
             reportedSources,
@@ -31,7 +31,7 @@ public static class TelemetryCoverageEvaluator
 
     public static IReadOnlyList<SourceHealthReport> MergeExpectedSources(
         IReadOnlyList<SourceHealthReport> reportedSources,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         IReadOnlySet<string> exceptedSourceIds,
         DateTimeOffset now,
         string platform)
@@ -106,7 +106,6 @@ public static class TelemetryCoverageEvaluator
                 Platform = expected.Platform,
                 SourceKind = expected.SourceKind,
                 DisplayName = expected.DisplayName,
-                Channel = expected.Channel,
                 SourceNamespace = expected.SourceNamespace,
                 Facility = expected.Facility,
                 Unit = expected.Unit,
@@ -153,7 +152,7 @@ public static class TelemetryCoverageEvaluator
     public static CoverageSummary RecalculateSummary(
         CoverageSummary summary,
         IReadOnlyList<SourceHealthReport> sources,
-        WindowsCoverageLevel targetLevel)
+        CoverageLevel targetLevel)
     {
         var platform = summary.Platform ?? InferPlatform(sources);
         var inScopeSources = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
@@ -195,7 +194,7 @@ public static class TelemetryCoverageEvaluator
         int queueDepth,
         DateTimeOffset? lastHeartbeatTime,
         IReadOnlyList<SourceHealthReport> sources,
-        WindowsCoverageLevel targetLevel)
+        CoverageLevel targetLevel)
     {
         return RecalculateSummary(new CoverageSummary
         {
@@ -208,17 +207,17 @@ public static class TelemetryCoverageEvaluator
         }, sources, targetLevel);
     }
 
-    public static WindowsCoverageLevel CalculateCurrentLevel(
+    public static CoverageLevel CalculateCurrentLevel(
         IReadOnlyList<SourceHealthReport> sources,
-        WindowsCoverageLevel targetLevel) => CalculateCurrentLevel(sources, targetLevel, InferPlatform(sources));
+        CoverageLevel targetLevel) => CalculateCurrentLevel(sources, targetLevel, InferPlatform(sources));
 
-    public static WindowsCoverageLevel CalculateCurrentLevel(
+    public static CoverageLevel CalculateCurrentLevel(
         IReadOnlyList<SourceHealthReport> sources,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         string platform)
     {
-        var current = WindowsCoverageLevel.L0;
-        foreach (var level in new[] { WindowsCoverageLevel.L1, WindowsCoverageLevel.L2, WindowsCoverageLevel.L3, WindowsCoverageLevel.L4 })
+        var current = CoverageLevel.L0;
+        foreach (var level in new[] { CoverageLevel.L1, CoverageLevel.L2, CoverageLevel.L3, CoverageLevel.L4 })
         {
             if (level > targetLevel)
             {
@@ -229,7 +228,7 @@ public static class TelemetryCoverageEvaluator
                 .Where(expected => expected.CoverageLevel <= level)
                 .ToArray();
 
-            if (level == WindowsCoverageLevel.L4
+            if (level == CoverageLevel.L4
                 && string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase))
             {
                 if (!IsStrictLinuxL4Satisfied(expected, sources))
@@ -334,7 +333,7 @@ public static class TelemetryCoverageEvaluator
         IReadOnlyList<DetectionRuleMetadata> rules,
         IReadOnlyList<SourceTelemetryCoverage> sources,
         IReadOnlyDictionary<string, InventoryTelemetryStatus> inventoryByType,
-        WindowsCoverageLevel targetLevel)
+        CoverageLevel targetLevel)
     {
         return rules
             .OrderBy(rule => rule.Category, StringComparer.OrdinalIgnoreCase)
@@ -347,7 +346,7 @@ public static class TelemetryCoverageEvaluator
         DetectionRuleMetadata rule,
         IReadOnlyList<SourceTelemetryCoverage> sources,
         IReadOnlyDictionary<string, InventoryTelemetryStatus> inventoryByType,
-        WindowsCoverageLevel targetLevel)
+        CoverageLevel targetLevel)
     {
         var profile = DetectionPrerequisiteCatalog.ForRule(rule.RuleId);
         var requiredSources = rule.RequiredSources;
@@ -473,18 +472,15 @@ public static class TelemetryCoverageEvaluator
         };
     }
 
-    private static bool SourceAppliesToTargetLevel(string requiredSource, WindowsCoverageLevel targetLevel)
+    private static bool SourceAppliesToTargetLevel(string requiredSource, CoverageLevel targetLevel)
     {
         if (string.Equals(requiredSource, "source-health", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        var aliases = WindowsTelemetrySourceCatalog.AliasesFor(requiredSource)
-            .Append(requiredSource)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var matchingEntries = WindowsTelemetrySourceCatalog.All
-            .Concat(LinuxTelemetrySourceCatalog.All)
+        var aliases = new[] { requiredSource }.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matchingEntries = LinuxTelemetrySourceCatalog.All
             .Where(entry => aliases.Any(alias => SourceNameEquals(alias, entry.SourceId)
                 || SourceNameEquals(alias, entry.ParserId)
                 || SourceNameEquals(alias, entry.SourceKind)))
@@ -575,15 +571,11 @@ public static class TelemetryCoverageEvaluator
         return "Prerequisite state could not be fully determined from current telemetry.";
     }
 
-    private static IReadOnlyList<SourceManifestEntry> ExpectedFor(string platform, WindowsCoverageLevel targetLevel) =>
-        string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
-            ? LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel)
-            : WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel);
+    private static IReadOnlyList<SourceManifestEntry> ExpectedFor(string platform, CoverageLevel targetLevel) =>
+        LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel);
 
     private static string InferPlatform(IReadOnlyList<SourceHealthReport> sources) =>
-        sources.Any(source => string.Equals(source.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal))
-            ? TelemetryPlatforms.Linux
-            : TelemetryPlatforms.Windows;
+        TelemetryPlatforms.Linux;
 
     private static string MissingStatus(SourceManifestEntry expected, bool excepted)
     {
@@ -628,7 +620,6 @@ public static class TelemetryCoverageEvaluator
 
     private static bool SourceMatches(string expectedOrAlias, string sourceId) =>
         SourceNameEquals(expectedOrAlias, sourceId)
-        || WindowsTelemetrySourceCatalog.SourceMatches(expectedOrAlias, sourceId)
         || LinuxTelemetrySourceCatalog.All.Any(entry =>
             (SourceNameEquals(entry.SourceId, expectedOrAlias)
                 || SourceNameEquals(entry.ParserId, expectedOrAlias))
@@ -637,8 +628,7 @@ public static class TelemetryCoverageEvaluator
     private static bool SourceMatches(string expectedOrAlias, SourceTelemetryCoverage source) =>
         SourceMatches(expectedOrAlias, source.SourceId)
         || SourceNameEquals(expectedOrAlias, source.SourceKind)
-        || WindowsTelemetrySourceCatalog.All
-            .Concat(LinuxTelemetrySourceCatalog.All)
+        || LinuxTelemetrySourceCatalog.All
             .Any(entry => SourceNameEquals(entry.SourceId, source.SourceId)
                 && SourceNameEquals(expectedOrAlias, entry.SourceKind));
 
@@ -684,7 +674,7 @@ public static class TelemetryCoverageEvaluator
         }
 
         var lowerRoleSources = expected
-            .Where(entry => entry.CoverageLevel < WindowsCoverageLevel.L4
+            .Where(entry => entry.CoverageLevel < CoverageLevel.L4
                 && entry.Requirement == SourceRequirementKinds.RoleSpecific)
             .ToArray();
         if (lowerRoleSources.Length == 0
@@ -694,7 +684,7 @@ public static class TelemetryCoverageEvaluator
         }
 
         var lowerMandatory = expected
-            .Where(entry => entry.CoverageLevel < WindowsCoverageLevel.L4)
+            .Where(entry => entry.CoverageLevel < CoverageLevel.L4)
             .Where(entry => entry.Requirement == SourceRequirementKinds.Mandatory
                 || (entry.Requirement == SourceRequirementKinds.RoleSpecific
                     && sourceById.TryGetValue(entry.SourceId, out var source)
@@ -707,7 +697,7 @@ public static class TelemetryCoverageEvaluator
         }
 
         var l4Mandatory = expected
-            .Where(entry => entry.CoverageLevel == WindowsCoverageLevel.L4
+            .Where(entry => entry.CoverageLevel == CoverageLevel.L4
                 && entry.Requirement == SourceRequirementKinds.Mandatory)
             .ToArray();
         var canonicalL4Mandatory = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -722,7 +712,7 @@ public static class TelemetryCoverageEvaluator
         }
 
         var l4RoleSources = expected
-            .Where(entry => entry.CoverageLevel == WindowsCoverageLevel.L4
+            .Where(entry => entry.CoverageLevel == CoverageLevel.L4
                 && entry.Requirement == SourceRequirementKinds.RoleSpecific)
             .ToArray();
         if (l4RoleSources.Length == 0)

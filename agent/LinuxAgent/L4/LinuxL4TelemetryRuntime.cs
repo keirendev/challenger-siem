@@ -1,6 +1,6 @@
 using System.Globalization;
 using Challenger.Siem.Agent.Core.Queue;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Services;
 using Microsoft.Extensions.Options;
@@ -30,7 +30,7 @@ public sealed class LinuxL4TelemetryRuntime(
     private DateTimeOffset notBefore;
     private IReadOnlyList<AssetInventorySnapshot>? pendingInventory;
 
-    public bool IsEnabledAndApproved => options.Journal.TargetCoverageLevel >= WindowsCoverageLevel.L4 && collector.IsEnabledAndApproved;
+    public bool IsEnabledAndApproved => options.Journal.TargetCoverageLevel >= CoverageLevel.L4 && collector.IsEnabledAndApproved;
     private bool StateReady { get { lock (sync) return stateError is "none" or "collector_state_cleaned"; } }
     public bool CleanupRequested => !options.L4Telemetry.Enabled && options.L4Telemetry.CleanupStateOnDisable;
     public LinuxL4TelemetryState CurrentState { get { lock (sync) return state; } }
@@ -364,7 +364,7 @@ public sealed class LinuxL4TelemetryRuntime(
     private SourceHealthReport BuildHealth(SourceManifestEntry manifest, LinuxL4SourceProgress progress)
     {
         var now = timeProvider.GetUtcNow();
-        var requested = options.Journal.TargetCoverageLevel >= WindowsCoverageLevel.L4 && options.L4Telemetry.Enabled;
+        var requested = options.Journal.TargetCoverageLevel >= CoverageLevel.L4 && options.L4Telemetry.Enabled;
         var enabled = IsEnabledAndApproved;
         var stateReady = StateReady;
         var status = enabled && !stateReady ? SourceHealthStatuses.Error

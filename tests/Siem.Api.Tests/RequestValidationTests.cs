@@ -2,7 +2,7 @@ using System.Text.Json;
 using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.State;
@@ -67,16 +67,6 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
-    public void ValidateBatchAcceptsValidWindowsEventBatch()
-    {
-        var batch = CreateValidBatch();
-
-        var errors = RequestValidation.ValidateBatch(batch, maxEventsPerBatch: 500);
-
-        Assert.Empty(errors);
-    }
-
-    [Fact]
     public void ValidateBatchRejectsMismatchedEventAgentId()
     {
         var valid = CreateValidBatch();
@@ -93,7 +83,7 @@ public sealed class RequestValidationTests
     {
         var valid = CreateValidBatch();
         var events = Enumerable.Range(0, 2)
-            .Select(index => valid.Events[0] with { EventId = Guid.NewGuid(), RecordId = index + 1 })
+            .Select(_ => valid.Events[0] with { EventId = Guid.NewGuid() })
             .ToArray();
         var batch = valid with { Events = events };
 
@@ -200,7 +190,7 @@ public sealed class RequestValidationTests
                 ServerBaseUrl = new Uri("https://siem.synthetic"),
                 Journal = new JournalOptions
                 {
-                    TargetCoverageLevel = WindowsCoverageLevel.L2,
+                    TargetCoverageLevel = CoverageLevel.L2,
                     DeclaredRoles = ["ssh_server"]
                 },
                 Queue = new QueueOptions { Path = Path.Combine(temporaryRoot, "queue.sqlite") },
@@ -331,10 +321,11 @@ public sealed class RequestValidationTests
         var request = new AgentRegistrationRequest
         {
             AgentId = "",
-            Hostname = "WIN11-TEST",
-            MachineGuid = "machine-guid",
-            OsVersion = "Windows 11",
-            AgentVersion = "0.1.0"
+            Hostname = "linux-test",
+            OsVersion = "Linux Test",
+            AgentVersion = "2.0.0",
+            Platform = TelemetryPlatforms.Linux,
+            HostId = "synthetic-host-id"
         };
 
         var errors = RequestValidation.ValidateRegistration(request);
@@ -401,7 +392,7 @@ public sealed class RequestValidationTests
     {
         return new IngestBatchRequest
         {
-            AgentId = "win11-test-001",
+            AgentId = "linux-test-001",
             BatchId = Guid.NewGuid(),
             SentAt = DateTimeOffset.UtcNow,
             Events = new[]
@@ -409,18 +400,30 @@ public sealed class RequestValidationTests
                 new EventEnvelope
                 {
                     EventId = Guid.NewGuid(),
-                    AgentId = "win11-test-001",
-                    Hostname = "WIN11-TEST",
-                    Source = EventSources.WindowsEventLog,
-                    Channel = "Security",
-                    Provider = "Microsoft-Windows-Security-Auditing",
-                    WindowsEventId = 4625,
-                    RecordId = 123456,
+                    AgentId = "linux-test-001",
+                    Hostname = "linux-test",
+                    Platform = TelemetryPlatforms.Linux,
+                    Source = EventSources.LinuxJournal,
+                    SourceId = LinuxTelemetrySourceIds.JournalL1,
+                    EventCode = "ssh.login.failure",
+                    Facility = "authpriv",
+                    Unit = "sshd.service",
+                    Checkpoint = new SourceCheckpoint { Sequence = 123456 },
+                    Deduplication = new EventDeduplicationMetadata
+                    {
+                        Inputs = [DeduplicationInputs.AgentId, DeduplicationInputs.SourceId, DeduplicationInputs.CheckpointSequence, DeduplicationInputs.EventCode]
+                    },
+                    DataHandling = new DataHandlingMetadata
+                    {
+                        RawSizeBytes = 2,
+                        RedactedFields = [],
+                        TruncatedFields = []
+                    },
                     EventTime = DateTimeOffset.UtcNow,
                     IngestTime = null,
                     Severity = "audit_failure",
                     Message = "An account failed to log on.",
-                    Raw = JsonSerializer.SerializeToElement(new { event_data = new { target_user_name = "alice" } })
+                    Raw = JsonSerializer.SerializeToElement(new { synthetic = true })
                 }
             }
         };

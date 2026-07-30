@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
@@ -34,7 +34,7 @@ public sealed class LinuxL2JournalTests
         {
             Assert.Equal(TelemetryPlatforms.Linux, entry.Platform);
             Assert.Equal(TelemetrySourceKinds.LinuxJournal, entry.SourceKind);
-            Assert.Equal(WindowsCoverageLevel.L2, entry.CoverageLevel);
+            Assert.Equal(CoverageLevel.L2, entry.CoverageLevel);
             Assert.Equal(LinuxTelemetrySourceCatalog.L2PackId, entry.SourcePack);
             Assert.False(entry.EnabledByDefault);
             Assert.NotEmpty(entry.Prerequisites);
@@ -70,22 +70,22 @@ public sealed class LinuxL2JournalTests
         Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.SourceKind);
 
         var unknown = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             Array.Empty<string>(),
             new HashSet<string>(StringComparer.Ordinal));
         Assert.Equal(SourceApplicabilityStatuses.Unknown, Assert.Single(unknown, item => item.SourceId == LinuxTelemetrySourceIds.Ssh).Applicability);
         var declared = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             ["ssh_server"],
             new HashSet<string>(StringComparer.Ordinal));
         Assert.Equal(SourceApplicabilityStatuses.Applicable, Assert.Single(declared, item => item.SourceId == LinuxTelemetrySourceIds.Ssh).Applicability);
         var unrelated = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             ["general_server"],
             new HashSet<string>(StringComparer.Ordinal));
         Assert.Equal(SourceApplicabilityStatuses.NotApplicable, Assert.Single(unrelated, item => item.SourceId == LinuxTelemetrySourceIds.Ssh).Applicability);
         var observed = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             Array.Empty<string>(),
             new HashSet<string>(StringComparer.Ordinal) { LinuxTelemetrySourceIds.Ssh, LinuxTelemetrySourceIds.Firewall });
         Assert.Equal(SourceApplicabilityStatuses.Applicable, Assert.Single(observed, item => item.SourceId == LinuxTelemetrySourceIds.Ssh).Applicability);
@@ -95,21 +95,21 @@ public sealed class LinuxL2JournalTests
     [Fact]
     public void JournalConfigurationDefaultsToL1AndBoundsL2Roles()
     {
-        var options = TestOptions(WindowsCoverageLevel.L1);
+        var options = TestOptions(CoverageLevel.L1);
         Assert.False(options.Journal.IncludeAccessibleUserJournals);
         Assert.True(options.HasValidJournalBounds());
         options.Journal.IncludeAccessibleUserJournals = true;
         Assert.True(options.HasValidJournalBounds());
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
         options.Journal.DeclaredRoles = ["ssh_server", "bastion"];
         Assert.True(options.HasValidJournalBounds());
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L3;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L3;
         Assert.True(options.HasValidJournalBounds());
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L4;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L4;
         Assert.True(options.HasValidJournalBounds());
         options.Journal.DeclaredRoles = [];
         Assert.False(options.HasValidJournalBounds());
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
         options.Journal.DeclaredRoles = ["invalid role"];
         Assert.False(options.HasValidJournalBounds());
         options.Journal.DeclaredRoles = ["SSH_SERVER"];
@@ -122,7 +122,7 @@ public sealed class LinuxL2JournalTests
     public void EveryL2FamilyHasPositiveAndNegativeSyntheticNormalizationCoverage()
     {
         var normalizer = new LinuxJournalNormalizer();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         var fixtures = FixtureCases();
         var catalogFamilies = LinuxTelemetrySourceCatalog.L2Security
             .SelectMany(entry => entry.EventFamilies)
@@ -186,7 +186,7 @@ public sealed class LinuxL2JournalTests
         var serviceFailure = NormalizeFixture(fixtures, "service_failure", normalizer, options);
         Assert.Equal("synthetic-failure.service", serviceFailure.Envelope.Normalized?.ServiceName);
 
-        var l1Options = TestOptions(WindowsCoverageLevel.L1);
+        var l1Options = TestOptions(CoverageLevel.L1);
         foreach (var fixture in fixtures)
         {
             Assert.True(normalizer.TryNormalize(fixture.GetProperty("positive").GetRawText(), l1Options, DateTimeOffset.UtcNow, out var l1, out _));
@@ -200,7 +200,7 @@ public sealed class LinuxL2JournalTests
     public void PacmanAlpmPackageChangesAreClassifiedWithoutTreatingPacmanCommandsAsEvents()
     {
         var normalizer = new LinuxJournalNormalizer();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         var positive = JsonSerializer.Serialize(new Dictionary<string, string>
         {
             ["__CURSOR"] = "s=synthetic-pacman;i=1;b=fake",
@@ -238,7 +238,7 @@ public sealed class LinuxL2JournalTests
     public void MalformedAmbiguousSecretAndOversizedInputsRemainBounded()
     {
         var normalizer = new LinuxJournalNormalizer();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         var edge = EdgeFixture();
         Assert.False(normalizer.TryNormalize(edge["malformed_record"]!.GetValue<string>(), options, DateTimeOffset.UtcNow, out _, out var malformed));
         Assert.Equal("journal_record_malformed", malformed);
@@ -269,7 +269,7 @@ public sealed class LinuxL2JournalTests
         Assert.Contains("<redacted>", redacted!.Envelope.Normalized?.ProcessCommandLine);
         Assert.Contains("raw._CMDLINE", redacted.Envelope.DataHandling!.RedactedFields);
 
-        var tinyInputLimit = TestOptions(WindowsCoverageLevel.L2);
+        var tinyInputLimit = TestOptions(CoverageLevel.L2);
         tinyInputLimit.Journal.MaxInputRecordBytes = 4096;
         var oversized = Record(new Dictionary<string, object>
         {
@@ -287,7 +287,7 @@ public sealed class LinuxL2JournalTests
     public async Task RuntimeReportsConfiguredLevelApplicabilityEvidenceAndPermissionStates()
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L1);
+        var options = TestOptions(CoverageLevel.L1);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
         await runtime.InitializeAsync("1.1.0-test", "synthetic-config", default);
@@ -295,12 +295,12 @@ public sealed class LinuxL2JournalTests
         Assert.Equal(
             LinuxTelemetrySourceCatalog.All.Count(item => item.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit),
             l1Snapshot.Manifest.Count);
-        Assert.All(l1Snapshot.Health.Where(item => item.CoverageLevel == WindowsCoverageLevel.L2 && item.SourceId != LinuxTelemetrySourceIds.AuditFramework),
+        Assert.All(l1Snapshot.Health.Where(item => item.CoverageLevel == CoverageLevel.L2 && item.SourceId != LinuxTelemetrySourceIds.AuditFramework),
             item => Assert.Equal(SourceHealthStatuses.Disabled, item.Status));
         Assert.Equal(SourceHealthStatuses.Unsupported,
             Assert.Single(l1Snapshot.Health, item => item.SourceId == LinuxTelemetrySourceIds.AuditFramework).Status);
 
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
         options.Journal.DeclaredRoles = ["ssh_server"];
         var l2Runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
         await l2Runtime.InitializeAsync("1.1.0-test", "synthetic-config", default);
@@ -346,7 +346,7 @@ public sealed class LinuxL2JournalTests
         foreach (var fixture in document.RootElement.EnumerateArray())
         {
             using var temporary = new TemporaryState();
-            var options = TestOptions(WindowsCoverageLevel.L2);
+            var options = TestOptions(CoverageLevel.L2);
             options.Journal.DeclaredRoles = fixture.GetProperty("roles").EnumerateArray()
                 .Select(role => role.GetString()!)
                 .ToArray();
@@ -439,7 +439,7 @@ public sealed class LinuxL2JournalTests
         string expectedVisibility)
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.Journal.DeclaredRoles = ["ssh_server"];
         options.State.Path = temporary.Path;
         var state = new LinuxStateStore(temporary.Path);
@@ -567,7 +567,7 @@ public sealed class LinuxL2JournalTests
         string expectedVisibility)
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var store = new LinuxStateStore(temporary.Path);
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
@@ -609,7 +609,7 @@ public sealed class LinuxL2JournalTests
     public async Task ExplicitNonSshRoleRemainsNotApplicableAfterObservedSshEvent()
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.Journal.DeclaredRoles = ["general_server"];
         options.State.Path = temporary.Path;
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
@@ -643,7 +643,7 @@ public sealed class LinuxL2JournalTests
     public async Task RuntimeReportsNullLastEventTimeForUnobservedSources()
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.Journal.DeclaredRoles = ["ssh_server"];
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
@@ -682,7 +682,7 @@ public sealed class LinuxL2JournalTests
             Assert.Equal(expected.GetProperty("producer").GetString(), evidence.Producer);
 
             using var temporary = new TemporaryState();
-            var options = TestOptions(WindowsCoverageLevel.L2);
+            var options = TestOptions(CoverageLevel.L2);
             options.State.Path = temporary.Path;
             var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), TimeProvider.System);
             await runtime.InitializeAsync("1.11.3-test", "synthetic-config", default);
@@ -749,7 +749,7 @@ public sealed class LinuxL2JournalTests
             Assert.Equal(expected.GetProperty("producer").GetString(), evidence.Producer);
 
             using var temporary = new TemporaryState();
-            var options = TestOptions(WindowsCoverageLevel.L2);
+            var options = TestOptions(CoverageLevel.L2);
             options.State.Path = temporary.Path;
             var runtime = new LinuxJournalRuntime(
                 Options.Create(options),
@@ -803,7 +803,7 @@ public sealed class LinuxL2JournalTests
     {
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(
             Options.Create(options),
@@ -864,7 +864,7 @@ public sealed class LinuxL2JournalTests
     {
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var store = new LinuxStateStore(temporary.Path);
         var runtime = new LinuxJournalRuntime(Options.Create(options), store, new FixedTimeProvider(now));
@@ -921,7 +921,7 @@ public sealed class LinuxL2JournalTests
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
         var clock = new FixedTimeProvider(now);
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
         await runtime.InitializeAsync("1.11.7-test", "synthetic-config", default);
@@ -959,7 +959,7 @@ public sealed class LinuxL2JournalTests
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
         var clock = new FixedTimeProvider(now);
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var store = new LinuxStateStore(temporary.Path);
         var runtime = new LinuxJournalRuntime(Options.Create(options), store, clock);
@@ -990,7 +990,7 @@ public sealed class LinuxL2JournalTests
     public async Task RuntimeSchedulerCollectorFailuresRemainExplicitAfterProducerEvidence()
     {
         using var temporary = new TemporaryState();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(
             Options.Create(options),
@@ -1035,7 +1035,7 @@ public sealed class LinuxL2JournalTests
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
         var clock = new FixedTimeProvider(now);
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
         await runtime.InitializeAsync("1.11.2-test", "synthetic-config", default);
@@ -1073,7 +1073,7 @@ public sealed class LinuxL2JournalTests
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
         var clock = new FixedTimeProvider(now);
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
         await runtime.InitializeAsync("1.11.4-test", "synthetic-config", default);
@@ -1135,7 +1135,7 @@ public sealed class LinuxL2JournalTests
         using var temporary = new TemporaryState();
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
         var clock = new FixedTimeProvider(now);
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         options.State.Path = temporary.Path;
         var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.Path), clock);
         await runtime.InitializeAsync("1.11.5-test", "synthetic-config", default);
@@ -1195,7 +1195,7 @@ public sealed class LinuxL2JournalTests
     {
         var fixtures = FixtureCases().Select(item => item.GetProperty("positive").GetRawText()).ToArray();
         var normalizer = new LinuxJournalNormalizer();
-        var options = TestOptions(WindowsCoverageLevel.L2);
+        var options = TestOptions(CoverageLevel.L2);
         const int count = 5000;
         var beforeMemory = GC.GetTotalAllocatedBytes(true);
         var stopwatch = Stopwatch.StartNew();
@@ -1231,7 +1231,7 @@ public sealed class LinuxL2JournalTests
     private static JsonObject EdgeFixture() => JsonNode.Parse(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "synthetic-linux-l2-journal-edge-cases.json")))!.AsObject();
 
-    private static LinuxAgentOptions TestOptions(WindowsCoverageLevel level) => new()
+    private static LinuxAgentOptions TestOptions(CoverageLevel level) => new()
     {
         AgentId = "linux-synthetic-l2-001",
         ApiToken = "fake-test-token",

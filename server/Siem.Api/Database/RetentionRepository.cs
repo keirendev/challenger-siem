@@ -73,8 +73,6 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
     public static readonly IReadOnlyList<string> ProtectedTables = new[]
     {
         "agents",
-        "operators",
-        "operator_sessions",
         "security_audit_events",
         "alerts",
         "alert_evidence",
@@ -85,9 +83,6 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
         "investigation_graph_edges",
         "investigation_graph_proposals",
         "investigation_graph_audit",
-        "soc_agent_turns",
-        "soc_agent_sessions",
-        "soc_agent_messages",
         "source_health"
     };
 
@@ -257,13 +252,11 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
             from (
                 select event_time, pg_column_size(events.*) as row_bytes,
                        case
-                         when source = 'windows_event_log' and channel in ('Security','System','Application') then 'mandatory_windows_event_log'
                          when source_id = 'linux-journal-l1' then 'mandatory_linux_journal'
                          when source in ('agent_health','inventory_diff') then 'optional_operational_events'
                          else 'optional_extended_events'
                        end as retention_category,
                        case
-                         when source = 'windows_event_log' and channel in ('Security','System','Application') then true
                          when source_id = 'linux-journal-l1' then true
                          else false
                        end as mandatory
@@ -325,19 +318,17 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
             with candidate as (
                 select ctid, agent_id, event_id, event_time, pg_column_size(events.*) as row_bytes,
                        case
-                         when source = 'windows_event_log' and channel in ('Security','System','Application') then 'mandatory_windows_event_log'
                          when source_id = 'linux-journal-l1' then 'mandatory_linux_journal'
                          when source in ('agent_health','inventory_diff') then 'optional_operational_events'
                          else 'optional_extended_events'
                        end as retention_category,
                        case
-                         when source = 'windows_event_log' and channel in ('Security','System','Application') then 1
                          when source_id = 'linux-journal-l1' then 1
                          else 0
                        end as priority
                 from events
                 where (@cutoff::timestamptz is null or event_time < @cutoff)
-                  and (@include_mandatory or not (source = 'windows_event_log' and channel in ('Security','System','Application') or source_id = 'linux-journal-l1'))
+                  and (@include_mandatory or source_id <> 'linux-journal-l1')
                 order by priority asc, event_time asc, id asc
                 limit @limit
                 for update skip locked

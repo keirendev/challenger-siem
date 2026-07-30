@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Configuration;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Configuration;
 
@@ -8,7 +8,8 @@ public static class StartupConfigurationValidator
     private static readonly string[] RequiredKeys =
     {
         "ConnectionStrings:SiemDatabase",
-        "Auth:EnrollmentToken"
+        "Auth:EnrollmentToken",
+        "Auth:ServiceToken"
     };
 
     public static void ValidateRequiredConfiguration(IConfiguration configuration)

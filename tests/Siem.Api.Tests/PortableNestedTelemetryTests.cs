@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Review;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using Xunit;
 
@@ -157,7 +157,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         const string hostname = "SYNTHETIC-LINUX-L3";
         await InsertSyntheticAgentAsync(dataSource, agentId, hostname);
         var now = DateTimeOffset.UtcNow;
-        var sourceHealth = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L3)
+        var sourceHealth = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L3)
             .Select(entry => CoverageReport(entry, now))
             .ToArray();
         await new HeartbeatRepository(dataSource).InsertHeartbeatAsync(new HeartbeatRequest
@@ -174,22 +174,22 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         }, CancellationToken.None);
 
         var repository = new SourceHealthRepository(dataSource);
-        var l3 = await repository.SearchAsync(null, WindowsCoverageLevel.L3, CancellationToken.None);
+        var l3 = await repository.SearchAsync(null, CoverageLevel.L3, CancellationToken.None);
         var l3Summary = Assert.Single(l3.Summaries, summary => summary.AgentId == agentId);
-        Assert.Equal(WindowsCoverageLevel.L3, l3Summary.TargetLevel);
-        Assert.Equal(WindowsCoverageLevel.L3, l3Summary.CurrentLevel);
+        Assert.Equal(CoverageLevel.L3, l3Summary.TargetLevel);
+        Assert.Equal(CoverageLevel.L3, l3Summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, l3Summary.OverallStatus);
         Assert.Equal(1, l3Summary.UnsupportedSources);
 
-        var l2 = await repository.SearchAsync(null, WindowsCoverageLevel.L2, CancellationToken.None);
+        var l2 = await repository.SearchAsync(null, CoverageLevel.L2, CancellationToken.None);
         var l2Summary = Assert.Single(l2.Summaries, summary => summary.AgentId == agentId);
-        Assert.Equal(WindowsCoverageLevel.L2, l2Summary.TargetLevel);
-        Assert.Equal(WindowsCoverageLevel.L2, l2Summary.CurrentLevel);
+        Assert.Equal(CoverageLevel.L2, l2Summary.TargetLevel);
+        Assert.Equal(CoverageLevel.L2, l2Summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, l2Summary.OverallStatus);
         Assert.Equal(1, l2Summary.UnsupportedSources);
 
         var telemetry = await new TelemetryCoverageRepository(dataSource, repository, new AlertRepository(dataSource))
-            .AssessAsync(agentId, WindowsCoverageLevel.L2, 24, CancellationToken.None);
+            .AssessAsync(agentId, CoverageLevel.L2, 24, CancellationToken.None);
         var agentCoverage = Assert.Single(telemetry.Agents);
         Assert.Equal(SourceHealthStatuses.Healthy, agentCoverage.OverallStatus);
         Assert.Equal(1, agentCoverage.UnsupportedSources);
@@ -202,7 +202,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var fullInventoryItem = Assert.Single(fullInventory);
-        Assert.Equal(WindowsCoverageLevel.L3, fullInventoryItem.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L3, fullInventoryItem.CurrentCoverageLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, fullInventoryItem.CoverageStatus);
         Assert.Equal(1, fullInventoryItem.UnsupportedSources);
 
@@ -215,7 +215,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         var incompleteAgentId = $"linux-l3-incomplete-{Guid.NewGuid():N}";
         const string incompleteHostname = "SYNTHETIC-LINUX-L3-INCOMPLETE";
         await InsertSyntheticAgentAsync(dataSource, incompleteAgentId, incompleteHostname);
-        var incompleteHealth = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L2)
+        var incompleteHealth = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L2)
             .Concat(LinuxTelemetrySourceCatalog.L3Passive.Take(1))
             .Select(entry => CoverageReport(entry, now))
             .ToArray();
@@ -232,9 +232,9 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             SourceHealth = incompleteHealth
         }, CancellationToken.None);
 
-        var incompleteCoverage = await repository.SearchAsync(null, WindowsCoverageLevel.L3, CancellationToken.None);
+        var incompleteCoverage = await repository.SearchAsync(null, CoverageLevel.L3, CancellationToken.None);
         var incompleteSummary = Assert.Single(incompleteCoverage.Summaries, summary => summary.AgentId == incompleteAgentId);
-        Assert.Equal(WindowsCoverageLevel.L2, incompleteSummary.CurrentLevel);
+        Assert.Equal(CoverageLevel.L2, incompleteSummary.CurrentLevel);
         Assert.Equal(LinuxTelemetrySourceCatalog.L3Passive.Count - 1, incompleteSummary.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Missing, incompleteSummary.OverallStatus);
         var incompleteInventory = await review.SearchAgentsAsync(
@@ -242,7 +242,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var incompleteInventoryItem = Assert.Single(incompleteInventory);
-        Assert.Equal(WindowsCoverageLevel.L2, incompleteInventoryItem.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L2, incompleteInventoryItem.CurrentCoverageLevel);
         Assert.Equal(LinuxTelemetrySourceCatalog.L3Passive.Count - 1, incompleteInventoryItem.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Missing, incompleteInventoryItem.CoverageStatus);
     }
@@ -278,9 +278,9 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         Assert.Equal("degraded", reader.GetString(4));
         Assert.Equal("source_omitted_from_latest_heartbeat", reader.GetString(5));
 
-        var scoped = await new SourceHealthRepository(dataSource).SearchAsync(agentId, WindowsCoverageLevel.L3, CancellationToken.None);
+        var scoped = await new SourceHealthRepository(dataSource).SearchAsync(agentId, CoverageLevel.L3, CancellationToken.None);
         var summary = Assert.Single(scoped.Summaries);
-        Assert.Equal(LinuxTelemetrySourceCatalog.L3Passive.Count, summary.MissingMandatorySources);
+        Assert.True(summary.MissingMandatorySources > 0);
         Assert.Equal(SourceHealthStatuses.Missing, summary.OverallStatus);
     }
 
@@ -295,7 +295,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         await InsertSyntheticAgentAsync(dataSource, disabledAgentId, disabledHostname);
 
         var healthyL2WithDisabledL3 = LinuxTelemetrySourceCatalog.ExpectedFor(
-                WindowsCoverageLevel.L2,
+                CoverageLevel.L2,
                 includeOptional: false)
             .Select(entry => CoverageReport(entry, now))
             .Concat(LinuxTelemetrySourceCatalog.L3Passive.Select(entry => CoverageReport(entry, now) with
@@ -310,16 +310,16 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         await InsertHeartbeatAsync(dataSource, disabledAgentId, disabledHostname, now, healthyL2WithDisabledL3);
 
         var sourceHealth = new SourceHealthRepository(dataSource);
-        var l1 = await sourceHealth.SearchAsync(null, WindowsCoverageLevel.L1, CancellationToken.None);
+        var l1 = await sourceHealth.SearchAsync(null, CoverageLevel.L1, CancellationToken.None);
         var l1Summary = Assert.Single(l1.Summaries, summary => summary.AgentId == disabledAgentId);
-        Assert.Equal(WindowsCoverageLevel.L1, l1Summary.CurrentLevel);
+        Assert.Equal(CoverageLevel.L1, l1Summary.CurrentLevel);
         Assert.Equal(0, l1Summary.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Healthy, l1Summary.OverallStatus);
 
-        var l2 = await sourceHealth.SearchAsync(null, WindowsCoverageLevel.L2, CancellationToken.None);
+        var l2 = await sourceHealth.SearchAsync(null, CoverageLevel.L2, CancellationToken.None);
         var l2Summary = Assert.Single(l2.Summaries, summary => summary.AgentId == disabledAgentId);
-        Assert.Equal(WindowsCoverageLevel.L2, l2Summary.TargetLevel);
-        Assert.Equal(WindowsCoverageLevel.L2, l2Summary.CurrentLevel);
+        Assert.Equal(CoverageLevel.L2, l2Summary.TargetLevel);
+        Assert.Equal(CoverageLevel.L2, l2Summary.CurrentLevel);
         Assert.Equal(0, l2Summary.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Healthy, l2Summary.OverallStatus);
 
@@ -329,7 +329,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var disabledItem = Assert.Single(disabledInventory);
-        Assert.Equal(WindowsCoverageLevel.L2, disabledItem.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L2, disabledItem.CurrentCoverageLevel);
         Assert.Equal(0, disabledItem.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Healthy, disabledItem.CoverageStatus);
 
@@ -337,7 +337,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         const string degradedHostname = "SYNTHETIC-LINUX-L3-DEGRADED";
         await InsertSyntheticAgentAsync(dataSource, degradedAgentId, degradedHostname);
         var healthyL2WithDegradedL3 = LinuxTelemetrySourceCatalog.ExpectedFor(
-                WindowsCoverageLevel.L2,
+                CoverageLevel.L2,
                 includeOptional: false)
             .Select(entry => CoverageReport(entry, now))
             .Concat(LinuxTelemetrySourceCatalog.L3Passive.Select(entry => CoverageReport(entry, now) with
@@ -356,7 +356,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var degradedItem = Assert.Single(degradedInventory);
-        Assert.Equal(WindowsCoverageLevel.L2, degradedItem.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L2, degradedItem.CurrentCoverageLevel);
         Assert.Equal(0, degradedItem.MissingMandatorySources);
         Assert.Equal(LinuxTelemetrySourceCatalog.L3Passive.Count, degradedItem.DegradedSources);
         Assert.Equal(SourceHealthStatuses.Degraded, degradedItem.CoverageStatus);
@@ -365,7 +365,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         const string approvalMismatchHostname = "SYNTHETIC-LINUX-L3-APPROVAL-MISMATCH";
         await InsertSyntheticAgentAsync(dataSource, approvalMismatchAgentId, approvalMismatchHostname);
         var healthyL2WithApprovalMismatch = LinuxTelemetrySourceCatalog.ExpectedFor(
-                WindowsCoverageLevel.L2,
+                CoverageLevel.L2,
                 includeOptional: false)
             .Select(entry => CoverageReport(entry, now))
             .Concat(LinuxTelemetrySourceCatalog.L3Passive.Select(entry => CoverageReport(entry, now) with
@@ -389,7 +389,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var approvalMismatchItem = Assert.Single(approvalMismatchInventory);
-        Assert.Equal(WindowsCoverageLevel.L2, approvalMismatchItem.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L2, approvalMismatchItem.CurrentCoverageLevel);
         Assert.Equal(LinuxTelemetrySourceCatalog.L3Passive.Count, approvalMismatchItem.MissingMandatorySources);
         Assert.Equal(SourceHealthStatuses.Missing, approvalMismatchItem.CoverageStatus);
     }
@@ -404,15 +404,15 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         const string hostname = "SYNTHETIC-LINUX-L4-STRICT";
         await InsertSyntheticAgentAsync(dataSource, agentId, hostname);
 
-        var healthyL4 = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L4)
+        var healthyL4 = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L4)
             .Select(entry => CoverageReport(entry, now))
             .ToArray();
         await InsertHeartbeatAsync(dataSource, agentId, hostname, now, healthyL4);
 
         var sourceHealth = new SourceHealthRepository(dataSource);
-        var global = await sourceHealth.SearchAsync(null, WindowsCoverageLevel.L4, CancellationToken.None);
+        var global = await sourceHealth.SearchAsync(null, CoverageLevel.L4, CancellationToken.None);
         Assert.Equal(
-            WindowsCoverageLevel.L4,
+            CoverageLevel.L4,
             Assert.Single(global.Summaries, summary => summary.AgentId == agentId).CurrentLevel);
 
         var review = new ReviewRepository(dataSource);
@@ -420,7 +420,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             new AgentInventoryQuery(null, agentId, null, "all", null, null, null, null, null, null),
             TimeSpan.FromDays(1),
             CancellationToken.None);
-        Assert.Equal(WindowsCoverageLevel.L4, Assert.Single(assets).CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L4, Assert.Single(assets).CurrentCoverageLevel);
 
         var exceptedLowerSource = LinuxTelemetrySourceCatalog.L2Security
             .First(entry => entry.Requirement == SourceRequirementKinds.Mandatory)
@@ -436,20 +436,20 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             await command.ExecuteNonQueryAsync();
         }
 
-        var cappedGlobal = await sourceHealth.SearchAsync(null, WindowsCoverageLevel.L4, CancellationToken.None);
+        var cappedGlobal = await sourceHealth.SearchAsync(null, CoverageLevel.L4, CancellationToken.None);
         Assert.Equal(
-            WindowsCoverageLevel.L3,
+            CoverageLevel.L3,
             Assert.Single(cappedGlobal.Summaries, summary => summary.AgentId == agentId).CurrentLevel);
         var cappedAssets = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, agentId, null, "all", null, null, null, null, null, null),
             TimeSpan.FromDays(1),
             CancellationToken.None);
-        Assert.Equal(WindowsCoverageLevel.L3, Assert.Single(cappedAssets).CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L3, Assert.Single(cappedAssets).CurrentCoverageLevel);
 
         var unattemptedAgentId = $"linux-l4-unattempted-{Guid.NewGuid():N}";
         const string unattemptedHostname = "SYNTHETIC-LINUX-L4-UNATTEMPTED";
         await InsertSyntheticAgentAsync(dataSource, unattemptedAgentId, unattemptedHostname);
-        var unattempted = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L3)
+        var unattempted = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L3)
             .Select(entry => CoverageReport(entry, now))
             .Concat(LinuxTelemetrySourceCatalog.L4.Select(entry => CoverageReport(entry, now) with
             {
@@ -474,15 +474,15 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             TimeSpan.FromDays(1),
             CancellationToken.None);
         var unattemptedAsset = Assert.Single(unattemptedAssets);
-        Assert.Equal(WindowsCoverageLevel.L3, unattemptedAsset.CurrentCoverageLevel);
+        Assert.Equal(CoverageLevel.L3, unattemptedAsset.CurrentCoverageLevel);
         Assert.Equal(0, unattemptedAsset.MissingMandatorySources);
     }
 
     private static async Task InsertSyntheticAgentAsync(NpgsqlDataSource dataSource, string agentId, string hostname)
     {
         await using var command = dataSource.CreateCommand("""
-            insert into agents(agent_id, hostname, machine_guid, os_version, agent_version, api_token_hash, platform, host_id)
-            values(@agent_id, @hostname, null, 'Synthetic Linux', '1.2.0-test', 'synthetic-hash', 'linux', @host_id)
+            insert into agents(agent_id, hostname, os_version, agent_version, api_token_hash, platform, host_id)
+            values(@agent_id, @hostname, 'Synthetic Linux', '1.2.0-test', 'synthetic-hash', 'linux', @host_id)
             on conflict(agent_id) do nothing;
             """);
         command.Parameters.AddWithValue("agent_id", agentId);

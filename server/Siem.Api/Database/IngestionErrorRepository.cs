@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -68,10 +68,9 @@ public sealed class IngestionErrorRepository(NpgsqlDataSource dataSource)
                 event_id = @event.EventId == Guid.Empty ? (Guid?)null : @event.EventId,
                 agent_id = BlankToNull(@event.AgentId),
                 hostname = BlankToNull(@event.Hostname),
-                channel = BlankToNull(@event.Channel),
-                provider = BlankToNull(@event.Provider),
-                windows_event_id = @event.WindowsEventId,
-                record_id = @event.RecordId,
+                source = BlankToNull(@event.Source),
+                source_id = BlankToNull(@event.SourceId),
+                event_code = BlankToNull(@event.EventCode),
                 raw_omitted = true
             })
             .ToArray();

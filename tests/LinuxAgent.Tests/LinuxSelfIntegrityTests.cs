@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Microsoft.Extensions.Options;
@@ -132,13 +132,15 @@ public sealed class LinuxSelfIntegrityTests
     }
 
     [Fact]
-    public void DependenciesDocumentationNamesImplementedSnapshotCollectors()
+    public void DependenciesDocumentationNamesTheHeadlessLinuxRuntime()
     {
         var text = File.ReadAllText(FindRepositoryFile("docs", "dependencies.md"));
 
-        Assert.Contains("implements disabled-by-default explicit-opt-in snapshot collectors for agent self-integrity and passive process/socket/host-behaviour evidence", text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("documentation-only spike", text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Adopted as design only", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".NET 8/ASP.NET Core", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PostgreSQL", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQLite", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Model Context Protocol", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No browser runtime", text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

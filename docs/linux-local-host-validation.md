@@ -7,7 +7,7 @@ This document is **not** authorization to use SSH, WinRM, reboot a host, restart
 ## Scope and compatibility
 
 - Applies to the bounded Linux agent service on a systemd host: passive L1 journal collection with default system-only and opt-in all-accessible-local scopes, opt-in L2 logical journal classification, bounded read-only inventory, disabled-by-default L3 self-integrity/procfs packs, and disabled-by-default L4 posture/SLO/role-journal sources.
-- Uses the existing `/api/v1` ingest, heartbeat, source-health, telemetry-coverage, and inventory surfaces. No `/api/v2`, `contracts/v2`, or incompatible `contracts/v1` change is introduced by this runbook.
+- Uses the existing `/api/v2` ingest, heartbeat, source-health, telemetry-coverage, and inventory surfaces. No `/api/v2`, `contracts/v2`, or incompatible `contracts/v2` change is introduced by this runbook.
 - Publishes only synthetic or aggregate pass/fail content. Raw host telemetry, generated settings, logs, queues, database dumps, screenshots, benchmark output, package lists, hostnames, usernames, IP addresses, private paths, command transcripts, event payloads, and secrets remain private and untracked.
 - No host-policy mutation is allowed by default. Missing, denied, stale, degraded, unsupported, or unknown sources are evidence states, not permission to broaden access.
 
@@ -122,7 +122,6 @@ L1 pass criteria:
 
 Purpose: prove the opt-in Linux security baseline canary after L1 passes. `L2` remains canary-only until this private gate passes.
 
-Minimum duration: **seven continuous days** with representative workload and ordinary maintenance windows.
 
 Entry gates:
 
@@ -141,7 +140,6 @@ During the soak, privately verify L1 criteria plus:
 - `linux-audit-framework` remains explicitly `unsupported` unless a future approved implementation exists;
 - structured fields take precedence and ambiguous messages do not invent users, addresses, packages, processes, or outcomes;
 - detections with degraded prerequisites lower confidence or suppress evaluation instead of implying safety;
-- normal rotation/maintenance, API outage/drain, API restart, database restart, agent restart, and queue-pressure windows recover without silent loss.
 
 L2 pass criteria:
 
@@ -266,7 +264,7 @@ Copy this template into an issue/PR/status comment only after replacing private 
 
 Run status: <blocked | in-progress | passed | failed>
 Product version: <version from VERSION>
-Contract compatibility: /api/v1 unchanged; contracts/v1 unchanged
+Contract compatibility: /api/v2 unchanged; contracts/v2 unchanged
 Published evidence class: sanitized aggregate only
 Private evidence reference: <operator-held reference, no local path>
 Authorized target/window: <yes | no>

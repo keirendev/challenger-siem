@@ -1,4 +1,4 @@
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Platform;
 
@@ -17,11 +17,11 @@ public static class PlatformCapabilityCatalog
         Cap("SPEC-GAP-009", "Search, timelines, dashboards, and observability", "Search/query observability, entity timelines, dashboard requirements, and performance telemetry are documented.", "search", "timelines", "query_observability"),
         Cap("SPEC-GAP-010", "Alert context and case management", "Case grouping, alert context, evidence, collaboration, and SOC metrics lifecycle are documented.", "case_management", "grouping", "soc_metrics"),
         Cap("SPEC-GAP-011", "SOAR playbooks and guarded response", "Playbook proposal/approval/execution guardrails, connector boundaries, and audit controls are documented.", "soar", "approval", "response"),
-        Cap("SPEC-GAP-012", "RBAC, SSO/MFA, tenancy, and self-audit", "Database-backed operator identities, exact roles, hardened sessions, field controls, and immutable self-audit are implemented; SSO/MFA and tenancy remain future capabilities.", "rbac", "sso", "audit"),
+        Cap("SPEC-GAP-012", "Service authentication, tenancy, and self-audit", "A deployment-supplied service credential and immutable self-audit are implemented; multi-tenant authorization remains a future capability.", "service_auth", "tenancy", "audit"),
         Cap("SPEC-GAP-013", "Scale, HA, and latency SLOs", "Scale targets, SLOs, queue/backlog metrics, HA posture, and benchmark plan are documented.", "slo", "ha", "performance"),
         Cap("SPEC-GAP-014", "Storage lifecycle and compliance", "Retention, legal hold, tamper evidence, encryption, residency, and compliance reporting controls are documented.", "retention", "tamper_evidence", "encryption"),
-        Cap("SPEC-GAP-015", "Windows EDR-grade telemetry expansion", "WEF, ETW, FIM, registry, AMSI, driver/service/process/network coverage expansion plan and role packs are documented.", "windows_edr", "etw", "fim"),
-        Cap("SPEC-GAP-016", "Windows agent hardening and response", "Local detections, guarded response controls, self-protection, update, proxy, mTLS, and OS matrix expectations are documented.", "agent_hardening", "mtls", "updates"),
+        Cap("SPEC-GAP-015", "Linux EDR-grade telemetry expansion", "eBPF, FIM, process, service, package, kernel, and network coverage expansion remains future work.", "linux_edr", "ebpf", "fim"),
+        Cap("SPEC-GAP-016", "Linux agent hardening and response", "Local detections, guarded response controls, self-protection, updates, proxy support, mTLS, and distribution coverage remain future work.", "agent_hardening", "mtls", "updates"),
         Cap("SPEC-GAP-017", "Web application monitoring", "HTTP access/audit/error telemetry, application context, session/user/entity enrichment, and privacy controls are documented.", "web_monitoring", "app_context", "privacy"),
         Cap("SPEC-GAP-018", "OWASP web/API detections", "OWASP-aligned detection catalog, validation scenarios, and web/API evidence requirements are documented.", "owasp", "web_detections", "validation"),
         Cap("SPEC-GAP-019", "Management APIs and downstream export", "Versioned management API and downstream event/alert export contracts, auth, filtering, and audit expectations are documented.", "management_api", "export", "versioning"),

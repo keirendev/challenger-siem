@@ -62,7 +62,7 @@ public sealed record LinuxSelfIntegrityState
     [JsonPropertyName("signatures")] public IReadOnlyDictionary<string, string> Signatures { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
-public sealed record SelfIntegrityCollectedEvent(Challenger.Siem.Contracts.V1.EventEnvelope Envelope, long Sequence, string State);
+public sealed record SelfIntegrityCollectedEvent(Challenger.Siem.Contracts.V2.EventEnvelope Envelope, long Sequence, string State);
 
 public sealed record SelfIntegrityCollectionResult(
     IReadOnlyList<SelfIntegrityCollectedEvent> Events,

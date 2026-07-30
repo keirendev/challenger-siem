@@ -1,15 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Challenger.Siem.Contracts.V1;
+namespace Challenger.Siem.Contracts.V2;
 
-/// <summary>
-/// Backward-compatible event source constants. WindowsEventLog retains its original v1 value;
-/// additive values identify Linux-native or platform-neutral source kinds for new clients.
-/// </summary>
+/// <summary>Linux and platform-neutral source kinds accepted by the v2 backend.</summary>
 public static class EventSources
 {
-    public const string WindowsEventLog = TelemetrySourceKinds.WindowsEventLog;
     public const string LinuxJournal = TelemetrySourceKinds.LinuxJournal;
     public const string LinuxAudit = TelemetrySourceKinds.LinuxAudit;
     public const string InventoryDiff = TelemetrySourceKinds.InventoryDiff;
@@ -32,27 +28,11 @@ public sealed record EventEnvelope
     public string? Platform { get; init; }
 
     [JsonPropertyName("source")]
-    public string Source { get; init; } = EventSources.WindowsEventLog;
+    public string Source { get; init; } = EventSources.LinuxJournal;
 
     [JsonPropertyName("source_id")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceId { get; init; }
-
-    [JsonPropertyName("channel")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Channel { get; init; }
-
-    [JsonPropertyName("provider")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Provider { get; init; }
-
-    [JsonPropertyName("windows_event_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? WindowsEventId { get; init; }
-
-    [JsonPropertyName("record_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? RecordId { get; init; }
 
     [JsonPropertyName("event_code")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

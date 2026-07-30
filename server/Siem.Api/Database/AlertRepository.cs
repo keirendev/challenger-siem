@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Api.Detections;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
@@ -230,7 +230,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 """;
             command.Parameters.AddWithValue("alert_id", alertId);
             command.Parameters.AddWithValue("expected_version", expectedVersion);
-            command.Parameters.AddWithValue("actor", BoundOptional(actor, 96, "Actor") ?? "operator");
+            command.Parameters.AddWithValue("actor", BoundOptional(actor, 96, "Actor") ?? "service");
             command.Parameters.AddWithValue("action", action);
             addParameters(command);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -421,7 +421,7 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 Status = reader.GetString(reader.GetOrdinal("status")),
                 Platform = ReadNullableString(reader, "platform"),
                 SourceKind = ReadNullableString(reader, "source_kind"),
-                CoverageLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
+                CoverageLevel = Enum.Parse<CoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
                 Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
                 Requirement = ReadNullableString(reader, "requirement_kind"),
                 Applicability = ReadNullableString(reader, "applicability"),
@@ -607,8 +607,8 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                     order by e.event_time desc, e.id asc
                     limit (select slots from remaining)
                 )
-                insert into alert_evidence (alert_id, agent_id, event_id, event_time, channel, windows_event_id, host_timezone, summary)
-                select @alert_id, e.agent_id, e.event_id, e.event_time, e.channel, e.windows_event_id, e.host_timezone,
+                insert into alert_evidence (alert_id, agent_id, event_id, event_time, host_timezone, summary)
+                select @alert_id, e.agent_id, e.event_id, e.event_time, e.host_timezone,
                        left(concat_ws(' ', e.source_id, e.event_code, e.event_category, e.event_action), 500)
                 from candidate_events e
                 on conflict (alert_id, agent_id, event_id) do nothing;
@@ -865,8 +865,6 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 ae.event_id,
                 ae.event_time,
                 coalesce(ae.host_timezone, e.host_timezone) as host_timezone,
-                ae.channel,
-                ae.windows_event_id,
                 ae.summary,
                 count(*) over()::int as total_evidence,
                 case
@@ -895,8 +893,6 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                 EventId = reader.GetGuid(reader.GetOrdinal("event_id")),
                 EventTime = ReadNullableDateTimeOffset(reader, "event_time"),
                 HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
-                Channel = ReadNullableString(reader, "channel"),
-                WindowsEventId = ReadNullableInt32(reader, "windows_event_id"),
                 Summary = reader.GetString(reader.GetOrdinal("summary")),
                 TelemetryRetentionState = reader.GetString(reader.GetOrdinal("telemetry_retention_state"))
             });

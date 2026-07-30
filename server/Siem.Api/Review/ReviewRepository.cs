@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Challenger.Siem.Api.Database;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Review;
@@ -225,17 +225,10 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 break;
         }
 
-        switch (query.Platform?.Trim().ToLowerInvariant())
+        if (!string.IsNullOrWhiteSpace(query.Platform)
+            && !string.Equals(query.Platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase))
         {
-            case TelemetryPlatforms.Windows:
-                where.Add("coalesce(a.platform, sh.platform, 'windows') = 'windows'");
-                break;
-            case TelemetryPlatforms.Linux:
-                where.Add("coalesce(a.platform, sh.platform, 'windows') = 'linux'");
-                break;
-            case "unknown":
-                where.Add("a.platform is null and sh.platform is null");
-                break;
+            where.Add("false");
         }
 
         if (query.CoverageLevel.HasValue)
@@ -306,14 +299,13 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             select
                 a.agent_id,
                 a.hostname,
-                a.machine_guid,
                 a.os_version,
                 a.agent_version,
                 a.first_seen,
                 a.last_seen,
                 a.status,
                 a.host_timezone,
-                coalesce(a.platform, sh.platform, 'windows') as platform,
+                coalesce(a.platform, sh.platform, 'linux') as platform,
                 lh.heartbeat_time as latest_heartbeat_time,
                 lh.queue_depth as latest_queue_depth,
                 nullif(lh.queue_metrics ->> 'used_percent', '')::numeric as queue_used_percent,
@@ -439,8 +431,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_mandatory_source_ids) and coverage_level = 'L4' and requirement_kind = 'mandatory' and enabled and applicability = 'applicable' and effective_status = 'healthy')::int as linux_l4_canonical_healthy_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability in ('applicable', 'not_applicable'))::int as linux_l4_role_resolved_sources,
                     count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability = 'applicable')::int as linux_l4_role_applicable_sources,
-                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as linux_l4_role_healthy_sources,
-                    count(*) filter (where source_id = 'sysmon-operational' and effective_status in ('healthy', 'excepted'))::int as windows_l3_required_healthy_sources
+                    count(distinct lower(source_id)) filter (where lower(source_id) = any(@linux_l4_role_source_ids) and coverage_level = 'L4' and requirement_kind = 'role_specific' and applicability = 'applicable' and enabled and effective_status = 'healthy')::int as linux_l4_role_healthy_sources
                 from (
                     select
                         health_source.*,
@@ -466,8 +457,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                             else health_source.status
                         end as effective_status,
                         (
-                            coalesce(a.platform, health_source.platform, 'windows') <> 'linux'
-                            or health_source.coverage_level not in ('L3', 'L4')
+                            health_source.coverage_level not in ('L3', 'L4')
                             or (health_source.coverage_level = 'L3' and (
                                 health_source.enabled
                                 or exists (
@@ -497,7 +487,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             cross join lateral (
                 select
                     case
-                        when coalesce(a.platform, sh.platform, 'windows') = 'linux'
+                        when coalesce(a.platform, sh.platform, 'linux') = 'linux'
                              and @linux_l4_mandatory_source_count = 2
                              and @linux_l4_role_source_count > 0
                              and @linux_l1_mandatory_source_count > 0
@@ -513,7 +503,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                              and coalesce(sh.linux_l4_canonical_healthy_sources, 0) = @linux_l4_mandatory_source_count
                              and coalesce(sh.linux_l4_role_resolved_sources, 0) = @linux_l4_role_source_count
                              and coalesce(sh.linux_l4_role_healthy_sources, 0) = coalesce(sh.linux_l4_role_applicable_sources, 0) then 'L4'
-                        when coalesce(a.platform, sh.platform, 'windows') = 'linux'
+                        when coalesce(a.platform, sh.platform, 'linux') = 'linux'
                              and @linux_l3_required_source_count > 0
                              and coalesce(sh.l1_required_sources, 0) > 0
                              and sh.l1_required_sources = sh.l1_covered_required_sources
@@ -522,16 +512,14 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                              and coalesce(sh.l3_required_sources, 0) >= @linux_l3_required_source_count
                              and sh.l3_required_sources = sh.l3_covered_required_sources
                              and coalesce(sh.linux_l3_canonical_covered_sources, 0) = @linux_l3_required_source_count then 'L3'
-                        when coalesce(a.platform, sh.platform, 'windows') = 'linux'
+                        when coalesce(a.platform, sh.platform, 'linux') = 'linux'
                              and coalesce(sh.l1_required_sources, 0) > 0
                              and sh.l1_required_sources = sh.l1_covered_required_sources
                              and coalesce(sh.l2_required_sources, 0) > 0
                              and sh.l2_required_sources = sh.l2_covered_required_sources then 'L2'
-                        when coalesce(a.platform, sh.platform, 'windows') = 'linux'
+                        when coalesce(a.platform, sh.platform, 'linux') = 'linux'
                              and coalesce(sh.l1_required_sources, 0) > 0
                              and sh.l1_required_sources = sh.l1_covered_required_sources then 'L1'
-                        when coalesce(a.platform, sh.platform, 'windows') <> 'linux' and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.stale_sources, 0) = 0 and coalesce(sh.l2_covered_required_sources, 0) >= 13 and coalesce(sh.windows_l3_required_healthy_sources, 0) >= 1 then 'L3'
-                        when coalesce(a.platform, sh.platform, 'windows') <> 'linux' and coalesce(sh.missing_mandatory_sources, 0) = 0 and coalesce(sh.error_sources, 0) = 0 and coalesce(sh.l2_covered_required_sources, 0) >= 13 then 'L2'
                         when coalesce(sh.healthy_sources, 0) >= 1 then 'L1'
                         else 'L0'
                     end as current_coverage_level,
@@ -587,7 +575,6 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
             results.Add(new AgentInventoryItem(
                 reader.GetString(reader.GetOrdinal("agent_id")),
                 reader.GetString(reader.GetOrdinal("hostname")),
-                ReadNullableString(reader, "machine_guid"),
                 reader.GetString(reader.GetOrdinal("os_version")),
                 reader.GetString(reader.GetOrdinal("agent_version")),
                 ReadDateTimeOffset(reader, "first_seen"),
@@ -600,7 +587,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
                 ReadNullableDateTimeOffset(reader, "last_event_time"),
                 reader.GetBoolean(reader.GetOrdinal("is_stale")),
                 reader.GetString(reader.GetOrdinal("platform")),
-                Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_coverage_level"))),
+                Enum.Parse<CoverageLevel>(reader.GetString(reader.GetOrdinal("current_coverage_level"))),
                 reader.GetString(reader.GetOrdinal("coverage_status")),
                 reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
                 reader.GetInt32(reader.GetOrdinal("stale_sources")),

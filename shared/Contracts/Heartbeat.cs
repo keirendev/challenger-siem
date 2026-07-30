@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Challenger.Siem.Contracts.V1;
+namespace Challenger.Siem.Contracts.V2;
 
 public sealed record HeartbeatRequest
 {

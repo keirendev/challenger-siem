@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
-using Challenger.Siem.Api.SocAgent;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Mcp;
 
@@ -63,7 +62,7 @@ public static partial class SiemMcpInventoryPolicy
             return value;
         }
 
-        var redacted = SocAgentTextSafety.RedactSecrets(value);
+        var redacted = SecretAssignmentPattern().Replace(value, "${name}=<redacted>");
         redacted = PrivateKeyPattern().Replace(redacted, Redacted);
         redacted = JsonWebTokenPattern().Replace(redacted, Redacted);
         redacted = ProviderCredentialPattern().Replace(redacted, Redacted);
@@ -100,4 +99,7 @@ public static partial class SiemMcpInventoryPolicy
 
     [GeneratedRegex("(?<scheme>[a-z][a-z0-9+.-]*://)[^\\s/@:]+:[^\\s/@]+@", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UserInfoPattern();
+
+    [GeneratedRegex("(?<name>(?:password|passwd|secret|token|credential|authorization|cookie|api[_-]?key|client[_-]?secret))\\s*[:=]\\s*[^\\s,;]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SecretAssignmentPattern();
 }

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Challenger.Siem.Api.Auth;
 
-public sealed class TokenService
+public sealed class TokenService(IConfiguration configuration)
 {
     public string GenerateAgentToken()
     {
@@ -48,26 +48,12 @@ public sealed class TokenService
         return token.Length == 0 ? null : token;
     }
 
-    public bool HasOperatorAccess(HttpContext context)
-    {
-        if (context.User.Identity?.IsAuthenticated != true) return false;
-        var role = OperatorAuthorization.Role(context.User);
-        var path = context.Request.Path.Value ?? string.Empty;
-        var permission = path.StartsWith("/api/v1/operators/me/", StringComparison.Ordinal) ? OperatorPermission.ReviewMetadata
-            : path.StartsWith("/api/v1/soc-agent", StringComparison.Ordinal) ? OperatorPermission.UseSocAgent
-            : path.StartsWith("/api/v1/graphs", StringComparison.Ordinal) ? OperatorPermission.ManageInvestigations
-            : path.StartsWith("/api/v1/cases", StringComparison.Ordinal) ? OperatorPermission.ManageInvestigations
-            : path.StartsWith("/api/v1/alerts", StringComparison.Ordinal) && context.Request.Method != HttpMethods.Get ? OperatorPermission.ManageInvestigations
-            : path.StartsWith("/api/v1/detections/", StringComparison.Ordinal) && context.Request.Method != HttpMethods.Get ? OperatorPermission.ManageDetections
-            : path.StartsWith("/api/v1/dashboards/layouts", StringComparison.Ordinal) && context.Request.Method != HttpMethods.Get ? OperatorPermission.ManageInvestigations
-            : path.StartsWith("/api/v1/admin", StringComparison.Ordinal) ? OperatorPermission.ManageOperators
-            : path.StartsWith("/api/v1/storage/", StringComparison.Ordinal) ? OperatorPermission.ManageAgents
-            : path == "/api/v1/inventory" ? OperatorPermission.ManageAgents
-            : context.Request.Method == HttpMethods.Get
-                ? OperatorPermission.ReviewMetadata
-            : OperatorPermission.ManageOperators;
-        return OperatorAuthorization.HasPermission(role, permission);
-    }
+    public bool IsServiceToken(string? token) =>
+        FixedTimeEquals(configuration["Auth:ServiceToken"] ?? string.Empty, token);
+
+    public bool HasServiceAccess(HttpContext context) =>
+        context.User.Identity?.IsAuthenticated == true
+        && IsServiceToken(GetBearerToken(context));
 
     private static string Base64UrlEncode(ReadOnlySpan<byte> data)
     {

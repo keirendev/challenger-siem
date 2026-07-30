@@ -32,7 +32,8 @@ public sealed class StartupConfigurationValidatorTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Database=challenger_siem;Username=siem;Password=redacted",
-                ["Auth:EnrollmentToken"] = "enrollment-token"
+                ["Auth:EnrollmentToken"] = "enrollment-token",
+                ["Auth:ServiceToken"] = "service-token"
             })
             .Build();
 
@@ -50,6 +51,7 @@ public sealed class StartupConfigurationValidatorTests
             {
                 ["ConnectionStrings:SiemDatabase"] = "Host=localhost;Database=challenger_siem;Username=siem;Password=redacted",
                 ["Auth:EnrollmentToken"] = "enrollment-token",
+                ["Auth:ServiceToken"] = "service-token",
                 ["Ingestion:MaxEventsPerBatch"] = configuredValue
             })
             .Build();

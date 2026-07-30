@@ -1,5 +1,5 @@
 using System.Globalization;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Services;
@@ -497,7 +497,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
         var enabled = options.Journal.Enabled && inConfiguredLevel
             && manifest.Applicability is not SourceApplicabilityStatuses.Unsupported
             and not SourceApplicabilityStatuses.NotApplicable;
-        if (manifest.CoverageLevel == WindowsCoverageLevel.L4
+        if (manifest.CoverageLevel == CoverageLevel.L4
             && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
         {
             enabled &= LinuxL4TelemetryCollector.IsConfigurationApproved(options);
@@ -585,7 +585,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             Enabled = enabled,
             LastEventTime = sourceLatest,
             ObservedAt = LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
-                || (manifest.CoverageLevel == WindowsCoverageLevel.L4
+                || (manifest.CoverageLevel == CoverageLevel.L4
                     && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
                     ? lastSuccessfulReadAt
                     : now,
@@ -774,7 +774,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             return SourceHealthStatuses.Degraded;
         }
         if (status == SourceHealthStatuses.Healthy
-            && manifest.CoverageLevel == WindowsCoverageLevel.L2
+            && manifest.CoverageLevel == CoverageLevel.L2
             && manifest.SourceKind == TelemetrySourceKinds.LinuxJournal
             && (!LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
                 || LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Contains(manifest.SourceId))
@@ -887,7 +887,7 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             return "source_above_configured_level";
         }
         if (effectiveStatus == SourceHealthStatuses.Disabled
-            && manifest.CoverageLevel == WindowsCoverageLevel.L4
+            && manifest.CoverageLevel == CoverageLevel.L4
             && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
         {
             return "l4_approval_hash_missing_or_mismatch";

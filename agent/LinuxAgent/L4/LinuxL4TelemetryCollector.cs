@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Serialization;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Passive;
@@ -93,10 +93,10 @@ public sealed class LinuxL4TelemetryCollector(
         var journalScope = LinuxJournalScopes.Configured(options.Journal);
         var activationBlockers = BuildActivationBlockers(options, candidate, planHash);
         var roleManifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-                WindowsCoverageLevel.L4,
+                CoverageLevel.L4,
                 options.Journal.DeclaredRoles,
                 new HashSet<string>(StringComparer.Ordinal))
-            .Where(item => item.CoverageLevel == WindowsCoverageLevel.L4
+            .Where(item => item.CoverageLevel == CoverageLevel.L4
                 && item.Requirement == SourceRequirementKinds.RoleSpecific)
             .ToArray();
         return new(
@@ -148,7 +148,7 @@ public sealed class LinuxL4TelemetryCollector(
             + configured.Inventory.CollectionTimeoutSeconds
             + configured.HeartbeatIntervalSeconds > 6_900)
             blockers.Add("policy_freshness_budget_exceeded");
-        if (configured.Journal.TargetCoverageLevel != WindowsCoverageLevel.L4)
+        if (configured.Journal.TargetCoverageLevel != CoverageLevel.L4)
             blockers.Add("journal_target_not_l4");
         if (!configured.Journal.Enabled) blockers.Add("journal_disabled");
         if (configured.Journal.DeclaredRoles is not { Length: > 0 })

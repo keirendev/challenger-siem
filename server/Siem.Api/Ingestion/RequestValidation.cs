@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Ingestion;
 
@@ -79,7 +79,6 @@ public static class RequestValidation
         var errors = NewErrorBag();
         RequireLength(errors, nameof(request.AgentId), request.AgentId, 1, 128);
         RequireLength(errors, nameof(request.Hostname), request.Hostname, 1, 255);
-        OptionalMaxLength(errors, nameof(request.MachineGuid), request.MachineGuid, 255);
         RequireLength(errors, nameof(request.OsVersion), request.OsVersion, 1, 255);
         RequireLength(errors, nameof(request.AgentVersion), request.AgentVersion, 1, 64);
         ValidatePlatformAndHostId(errors, request.Platform, request.HostId);
@@ -285,18 +284,6 @@ public static class RequestValidation
         return ToValidationProblem(errors);
     }
 
-    public static bool RequiresCrossPlatformStorage(AgentRegistrationRequest request) =>
-        string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal);
-
-    public static bool RequiresCrossPlatformStorage(HeartbeatRequest request) =>
-        string.Equals(request.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
-        || request.SourceManifest?.Any(source => source is not null && TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind)) == true
-        || request.SourceHealth?.Any(source => source is not null && TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind)) == true;
-
-    public static bool RequiresCrossPlatformStorage(IngestBatchRequest request) =>
-        request.Events.Any(envelope => TelemetrySourceKinds.UsesPortableIdentity(envelope.Source)
-            || string.Equals(envelope.Platform, TelemetryPlatforms.Linux, StringComparison.Ordinal));
-
     private static void ValidateEvent(
         Dictionary<string, List<string>> errors,
         string batchAgentId,
@@ -325,11 +312,7 @@ public static class RequestValidation
         RequireLength(errors, $"{prefix}.hostname", envelope.Hostname, 1, 255);
         if (!TelemetrySourceKinds.All.Contains(envelope.Source))
         {
-            Add(errors, $"{prefix}.source", "Source kind is not supported by the v1 contract.");
-        }
-        else if (string.Equals(envelope.Source, EventSources.WindowsEventLog, StringComparison.Ordinal))
-        {
-            ValidateWindowsEventIdentity(errors, prefix, envelope);
+            Add(errors, $"{prefix}.source", "Source kind is not supported by the v2 contract.");
         }
         else
         {
@@ -391,42 +374,14 @@ public static class RequestValidation
         ValidateDataHandling(errors, prefix, envelope.DataHandling, rawSizeBytes);
     }
 
-    private static void ValidateWindowsEventIdentity(Dictionary<string, List<string>> errors, string prefix, EventEnvelope envelope)
-    {
-        if (envelope.Platform is not null && !string.Equals(envelope.Platform, TelemetryPlatforms.Windows, StringComparison.Ordinal))
-        {
-            Add(errors, $"{prefix}.platform", "windows_event_log events may only declare the windows platform.");
-        }
-
-        RequireLength(errors, $"{prefix}.channel", envelope.Channel, 1, 255);
-        RequireLength(errors, $"{prefix}.provider", envelope.Provider, 1, 255);
-        if (envelope.WindowsEventId is < 0 or > 65_535 || !envelope.WindowsEventId.HasValue)
-        {
-            Add(errors, $"{prefix}.windows_event_id", "Windows event ID must be between 0 and 65535.");
-        }
-
-        if (envelope.RecordId < 0 || !envelope.RecordId.HasValue)
-        {
-            Add(errors, $"{prefix}.record_id", "Record ID must be greater than or equal to zero.");
-        }
-    }
-
     private static void ValidatePortableEventIdentity(Dictionary<string, List<string>> errors, string prefix, EventEnvelope envelope)
     {
         if (!TelemetrySourceKinds.IsValidForPlatform(envelope.Source, envelope.Platform))
         {
-            Add(errors, $"{prefix}.platform", TelemetrySourceKinds.IsLinuxNative(envelope.Source)
-                ? "Linux-native source kinds require platform linux."
-                : "Platform-neutral source kinds require platform windows or linux.");
+            Add(errors, $"{prefix}.platform", "Source kinds require platform linux.");
         }
 
         RequireLength(errors, $"{prefix}.source_id", envelope.SourceId, 1, 128);
-        if (envelope.Channel is not null || envelope.Provider is not null
-            || envelope.WindowsEventId.HasValue || envelope.RecordId.HasValue)
-        {
-            Add(errors, $"{prefix}.source", "Portable event sources must omit Windows Event Log identity fields.");
-        }
-
         if (envelope.Source == EventSources.LinuxJournal)
         {
             if (string.IsNullOrWhiteSpace(envelope.EventCode)
@@ -1032,7 +987,7 @@ public static class RequestValidation
         OptionalMaxLength(errors, $"{prefix}.privacy", source.Privacy, 128);
         ValidateRequirementMetadata(errors, prefix, source.Requirement, source.ApplicableRoles, source.Required,
             TelemetrySourceKinds.UsesPortableIdentity(source.SourceKind));
-        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
+        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.SourceNamespace,
             source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, source.CheckpointKind);
         ValidateKnownLinuxSourceDescriptor(
             errors,
@@ -1076,7 +1031,7 @@ public static class RequestValidation
         }
         RequireLength(errors, $"{prefix}.source_id", source.SourceId, 1, 128);
         RequireLength(errors, $"{prefix}.display_name", source.DisplayName, 1, 255);
-        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.Channel, source.SourceNamespace,
+        ValidateSourceDescriptor(errors, prefix, source.Platform, source.SourceKind, source.SourceNamespace,
             source.Facility, source.Unit, source.Applicability, source.ApplicabilityReason, checkpointKind: null);
         ValidateKnownLinuxSourceDescriptor(
             errors,
@@ -1133,9 +1088,6 @@ public static class RequestValidation
         }
         ValidateTimestamp(errors, $"{prefix}.observed_at", source.ObservedAt);
         ValidateHostTimezone(errors, $"{prefix}.host_timezone", source.HostTimezone);
-        ValidateNonNegative(errors, $"{prefix}.last_record_id", source.LastRecordId);
-        ValidateNonNegative(errors, $"{prefix}.oldest_record_id", source.OldestRecordId);
-        ValidateNonNegative(errors, $"{prefix}.newest_record_id", source.NewestRecordId);
         ValidateNonNegative(errors, $"{prefix}.log_size_bytes", source.LogSizeBytes);
         ValidateNonNegative(errors, $"{prefix}.retention_days", source.RetentionDays);
         ValidateNonNegative(errors, $"{prefix}.lag_seconds", source.LagSeconds);
@@ -1171,11 +1123,6 @@ public static class RequestValidation
 
         if (portableSource)
         {
-            if (source.LastRecordId.HasValue || source.OldestRecordId.HasValue || source.NewestRecordId.HasValue)
-            {
-                Add(errors, $"{prefix}.source_kind", "Portable source health must use checkpoints instead of Windows record IDs.");
-            }
-
             if (source.Applicability == SourceApplicabilityStatuses.Applicable)
             {
                 ValidateCheckpoint(errors, $"{prefix}.collected_checkpoint", source.CollectedCheckpoint, required: true);
@@ -1198,7 +1145,6 @@ public static class RequestValidation
         string prefix,
         string? platform,
         string? sourceKind,
-        string? channel,
         string? sourceNamespace,
         string? facility,
         string? unit,
@@ -1206,16 +1152,9 @@ public static class RequestValidation
         string? applicabilityReason,
         string? checkpointKind)
     {
-        var legacy = platform is null && sourceKind is null;
-        if (legacy)
+        if (platform != TelemetryPlatforms.Linux)
         {
-            RequireLength(errors, $"{prefix}.channel", channel, 1, 255);
-            return;
-        }
-
-        if (platform is not (TelemetryPlatforms.Windows or TelemetryPlatforms.Linux))
-        {
-            Add(errors, $"{prefix}.platform", "Platform must be windows or linux.");
+            Add(errors, $"{prefix}.platform", "Platform must be linux.");
         }
 
         if (sourceKind is null || !TelemetrySourceKinds.All.Contains(sourceKind))
@@ -1229,10 +1168,8 @@ public static class RequestValidation
             Add(errors, $"{prefix}.source_kind", "Source kind is not valid for the declared platform.");
         }
 
-        var portable = TelemetrySourceKinds.UsesPortableIdentity(sourceKind);
-        if (portable)
+        if (TelemetrySourceKinds.UsesPortableIdentity(sourceKind))
         {
-            if (channel is not null) Add(errors, $"{prefix}.channel", "Portable sources must omit the Windows channel field.");
             RequireLength(errors, $"{prefix}.source_namespace", sourceNamespace, 1, 128);
             if (applicability is null || !AllowedApplicabilityStatuses.Contains(applicability))
             {
@@ -1243,11 +1180,6 @@ public static class RequestValidation
                 Add(errors, $"{prefix}.checkpoint_kind", "Checkpoint kind is not supported.");
             }
         }
-        else
-        {
-            RequireLength(errors, $"{prefix}.channel", channel, 1, 255);
-        }
-
         OptionalMaxLength(errors, $"{prefix}.source_namespace", sourceNamespace, 128);
         OptionalMaxLength(errors, $"{prefix}.facility", facility, 128);
         OptionalMaxLength(errors, $"{prefix}.unit", unit, 255);
@@ -1520,12 +1452,11 @@ public static class RequestValidation
 
     private static void ValidatePlatformAndHostId(Dictionary<string, List<string>> errors, string? platform, string? hostId)
     {
-        if (platform is not null && platform is not (TelemetryPlatforms.Windows or TelemetryPlatforms.Linux))
+        if (platform != TelemetryPlatforms.Linux)
         {
-            Add(errors, "platform", "Platform must be windows or linux.");
+            Add(errors, "platform", "Platform must be linux.");
         }
-        OptionalMaxLength(errors, "host_id", hostId, 255);
-        if (platform == TelemetryPlatforms.Linux) RequireLength(errors, "host_id", hostId, 1, 255);
+        RequireLength(errors, "host_id", hostId, 1, 255);
     }
 
     private static void ValidateHostTimezone(Dictionary<string, List<string>> errors, string prefix, HostTimezoneMetadata? timezone)

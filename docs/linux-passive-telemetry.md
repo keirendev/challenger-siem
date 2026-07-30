@@ -8,9 +8,9 @@ The collector reads bounded procfs files that already exist. It does not install
 
 The pack is complementary to the L1/L2 journal path. It does not claim the exactness of kernel exec/exit or socket hooks: every event name and health record identifies snapshot/polling evidence and reports gaps, truncation, pressure, and incomplete visibility.
 
-## Sources and v1 compatibility
+## Sources and v2 contracts
 
-The pack uses additive source IDs inside the existing v1 portable event envelope:
+The pack uses Linux source IDs inside the v2 event envelope:
 
 | Source | Existing event source kind | Purpose |
 |---|---|---|
@@ -18,7 +18,7 @@ The pack uses additive source IDs inside the existing v1 portable event envelope
 | `linux-network-socket-snapshot-diff` | `inventory_diff` | Bounded TCP/UDP socket and listener baseline/differences |
 | `linux-host-behaviour-metrics` | `agent_health` | Coalesced host load, memory, pressure, and counter-derived disk/network deltas |
 
-No `/api/v2`, incompatible schema, or new database event-source enum is required. Events retain deterministic IDs, source-local sequence checkpoints, explicit data-handling metadata, and server deduplication. A sequence range is durably reserved before queue insertion, and the collected baseline/checkpoint advances only after all events are queued. For fully committed rows, accepted/duplicate acknowledgement is recorded before queue deletion. Rows left by an interrupted reservation can be accepted and deleted without advancing the committed acknowledgement; the reservation remains an explicit, non-reused sequence gap and its semantic changes are retried from the prior baseline at new sequences.
+No separate ingestion route or additional database event-source value is required. Events retain deterministic IDs, source-local sequence checkpoints, explicit data-handling metadata, and server deduplication. A sequence range is durably reserved before queue insertion, and the collected baseline/checkpoint advances only after all events are queued. For fully committed rows, accepted/duplicate acknowledgement is recorded before queue deletion. Rows left by an interrupted reservation can be accepted and deleted without advancing the committed acknowledgement; the reservation remains an explicit, non-reused sequence gap and its semantic changes are retried from the prior baseline at new sequences.
 
 ## Process observations
 
@@ -86,7 +86,7 @@ Before installation, the lifecycle helper calculates the same canonical hash fro
 ./scripts/linux-agent.sh plan --config <private-mode-0600-agentsettings.json>
 ```
 
-The helper first applies the same passive interval, timeout, item, byte, event/headroom, fixed-state-path, queue bounds, and passive-versus-journal row/byte-priority checks as the agent. The approval hash binds every passive setting except `Enabled` and the self-referential `ApprovedPlanHash`, plus the queue size/warning, journal pause/poll-size inputs, and effective journal scope used by the reviewed collection and priority boundary. It accepts case-insensitive JSON keys with native integer/Boolean primitives and deliberately rejects looser string coercions. An invalid candidate produces no approvable passive plan hash. If a plan-bound passive, queue, or journal setting is supplied through an environment override, the helper refuses to guess; use the published agent's `--passive-telemetry-plan` output as authoritative for the effective configuration. Changing `IncludeAccessibleUserJournals` invalidates the passive approval even though it does not change procfs inputs. Supported values and relations are listed in [Agent configuration format](agent-config.md#linux-passive-l3-fields).
+The helper first applies the same passive interval, timeout, item, byte, event/headroom, fixed-state-path, queue bounds, and passive-versus-journal row/byte-priority checks as the agent. The approval hash binds every passive setting except `Enabled` and the self-referential `ApprovedPlanHash`, plus the queue size/warning, journal pause/poll-size inputs, and effective journal scope used by the reviewed collection and priority boundary. It accepts case-insensitive JSON keys with native integer/Boolean primitives and deliberately rejects looser string coercions. An invalid candidate produces no approvable passive plan hash. If a plan-bound passive, queue, or journal setting is supplied through an environment override, the helper refuses to guess; use the published agent's `--passive-telemetry-plan` output as authoritative for the effective configuration. Changing `IncludeAccessibleUserJournals` invalidates the passive approval even though it does not change procfs inputs. Supported values and relations are listed in [Linux agent configuration](linux-agent.md#configuration).
 
 An already published agent also exposes `--passive-telemetry-plan` for a configuration selected through `CHALLENGER_SIEM_AGENT_CONFIG`. Both modes are read-only and must not have their real-host output copied into tracked files.
 

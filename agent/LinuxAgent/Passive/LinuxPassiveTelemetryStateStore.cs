@@ -3,7 +3,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Serialization;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.LinuxAgent.Passive;
 

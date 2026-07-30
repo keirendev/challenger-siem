@@ -9,7 +9,7 @@ public sealed record SiemMcpAuditSummary(
     int RowCount,
     bool Truncated,
     string Redaction,
-    string DataClassification = "operator_sensitive");
+    string DataClassification = "siem_sensitive");
 
 public sealed class SiemMcpAccess(
     IHttpContextAccessor httpContextAccessor,
@@ -20,18 +20,17 @@ public sealed class SiemMcpAccess(
         get
         {
             var context = RequiredContext();
-            return OperatorAuthorization.Role(context.User)
-                ?? throw new InvalidOperationException("Authenticated MCP operator role is unavailable.");
+            return ServiceAuthorization.Role(context.User);
         }
     }
 
-    public bool IsAdmin => string.Equals(Role, OperatorRoles.Admin, StringComparison.Ordinal);
+    public bool IsAdmin => true;
 
     public void RequireAdmin()
     {
         if (!IsAdmin)
         {
-            throw new UnauthorizedAccessException("This MCP operation requires an admin operator token.");
+            throw new UnauthorizedAccessException("This MCP operation requires the configured service credential.");
         }
     }
 
@@ -83,7 +82,7 @@ public sealed class SiemMcpAccess(
         var context = httpContextAccessor.HttpContext;
         if (context?.User.Identity?.IsAuthenticated != true)
         {
-            throw new InvalidOperationException("Authenticated MCP operator context is unavailable.");
+            throw new InvalidOperationException("Authenticated MCP service context is unavailable.");
         }
 
         return context;
@@ -110,7 +109,7 @@ public sealed class SiemMcpAccess(
             ["reason"] = reason
         };
         return audit.RecordAsync(
-            OperatorAuthentication.OperatorId(context.User),
+            ServiceAuthentication.ServiceId,
             context.User.Identity?.Name,
             $"mcp.tool.{capability}",
             outcome,

@@ -58,7 +58,7 @@ public sealed class SiemMcpResources(SiemMcpTools tools)
         MimeType = "application/json")]
     [Description("One agent's bounded L2 telemetry coverage assessment.")]
     public async Task<string> GetCoverageAsync(string agentId, CancellationToken cancellationToken = default) =>
-        SiemMcpJson.Serialize(await tools.GetCoverageAsync(agentId, Challenger.Siem.Contracts.V1.WindowsCoverageLevel.L2, 24, cancellationToken));
+        SiemMcpJson.Serialize(await tools.GetCoverageAsync(agentId, Challenger.Siem.Contracts.V2.CoverageLevel.L2, 24, cancellationToken));
 
     [McpServerResource(
         UriTemplate = "siem://agents/{agentId}/source-health",
@@ -67,7 +67,7 @@ public sealed class SiemMcpResources(SiemMcpTools tools)
         MimeType = "application/json")]
     [Description("One agent's source-health and gap metadata.")]
     public async Task<string> GetSourceHealthAsync(string agentId, CancellationToken cancellationToken = default) =>
-        SiemMcpJson.Serialize(await tools.GetSourceHealthAsync(agentId, Challenger.Siem.Contracts.V1.WindowsCoverageLevel.L2, 50, cancellationToken));
+        SiemMcpJson.Serialize(await tools.GetSourceHealthAsync(agentId, Challenger.Siem.Contracts.V2.CoverageLevel.L2, 50, cancellationToken));
 
     [McpServerResource(
         UriTemplate = "siem://graphs/{graphId}",

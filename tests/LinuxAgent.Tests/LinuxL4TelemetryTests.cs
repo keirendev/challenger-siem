@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.L4;
@@ -161,13 +161,13 @@ public sealed class LinuxL4TelemetryTests
         Assert.Contains("declared_role_unsupported", unsupportedRole.ActivationBlockers);
 
         options.Journal.DeclaredRoles = ["general_server"];
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L3;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L3;
         options.L4Telemetry.ApprovedPlanHash = LinuxL4TelemetryCollector.ComputePlanHash(options);
         var wrongTarget = collector.Preflight(snapshots);
         Assert.False(wrongTarget.ActivationReady);
         Assert.Contains("journal_target_not_l4", wrongTarget.ActivationBlockers);
 
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L4;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L4;
         options.PassiveTelemetry.Enabled = false;
         options.L4Telemetry.ApprovedPlanHash = LinuxL4TelemetryCollector.ComputePlanHash(options);
         var passiveDisabled = collector.Preflight(snapshots);
@@ -1017,7 +1017,7 @@ public sealed class LinuxL4TelemetryTests
             ApiToken = "synthetic-test-token",
             Journal = new JournalOptions
             {
-                TargetCoverageLevel = WindowsCoverageLevel.L4,
+                TargetCoverageLevel = CoverageLevel.L4,
                 DeclaredRoles = ["general_server"]
             },
             PassiveTelemetry = new PassiveTelemetryOptions { Enabled = true },

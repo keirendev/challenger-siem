@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -82,7 +82,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     display_name,
                     platform,
                     source_kind,
-                    channel,
                     source_namespace,
                     facility,
                     unit,
@@ -94,9 +93,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     enabled,
                     last_event_time,
                     observed_at,
-                    last_record_id,
-                    oldest_record_id,
-                    newest_record_id,
                     log_size_bytes,
                     retention_days,
                     lag_seconds,
@@ -132,7 +128,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @display_name,
                     @platform,
                     @source_kind,
-                    @channel,
                     @source_namespace,
                     @facility,
                     @unit,
@@ -144,9 +139,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     @enabled,
                     @last_event_time,
                     @observed_at,
-                    @last_record_id,
-                    @oldest_record_id,
-                    @newest_record_id,
                     @log_size_bytes,
                     @retention_days,
                     @lag_seconds,
@@ -180,7 +172,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     display_name = excluded.display_name,
                     platform = excluded.platform,
                     source_kind = excluded.source_kind,
-                    channel = excluded.channel,
                     source_namespace = excluded.source_namespace,
                     facility = excluded.facility,
                     unit = excluded.unit,
@@ -192,9 +183,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
                     enabled = excluded.enabled,
                     last_event_time = excluded.last_event_time,
                     observed_at = excluded.observed_at,
-                    last_record_id = excluded.last_record_id,
-                    oldest_record_id = excluded.oldest_record_id,
-                    newest_record_id = excluded.newest_record_id,
                     log_size_bytes = excluded.log_size_bytes,
                     retention_days = excluded.retention_days,
                     lag_seconds = excluded.lag_seconds,
@@ -229,7 +217,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("display_name", source.DisplayName);
             command.Parameters.AddWithValue("platform", string.IsNullOrWhiteSpace(source.Platform) ? (object)DBNull.Value : source.Platform);
             command.Parameters.AddWithValue("source_kind", string.IsNullOrWhiteSpace(source.SourceKind) ? (object)DBNull.Value : source.SourceKind);
-            command.Parameters.AddWithValue("channel", string.IsNullOrWhiteSpace(source.Channel) ? (object)DBNull.Value : source.Channel);
             command.Parameters.AddWithValue("source_namespace", string.IsNullOrWhiteSpace(source.SourceNamespace) ? (object)DBNull.Value : source.SourceNamespace);
             command.Parameters.AddWithValue("facility", string.IsNullOrWhiteSpace(source.Facility) ? (object)DBNull.Value : source.Facility);
             command.Parameters.AddWithValue("unit", string.IsNullOrWhiteSpace(source.Unit) ? (object)DBNull.Value : source.Unit);
@@ -241,9 +228,6 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("enabled", source.Enabled);
             command.Parameters.AddWithValue("last_event_time", source.LastEventTime.HasValue ? source.LastEventTime.Value.ToUniversalTime() : (object)DBNull.Value);
             command.Parameters.AddWithValue("observed_at", source.ObservedAt.HasValue ? source.ObservedAt.Value.ToUniversalTime() : (object)DBNull.Value);
-            command.Parameters.AddWithValue("last_record_id", source.LastRecordId.HasValue ? source.LastRecordId.Value : (object)DBNull.Value);
-            command.Parameters.AddWithValue("oldest_record_id", source.OldestRecordId.HasValue ? source.OldestRecordId.Value : (object)DBNull.Value);
-            command.Parameters.AddWithValue("newest_record_id", source.NewestRecordId.HasValue ? source.NewestRecordId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("log_size_bytes", source.LogSizeBytes.HasValue ? source.LogSizeBytes.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("retention_days", source.RetentionDays.HasValue ? source.RetentionDays.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("lag_seconds", source.LagSeconds.HasValue ? source.LagSeconds.Value : (object)DBNull.Value);

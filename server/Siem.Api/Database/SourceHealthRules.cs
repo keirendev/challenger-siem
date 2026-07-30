@@ -1,4 +1,4 @@
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Database;
 
@@ -13,7 +13,7 @@ public static class SourceHealthRules
         .Select(source => source.SourceId)
         .Append(LinuxTelemetrySourceIds.PolicyPostureDrift)
         .Concat(LinuxTelemetrySourceCatalog.All
-            .Where(source => source.CoverageLevel == WindowsCoverageLevel.L4
+            .Where(source => source.CoverageLevel == CoverageLevel.L4
                 && source.Requirement == SourceRequirementKinds.RoleSpecific)
             .Select(source => source.SourceId))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -116,7 +116,7 @@ public static class SourceHealthRules
         };
         if (mandatory
             && !UsesSuccessfulObservationFreshness(report.SourceId)
-            && report.CoverageLevel >= WindowsCoverageLevel.L2
+            && report.CoverageLevel >= CoverageLevel.L2
             && report.EventFamilyStatuses is { Count: > 0 }
             && report.EventFamilyStatuses.Values.All(value => value == SourceEvidenceStatuses.NotObserved))
         {

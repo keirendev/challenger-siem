@@ -5,10 +5,10 @@
 ## What uses `VERSION`
 
 - `Directory.Build.props` applies it to .NET project `Version`, `PackageVersion`, and `InformationalVersion` metadata.
-- The Windows agent reports the assembly informational version in heartbeat data.
+- The Linux agent reports the assembly informational version in heartbeat data.
 - Local helper scripts use `./scripts/current-version.sh` as the default agent version for registration and copy-ready agent prep.
 
-API and schema contract versions are separate compatibility tracks. `/api/v1` and `contracts/v1/` stay stable unless a deliberate contract version change is made.
+API and schema contract versions are separate compatibility tracks. `/api/v2` and `contracts/v2/` stay stable unless a deliberate contract version change is made.
 
 ## SemVer policy
 
@@ -30,6 +30,6 @@ Ask the operator before a major bump or whenever compatibility impact is unclear
 2. For every change set, decide whether the project version must change. If no bump is needed, say so in the final response.
 3. When a bump is needed, update `VERSION` in the same change set as the code/docs/contracts change.
 4. Update `CHANGELOG.md` under `Unreleased` with the operator-visible impact. On an explicit release, move entries from `Unreleased` to a dated version section.
-5. For incompatible API/schema changes, create a new versioned route/schema folder instead of silently changing `/api/v1` or `contracts/v1/`.
+5. For incompatible API/schema changes, create a new versioned route/schema folder instead of silently changing `/api/v2` or `contracts/v2/`.
 6. Do not update generated artifacts under `dist/`, `bin/`, or `obj/` unless the operator explicitly asks for release artifacts.
 7. Run the relevant build/tests and report the resulting version or no-bump decision.

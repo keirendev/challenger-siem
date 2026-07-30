@@ -4,7 +4,7 @@ using Challenger.Siem.Agent.Core.Reliability;
 using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.Agent.Core.Util;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.L4;

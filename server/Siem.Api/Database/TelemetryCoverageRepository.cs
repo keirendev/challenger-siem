@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Detections;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
@@ -11,20 +11,6 @@ public sealed class TelemetryCoverageRepository(
     SourceHealthRepository sourceHealth,
     AlertRepository alerts)
 {
-    private static readonly IReadOnlyList<string> WindowsInventorySnapshotTypes = new[]
-    {
-        "host_identity",
-        "network",
-        "local_users_groups",
-        "services_drivers",
-        "scheduled_tasks_autoruns",
-        "installed_software",
-        "patches_features",
-        "defender_firewall_bitlocker_policy",
-        "audit_policy",
-        "windows_role_detection"
-    };
-
     private static readonly IReadOnlyList<string> LinuxInventorySnapshotTypes = new[]
     {
         "linux_host_identity",
@@ -47,7 +33,7 @@ public sealed class TelemetryCoverageRepository(
 
     public async Task<TelemetryCoverageResponse> AssessAsync(
         string? agentId,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         int lookbackHours,
         CancellationToken cancellationToken)
     {
@@ -64,7 +50,7 @@ public sealed class TelemetryCoverageRepository(
             var sources = sourceResponse.Sources;
             var summary = sourceResponse.Summaries.FirstOrDefault()
                 ?? TelemetryCoverageEvaluator.CreateSummary(agent.AgentId, agent.Hostname, 0, null, sources, targetLevel);
-            var platform = summary.Platform ?? agent.Platform;
+            const string platform = TelemetryPlatforms.Linux;
             summary = summary with
             {
                 Platform = platform,
@@ -77,10 +63,7 @@ public sealed class TelemetryCoverageRepository(
                 .ToArray();
             var inventory = await LoadInventoryStatusesAsync(agent.AgentId, platform, lookbackStart, cancellationToken);
             var inventoryByType = inventory.ToDictionary(item => item.SnapshotType, StringComparer.OrdinalIgnoreCase);
-            var linuxPlatform = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase);
-            var platformRules = rules
-                .Where(rule => DetectionRuleCatalog.IsLinuxRule(rule.RuleId) == linuxPlatform)
-                .ToArray();
+            var platformRules = rules.Where(rule => DetectionRuleCatalog.IsLinuxRule(rule.RuleId)).ToArray();
             var detectionPrerequisites = TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
                 platformRules,
                 sourceCoverage,
@@ -89,9 +72,7 @@ public sealed class TelemetryCoverageRepository(
             var alertStatusCounts = await LoadAlertStatusCountsAsync(agent.AgentId, lookbackStart, cancellationToken);
             var newAlertCount = alertStatusCounts.GetValueOrDefault(AlertStatuses.New);
             var activeGraphCount = await CountActiveGraphsAsync(agent.AgentId, cancellationToken);
-            var expectedSourceCount = linuxPlatform
-                ? LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel).Count
-                : WindowsTelemetrySourceCatalog.ExpectedFor(targetLevel).Count;
+            var expectedSourceCount = LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel).Count;
             var reportedSourceCount = CountReportedSources(sources);
             var sourceStatusCounts = sourceCoverage
                 .GroupBy(source => source.Status, StringComparer.OrdinalIgnoreCase)
@@ -155,7 +136,7 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select agent_id, hostname, status, last_seen, host_timezone, coalesce(platform, 'windows') as platform
+            select agent_id, hostname, status, last_seen, host_timezone, 'linux' as platform
             from agents
             """;
         if (string.IsNullOrWhiteSpace(agentId))
@@ -194,12 +175,12 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select source_id, channel, count(*)::int as event_count
+            select source_id, count(*)::int as event_count
             from events
             where agent_id = @agent_id
               and event_time >= @lookback_start
               and event_time <= @lookback_end
-            group by source_id, channel;
+            group by source_id;
             """;
         command.Parameters.AddWithValue("agent_id", agentId);
         command.Parameters.AddWithValue("lookback_start", lookbackStart.ToUniversalTime());
@@ -209,13 +190,7 @@ public sealed class TelemetryCoverageRepository(
         while (await reader.ReadAsync(cancellationToken))
         {
             var sourceIdOrdinal = reader.GetOrdinal("source_id");
-            var channelOrdinal = reader.GetOrdinal("channel");
             var sourceId = reader.IsDBNull(sourceIdOrdinal) ? null : reader.GetString(sourceIdOrdinal);
-            if (sourceId is null && !reader.IsDBNull(channelOrdinal))
-            {
-                var channel = reader.GetString(channelOrdinal);
-                sourceId = WindowsTelemetrySourceCatalog.FindByChannel(channel)?.SourceId ?? Slug(channel);
-            }
             if (sourceId is not null)
             {
                 counts[sourceId] = counts.GetValueOrDefault(sourceId) + reader.GetInt32(reader.GetOrdinal("event_count"));
@@ -260,9 +235,7 @@ public sealed class TelemetryCoverageRepository(
             }
         }
 
-        var expectedTypes = string.Equals(platform, TelemetryPlatforms.Linux, StringComparison.Ordinal)
-            ? LinuxInventorySnapshotTypes
-            : WindowsInventorySnapshotTypes;
+        var expectedTypes = LinuxInventorySnapshotTypes;
         return expectedTypes
             .Select(type => ToInventoryStatus(agentId, type, latest.GetValueOrDefault(type), lookbackStart))
             .ToArray();
@@ -320,7 +293,6 @@ public sealed class TelemetryCoverageRepository(
         {
             SourceId = source.SourceId,
             DisplayName = source.DisplayName,
-            Channel = source.Channel ?? string.Empty,
             Platform = source.Platform,
             SourceKind = source.SourceKind,
             SourceNamespace = source.SourceNamespace,
@@ -358,10 +330,8 @@ public sealed class TelemetryCoverageRepository(
             IsThrottled = IsSourceThrottled(source),
             StateGuidance = SourceStateGuidance(source, recentCount),
             Reason = SourceReason(source, recentCount),
-            EventSearchUrl = source.SourceId is { Length: > 0 } && source.SourceKind is not null
-                ? $"/events?agent_id={Uri.EscapeDataString(agentId)}&source_id={Uri.EscapeDataString(source.SourceId)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}"
-                : $"/events?agent_id={Uri.EscapeDataString(agentId)}&channel={Uri.EscapeDataString(source.Channel ?? string.Empty)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
-            SourceHealthUrl = $"/agents/detail?agent_id={Uri.EscapeDataString(agentId)}"
+            EventSearchUrl = $"/api/v2/events?agent_id={Uri.EscapeDataString(agentId)}&source_id={Uri.EscapeDataString(source.SourceId)}&from={Uri.EscapeDataString(lookbackStart.ToString("O"))}",
+            SourceHealthUrl = $"/api/v2/source-health?agent_id={Uri.EscapeDataString(agentId)}"
         };
     }
 
@@ -373,7 +343,7 @@ public sealed class TelemetryCoverageRepository(
     {
         var url = string.Equals(snapshotType, "audit_policy", StringComparison.OrdinalIgnoreCase)
             ? $"/audit-policy?agent_id={Uri.EscapeDataString(agentId)}"
-            : $"/api/v1/inventory?agent_id={Uri.EscapeDataString(agentId)}&snapshot_type={Uri.EscapeDataString(snapshotType)}";
+            : $"/api/v2/inventory?agent_id={Uri.EscapeDataString(agentId)}&snapshot_type={Uri.EscapeDataString(snapshotType)}";
 
         if (snapshot is null)
         {
@@ -506,10 +476,10 @@ public sealed class TelemetryCoverageRepository(
         }
 
         if (string.Equals(summary.Platform, TelemetryPlatforms.Linux, StringComparison.OrdinalIgnoreCase)
-            && summary.TargetLevel == WindowsCoverageLevel.L4
-            && summary.CurrentLevel < WindowsCoverageLevel.L4)
+            && summary.TargetLevel == CoverageLevel.L4
+            && summary.CurrentLevel < CoverageLevel.L4)
         {
-            var unresolvedRoles = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+            var unresolvedRoles = sources.Count(source => source.CoverageLevel == CoverageLevel.L4
                 && source.Requirement == SourceRequirementKinds.RoleSpecific
                 && source.Applicability is not SourceApplicabilityStatuses.Applicable and not SourceApplicabilityStatuses.NotApplicable);
             if (unresolvedRoles > 0)
@@ -517,7 +487,7 @@ public sealed class TelemetryCoverageRepository(
                 gaps.Add($"{unresolvedRoles} L4 role-pack applicability decision(s) are unresolved; unknown roles cannot satisfy L4.");
             }
 
-            var unavailableRoles = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+            var unavailableRoles = sources.Count(source => source.CoverageLevel == CoverageLevel.L4
                 && source.Requirement == SourceRequirementKinds.RoleSpecific
                 && source.Applicability == SourceApplicabilityStatuses.Applicable
                 && (!source.Enabled || !string.Equals(source.Status, SourceHealthStatuses.Healthy, StringComparison.OrdinalIgnoreCase)));
@@ -526,7 +496,7 @@ public sealed class TelemetryCoverageRepository(
                 gaps.Add($"{unavailableRoles} applicable L4 role pack(s) are not enabled, fresh, and healthy.");
             }
 
-            var unavailableMandatory = sources.Count(source => source.CoverageLevel == WindowsCoverageLevel.L4
+            var unavailableMandatory = sources.Count(source => source.CoverageLevel == CoverageLevel.L4
                 && source.Requirement == SourceRequirementKinds.Mandatory
                 && (!source.Enabled
                     || source.Applicability != SourceApplicabilityStatuses.Applicable
@@ -536,7 +506,7 @@ public sealed class TelemetryCoverageRepository(
                 gaps.Add($"{unavailableMandatory} mandatory L4 posture/performance source(s) lack exact healthy current evidence.");
             }
 
-            var exceptedLower = sources.Count(source => source.CoverageLevel < WindowsCoverageLevel.L4
+            var exceptedLower = sources.Count(source => source.CoverageLevel < CoverageLevel.L4
                 && (source.Requirement == SourceRequirementKinds.Mandatory
                     || (source.Requirement == SourceRequirementKinds.RoleSpecific && source.Applicability == SourceApplicabilityStatuses.Applicable))
                 && string.Equals(source.Status, SourceHealthStatuses.Excepted, StringComparison.OrdinalIgnoreCase));

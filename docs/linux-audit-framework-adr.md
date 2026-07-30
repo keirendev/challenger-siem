@@ -78,7 +78,7 @@ to `observed`, but is not required for quiet health. It does not require generat
 audit activity, and event-dependent detection prerequisites remain unsatisfied while
 quiet.
 
-The first implementation must retain the existing v1 catalog and envelope contract,
+The first implementation must retain the v2 Linux catalog and envelope contract,
 not silently migrate it: optional requirement, source kind `linux_audit`, namespace
 `linux.audit`, sequence checkpoint, `high_sensitivity` privacy, event source
 `linux_audit`, and disabled-by-default behavior. A manifest migration would require a
@@ -214,14 +214,14 @@ An active gap clears only after:
 4. the audit acknowledged sequence, private physical finalized cursor, collected
    cursor, WAL, and pending groups are again internally consistent.
 
-The quiet recovery row is an ordinary v1-valid `EventEnvelope`, not the unacknowledged
+The quiet recovery row is an ordinary v2-valid `EventEnvelope`, not the unacknowledged
 heartbeat source-health object. It uses `platform=linux`, `source=linux_audit`, the
 canonical `linux-audit-framework` source ID, sequence checkpoint, event code
 `audit_source_recovery`, information severity, and the same six-input deduplication
 recipe defined below. Its message is exactly
 `Linux audit source continuity recovered without collecting audit activity.`;
 agent ID and hostname use the existing bounded enrolled-agent values, and every other
-common envelope field follows the current portable-v1 defaults. Its compact canonical
+common envelope field follows the current v2 defaults. Its compact canonical
 `raw` object contains exactly schema
 version, `record_kind=source_health_recovery`, hashed gap ID, fixed reason code,
 `content_collected=false`, `routed_interface=systemd_journal_audit_v1`, and observation
@@ -236,7 +236,7 @@ Server validation, coverage, and detections must treat
 `audit_source_recovery` as source-health evidence only: it never marks an audit event
 family `observed`, never satisfies a recent-audit-event prerequisite, and is excluded
 from audit activity detections. Accepted/duplicate acknowledgement may clear the
-named gap; rejection becomes `audit_poison_gap`. This is additive within v1 because
+named gap; rejection becomes `audit_poison_gap`. This is additive within v2 because
 the existing Linux-audit source kind, sequence checkpoint, event-code field, compact
 raw object, data-handling metadata, and deterministic recipe already support the
 shape. Synthetic contract validation of the exact envelope is an implementation
@@ -345,7 +345,7 @@ record. Numeric IDs remain canonical; name resolution is not performed.
 | MAC permissions | 16 unique sorted values, 32 ASCII bytes each |
 | PID and PPID | Signed 32-bit decimal; PID `1..2147483647`, PPID `0..2147483647` |
 | UID, GID, AUID, and session ID | Unsigned 32-bit decimal `0..4294967295`; the all-ones unset value remains numeric and is not name-resolved |
-| Audit identity | Seconds are decimal `0..253402300799`, the maximum representable Unix second for v1 `DateTimeOffset`; milliseconds are `0..999`; serial is unsigned 64-bit decimal; each input must round-trip canonically |
+| Audit identity | Seconds are decimal `0..253402300799`, the maximum representable Unix second for v2 `DateTimeOffset`; milliseconds are `0..999`; serial is unsigned 64-bit decimal; each input must round-trip canonically |
 | PATH item, inode, device, and mode | Item is unsigned 32-bit; inode is unsigned 64-bit; device is a fixed `major:minor` pair of unsigned 32-bit hexadecimal values; mode is either the exact unknown sentinel `00` or a leading-zero 6–7-byte octal token matching `0[0-7]{5,6}` with value at most `0177777`, retaining file-type bits such as `0100644` |
 | Architecture and syscall | Architecture is exactly 8 ASCII hexadecimal digits; syscall is unsigned 32-bit decimal |
 | Result | One of the fixed normalized tokens `success`, `failure`, or `unknown` |
@@ -385,7 +385,7 @@ an audit family. `raw_sha256` is recomputed over the applicable compact canonica
 `raw` object. The durable sequence reservation makes crash replay stable. Boot ID,
 audit serial, type set, retained field values, partial flags, and bounded counters
 affect an activity ID only through `raw_sha256`; raw text and private physical cursors
-are never inputs. Any future identity recipe change requires a v1 contract migration
+are never inputs. Any future identity recipe change requires a v2 contract migration
 rather than undocumented fields.
 
 ## Fixed resource and reliability budgets
@@ -477,7 +477,7 @@ raw rejected data.
 
 ## Operator and API presentation
 
-The existing `/api/v1` manifest, source-health, telemetry-coverage, event search, and
+The existing `/api/v2` manifest, source-health, telemetry-coverage, event search, and
 web detail surfaces are sufficient; no incompatible contract is designed. Stable
 details expose only bounded codes/counters, never raw records.
 
@@ -532,7 +532,7 @@ allowed. A future implementation PR must include:
    `stale`, agent-state-denial `error`, `degraded`, healthy
    observed, attested healthy quiet, unattested quiet, active gap, pressure/drop, and
    recovery only after downstream acknowledgement. The exact
-   `audit_source_recovery` envelope must pass v1 validation while remaining excluded
+   `audit_source_recovery` envelope must pass v2 validation while remaining excluded
    from event-family observation, coverage readiness, and detections.
 6. **Performance fixtures:** sustained ceiling, burst, oversized input, group fan-out,
    server outage, queue pressure, poison, reconnect/drain, and long quiet periods. Tests

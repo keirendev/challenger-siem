@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.State;
@@ -33,7 +33,7 @@ public sealed class LinuxEnrollmentTests
             Journal = new JournalOptions
             {
                 IncludeAccessibleUserJournals = true,
-                TargetCoverageLevel = WindowsCoverageLevel.L3
+                TargetCoverageLevel = CoverageLevel.L3
             },
             SelfIntegrity = new SelfIntegrityOptions
             {
@@ -136,7 +136,7 @@ public sealed class LinuxEnrollmentTests
             Assert.Equal(options.L4Telemetry.StatePath, l4.GetProperty("StatePath").GetString());
             var journal = document.RootElement.GetProperty("Agent").GetProperty("Journal");
             Assert.True(journal.GetProperty("IncludeAccessibleUserJournals").GetBoolean());
-            Assert.Equal(WindowsCoverageLevel.L3.ToString(), journal.GetProperty("TargetCoverageLevel").GetString());
+            Assert.Equal(CoverageLevel.L3.ToString(), journal.GetProperty("TargetCoverageLevel").GetString());
             Assert.Equal(string.Empty, document.RootElement.GetProperty("Agent").GetProperty("EnrollmentToken").GetString());
             Assert.DoesNotContain("synthetic-enrollment-token", await File.ReadAllTextAsync(configPath), StringComparison.Ordinal);
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(configPath));
@@ -153,7 +153,7 @@ public sealed class LinuxEnrollmentTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/api/v1/agents/register", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/v2/agents/register", request.RequestUri?.AbsolutePath);
             Assert.True(request.Headers.Contains("X-Enrollment-Token"));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {

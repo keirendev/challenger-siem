@@ -17,8 +17,17 @@ public sealed class IntegrationTestDatabase : IAsyncLifetime
             return;
         }
 
-        var databaseDirectory = Path.GetDirectoryName(FindRepositoryFile("server/Siem.Api/Database/001_initial.sql"))!;
-        var migrations = Directory.GetFiles(databaseDirectory, "[0-9][0-9][0-9]_*.sql").Order(StringComparer.Ordinal).ToArray();
+        var databaseDirectory = Path.GetDirectoryName(FindRepositoryFile("server/Siem.Api/Database/001_linux_v2.sql"))!;
+        var migrations = Directory.GetFiles(databaseDirectory, "*.sql")
+            .Where(path =>
+            {
+                var name = Path.GetFileName(path);
+                return name.Length > 4
+                    && name[0..3].All(char.IsAsciiDigit)
+                    && name[3] == '_';
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
         await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
         foreach (var migration in migrations)
         {

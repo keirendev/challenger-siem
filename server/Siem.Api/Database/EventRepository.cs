@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Configuration;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -63,10 +63,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     hostname,
                     source,
                     platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
-                    channel,
-                    provider,
-                    windows_event_id,
-                    record_id,
                     event_time,
                     host_timezone,
                     severity,
@@ -91,10 +87,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                     @hostname,
                     @source,
                     @platform, @source_id, @event_code, @facility, @unit, @checkpoint_json, @deduplication_json, @data_handling_json,
-                    @channel,
-                    @provider,
-                    @windows_event_id,
-                    @record_id,
                     @event_time,
                     @host_timezone,
                     @severity,
@@ -128,10 +120,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             Jsonb.Add(command, "checkpoint_json", envelope.Checkpoint);
             Jsonb.Add(command, "deduplication_json", envelope.Deduplication);
             Jsonb.Add(command, "data_handling_json", envelope.DataHandling);
-            command.Parameters.AddWithValue("channel", DbValue(envelope.Channel));
-            command.Parameters.AddWithValue("provider", DbValue(envelope.Provider));
-            command.Parameters.AddWithValue("windows_event_id", envelope.WindowsEventId.HasValue ? envelope.WindowsEventId.Value : DBNull.Value);
-            command.Parameters.AddWithValue("record_id", envelope.RecordId.HasValue ? envelope.RecordId.Value : DBNull.Value);
             command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
             Jsonb.Add(command, "host_timezone", envelope.HostTimezone);
             command.Parameters.AddWithValue("severity", envelope.Severity);
@@ -177,23 +165,19 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return page.Events;
     }
 
-    public async Task<EventSearchPage> SearchEventsPageForOperatorAsync(EventSearchQuery query, string role, CancellationToken cancellationToken)
+    public async Task<EventSearchPage> SearchEventsPageForServiceAsync(EventSearchQuery query, string role, CancellationToken cancellationToken)
     {
         var roleQuery = query.ForRole(role);
         var page = await SearchEventsPageAsync(roleQuery, role, cancellationToken);
-        var filtered = page.Events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();
-        var redaction = role == OperatorRoles.Admin
-            ? "admin_full_raw"
-            : OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive)
-                ? "raw_omitted_sensitive_fields_redacted"
-                : "metadata_only_sensitive_filters_removed";
+        var filtered = page.Events.Select(item => ServiceEventPolicy.Apply(item, role)).ToArray();
+        const string redaction = "service_full_record";
         return page with { Events = filtered, RedactionNotice = redaction };
     }
 
-    public async Task<IReadOnlyList<EventEnvelope>> SearchEventsForOperatorAsync(EventSearchQuery query, string role, CancellationToken cancellationToken, int offset = 0)
+    public async Task<IReadOnlyList<EventEnvelope>> SearchEventsForServiceAsync(EventSearchQuery query, string role, CancellationToken cancellationToken, int offset = 0)
     {
         var page = await SearchEventsPageAsync(query.ForRole(role) with { Cursor = null }, role, cancellationToken, offset);
-        return page.Events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();
+        return page.Events.Select(item => ServiceEventPolicy.Apply(item, role)).ToArray();
     }
 
     public async Task<EventTimelineQueryResult> GetTimelineAsync(EventSearchQuery query, string role, CancellationToken cancellationToken)
@@ -240,7 +224,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return new EventTimelineQueryResult(results, bucketSeconds);
     }
 
-    public async Task<IReadOnlyList<EventEnvelope>> SearchGlobalEventsForOperatorAsync(string searchText, int limit, string role, CancellationToken cancellationToken, int offset = 0)
+    public async Task<IReadOnlyList<EventEnvelope>> SearchGlobalEventsForServiceAsync(string searchText, int limit, string role, CancellationToken cancellationToken, int offset = 0)
     {
         var trimmed = searchText.Trim();
         if (trimmed.Length == 0)
@@ -250,7 +234,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
 
         var normalizedLimit = Math.Clamp(limit, 1, EventSearchQuery.MaxLimit);
         var clampedOffset = Math.Max(0, offset);
-        var canReviewSensitive = OperatorAuthorization.HasPermission(role, OperatorPermission.ReviewSensitive);
+        var canReviewSensitive = ServiceAuthorization.HasPermission(role, ServicePermission.ReviewSensitive);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -267,17 +251,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             "coalesce(platform, '') ilike @like_term escape '\\'",
             "coalesce(source_id, '') ilike @like_term escape '\\'",
             "coalesce(event_code, '') ilike @like_term escape '\\'",
-            "coalesce(channel, '') ilike @like_term escape '\\'",
-            "coalesce(provider, '') ilike @like_term escape '\\'",
             "coalesce(facility, '') ilike @like_term escape '\\'",
             "coalesce(unit, '') ilike @like_term escape '\\'"
         };
-
-        if (int.TryParse(trimmed, out var windowsEventId))
-        {
-            predicates.Add("windows_event_id = @windows_event_id");
-            command.Parameters.AddWithValue("windows_event_id", windowsEventId);
-        }
 
         if (canReviewSensitive)
         {
@@ -296,16 +272,16 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(EventFieldPolicy.Apply(ReadEventEnvelope(reader), role));
+            results.Add(ServiceEventPolicy.Apply(ReadEventEnvelope(reader), role));
         }
 
         return results;
     }
 
-    public async Task<EventEnvelope?> GetEventForOperatorAsync(string agentId, Guid eventId, string role, CancellationToken cancellationToken)
+    public async Task<EventEnvelope?> GetEventForServiceAsync(string agentId, Guid eventId, string role, CancellationToken cancellationToken)
     {
         var item = await GetEventAsync(agentId, eventId, cancellationToken);
-        return item is null ? null : EventFieldPolicy.Apply(item, role);
+        return item is null ? null : ServiceEventPolicy.Apply(item, role);
     }
 
     public async Task<EventEnvelope?> GetEventAsync(string agentId, Guid eventId, CancellationToken cancellationToken)
@@ -359,18 +335,16 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return stored;
     }
 
-    public async Task<IReadOnlyList<SavedEventSearchRecord>> ListSavedSearchesAsync(Guid operatorId, string role, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<SavedEventSearchRecord>> ListSavedSearchesAsync(Guid serviceId, string role, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             select saved_search_id, name, description, visibility, version, query_json, columns_json, created_at, updated_at, owner_username
             from saved_event_searches
-            where owner_operator_id = @operator_id or visibility = 'shared'
             order by updated_at desc, name asc
             limit 100;
             """;
-        command.Parameters.AddWithValue("operator_id", operatorId);
         var results = new List<SavedEventSearchRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -380,26 +354,24 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         return results;
     }
 
-    public async Task<SavedEventSearchRecord?> GetSavedSearchAsync(Guid id, Guid operatorId, bool canUseShared, string role, CancellationToken cancellationToken)
+    public async Task<SavedEventSearchRecord?> GetSavedSearchAsync(Guid id, Guid serviceId, bool canUseShared, string role, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             select saved_search_id, name, description, visibility, version, query_json, columns_json, created_at, updated_at, owner_username
             from saved_event_searches
-            where saved_search_id = @id and (owner_operator_id = @operator_id or (@can_shared and visibility = 'shared'))
+            where saved_search_id = @id
             limit 1;
             """;
         command.Parameters.AddWithValue("id", id);
-        command.Parameters.AddWithValue("operator_id", operatorId);
-        command.Parameters.AddWithValue("can_shared", canUseShared);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? ApplySavedSearchRolePolicy(ReadSavedSearch(reader), role)
             : null;
     }
 
-    public async Task<SavedEventSearchRecord> SaveSearchAsync(SavedEventSearchRequest request, Guid operatorId, string username, bool canShare, CancellationToken cancellationToken, Guid? existingId = null)
+    public async Task<SavedEventSearchRecord> SaveSearchAsync(SavedEventSearchRequest request, Guid serviceId, string serviceName, bool canShare, CancellationToken cancellationToken, Guid? existingId = null)
     {
         ValidateSavedSearchRequest(request, canShare);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -412,7 +384,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 update saved_event_searches
                 set name = @name, description = @description, visibility = @visibility, query_json = @query_json::jsonb, columns_json = @columns_json::jsonb,
                     version = version + 1, updated_at = now()
-                where saved_search_id = @id and owner_operator_id = @operator_id and (@expected_version is null or version = @expected_version)
+                where saved_search_id = @id and (@expected_version is null or version = @expected_version)
                 returning saved_search_id, name, description, visibility, version, query_json, columns_json, created_at, updated_at, owner_username;
                 """;
             command.Parameters.AddWithValue("id", existingId.Value);
@@ -421,41 +393,39 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         else
         {
             command.CommandText = """
-                insert into saved_event_searches(saved_search_id, owner_operator_id, owner_username, name, description, visibility, version, query_json, columns_json)
-                values(@id, @operator_id, @owner_username, @name, @description, @visibility, 1, @query_json::jsonb, @columns_json::jsonb)
+                insert into saved_event_searches(saved_search_id, owner_username, name, description, visibility, version, query_json, columns_json)
+                values(@id, @owner_username, @name, @description, @visibility, 1, @query_json::jsonb, @columns_json::jsonb)
                 returning saved_search_id, name, description, visibility, version, query_json, columns_json, created_at, updated_at, owner_username;
                 """;
             command.Parameters.AddWithValue("id", Guid.NewGuid());
         }
-        command.Parameters.AddWithValue("operator_id", operatorId);
-        command.Parameters.AddWithValue("owner_username", username);
+        command.Parameters.AddWithValue("owner_username", serviceName);
         command.Parameters.AddWithValue("name", request.Name.Trim());
         command.Parameters.AddWithValue("description", string.IsNullOrWhiteSpace(request.Description) ? DBNull.Value : request.Description.Trim());
         command.Parameters.AddWithValue("visibility", request.Visibility);
         command.Parameters.AddWithValue("query_json", queryJson);
         command.Parameters.AddWithValue("columns_json", columnsJson);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("Saved search was not written; expected version may be stale or the record is not owned by this operator.");
+        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("Saved search was not written; the expected version may be stale.");
         return ReadSavedSearch(reader);
     }
 
-    public async Task<bool> DeleteSavedSearchAsync(Guid id, Guid operatorId, CancellationToken cancellationToken)
+    public async Task<bool> DeleteSavedSearchAsync(Guid id, Guid serviceId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "delete from saved_event_searches where saved_search_id = @id and owner_operator_id = @operator_id;";
+        command.CommandText = "delete from saved_event_searches where saved_search_id = @id;";
         command.Parameters.AddWithValue("id", id);
-        command.Parameters.AddWithValue("operator_id", operatorId);
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task<EventExportResult> ExportCsvForOperatorAsync(EventSearchQuery query, string role, CancellationToken cancellationToken)
+    public async Task<EventExportResult> ExportCsvForServiceAsync(EventSearchQuery query, string role, CancellationToken cancellationToken)
     {
         var exportQuery = query.ForRole(role) with { Limit = Math.Clamp(query.Limit, 1, EventSearchQuery.MaxExportLimit), Cursor = null };
         var page = await SearchEventsPageAsync(exportQuery, role, cancellationToken, offset: 0, maxLimit: EventSearchQuery.MaxExportLimit);
-        var rows = page.Events.Select(item => EventFieldPolicy.Apply(item, role)).ToArray();
+        var rows = page.Events.Select(item => ServiceEventPolicy.Apply(item, role)).ToArray();
         var builder = new StringBuilder();
-        builder.AppendLine("event_time_utc,ingest_time_utc,agent_id,hostname,platform,source,source_id,channel,provider,facility,unit,event_code,windows_event_id,severity,category,action,outcome,message");
+        builder.AppendLine("event_time_utc,ingest_time_utc,agent_id,hostname,platform,source,source_id,facility,unit,event_code,severity,category,action,outcome,message");
         foreach (var item in rows)
         {
             builder.AppendCsv(TimeCsv(item.EventTime));
@@ -465,12 +435,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             builder.AppendCsv(item.Platform);
             builder.AppendCsv(item.Source);
             builder.AppendCsv(item.SourceId);
-            builder.AppendCsv(item.Channel);
-            builder.AppendCsv(item.Provider);
             builder.AppendCsv(item.Facility);
             builder.AppendCsv(item.Unit);
             builder.AppendCsv(item.EventCode);
-            builder.AppendCsv(item.WindowsEventId?.ToString(CultureInfo.InvariantCulture));
             builder.AppendCsv(item.Severity);
             builder.AppendCsv(item.Normalized?.Category);
             builder.AppendCsv(item.Normalized?.Action);
@@ -532,11 +499,9 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         AddTextFilter(where, command, "platform", "platform", query.Platform, exact: true);
         AddTextFilter(where, command, "source_id", "source_id", query.SourceId, exact: true);
         AddTextFilter(where, command, "event_code", "event_code", query.EventCode, exact: true);
-        AddTextFilter(where, command, "provider", "provider", query.Provider, exact: true);
         AddTextFilter(where, command, "facility", "facility", query.Facility, exact: true);
         AddTextFilter(where, command, "unit", "unit", query.Unit, exact: true);
         AddTextFilter(where, command, "severity", "severity", query.Severity, exact: true);
-        AddTextFilter(where, command, "channel", "channel", query.Channel, exact: true);
         AddTextFilter(where, command, "event_category", "category", query.Category, exact: true);
         AddTextFilter(where, command, "event_action", "action", query.Action, exact: true);
         AddTextFilter(where, command, "normalized_json->>'outcome'", "outcome", query.Outcome, exact: true);
@@ -553,11 +518,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
         AddTextFilter(where, command, "registry_key", "registry_key", query.RegistryKey, exact: false);
         AddTextFilter(where, command, "normalized_json->>'package_name'", "package_name", query.PackageName, exact: true);
 
-        if (query.WindowsEventId.HasValue)
-        {
-            where.Add("windows_event_id = @windows_event_id");
-            command.Parameters.AddWithValue("windows_event_id", query.WindowsEventId.Value);
-        }
         if (query.From.HasValue)
         {
             where.Add("event_time >= @from");
@@ -604,10 +564,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
                 hostname,
                 source,
                 platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
-                channel,
-                provider,
-                windows_event_id,
-                record_id,
                 event_time,
                 host_timezone,
                 ingest_time,
@@ -622,7 +578,7 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
     {
         var filterCount = query.ActiveFilterSummaries().Count;
         var range = query.From.HasValue || query.To.HasValue ? "bounded UTC range" : "all retained UTC event time";
-        var roleText = string.IsNullOrWhiteSpace(role) ? "operator" : role;
+        var roleText = string.IsNullOrWhiteSpace(role) ? "service" : role;
         return $"{filterCount} active filters over {range}; newest first; limit {limit}; role {roleText}.";
     }
 
@@ -692,10 +648,6 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             Checkpoint = Jsonb.Read<SourceCheckpoint>(reader, "checkpoint_json"),
             Deduplication = Jsonb.Read<EventDeduplicationMetadata>(reader, "deduplication_json"),
             DataHandling = Jsonb.Read<DataHandlingMetadata>(reader, "data_handling_json"),
-            Channel = ReadNullableString(reader, "channel"),
-            Provider = ReadNullableString(reader, "provider"),
-            WindowsEventId = ReadNullableInt32(reader, "windows_event_id"),
-            RecordId = ReadNullableInt64(reader, "record_id"),
             EventTime = ReadDateTimeOffset(reader, "event_time"),
             HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
             IngestTime = ReadDateTimeOffset(reader, "ingest_time"),

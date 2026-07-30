@@ -2,7 +2,7 @@ using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Api.Ingestion;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Xunit;
 
 namespace Challenger.Siem.Api.Tests;
@@ -26,7 +26,7 @@ public sealed class LinuxL4CoverageTests
     public void CanonicalLinuxL4CatalogHasExactMandatoryAndRoleSources()
     {
         var l4 = LinuxTelemetrySourceCatalog.All
-            .Where(entry => entry.CoverageLevel == WindowsCoverageLevel.L4)
+            .Where(entry => entry.CoverageLevel == CoverageLevel.L4)
             .ToArray();
 
         Assert.Equal(
@@ -51,7 +51,7 @@ public sealed class LinuxL4CoverageTests
     {
         var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
         var healthy = Merged(Reports(now), now);
-        Assert.Equal(WindowsCoverageLevel.L4, Current(healthy));
+        Assert.Equal(CoverageLevel.L4, Current(healthy));
 
         var exceptedLowerId = LinuxTelemetrySourceCatalog.L2Security
             .First(entry => entry.Requirement == SourceRequirementKinds.Mandatory)
@@ -63,21 +63,21 @@ public sealed class LinuxL4CoverageTests
             .ToArray();
         var excepted = TelemetryCoverageEvaluator.MergeExpectedSources(
             withLowerGap,
-            WindowsCoverageLevel.L4,
+            CoverageLevel.L4,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { exceptedLowerId },
             now,
             TelemetryPlatforms.Linux);
-        Assert.Equal(WindowsCoverageLevel.L3, Current(excepted));
+        Assert.Equal(CoverageLevel.L3, Current(excepted));
 
         foreach (var sourceId in new[] { PolicySourceId, PerformanceSourceId })
         {
             var missing = Merged(Reports(now).Where(report => report.SourceId != sourceId).ToArray(), now);
-            Assert.Equal(WindowsCoverageLevel.L3, Current(missing));
+            Assert.Equal(CoverageLevel.L3, Current(missing));
 
             var unhealthy = Merged(Reports(now).Select(report => report.SourceId == sourceId
                 ? report with { Status = SourceHealthStatuses.Degraded }
                 : report).ToArray(), now);
-            Assert.Equal(WindowsCoverageLevel.L3, Current(unhealthy));
+            Assert.Equal(CoverageLevel.L3, Current(unhealthy));
         }
     }
 
@@ -96,7 +96,7 @@ public sealed class LinuxL4CoverageTests
                 Enabled = false
             }
             : report).ToArray(), now);
-        Assert.Equal(WindowsCoverageLevel.L3, Current(unknown));
+        Assert.Equal(CoverageLevel.L3, Current(unknown));
 
         var applicableHealthy = Merged(Reports(now).Select(report => report.SourceId == roleId
             ? report with
@@ -108,7 +108,7 @@ public sealed class LinuxL4CoverageTests
                 ObservedAt = now
             }
             : report).ToArray(), now);
-        Assert.Equal(WindowsCoverageLevel.L4, Current(applicableHealthy));
+        Assert.Equal(CoverageLevel.L4, Current(applicableHealthy));
 
         var applicableStale = Merged(Reports(now).Select(report => report.SourceId == roleId
             ? report with
@@ -120,7 +120,7 @@ public sealed class LinuxL4CoverageTests
                 ObservedAt = now.Subtract(SourceHealthRules.PassivePollingStaleAfter).AddSeconds(-1)
             }
             : report).ToArray(), now);
-        Assert.Equal(WindowsCoverageLevel.L3, Current(applicableStale));
+        Assert.Equal(CoverageLevel.L3, Current(applicableStale));
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class LinuxL4CoverageTests
                 ObservedAt = now
             }
             : report).ToArray(), now);
-        Assert.Equal(WindowsCoverageLevel.L3, Current(unknown));
+        Assert.Equal(CoverageLevel.L3, Current(unknown));
 
         var unsupported = Merged(Reports(now).Select(report => report.SourceId == sshId
             ? report with
@@ -159,7 +159,7 @@ public sealed class LinuxL4CoverageTests
                     StringComparer.Ordinal)
             }
             : report).ToArray(), now);
-        Assert.Equal(WindowsCoverageLevel.L3, Current(unsupported));
+        Assert.Equal(CoverageLevel.L3, Current(unsupported));
 
         var quietApplicable = Merged(Reports(now).Select(report => report.SourceId == sshId
             ? report with
@@ -184,7 +184,7 @@ public sealed class LinuxL4CoverageTests
         Assert.Equal(SourceHealthStatuses.Healthy, quietSsh.Status);
         Assert.True(SourceHealthRules.UsesSuccessfulObservationFreshness(sshId));
         Assert.False(SourceHealthRules.IsSuccessfulPollingSource(sshId));
-        Assert.Equal(WindowsCoverageLevel.L4, Current(quietApplicable));
+        Assert.Equal(CoverageLevel.L4, Current(quietApplicable));
 
         var stale = Merged(quietApplicable.Select(report => report.SourceId == sshId
             ? report with
@@ -194,7 +194,7 @@ public sealed class LinuxL4CoverageTests
             }
             : report).ToArray(), now);
         Assert.Equal(SourceHealthStatuses.Stale, Assert.Single(stale, report => report.SourceId == sshId).Status);
-        Assert.Equal(WindowsCoverageLevel.L1, Current(stale));
+        Assert.Equal(CoverageLevel.L1, Current(stale));
     }
 
     [Fact]
@@ -237,7 +237,7 @@ public sealed class LinuxL4CoverageTests
                 SourceKind = TelemetrySourceKinds.AgentHealth,
                 SourceNamespace = "synthetic.custom",
                 DisplayName = "Synthetic custom L4",
-                CoverageLevel = WindowsCoverageLevel.L4,
+                CoverageLevel = CoverageLevel.L4,
                 Requirement = SourceRequirementKinds.Mandatory,
                 Required = true,
                 Applicability = SourceApplicabilityStatuses.Applicable,
@@ -247,7 +247,7 @@ public sealed class LinuxL4CoverageTests
             })
             .ToArray();
 
-        Assert.Equal(WindowsCoverageLevel.L3, Current(Merged(reports, now)));
+        Assert.Equal(CoverageLevel.L3, Current(Merged(reports, now)));
     }
 
     [Fact]
@@ -277,14 +277,14 @@ public sealed class LinuxL4CoverageTests
 
         var spoofedManifest = canonical with
         {
-            CoverageLevel = WindowsCoverageLevel.L3,
+            CoverageLevel = CoverageLevel.L3,
             Requirement = SourceRequirementKinds.Optional,
             Required = false,
             ParserId = "synthetic-parser"
         };
         var spoofedHealth = health with
         {
-            CoverageLevel = WindowsCoverageLevel.L3,
+            CoverageLevel = CoverageLevel.L3,
             Requirement = SourceRequirementKinds.Optional,
             Required = false
         };
@@ -338,7 +338,7 @@ public sealed class LinuxL4CoverageTests
     }
 
     [Fact]
-    public void ServerSqlAndWebSurfacesContainStrictLinuxL4Gate()
+    public void ServerSqlContainsStrictLinuxL4Gate()
     {
         var sourceHealth = Read("server", "Siem.Api", "Database", "SourceHealthRepository.cs");
         var review = Read("server", "Siem.Api", "Review", "ReviewRepository.cs");
@@ -354,17 +354,11 @@ public sealed class LinuxL4CoverageTests
             Assert.Contains("performance_source_health_stale_cutoff", implementation, StringComparison.Ordinal);
         }
 
-        var detailModel = Read("server", "Siem.Api", "Pages", "Agents", "Detail.cshtml.cs");
-        var detail = Read("server", "Siem.Api", "Pages", "Agents", "Detail.cshtml");
-        var index = Read("server", "Siem.Api", "Pages", "Agents", "Index.cshtml");
-        Assert.Contains("WindowsCoverageLevel.L4", detailModel, StringComparison.Ordinal);
-        Assert.Contains("Coverage exceptions never satisfy this strict L4 gate", detail, StringComparison.Ordinal);
-        Assert.Contains("asp-route-target_level=\"L4\"", index, StringComparison.Ordinal);
         Assert.Contains("approval_state' = 'missing_or_mismatched'", review, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<SourceHealthReport> Reports(DateTimeOffset now) =>
-        LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L4)
+        LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L4)
             .Select(entry => Report(entry, now))
             .ToArray();
 
@@ -425,13 +419,13 @@ public sealed class LinuxL4CoverageTests
     private static IReadOnlyList<SourceHealthReport> Merged(IReadOnlyList<SourceHealthReport> reports, DateTimeOffset now) =>
         TelemetryCoverageEvaluator.MergeExpectedSources(
             reports,
-            WindowsCoverageLevel.L4,
+            CoverageLevel.L4,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
 
-    private static WindowsCoverageLevel Current(IReadOnlyList<SourceHealthReport> reports) =>
-        TelemetryCoverageEvaluator.CalculateCurrentLevel(reports, WindowsCoverageLevel.L4, TelemetryPlatforms.Linux);
+    private static CoverageLevel Current(IReadOnlyList<SourceHealthReport> reports) =>
+        TelemetryCoverageEvaluator.CalculateCurrentLevel(reports, CoverageLevel.L4, TelemetryPlatforms.Linux);
 
     private static SourceManifestEntry Find(string sourceId) =>
         LinuxTelemetrySourceCatalog.All.Single(entry => entry.SourceId == sourceId);

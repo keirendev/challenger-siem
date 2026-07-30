@@ -1,44 +1,5 @@
-# HTTPS/TLS deployment path
+# TLS
 
-Challenger SIEM treats HTTPS as required outside loopback development and explicitly approved isolated lab exceptions.
+Production REST, agent ingest, and MCP traffic must use HTTPS. Terminate TLS in Kestrel or an approved reverse proxy, use a certificate trusted by Linux endpoints and MCP clients, and disable plaintext access outside isolated development.
 
-## Local development
-
-Acceptable local-only HTTP endpoints:
-
-- `http://127.0.0.1:<port>` for same-host smoke tests.
-- `http://<agent-reachable-server-address>:<port>` only for an operator-approved isolated lab callback path.
-
-These HTTP endpoints are for development/lab validation only. They must not be used for production endpoint enrollment or telemetry.
-
-## Production options
-
-Use one of these deployment shapes:
-
-1. **Reverse proxy terminates TLS**
-   - Run Kestrel on a private loopback or internal interface.
-   - Terminate HTTPS in a maintained reverse proxy such as nginx, Apache, IIS, or a platform load balancer.
-   - Forward only the required application paths to the API process.
-   - Keep private keys in the proxy/platform secret store, not in this repository.
-
-2. **Kestrel terminates TLS directly**
-   - Configure `ASPNETCORE_URLS=https://0.0.0.0:443` or equivalent Kestrel endpoints.
-   - Provide certificates with ASP.NET Core configuration or the host certificate store.
-   - Protect certificate private keys with OS permissions and never commit them.
-
-## Agent trust expectations
-
-Windows agents must trust the server certificate chain used by `ServerBaseUrl`.
-
-- For public certificates, use a CA chain trusted by the Windows endpoint.
-- For private/internal PKI, install the issuing CA certificate through normal endpoint management.
-- Do not disable certificate validation in production.
-- Keep `ServerBaseUrl` as `https://...` for production registration, ingest, and heartbeat.
-
-## Server enforcement
-
-In non-Development ASP.NET Core environments the API rejects plain HTTP requests with `https_required`. `UseHttpsRedirection` is also enabled. Ensure reverse proxies set the forwarded-proto configuration appropriate for the hosting environment before exposing the API publicly.
-
-## Secret handling
-
-TLS private keys, enrollment tokens, operator API credentials, database passwords, generated agent settings, and raw telemetry stay in ignored local files or external secret stores. They must not be committed, pasted into issue comments, or included in release artifacts.
+Certificate private keys, trust bundles with private material, passwords, and deployment topology belong in secret-managed or ignored paths. Verify certificate expiry, hostname matching, chain trust, and rotation in deployment monitoring.

@@ -1,4 +1,4 @@
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
@@ -10,11 +10,10 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            insert into agents (agent_id, hostname, machine_guid, os_version, agent_version, first_seen, last_seen, status, api_token_hash, host_timezone, platform, host_id)
-            values (@agent_id, @hostname, @machine_guid, @os_version, @agent_version, now(), now(), 'active', @api_token_hash, @host_timezone, @platform, @host_id)
+            insert into agents (agent_id, hostname, os_version, agent_version, first_seen, last_seen, status, api_token_hash, host_timezone, platform, host_id)
+            values (@agent_id, @hostname, @os_version, @agent_version, now(), now(), 'active', @api_token_hash, @host_timezone, @platform, @host_id)
             on conflict (agent_id) do update set
                 hostname = excluded.hostname,
-                machine_guid = excluded.machine_guid,
                 os_version = excluded.os_version,
                 agent_version = excluded.agent_version,
                 host_timezone = coalesce(excluded.host_timezone, agents.host_timezone),
@@ -27,7 +26,6 @@ public sealed class AgentRepository(NpgsqlDataSource dataSource)
             """;
         command.Parameters.AddWithValue("agent_id", request.AgentId);
         command.Parameters.AddWithValue("hostname", request.Hostname);
-        command.Parameters.AddWithValue("machine_guid", (object?)request.MachineGuid ?? DBNull.Value);
         command.Parameters.AddWithValue("os_version", request.OsVersion);
         command.Parameters.AddWithValue("agent_version", request.AgentVersion);
         command.Parameters.AddWithValue("api_token_hash", apiTokenHash);

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Auth;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -37,7 +37,7 @@ public sealed record DetectionRuleSettingsRequest(
     string? SuppressionNotes,
     string ConfirmImpact);
 
-public sealed class DetectionManagementRepository(NpgsqlDataSource dataSource)
+public sealed class DetectionManagementRepository(NpgsqlDataSource dataSource, AlertRepository alerts)
 {
     private static readonly IReadOnlySet<string> LifecycleStates = new HashSet<string>(StringComparer.Ordinal)
         { "catalog", "draft", "review", "test_failed", "test_passed", "staged", "active", "deprecated", "disabled" };
@@ -46,6 +46,7 @@ public sealed class DetectionManagementRepository(NpgsqlDataSource dataSource)
 
     public async Task<IReadOnlyList<DetectionRuleManagementRecord>> ListAsync(IReadOnlyList<DetectionRuleMetadata> rules, CancellationToken cancellationToken)
     {
+        await alerts.EnsureBuiltInRulesAsync(cancellationToken);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var settings = await LoadSettingsAsync(connection, cancellationToken);
         var prerequisites = await LoadPrerequisiteCountsAsync(connection, cancellationToken);
@@ -78,6 +79,7 @@ public sealed class DetectionManagementRepository(NpgsqlDataSource dataSource)
             throw new KeyNotFoundException("Detection rule version was not found.");
         }
 
+        await alerts.EnsureBuiltInRulesAsync(cancellationToken);
         ValidateRequest(request);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -144,7 +146,7 @@ public sealed class DetectionManagementRepository(NpgsqlDataSource dataSource)
         }
 
         await transaction.CommitAsync(cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name,
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name,
             "detection_rule.settings.update", "success", "detection_rule", $"{ruleId}@{version}", context,
             new Dictionary<string, object?>
             {

@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.Agent.Core.Serialization;
 
 namespace Challenger.Siem.Agent.Core.Transport;
@@ -19,7 +19,7 @@ public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfi
         string enrollmentToken,
         CancellationToken cancellationToken)
     {
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/register")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v2/agents/register")
         {
             Content = JsonContent.Create(registration, options: JsonDefaults.Options)
         };
@@ -49,7 +49,7 @@ public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfi
             Events = events
         };
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ingest/events")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v2/ingest/events")
         {
             Content = JsonContent.Create(request, options: JsonDefaults.Options)
         };
@@ -69,7 +69,7 @@ public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfi
 
     public async Task SendHeartbeatAsync(HeartbeatRequest heartbeat, CancellationToken cancellationToken)
     {
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/heartbeat")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v2/agents/heartbeat")
         {
             Content = JsonContent.Create(heartbeat, options: JsonDefaults.Options)
         };
@@ -93,7 +93,7 @@ public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfi
             Snapshots = snapshots
         };
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agents/inventory")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v2/agents/inventory")
         {
             Content = JsonContent.Create(request, options: JsonDefaults.Options)
         };

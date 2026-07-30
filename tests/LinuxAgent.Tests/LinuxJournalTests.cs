@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Services;
@@ -293,7 +293,7 @@ public sealed class LinuxJournalTests
             configuredScope: LinuxJournalScopes.AllAccessibleLocal);
 
         var options = TestOptions(temporary.Queue, temporary.State);
-        options.Journal.TargetCoverageLevel = WindowsCoverageLevel.L2;
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
         var runtime = Runtime(options, state);
         await runtime.InitializeAsync("test", "config", default);
         Assert.Equal("pending_contraction", L1Health(runtime).Details["scope_transition"]);

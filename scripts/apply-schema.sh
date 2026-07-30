@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ -f .local/dev.env ]]; then
+if [[ $# -eq 0
+  && -z "${ConnectionStrings__SiemDatabase:-}"
+  && -z "${CHALLENGER_SIEM_DATABASE:-}"
+  && -f .local/dev.env ]]; then
   # shellcheck disable=SC1091
   source .local/dev.env
 fi
@@ -49,6 +52,11 @@ mapfile -t migrations < <(find server/Siem.Api/Database -maxdepth 1 -type f -nam
 if [[ ${#migrations[@]} -eq 0 ]]; then
   echo "No numbered database migrations were found." >&2
   exit 1
+fi
+existing_tables="$(psql "${PSQL_ARGS[@]}" -Atqc "select count(*) from pg_catalog.pg_tables where schemaname='public';")"
+if [[ "$existing_tables" != "0" ]]; then
+  echo "The Linux v2 schema requires a fresh empty database; existing public tables were found. Back up and provision a new database instead of migrating in place." >&2
+  exit 3
 fi
 for migration in "${migrations[@]}"; do
   psql "${PSQL_ARGS[@]}" -v ON_ERROR_STOP=1 -f "$migration" >/dev/null

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Challenger.Siem.Contracts.V1;
+namespace Challenger.Siem.Contracts.V2;
 
 public sealed record AgentRegistrationRequest
 {
@@ -10,16 +10,11 @@ public sealed record AgentRegistrationRequest
     [JsonPropertyName("hostname")]
     public string Hostname { get; init; } = string.Empty;
 
-    [JsonPropertyName("machine_guid")]
-    public string? MachineGuid { get; init; }
-
     [JsonPropertyName("platform")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Platform { get; init; }
+    public string Platform { get; init; } = TelemetryPlatforms.Linux;
 
     [JsonPropertyName("host_id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? HostId { get; init; }
+    public string HostId { get; init; } = string.Empty;
 
     [JsonPropertyName("os_version")]
     public string OsVersion { get; init; } = string.Empty;

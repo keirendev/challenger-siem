@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Detections;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Microsoft.Extensions.Options;
@@ -526,35 +526,24 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     }
 
     [Fact]
-    public void LinuxDetectionMigrationAndSchemaValidationKnowAdditiveMetadata()
+    public void LinuxDetectionBaselineContainsRequiredMetadata()
     {
-        var migration = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "008_linux_detection_execution.sql"));
+        var schema = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "001_linux_v2.sql"));
         var validator = File.ReadAllText(RepositoryFile("scripts", "validate-schema.sh"));
         foreach (var fragment in new[]
         {
-            "detection_rules add column if not exists tactics",
+            "create table detection_rules",
+            "tactics text[]",
             "correlation_window_seconds",
             "suppression_keys",
-            "uq_alert_evidence_alert_agent_event",
-            "idx_events_linux_auth_correlation"
+            "unique(alert_id,agent_id,event_id)"
         })
         {
-            Assert.Contains(fragment, migration, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(fragment, schema, StringComparison.OrdinalIgnoreCase);
         }
-        foreach (var fragment in new[]
-        {
-            "detection_rules', 'tactics",
-            "correlation_window_seconds",
-            "suppression_keys",
-            "uq_alert_evidence_alert_agent_event",
-            "idx_events_linux_auth_correlation"
-        })
-        {
-            Assert.Contains(fragment, validator, StringComparison.OrdinalIgnoreCase);
-        }
-        Assert.DoesNotContain("drop table", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("drop column", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("truncate ", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("schema_version=2", validator, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("alerts", validator, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("alter table", schema, StringComparison.OrdinalIgnoreCase);
     }
 
     [PostgresFact]
@@ -965,18 +954,35 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
             Source = source,
             SourceId = sourceId,
             EventCode = eventCode,
+            Checkpoint = new SourceCheckpoint
+            {
+                Sequence = 1,
+                EventTime = eventTime ?? DateTimeOffset.UtcNow,
+                RecordedAt = eventTime ?? DateTimeOffset.UtcNow
+            },
+            Deduplication = new EventDeduplicationMetadata
+            {
+                Inputs =
+                [
+                    DeduplicationInputs.AgentId,
+                    DeduplicationInputs.SourceId,
+                    DeduplicationInputs.CheckpointSequence,
+                    DeduplicationInputs.EventCode
+                ]
+            },
             EventTime = eventTime ?? DateTimeOffset.UtcNow,
             Severity = normalized.Outcome == "failure" ? "audit_failure" : "information",
             Message = "Synthetic Linux detection fixture.",
             Normalized = normalized,
-            Raw = JsonSerializer.SerializeToElement(new { synthetic = true, source_id = sourceId, event_code = eventCode })
+            Raw = JsonSerializer.SerializeToElement(new { synthetic = true, source_id = sourceId, event_code = eventCode }),
+            DataHandling = new DataHandlingMetadata()
         };
 
     private static async Task InsertLinuxAgentAsync(NpgsqlDataSource dataSource, string agentId, string hostname)
     {
         await using var command = dataSource.CreateCommand("""
-            insert into agents(agent_id, hostname, machine_guid, os_version, agent_version, api_token_hash, platform, host_id)
-            values(@agent_id, @hostname, null, 'Synthetic Linux', '1.2.0-test', 'synthetic-hash', 'linux', @host_id)
+            insert into agents(agent_id, hostname, os_version, agent_version, api_token_hash, platform, host_id)
+            values(@agent_id, @hostname, 'Synthetic Linux', '1.2.0-test', 'synthetic-hash', 'linux', @host_id)
             on conflict(agent_id) do nothing;
             """);
         command.Parameters.AddWithValue("agent_id", agentId);
@@ -987,6 +993,7 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
 
     private static async Task EnableDetectionRuleAsync(NpgsqlDataSource dataSource, string ruleId, int version)
     {
+        await new AlertRepository(dataSource).EnsureBuiltInRulesAsync(CancellationToken.None);
         await using var command = dataSource.CreateCommand("""
             insert into detection_rule_management(rule_id, version, enabled, lifecycle_state, validation_status, tuning_notes, suppression_notes, settings_version)
             values(@rule_id, @version, true, 'active', 'synthetic_passed', '', '', 1)

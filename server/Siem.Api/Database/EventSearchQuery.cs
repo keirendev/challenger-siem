@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Microsoft.AspNetCore.Http;
 
 namespace Challenger.Siem.Api.Database;
@@ -47,7 +47,7 @@ public sealed record EventSearchQuery
 
     private static readonly HashSet<string> AllowedColumns = new(StringComparer.Ordinal)
     {
-        "event_time", "host", "agent_id", "platform", "source", "provider", "code", "severity", "outcome", "category", "action", "user", "process", "service", "file", "network", "message", "ingest_time", "pivots"
+        "event_time", "host", "agent_id", "platform", "source", "code", "severity", "outcome", "category", "action", "user", "process", "service", "file", "network", "message", "ingest_time", "pivots"
     };
 
     private static readonly HashSet<string> ProtectedFilterNames = new(StringComparer.OrdinalIgnoreCase)
@@ -59,8 +59,6 @@ public sealed record EventSearchQuery
 
     public string? Hostname { get; init; }
     public string? AgentId { get; init; }
-    public string? Channel { get; init; }
-    public int? WindowsEventId { get; init; }
     public DateTimeOffset? From { get; init; }
     public DateTimeOffset? To { get; init; }
     public string? Keyword { get; init; }
@@ -83,7 +81,6 @@ public sealed record EventSearchQuery
     public string? Platform { get; init; }
     public string? SourceId { get; init; }
     public string? EventCode { get; init; }
-    public string? Provider { get; init; }
     public string? Facility { get; init; }
     public string? Unit { get; init; }
     public string? Severity { get; init; }
@@ -122,8 +119,6 @@ public sealed record EventSearchQuery
         {
             Hostname = ReadString(query, "hostname", errors, 128),
             AgentId = ReadString(query, "agent_id", errors, 128),
-            Channel = ReadString(query, "channel", errors, 160, allowSymbols: true),
-            WindowsEventId = ReadInt(query, "windows_event_id", errors, 0, 65535),
             From = from,
             To = to,
             Keyword = ReadString(query, "keyword", errors, 160, allowSymbols: true),
@@ -146,7 +141,6 @@ public sealed record EventSearchQuery
             Platform = ReadString(query, "platform", errors, 32),
             SourceId = ReadString(query, "source_id", errors, 128),
             EventCode = ReadString(query, "event_code", errors, 128),
-            Provider = ReadString(query, "provider", errors, 160, allowSymbols: true),
             Facility = ReadString(query, "facility", errors, 80, allowSymbols: true),
             Unit = ReadString(query, "unit", errors, 160, allowSymbols: true),
             Severity = ReadString(query, "severity", errors, 32),
@@ -166,7 +160,7 @@ public sealed record EventSearchQuery
 
     public EventSearchQuery ForRole(string role)
     {
-        if (Challenger.Siem.Api.Auth.OperatorAuthorization.HasPermission(role, Challenger.Siem.Api.Auth.OperatorPermission.ReviewSensitive))
+        if (Challenger.Siem.Api.Auth.ServiceAuthorization.HasPermission(role, Challenger.Siem.Api.Auth.ServicePermission.ReviewSensitive))
         {
             return this;
         }
@@ -196,7 +190,7 @@ public sealed record EventSearchQuery
         IReadOnlyDictionary<string, string> query,
         string role)
     {
-        if (Challenger.Siem.Api.Auth.OperatorAuthorization.HasPermission(role, Challenger.Siem.Api.Auth.OperatorPermission.ReviewSensitive))
+        if (Challenger.Siem.Api.Auth.ServiceAuthorization.HasPermission(role, Challenger.Siem.Api.Auth.ServicePermission.ReviewSensitive))
         {
             return new Dictionary<string, string>(query, StringComparer.OrdinalIgnoreCase);
         }
@@ -216,11 +210,8 @@ public sealed record EventSearchQuery
         Add(filters, "platform", Platform, false);
         Add(filters, "source", Source, false);
         Add(filters, "source_id", SourceId, false);
-        Add(filters, "channel", Channel, false);
-        Add(filters, "provider", Provider, false);
         Add(filters, "facility", Facility, false);
         Add(filters, "unit", Unit, false);
-        Add(filters, "windows_event_id", WindowsEventId?.ToString(CultureInfo.InvariantCulture), false);
         Add(filters, "event_code", EventCode, false);
         Add(filters, "severity", Severity, false);
         Add(filters, "outcome", Outcome, false);
@@ -276,9 +267,9 @@ public sealed record EventSearchQuery
     private EventSearchQuery ValidateEnums()
     {
         var errors = ValidationErrors.ToList();
-        if (!string.IsNullOrWhiteSpace(Platform) && Platform is not (TelemetryPlatforms.Windows or TelemetryPlatforms.Linux)) errors.Add(new("platform", "platform must be windows or linux."));
-        if (!string.IsNullOrWhiteSpace(Source) && !TelemetrySourceKinds.All.Contains(Source)) errors.Add(new("source", "source is not a supported v1 source kind."));
-        if (!string.IsNullOrWhiteSpace(Severity) && Severity is not ("verbose" or "information" or "warning" or "error" or "critical" or "audit_success" or "audit_failure")) errors.Add(new("severity", "severity is not a supported v1 event severity."));
+        if (!string.IsNullOrWhiteSpace(Platform) && Platform != TelemetryPlatforms.Linux) errors.Add(new("platform", "platform must be linux."));
+        if (!string.IsNullOrWhiteSpace(Source) && !TelemetrySourceKinds.All.Contains(Source)) errors.Add(new("source", "source is not a supported v2 source kind."));
+        if (!string.IsNullOrWhiteSpace(Severity) && Severity is not ("verbose" or "information" or "warning" or "error" or "critical" or "audit_success" or "audit_failure")) errors.Add(new("severity", "severity is not a supported v2 event severity."));
         if (!string.IsNullOrWhiteSpace(SourcePort) && !int.TryParse(SourcePort, NumberStyles.None, CultureInfo.InvariantCulture, out _)) errors.Add(new("source_port", "source_port must be numeric."));
         if (!string.IsNullOrWhiteSpace(DestinationPort) && !int.TryParse(DestinationPort, NumberStyles.None, CultureInfo.InvariantCulture, out _)) errors.Add(new("destination_port", "destination_port must be numeric."));
         if (!string.IsNullOrWhiteSpace(EntityValue) && string.IsNullOrWhiteSpace(EntityType)) errors.Add(new("entity_type", "entity_type is required when entity_value is present."));

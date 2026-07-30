@@ -1,5 +1,5 @@
 using Challenger.Siem.Api.Coverage;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Xunit;
 
 namespace Challenger.Siem.Api.Tests;
@@ -20,7 +20,7 @@ public sealed class TelemetryCoverageEvaluatorTests
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L3));
+            CoverageLevel.L3));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusSatisfied, result.Status);
         Assert.Contains(LinuxTelemetrySourceIds.ProcessSnapshotDiff, result.RecentEventSources);
@@ -35,13 +35,13 @@ public sealed class TelemetryCoverageEvaluatorTests
             TelemetrySourceKinds.LinuxJournal,
             recentEventCount: 0,
             observedAt: DateTimeOffset.Parse("2026-07-16T01:00:00Z"),
-            coverageLevel: WindowsCoverageLevel.L1);
+            coverageLevel: CoverageLevel.L1);
 
         var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L1));
+            CoverageLevel.L1));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
         Assert.Empty(result.RecentEventSources);
@@ -56,13 +56,13 @@ public sealed class TelemetryCoverageEvaluatorTests
             TelemetrySourceKinds.LinuxJournal,
             recentEventCount: 0,
             observedAt: DateTimeOffset.Parse("2026-07-19T01:00:00Z"),
-            coverageLevel: WindowsCoverageLevel.L2);
+            coverageLevel: CoverageLevel.L2);
 
         var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L2));
+            CoverageLevel.L2));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
         Assert.Contains(LinuxTelemetrySourceIds.KernelSecurity, result.HealthySources);
@@ -78,13 +78,13 @@ public sealed class TelemetryCoverageEvaluatorTests
             TelemetrySourceKinds.LinuxJournal,
             recentEventCount: 0,
             observedAt: DateTimeOffset.Parse("2026-07-19T01:00:00Z"),
-            coverageLevel: WindowsCoverageLevel.L2);
+            coverageLevel: CoverageLevel.L2);
 
         var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L2));
+            CoverageLevel.L2));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
         Assert.Contains(LinuxTelemetrySourceIds.LoginSession, result.HealthySources);
@@ -100,13 +100,13 @@ public sealed class TelemetryCoverageEvaluatorTests
             TelemetrySourceKinds.LinuxJournal,
             recentEventCount: 0,
             observedAt: DateTimeOffset.Parse("2026-07-19T01:00:00Z"),
-            coverageLevel: WindowsCoverageLevel.L2);
+            coverageLevel: CoverageLevel.L2);
 
         var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L2));
+            CoverageLevel.L2));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
         Assert.Contains(LinuxTelemetrySourceIds.Scheduler, result.HealthySources);
@@ -124,13 +124,13 @@ public sealed class TelemetryCoverageEvaluatorTests
             LinuxTelemetrySourceIds.JournalL1,
             TelemetrySourceKinds.LinuxJournal,
             recentEventCount: 0,
-            coverageLevel: WindowsCoverageLevel.L1);
+            coverageLevel: CoverageLevel.L1);
 
         var result = Assert.Single(TelemetryCoverageEvaluator.EvaluateDetectionPrerequisites(
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L2));
+            CoverageLevel.L2));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusUnknown, result.Status);
         Assert.Contains(LinuxTelemetrySourceIds.JournalL1, result.HealthySources);
@@ -156,7 +156,7 @@ public sealed class TelemetryCoverageEvaluatorTests
             [rule],
             [source],
             new Dictionary<string, InventoryTelemetryStatus>(StringComparer.OrdinalIgnoreCase),
-            WindowsCoverageLevel.L3));
+            CoverageLevel.L3));
 
         Assert.Equal(TelemetryCoverageEvaluator.StatusSatisfied, result.Status);
         Assert.Contains(alias, result.HealthySources);
@@ -172,7 +172,7 @@ public sealed class TelemetryCoverageEvaluatorTests
             entry.SourceId == LinuxTelemetrySourceIds.ProcessSnapshotDiff);
         Assert.Equal(SourceRequirementKinds.Mandatory, blockedSource.Requirement);
 
-        var sources = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L3)
+        var sources = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L3)
             .Select(entry =>
             {
                 var blocked = entry.SourceId == blockedSource.SourceId;
@@ -200,10 +200,10 @@ public sealed class TelemetryCoverageEvaluatorTests
 
         var level = TelemetryCoverageEvaluator.CalculateCurrentLevel(
             sources,
-            WindowsCoverageLevel.L3,
+            CoverageLevel.L3,
             TelemetryPlatforms.Linux);
 
-        Assert.Equal(WindowsCoverageLevel.L2, level);
+        Assert.Equal(CoverageLevel.L2, level);
     }
 
     private static DetectionRuleMetadata Rule(string ruleId, params string[] requiredSources) => new()
@@ -220,7 +220,7 @@ public sealed class TelemetryCoverageEvaluatorTests
         string sourceKind,
         int recentEventCount,
         DateTimeOffset? observedAt = null,
-        WindowsCoverageLevel coverageLevel = WindowsCoverageLevel.L3) => new()
+        CoverageLevel coverageLevel = CoverageLevel.L3) => new()
         {
             SourceId = sourceId,
             Platform = TelemetryPlatforms.Linux,

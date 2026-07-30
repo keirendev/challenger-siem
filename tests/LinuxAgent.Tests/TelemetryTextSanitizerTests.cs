@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.Agent.Core.Serialization;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Xunit;
 
 namespace Challenger.Siem.LinuxAgent.Tests;

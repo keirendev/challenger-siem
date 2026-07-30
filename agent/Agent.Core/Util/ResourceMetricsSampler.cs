@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Agent.Core.Util;
 

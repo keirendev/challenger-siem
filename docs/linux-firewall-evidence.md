@@ -32,10 +32,9 @@ Only an unavailable fixed executable (`command_missing`) counts toward producer 
 
 ## Operator review
 
-Review `linux-firewall` after the normal inventory startup delay in `/api/v1/source-health`, `/api/v1/telemetry-coverage`, or the host coverage page.
+Review `linux-firewall` after the normal inventory startup delay in `/api/v2/source-health`, `/api/v2/telemetry-coverage`, or the host coverage page.
 
 - `logging_enabled` plus `supported_quiet` means the already-enabled producer and current journal were observed; it does not mean traffic was allowed, denied, or safe.
-- `logging_disabled` is an operator decision point, not an invitation for the agent or web console to enable logging. Use the firewall owner's normal change-control and rollback process only when that additional telemetry is actually required.
 - `absent`, `unsupported`, `permission_denied`, `timeout`, `malformed`, and pre-inventory `unknown` stay machine-readable and distinct. Do not install packages, switch firewall implementations, widen privilege, or generate traffic solely to turn the row green.
 - Search recent events only when an exact family is `observed`; quiet health never satisfies a detection rule's recent-event requirement.
 

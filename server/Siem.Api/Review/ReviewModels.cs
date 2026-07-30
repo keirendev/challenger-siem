@@ -1,4 +1,4 @@
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.Api.Review;
 
@@ -25,7 +25,7 @@ public sealed record AgentInventoryQuery(
     string? Health,
     string? Status,
     string? Platform,
-    WindowsCoverageLevel? CoverageLevel,
+    CoverageLevel? CoverageLevel,
     string? SourceIssue,
     string? Pressure,
     string? Gap,
@@ -34,7 +34,6 @@ public sealed record AgentInventoryQuery(
 public sealed record AgentInventoryItem(
     string AgentId,
     string Hostname,
-    string? MachineGuid,
     string OsVersion,
     string AgentVersion,
     DateTimeOffset FirstSeen,
@@ -47,7 +46,7 @@ public sealed record AgentInventoryItem(
     DateTimeOffset? LastEventTime,
     bool IsStale,
     string Platform,
-    WindowsCoverageLevel CurrentCoverageLevel,
+    CoverageLevel CurrentCoverageLevel,
     string CoverageStatus,
     int MissingMandatorySources,
     int StaleSources,

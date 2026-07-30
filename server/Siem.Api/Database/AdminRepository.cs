@@ -4,8 +4,6 @@ using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
 
-public sealed record AdminOperatorRecord(Guid OperatorId, string Username, string DisplayName, string Role, bool Enabled, int FailedLoginCount, DateTimeOffset? LockedUntil, DateTimeOffset? LastLoginAt, DateTimeOffset CredentialsChangedAt);
-public sealed record AdminSessionRecord(Guid SessionId, string Username, string Role, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, DateTimeOffset? RevokedAt, string? RevokeReason);
 public sealed record AdminAuditRecord(long AuditId, DateTimeOffset OccurredAt, string? ActorUsername, string Action, string Outcome, string? TargetType, string? TargetId, string DetailsSummary);
 public sealed record AdminSourceState(string SourceId, string DisplayName, string Status, long AgentCount, long Healthy, long Degraded, long Missing, string? ReviewNote, DateTimeOffset? MutedUntil, int SettingsVersion);
 public sealed record AdminConfigSettingRecord(string Key, string Value, string EffectiveValue, int Version, DateTimeOffset? UpdatedAt, string? UpdatedBy, string Impact);
@@ -13,8 +11,6 @@ public sealed record AdminConfigSettingRequest(string Key, string Value, int Exp
 public sealed record AdminSourceSettingRequest(string SourceId, string DisplayName, string? ReviewNote, DateTimeOffset? MutedUntil, int ExpectedVersion, string ConfirmImpact);
 
 public sealed record AdminOverviewResponse(
-    IReadOnlyList<AdminOperatorRecord> Operators,
-    IReadOnlyList<AdminSessionRecord> Sessions,
     IReadOnlyList<AdminSourceState> Sources,
     IReadOnlyList<AdminConfigSettingRecord> Settings,
     IReadOnlyList<AdminAuditRecord> AuditEvents);
@@ -25,8 +21,6 @@ public sealed class AdminRepository(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         return new AdminOverviewResponse(
-            await LoadOperatorsAsync(connection, cancellationToken),
-            await LoadSessionsAsync(connection, cancellationToken),
             await LoadSourcesAsync(connection, cancellationToken),
             await LoadSettingsAsync(connection, configured, cancellationToken),
             await LoadAuditAsync(connection, cancellationToken));
@@ -73,7 +67,7 @@ public sealed class AdminRepository(NpgsqlDataSource dataSource)
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name,
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name,
             "admin.config.update", "success", "server_config", request.Key, context,
             new Dictionary<string, object?> { ["setting_key"] = request.Key, ["version"] = nextVersion, ["impact"] = ImpactFor(request.Key, request.Value) }, cancellationToken);
         return (await LoadSettingsAsync(connection, configured, cancellationToken)).FirstOrDefault(item => item.Key == request.Key);
@@ -108,37 +102,10 @@ public sealed class AdminRepository(NpgsqlDataSource dataSource)
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name,
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name,
             "admin.source_review.update", "success", "source", request.SourceId, context,
             new Dictionary<string, object?> { ["version"] = nextVersion, ["muted_until_set"] = request.MutedUntil.HasValue }, cancellationToken);
         return (await LoadSourcesAsync(connection, cancellationToken)).FirstOrDefault(item => item.SourceId == request.SourceId);
-    }
-
-    private static async Task<IReadOnlyList<AdminOperatorRecord>> LoadOperatorsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "select operator_id, username, display_name, role, enabled, failed_login_count, locked_until, last_login_at, credentials_changed_at from operators order by username asc limit 200;";
-        var results = new List<AdminOperatorRecord>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new AdminOperatorRecord(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetBoolean(4), reader.GetInt32(5), ReadNullableTime(reader, 6), ReadNullableTime(reader, 7), ReadTime(reader, 8)));
-        }
-        return results;
-    }
-
-    private static async Task<IReadOnlyList<AdminSessionRecord>> LoadSessionsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            select s.session_id, o.username, o.role, s.created_at, s.expires_at, s.revoked_at, s.revoke_reason
-            from operator_sessions s join operators o on o.operator_id=s.operator_id
-            order by s.created_at desc limit 200;
-            """;
-        var results = new List<AdminSessionRecord>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) results.Add(new AdminSessionRecord(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), ReadTime(reader, 3), ReadTime(reader, 4), ReadNullableTime(reader, 5), reader.IsDBNull(6) ? null : reader.GetString(6)));
-        return results;
     }
 
     private static async Task<IReadOnlyList<AdminSourceState>> LoadSourcesAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
@@ -190,7 +157,7 @@ public sealed class AdminRepository(NpgsqlDataSource dataSource)
     private static async Task<IReadOnlyList<AdminAuditRecord>> LoadAuditAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "select audit_id, occurred_at, actor_username, action, outcome, target_type, target_id, left(details::text, 500) from security_audit_events order by occurred_at desc limit 200;";
+        command.CommandText = "select audit_id, occurred_at, actor_name, action, outcome, target_type, target_id, left(details::text, 500) from security_audit_events order by occurred_at desc limit 200;";
         var results = new List<AdminAuditRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(new AdminAuditRecord(reader.GetInt64(0), ReadTime(reader, 1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7)));

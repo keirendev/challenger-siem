@@ -8,12 +8,9 @@ using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Api.Mcp;
 using Challenger.Siem.Api.Platform;
 using Challenger.Siem.Api.Review;
-using Challenger.Siem.Api.SocAgent;
 using Challenger.Siem.Api.Storage;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -31,10 +28,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
 
-builder.Services.AddDataProtection();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<TokenService>();
-builder.Services.AddSingleton<OperatorPasswordHasher>();
 builder.Services.AddSingleton(sp =>
 {
     var configuration = sp.GetRequiredService<IConfiguration>();
@@ -47,9 +42,7 @@ builder.Services.AddSingleton(sp =>
     return NpgsqlDataSource.Create(connectionString);
 });
 builder.Services.AddScoped<AgentRepository>();
-builder.Services.AddScoped<OperatorRepository>();
 builder.Services.AddScoped<SecurityAuditRepository>();
-builder.Services.AddScoped<OperatorCookieEvents>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<RetentionRepository>();
@@ -62,35 +55,7 @@ builder.Services.AddScoped<CaseRepository>();
 builder.Services.AddScoped<DetectionManagementRepository>();
 builder.Services.AddScoped<DashboardRepository>();
 builder.Services.AddScoped<AdminRepository>();
-builder.Services.AddScoped<SocAgentRepository>();
-builder.Services.AddScoped<SocAgentProviderStatusService>();
-builder.Services.AddScoped<ISocAgentOAuthOperatorSessionValidator, SocAgentOAuthOperatorSessionValidator>();
-builder.Services.AddSingleton<SocAgentCodexAppServerClient>();
-builder.Services.AddSingleton<ISocAgentCodexAppServerClient>(serviceProvider =>
-    serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
-builder.Services.AddSingleton<ISocAgentCodexCredentialBroker>(serviceProvider =>
-    serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
-builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<SocAgentCodexAppServerClient>());
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddHttpClient<ISocAgentModelProvider, OpenAiSocAgentModelProvider>((serviceProvider, client) =>
-{
-    var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
-    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-{
-    AllowAutoRedirect = false
-});
-builder.Services.AddHttpClient<SocAgentSubscriptionOAuthConnectService>((serviceProvider, client) =>
-{
-    var configured = serviceProvider.GetRequiredService<IOptions<SocAgentOptions>>().Value;
-    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configured.RequestTimeoutSeconds, 5, 120));
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-{
-    AllowAutoRedirect = false
-});
-builder.Services.AddScoped<SocAgentService>();
-builder.Services.AddSingleton<SocAgentLiveRunRegistry>();
-builder.Services.AddScoped<SocAgentLiveRunCoordinator>();
 builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<InvestigationGraphRepository>();
@@ -98,8 +63,6 @@ builder.Services.AddScoped<ReviewRepository>();
 builder.Services.AddScoped<SiemMcpAccess>();
 builder.Services.AddScoped<SiemMcpTools>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
-builder.Services.Configure<SocAgentOptions>(builder.Configuration.GetSection(SocAgentOptions.SectionName));
-builder.Services.Configure<SocAgentCodexAppServerOptions>(builder.Configuration.GetSection(SocAgentCodexAppServerOptions.SectionName));
 builder.Services.AddOptions<ManagedRetentionOptions>()
     .Bind(builder.Configuration.GetSection(ManagedRetentionOptions.SectionName))
     .ValidateOnStart();
@@ -115,83 +78,26 @@ builder.Services
     .WithTools<SiemMcpTools>(SiemMcpJson.Options)
     .WithResources<SiemMcpResources>()
     .WithPrompts<SiemMcpPrompts>(SiemMcpJson.Options);
-builder.Services.AddRazorPages(options =>
-{
-    options.Conventions.AuthorizeFolder("/");
-    options.Conventions.AllowAnonymousToPage("/Login");
-});
 builder.Services
     .AddAuthentication(options =>
     {
-        options.DefaultScheme = OperatorAuthentication.SmartScheme;
-        options.DefaultChallengeScheme = OperatorAuthentication.SmartScheme;
+        options.DefaultScheme = ServiceAuthentication.Scheme;
+        options.DefaultChallengeScheme = ServiceAuthentication.Scheme;
     })
-    .AddPolicyScheme(OperatorAuthentication.SmartScheme, null, options => options.ForwardDefaultSelector = context =>
-    {
-        var pathValue = context.Request.Path.Value ?? string.Empty;
-        var isAgentTransport = pathValue.StartsWith("/api/v1/agents/", StringComparison.OrdinalIgnoreCase)
-            || pathValue.StartsWith("/api/v1/ingest/", StringComparison.OrdinalIgnoreCase);
-        // Agent transport uses AgentAuthenticator only; never invoke operator bearer handling on those routes.
-        if (isAgentTransport)
-        {
-            return CookieAuthenticationDefaults.AuthenticationScheme;
-        }
-
-        return context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? OperatorAuthentication.BearerScheme
-            : CookieAuthenticationDefaults.AuthenticationScheme;
-    })
-    .AddScheme<AuthenticationSchemeOptions, OperatorBearerHandler>(OperatorAuthentication.BearerScheme, null)
-    .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
-    {
-        options.LoginPath = "/login";
-        options.LogoutPath = "/logout";
-        options.AccessDeniedPath = "/forbidden";
-        options.Cookie.Name = ".ChallengerSiem.Operator";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Strict;
-        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
-        options.Cookie.MaxAge = OperatorRepository.SessionLifetime;
-        options.ExpireTimeSpan = OperatorRepository.SessionLifetime;
-        options.SlidingExpiration = false;
-        options.EventsType = typeof(OperatorCookieEvents);
-    });
+    .AddScheme<AuthenticationSchemeOptions, ServiceBearerHandler>(ServiceAuthentication.Scheme, null);
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("analyst", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ReviewSensitive)));
-    options.AddPolicy("investigations", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ManageInvestigations)));
-    options.AddPolicy("detections", policy => policy.RequireAssertion(c => OperatorAuthorization.HasPermission(OperatorAuthorization.Role(c.User), OperatorPermission.ManageDetections)));
-    options.AddPolicy("admin", policy => policy.RequireRole(OperatorRoles.Admin));
+    options.AddPolicy("service", policy => policy.RequireAuthenticatedUser());
 });
 
 var app = builder.Build();
-
-// Local operator bootstrap/recovery/token rotation only needs the database connection string.
-// Keep enrollment-token validation for normal web/API server startup.
-if (args.Length >= 2 && string.Equals(args[0], "operator", StringComparison.Ordinal))
-{
-    if (string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("SiemDatabase")))
-    {
-        throw new InvalidOperationException(
-            "Missing required Challenger SIEM configuration: ConnectionStrings:SiemDatabase. Set this value with an environment variable or ignored local settings file. Secret values are intentionally not shown.");
-    }
-
-    var commandExit = await OperatorAccountCommand.TryRunAsync(args, app.Services, CancellationToken.None);
-    if (commandExit.HasValue)
-    {
-        Environment.ExitCode = commandExit.Value;
-        return;
-    }
-}
 
 StartupConfigurationValidator.ValidateRequiredConfiguration(app.Configuration);
 
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
 {
-    context.Response.Headers.TryAdd("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'");
     context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.TryAdd("Referrer-Policy", "same-origin");
     if (!app.Environment.IsDevelopment() && !context.Request.IsHttps)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -201,7 +107,6 @@ app.Use(async (context, next) =>
 
     await next();
 });
-app.UseStaticFiles();
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {
@@ -215,35 +120,25 @@ app.Use(async (context, next) =>
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers.WWWAuthenticate = "Bearer";
-            await context.Response.WriteAsJsonAsync(new { error = "mcp_operator_bearer_required" });
+            await context.Response.WriteAsJsonAsync(new { error = "mcp_service_bearer_required" });
             return;
         }
-    }
-
-    if (context.Request.Path.StartsWithSegments("/api")
-        && context.Request.Method is not ("GET" or "HEAD" or "OPTIONS")
-        && context.User.Identity?.IsAuthenticated == true
-        && !context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-    {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-        await context.Response.WriteAsJsonAsync(new { error = "csrf_safe_bearer_required" });
-        return;
     }
     await next();
 });
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? string.Empty;
-    var isOperatorApi = path.StartsWith("/api/v1/", StringComparison.Ordinal)
-        && !path.StartsWith("/api/v1/agents/", StringComparison.Ordinal)
-        && !path.StartsWith("/api/v1/ingest/", StringComparison.Ordinal);
-    if (isOperatorApi)
+    var isServiceApi = path.StartsWith("/api/v2/", StringComparison.Ordinal)
+        && !path.StartsWith("/api/v2/agents/", StringComparison.Ordinal)
+        && !path.StartsWith("/api/v2/ingest/", StringComparison.Ordinal);
+    if (isServiceApi)
     {
         var audit = context.RequestServices.GetRequiredService<SecurityAuditRepository>();
         var authenticated = context.User.Identity?.IsAuthenticated == true;
-        var allowed = authenticated && context.RequestServices.GetRequiredService<TokenService>().HasOperatorAccess(context);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name,
-            "operator.api_access", allowed ? "success" : "denied", "route", path, context,
+        var allowed = authenticated && context.RequestServices.GetRequiredService<TokenService>().HasServiceAccess(context);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, ServiceAuthentication.PrincipalName,
+            "service.api_access", allowed ? "success" : "denied", "route", path, context,
             new Dictionary<string,object?> { ["method"] = context.Request.Method }, context.RequestAborted);
     }
     await next();
@@ -252,40 +147,7 @@ app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
-app.MapPost("/api/v1/operators", async Task<IResult> (OperatorCreateRequest request, HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
-{
-    if (!OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ManageOperators)) return Results.Forbid();
-    try
-    {
-        var created = await operators.CreateAsync(request.Username, request.DisplayName, request.Role, request.Password, false, cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "operator.create", "success", "operator", created.OperatorId.ToString(), context, new Dictionary<string,object?> { ["role"] = created.Role }, cancellationToken);
-        return Results.Ok(new { created.OperatorId, created.Username, created.DisplayName, created.Role, created.Enabled });
-    }
-    catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string,string[]> { ["operator"] = new[] { ex.Message } }); }
-}).RequireAuthorization("admin");
-
-app.MapPost("/api/v1/operators/me/password", async Task<IResult> (OperatorPasswordChangeRequest request, HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
-{
-    var id = OperatorAuthentication.OperatorId(context.User); if (!id.HasValue) return Results.Unauthorized();
-    if (!await operators.VerifyPasswordAsync(id.Value, request.CurrentPassword, cancellationToken))
-    {
-        await audit.RecordAsync(id, context.User.Identity?.Name, "operator.password.change", "failure", "operator", id.ToString(), context, null, cancellationToken);
-        return Results.Unauthorized();
-    }
-    try { await operators.ChangePasswordAsync(id.Value, request.NewPassword, false, cancellationToken); }
-    catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string,string[]> { ["new_password"] = new[] { ex.Message } }); }
-    await audit.RecordAsync(id, context.User.Identity?.Name, "operator.password.change", "success", "operator", id.ToString(), context, null, cancellationToken);
-    return Results.Ok(new { status = "changed", sessions_revoked = true });
-}).RequireAuthorization();
-
-app.MapPost("/api/v1/operators/me/api-token/rotate", async Task<IResult> (HttpContext context, OperatorRepository operators, SecurityAuditRepository audit, CancellationToken cancellationToken) =>
-{
-    var id=OperatorAuthentication.OperatorId(context.User); if(!id.HasValue)return Results.Unauthorized(); var token=await operators.RotateApiTokenAsync(id.Value,cancellationToken);
-    await audit.RecordAsync(id,context.User.Identity?.Name,"operator.api_token.rotate","success","operator",id.ToString(),context,null,cancellationToken);
-    return Results.Ok(new { api_token=token, shown_once=true, sessions_revoked=true });
-}).RequireAuthorization();
-
-app.MapPost("/api/v1/agents/register", async Task<IResult> (
+app.MapPost("/api/v2/agents/register", async Task<IResult> (
     HttpContext context,
     AgentRegistrationRequest request,
     AgentRepository agents,
@@ -324,7 +186,7 @@ app.MapPost("/api/v1/agents/register", async Task<IResult> (
     });
 });
 
-app.MapPost("/api/v1/agents/heartbeat", async Task<IResult> (
+app.MapPost("/api/v2/agents/heartbeat", async Task<IResult> (
     HttpContext context,
     HeartbeatRequest request,
     AgentAuthenticator authenticator,
@@ -347,7 +209,7 @@ app.MapPost("/api/v1/agents/heartbeat", async Task<IResult> (
     return Results.Ok(new { status = "accepted" });
 });
 
-app.MapPost("/api/v1/agents/inventory", async Task<IResult> (
+app.MapPost("/api/v2/agents/inventory", async Task<IResult> (
     HttpContext context,
     AssetInventoryBatchRequest request,
     AgentAuthenticator authenticator,
@@ -373,7 +235,7 @@ app.MapPost("/api/v1/agents/inventory", async Task<IResult> (
     return Results.Ok(new { status = "accepted", snapshots = request.Snapshots.Count });
 });
 
-app.MapPost("/api/v1/ingest/events", async Task<IResult> (
+app.MapPost("/api/v2/ingest/events", async Task<IResult> (
     HttpContext context,
     IngestBatchRequest request,
     AgentAuthenticator authenticator,
@@ -413,16 +275,16 @@ app.MapPost("/api/v1/ingest/events", async Task<IResult> (
     });
 });
 
-app.MapGet("/api/v1/events", async Task<IResult> (
+app.MapGet("/api/v2/events", async Task<IResult> (
     HttpContext context,
     EventRepository events,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var query = EventSearchQuery.FromQuery(context.Request.Query);
@@ -431,7 +293,7 @@ app.MapGet("/api/v1/events", async Task<IResult> (
         return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
     }
 
-    var page = await events.SearchEventsPageForOperatorAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
+    var page = await events.SearchEventsPageForServiceAsync(query, ServiceAuthorization.Role(context.User)!, cancellationToken);
     return Results.Ok(new EventSearchResponse
     {
         Events = page.Events,
@@ -442,15 +304,15 @@ app.MapGet("/api/v1/events", async Task<IResult> (
     });
 });
 
-app.MapGet("/api/v1/events/timeline", async Task<IResult> (
+app.MapGet("/api/v2/events/timeline", async Task<IResult> (
     HttpContext context,
     EventRepository events,
     TokenService tokens,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var query = EventSearchQuery.FromQuery(context.Request.Query);
@@ -459,7 +321,7 @@ app.MapGet("/api/v1/events/timeline", async Task<IResult> (
         return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
     }
 
-    var timeline = await events.GetTimelineAsync(query, OperatorAuthorization.Role(context.User)!, cancellationToken);
+    var timeline = await events.GetTimelineAsync(query, ServiceAuthorization.Role(context.User)!, cancellationToken);
     return Results.Ok(new EventTimelineResponse
     {
         Buckets = timeline.Buckets,
@@ -467,24 +329,21 @@ app.MapGet("/api/v1/events/timeline", async Task<IResult> (
     });
 });
 
-app.MapGet("/api/v1/events/saved-searches", async Task<IResult> (
+app.MapGet("/api/v2/events/saved-searches", async Task<IResult> (
     HttpContext context,
     EventRepository events,
     TokenService tokens,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    return operatorId.HasValue
-        ? Results.Ok(new { saved_searches = await events.ListSavedSearchesAsync(operatorId.Value, OperatorAuthorization.Role(context.User)!, cancellationToken) })
-        : Results.Unauthorized();
+    return Results.Ok(new { saved_searches = await events.ListSavedSearchesAsync(ServiceAuthentication.ServiceId, ServiceRoles.Service, cancellationToken) });
 });
 
-app.MapPost("/api/v1/events/saved-searches", async Task<IResult> (
+app.MapPost("/api/v2/events/saved-searches", async Task<IResult> (
     SavedEventSearchRequest request,
     HttpContext context,
     EventRepository events,
@@ -492,23 +351,21 @@ app.MapPost("/api/v1/events/saved-searches", async Task<IResult> (
     SecurityAuditRepository audit,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (!operatorId.HasValue) return Results.Unauthorized();
+    var serviceId = ServiceAuthentication.ServiceId;
     try
     {
-        var canShare = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ReviewSensitive);
-        var saved = await events.SaveSearchAsync(request, operatorId.Value, context.User.Identity?.Name ?? "operator", canShare, cancellationToken);
-        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.create", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
+        var saved = await events.SaveSearchAsync(request, serviceId, ServiceAuthentication.PrincipalName, true, cancellationToken);
+        await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.saved.create", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
         return Results.Ok(saved);
     }
     catch (UnauthorizedAccessException)
     {
-        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.create", "denied", "saved_event_search", null, context, null, cancellationToken);
+        await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.saved.create", "denied", "saved_event_search", null, context, null, cancellationToken);
         return Results.Forbid();
     }
     catch (ArgumentException ex)
@@ -517,7 +374,7 @@ app.MapPost("/api/v1/events/saved-searches", async Task<IResult> (
     }
 });
 
-app.MapPut("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
+app.MapPut("/api/v2/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
     Guid savedSearchId,
     SavedEventSearchRequest request,
     HttpContext context,
@@ -526,18 +383,16 @@ app.MapPut("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IRes
     SecurityAuditRepository audit,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (!operatorId.HasValue) return Results.Unauthorized();
+    var serviceId = ServiceAuthentication.ServiceId;
     try
     {
-        var canShare = OperatorAuthorization.HasPermission(OperatorAuthorization.Role(context.User), OperatorPermission.ReviewSensitive);
-        var saved = await events.SaveSearchAsync(request, operatorId.Value, context.User.Identity?.Name ?? "operator", canShare, cancellationToken, savedSearchId);
-        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.update", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
+        var saved = await events.SaveSearchAsync(request, serviceId, ServiceAuthentication.PrincipalName, true, cancellationToken, savedSearchId);
+        await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.saved.update", "success", "saved_event_search", saved.SavedSearchId.ToString(), context, new Dictionary<string, object?> { ["visibility"] = saved.Visibility, ["version"] = saved.Version }, cancellationToken);
         return Results.Ok(saved);
     }
     catch (InvalidOperationException ex)
@@ -546,7 +401,7 @@ app.MapPut("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IRes
     }
     catch (UnauthorizedAccessException)
     {
-        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.update", "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
+        await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.saved.update", "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
         return Results.Forbid();
     }
     catch (ArgumentException ex)
@@ -555,7 +410,7 @@ app.MapPut("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IRes
     }
 });
 
-app.MapDelete("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
+app.MapDelete("/api/v2/events/saved-searches/{savedSearchId:guid}", async Task<IResult> (
     Guid savedSearchId,
     HttpContext context,
     EventRepository events,
@@ -563,35 +418,34 @@ app.MapDelete("/api/v1/events/saved-searches/{savedSearchId:guid}", async Task<I
     SecurityAuditRepository audit,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (!operatorId.HasValue) return Results.Unauthorized();
-    var deleted = await events.DeleteSavedSearchAsync(savedSearchId, operatorId.Value, cancellationToken);
-    await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.saved.delete", deleted ? "success" : "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
+    var serviceId = ServiceAuthentication.ServiceId;
+    var deleted = await events.DeleteSavedSearchAsync(savedSearchId, serviceId, cancellationToken);
+    await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.saved.delete", deleted ? "success" : "denied", "saved_event_search", savedSearchId.ToString(), context, null, cancellationToken);
     return deleted ? Results.Ok(new { status = "deleted" }) : Results.NotFound();
 });
 
-app.MapPost("/api/v1/events/export", async Task<IResult> (
+app.MapPost("/api/v2/events/export", async Task<IResult> (
     HttpContext context,
     EventRepository events,
     TokenService tokens,
     SecurityAuditRepository audit,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var role = OperatorAuthorization.Role(context.User)!;
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (!OperatorAuthorization.HasPermission(role, OperatorPermission.ManageOperators))
+    var role = ServiceAuthorization.Role(context.User)!;
+    var serviceId = ServiceAuthentication.ServiceId;
+    if (!ServiceAuthorization.HasPermission(role, ServicePermission.ExportEvents))
     {
-        await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.export", "denied", "events", null, context, null, cancellationToken);
+        await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.export", "denied", "events", null, context, null, cancellationToken);
         return Results.Forbid();
     }
 
@@ -606,13 +460,13 @@ app.MapPost("/api/v1/events/export", async Task<IResult> (
         return Results.ValidationProblem(query.ValidationErrors.GroupBy(item => item.Field).ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
     }
 
-    var export = await events.ExportCsvForOperatorAsync(query, role, cancellationToken);
-    await audit.RecordAsync(operatorId, context.User.Identity?.Name, "event_search.export", "success", "events", null, context, new Dictionary<string, object?> { ["rows"] = export.Rows, ["limit"] = export.BoundedLimit, ["format"] = "csv" }, cancellationToken);
+    var export = await events.ExportCsvForServiceAsync(query, role, cancellationToken);
+    await audit.RecordAsync(serviceId, context.User.Identity?.Name, "event_search.export", "success", "events", null, context, new Dictionary<string, object?> { ["rows"] = export.Rows, ["limit"] = export.BoundedLimit, ["format"] = "csv" }, cancellationToken);
     context.Response.Headers.ContentDisposition = $"attachment; filename=\"{export.FileName}\"";
     return Results.File(export.Content, "text/csv; charset=utf-8", export.FileName);
 });
 
-app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
+app.MapGet("/api/v2/storage/accounting", async Task<IResult> (
     HttpContext context,
     EventRepository events,
     TokenService tokens,
@@ -621,9 +475,9 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
     AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
@@ -631,7 +485,7 @@ app.MapGet("/api/v1/storage/accounting", async Task<IResult> (
     return Results.Ok(await events.GetManagedStorageAccountingAsync(legacyCapacity, cancellationToken, effectiveOptions.TargetRetentionDays));
 });
 
-app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
+app.MapGet("/api/v2/storage/retention/status", async Task<IResult> (
     HttpContext context,
     RetentionRepository retention,
     TokenService tokens,
@@ -639,16 +493,16 @@ app.MapGet("/api/v1/storage/retention/status", async Task<IResult> (
     AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var effectiveOptions = await admin.GetEffectiveRetentionOptionsAsync(retentionOptions.Value, cancellationToken);
     return Results.Ok(await retention.GetStatusAsync(effectiveOptions, cancellationToken));
 });
 
-app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
+app.MapPost("/api/v2/storage/retention/run", async Task<IResult> (
     HttpContext context,
     RetentionRepository retention,
     TokenService tokens,
@@ -656,9 +510,9 @@ app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
     AdminRepository admin,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     RetentionRunRequest request;
@@ -680,51 +534,51 @@ app.MapPost("/api/v1/storage/retention/run", async Task<IResult> (
     return result.Status == "lock_not_acquired" ? Results.Conflict(result) : Results.Ok(result);
 });
 
-app.MapGet("/api/v1/source-health", async Task<IResult> (
+app.MapGet("/api/v2/source-health", async Task<IResult> (
     HttpContext context,
     SourceHealthRepository sourceHealth,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
-    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), WindowsCoverageLevel.L2);
+    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), CoverageLevel.L2);
     return Results.Ok(await sourceHealth.SearchAsync(agentId, targetLevel, cancellationToken));
 });
 
-app.MapGet("/api/v1/telemetry-coverage", async Task<IResult> (
+app.MapGet("/api/v2/telemetry-coverage", async Task<IResult> (
     HttpContext context,
     TelemetryCoverageRepository telemetryCoverage,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
-    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), WindowsCoverageLevel.L2);
+    var targetLevel = ParseCoverageLevelOrDefault(context.Request.Query["target_level"].FirstOrDefault(), CoverageLevel.L2);
     var lookbackHours = ParseIntOrDefault(context.Request.Query["lookback_hours"].FirstOrDefault(), 24);
     return Results.Ok(await telemetryCoverage.AssessAsync(agentId, targetLevel, lookbackHours, cancellationToken));
 });
 
-app.MapGet("/api/v1/inventory", async Task<IResult> (
+app.MapGet("/api/v2/inventory", async Task<IResult> (
     HttpContext context,
     AssetInventoryRepository inventory,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
@@ -732,34 +586,34 @@ app.MapGet("/api/v1/inventory", async Task<IResult> (
     return Results.Ok(new { snapshots = await inventory.SearchAsync(agentId, snapshotType, cancellationToken) });
 });
 
-app.MapGet("/api/v1/platform/capabilities", (HttpContext context, TokenService tokens, IConfiguration configuration) =>
+app.MapGet("/api/v2/platform/capabilities", (HttpContext context, TokenService tokens, IConfiguration configuration) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     return Results.Ok(new PlatformCapabilitiesResponse { Capabilities = PlatformCapabilityCatalog.All });
 });
 
-app.MapGet("/api/v1/alerts", async Task<IResult> (
+app.MapGet("/api/v2/alerts", async Task<IResult> (
     HttpContext context,
     AlertRepository alerts,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var status = context.Request.Query["status"].FirstOrDefault();
-    var role = OperatorAuthorization.Role(context.User)!;
-    return Results.Ok(new { alerts = (await alerts.SearchAlertsAsync(status, cancellationToken)).Select(item => AlertFieldPolicy.Apply(item, role)) });
+    var role = ServiceAuthorization.Role(context.User)!;
+    return Results.Ok(new { alerts = (await alerts.SearchAlertsAsync(status, cancellationToken)).Select(item => ServiceAlertPolicy.Apply(item, role)) });
 });
 
-app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
+app.MapGet("/api/v2/alerts/{alertId:guid}", async Task<IResult> (
     Guid alertId,
     HttpContext context,
     AlertRepository alerts,
@@ -767,199 +621,199 @@ app.MapGet("/api/v1/alerts/{alertId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var alert = await alerts.GetAlertAsync(alertId, cancellationToken);
-    return alert is null ? Results.NotFound() : Results.Ok(AlertFieldPolicy.Apply(alert, OperatorAuthorization.Role(context.User)!));
+    return alert is null ? Results.NotFound() : Results.Ok(ServiceAlertPolicy.Apply(alert, ServiceAuthorization.Role(context.User)!));
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/assign", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/assign", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.AssignAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.assign", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.AssignAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.assign", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/acknowledge", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/acknowledge", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.AcknowledgeAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.acknowledge", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.AcknowledgeAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.acknowledge", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/status", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/status", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.SetStatusAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.status", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["status"] = request.Status, ["expected_version"] = request.ExpectedVersion }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.SetStatusAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.status", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["status"] = request.Status, ["expected_version"] = request.ExpectedVersion }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/suppress", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/suppress", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.SuppressAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.suppress", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion, ["has_expiry"] = request.SuppressedUntil.HasValue }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.SuppressAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.suppress", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion, ["has_expiry"] = request.SuppressedUntil.HasValue }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/close", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/close", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.CloseAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.close", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["disposition"] = request.Disposition, ["expected_version"] = request.ExpectedVersion }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.CloseAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.close", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["disposition"] = request.Disposition, ["expected_version"] = request.ExpectedVersion }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/alerts/{alertId:guid}/reopen", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/alerts/{alertId:guid}/reopen", async Task<IResult> (Guid alertId, AlertMutationRequest request, HttpContext context, AlertRepository alerts, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var result = await alerts.ReopenAsync(alertId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "alert.reopen", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
-        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(AlertFieldPolicy.Apply(result, OperatorAuthorization.Role(context.User)!));
+        var result = await alerts.ReopenAsync(alertId, request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "alert.reopen", result is null ? "failure" : "success", "alert", alertId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken);
+        return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(ServiceAlertPolicy.Apply(result, ServiceAuthorization.Role(context.User)!));
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["alert"] = new[] { ex.Message } }); }
 });
 
-app.MapGet("/api/v1/cases", async Task<IResult> (HttpContext context, CaseRepository cases, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapGet("/api/v2/cases", async Task<IResult> (HttpContext context, CaseRepository cases, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     return Results.Ok(new { cases = await cases.ListAsync(context.Request.Query["status"].FirstOrDefault(), context.Request.Query["owner"].FirstOrDefault(), cancellationToken) });
 });
 
-app.MapPost("/api/v1/cases", async Task<IResult> (CaseCreateRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases", async Task<IResult> (CaseCreateRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     try
     {
-        var created = await cases.CreateAsync(request, context.User.Identity?.Name ?? "operator", cancellationToken);
-        await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.create", "success", "case", created.CaseId.ToString(), context, new Dictionary<string, object?> { ["severity"] = created.Severity, ["priority"] = created.Priority, ["linked_alerts"] = request.AlertIds.Count }, cancellationToken);
+        var created = await cases.CreateAsync(request, ServiceAuthentication.PrincipalName, cancellationToken);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.create", "success", "case", created.CaseId.ToString(), context, new Dictionary<string, object?> { ["severity"] = created.Severity, ["priority"] = created.Priority, ["linked_alerts"] = request.AlertIds.Count }, cancellationToken);
         return Results.Ok(created);
     }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapGet("/api/v1/cases/{caseId:guid}", async Task<IResult> (Guid caseId, HttpContext context, CaseRepository cases, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapGet("/api/v2/cases/{caseId:guid}", async Task<IResult> (Guid caseId, HttpContext context, CaseRepository cases, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
     var detail = await cases.GetAsync(caseId, cancellationToken);
     return detail is null ? Results.NotFound() : Results.Ok(detail);
 });
 
-app.MapPut("/api/v1/cases/{caseId:guid}", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPut("/api/v2/cases/{caseId:guid}", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.UpdateAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.update", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.UpdateAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.update", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/status", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/status", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.SetStatusAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.status", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["status"] = request.Status, ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.SetStatusAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.status", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["status"] = request.Status, ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/assign", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/assign", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.AssignAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.assign", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.AssignAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.assign", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/close", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/close", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.CloseAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.close", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["disposition"] = request.Disposition, ["coverage_gap_acknowledged"] = request.CoverageGapAcknowledged, ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.CloseAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.close", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["disposition"] = request.Disposition, ["coverage_gap_acknowledged"] = request.CoverageGapAcknowledged, ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/reopen", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/reopen", async Task<IResult> (Guid caseId, CaseMutationRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.ReopenAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.reopen", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.ReopenAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.reopen", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["expected_version"] = request.ExpectedVersion }, cancellationToken); return result is null ? Results.Conflict(new { error = "version_conflict_or_missing" }) : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/notes", async Task<IResult> (Guid caseId, CaseNoteRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/notes", async Task<IResult> (Guid caseId, CaseNoteRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.AddNoteAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.note", result is null ? "failure" : "success", "case", caseId.ToString(), context, null, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.AddNoteAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.note", result is null ? "failure" : "success", "case", caseId.ToString(), context, null, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/alerts", async Task<IResult> (Guid caseId, CaseAlertRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/alerts", async Task<IResult> (Guid caseId, CaseAlertRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.LinkAlertAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.link_alert", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["alert_id"] = request.AlertId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.LinkAlertAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.link_alert", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["alert_id"] = request.AlertId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/entities", async Task<IResult> (Guid caseId, CaseEntityRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/entities", async Task<IResult> (Guid caseId, CaseEntityRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.LinkEntityAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.link_entity", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["entity_type"] = request.EntityType }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.LinkEntityAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.link_entity", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["entity_type"] = request.EntityType }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/graphs", async Task<IResult> (Guid caseId, CaseGraphRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/graphs", async Task<IResult> (Guid caseId, CaseGraphRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.LinkGraphAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.link_graph", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["graph_id"] = request.GraphId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.LinkGraphAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.link_graph", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["graph_id"] = request.GraphId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
     catch (Exception ex) when (ex is ArgumentException or PostgresException) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapPost("/api/v1/cases/{caseId:guid}/evidence", async Task<IResult> (Guid caseId, CaseEvidenceRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
+app.MapPost("/api/v2/cases/{caseId:guid}/evidence", async Task<IResult> (Guid caseId, CaseEvidenceRequest request, HttpContext context, CaseRepository cases, SecurityAuditRepository audit, TokenService tokens, CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context)) return OperatorAccessFailure(context);
-    try { var result = await cases.LinkEvidenceAsync(caseId, request, context.User.Identity?.Name ?? "operator", cancellationToken); await audit.RecordAsync(OperatorAuthentication.OperatorId(context.User), context.User.Identity?.Name, "case.link_evidence", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["agent_id"] = request.AgentId, ["event_id"] = request.EventId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    try { var result = await cases.LinkEvidenceAsync(caseId, request, ServiceAuthentication.PrincipalName, cancellationToken); await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name, "case.link_evidence", result is null ? "failure" : "success", "case", caseId.ToString(), context, new Dictionary<string, object?> { ["agent_id"] = request.AgentId, ["event_id"] = request.EventId }, cancellationToken); return result is null ? Results.NotFound() : Results.Ok(result); }
     catch (ArgumentException ex) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["case"] = new[] { ex.Message } }); }
 });
 
-app.MapGet("/api/v1/graphs", async Task<IResult> (
+app.MapGet("/api/v2/graphs", async Task<IResult> (
     HttpContext context,
     InvestigationGraphRepository graphs,
     TokenService tokens,
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var status = context.Request.Query["status"].FirstOrDefault();
     return Results.Ok(new { graphs = await graphs.ListAsync(status, cancellationToken) });
 });
 
-app.MapPost("/api/v1/graphs", async Task<IResult> (
+app.MapPost("/api/v2/graphs", async Task<IResult> (
     HttpContext context,
     InvestigationGraphCreateRequest request,
     InvestigationGraphRepository graphs,
@@ -967,14 +821,14 @@ app.MapPost("/api/v1/graphs", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.CreateAsync(request, context.User.Identity?.Name ?? "operator", cancellationToken));
+        return Results.Ok(await graphs.CreateAsync(request, ServiceAuthentication.PrincipalName, cancellationToken));
     }
     catch (ArgumentException ex)
     {
@@ -982,7 +836,7 @@ app.MapPost("/api/v1/graphs", async Task<IResult> (
     }
 });
 
-app.MapGet("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
+app.MapGet("/api/v2/graphs/{graphId:guid}", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphRepository graphs,
@@ -990,16 +844,16 @@ app.MapGet("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var detail = await graphs.GetDetailAsync(graphId, cancellationToken);
     return detail is null ? Results.NotFound() : Results.Ok(detail);
 });
 
-app.MapPut("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
+app.MapPut("/api/v2/graphs/{graphId:guid}", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphUpdateRequest request,
@@ -1008,14 +862,14 @@ app.MapPut("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        var updated = await graphs.UpdateAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken);
+        var updated = await graphs.UpdateAsync(graphId, request, ServiceAuthentication.PrincipalName, cancellationToken);
         return updated is null ? Results.Conflict(new { error = "version_conflict_or_archived" }) : Results.Ok(updated);
     }
     catch (ArgumentException ex)
@@ -1024,7 +878,7 @@ app.MapPut("/api/v1/graphs/{graphId:guid}", async Task<IResult> (
     }
 });
 
-app.MapPost("/api/v1/graphs/{graphId:guid}/archive", async Task<IResult> (
+app.MapPost("/api/v2/graphs/{graphId:guid}/archive", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphRepository graphs,
@@ -1032,16 +886,16 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/archive", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var archived = await graphs.ArchiveAsync(graphId, context.User.Identity?.Name ?? "operator", cancellationToken);
+    var archived = await graphs.ArchiveAsync(graphId, ServiceAuthentication.PrincipalName, cancellationToken);
     return archived is null ? Results.NotFound() : Results.Ok(archived);
 });
 
-app.MapPost("/api/v1/graphs/{graphId:guid}/nodes", async Task<IResult> (
+app.MapPost("/api/v2/graphs/{graphId:guid}/nodes", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphNodeRequest request,
@@ -1050,14 +904,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/nodes", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.AddNodeAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken));
+        return Results.Ok(await graphs.AddNodeAsync(graphId, request, ServiceAuthentication.PrincipalName, cancellationToken));
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
     {
@@ -1065,7 +919,7 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/nodes", async Task<IResult> (
     }
 });
 
-app.MapPost("/api/v1/graphs/{graphId:guid}/edges", async Task<IResult> (
+app.MapPost("/api/v2/graphs/{graphId:guid}/edges", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphEdgeRequest request,
@@ -1074,14 +928,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/edges", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.AddEdgeAsync(graphId, request, context.User.Identity?.Name ?? "operator", cancellationToken));
+        return Results.Ok(await graphs.AddEdgeAsync(graphId, request, ServiceAuthentication.PrincipalName, cancellationToken));
     }
     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or PostgresException)
     {
@@ -1089,7 +943,7 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/edges", async Task<IResult> (
     }
 });
 
-app.MapPost("/api/v1/graphs/{graphId:guid}/proposals", async Task<IResult> (
+app.MapPost("/api/v2/graphs/{graphId:guid}/proposals", async Task<IResult> (
     Guid graphId,
     HttpContext context,
     InvestigationGraphProposalRequest request,
@@ -1098,14 +952,14 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/proposals", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        return Results.Ok(await graphs.CreateSocAgentProposalAsync(graphId, request.Instruction, context.User.Identity?.Name ?? "operator", cancellationToken));
+        return Results.Ok(await graphs.CreateServiceProposalAsync(graphId, request.Instruction, ServiceAuthentication.PrincipalName, cancellationToken));
     }
     catch (ArgumentException ex)
     {
@@ -1113,7 +967,7 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/proposals", async Task<IResult> (
     }
 });
 
-app.MapPost("/api/v1/graphs/{graphId:guid}/proposals/{proposalId:guid}/apply", async Task<IResult> (
+app.MapPost("/api/v2/graphs/{graphId:guid}/proposals/{proposalId:guid}/apply", async Task<IResult> (
     Guid graphId,
     Guid proposalId,
     HttpContext context,
@@ -1122,286 +976,16 @@ app.MapPost("/api/v1/graphs/{graphId:guid}/proposals/{proposalId:guid}/apply", a
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
-    var proposal = await graphs.ApplyProposalAsync(graphId, proposalId, context.User.Identity?.Name ?? "operator", cancellationToken);
+    var proposal = await graphs.ApplyProposalAsync(graphId, proposalId, ServiceAuthentication.PrincipalName, cancellationToken);
     return proposal is null ? Results.NotFound() : Results.Ok(proposal);
 });
 
-app.MapPost("/api/v1/soc-agent/ask", async Task<IResult> (
-    HttpContext context,
-    SocAgentAskRequest request,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    if (string.IsNullOrWhiteSpace(request.Question) || request.Question.Length > 4000)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]>
-        {
-            ["question"] = new[] { "Question is required and must be 4000 characters or less." }
-        });
-    }
-
-    try
-    {
-        return Results.Ok(await socAgent.AskAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
-    }
-    catch (ArgumentException ex)
-    {
-        return SocAgentSelectionValidationProblem(ex);
-    }
-});
-
-app.MapGet("/api/v1/soc-agent/status", (HttpContext context, SocAgentService socAgent, TokenService tokens, IConfiguration configuration) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    return Results.Ok(socAgent.GetProviderStatus());
-});
-
-app.MapGet("/api/v1/soc-agent/sessions", async Task<IResult> (
-    HttpContext context,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    return Results.Ok(new { sessions = await socAgent.GetRecentSessionsAsync(cancellationToken) });
-});
-
-app.MapPost("/api/v1/soc-agent/sessions", async Task<IResult> (
-    HttpContext context,
-    SocAgentSessionCreateRequest request,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    try
-    {
-        var session = await socAgent.CreateSessionAsync(request, cancellationToken);
-        return Results.Ok(session);
-    }
-    catch (ArgumentException ex)
-    {
-        return SocAgentSelectionValidationProblem(ex);
-    }
-});
-
-app.MapGet("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
-    Guid sessionId,
-    HttpContext context,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    var detail = await socAgent.GetSessionDetailAsync(sessionId, cancellationToken);
-    return detail is null ? Results.NotFound() : Results.Ok(detail);
-});
-
-app.MapDelete("/api/v1/soc-agent/sessions/{sessionId:guid}", async Task<IResult> (
-    Guid sessionId,
-    HttpContext context,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    var result = await socAgent.DeleteSessionAsync(sessionId, cancellationToken);
-    return result.Status switch
-    {
-        "deleted" => Results.Ok(result),
-        "not_found" => Results.NotFound(result),
-        "run_active" => Results.Conflict(result),
-        _ => Results.Problem("soc-agent chat session deletion could not be completed.")
-    };
-});
-
-app.MapPost("/api/v1/soc-agent/sessions/{sessionId:guid}/messages", async Task<IResult> (
-    Guid sessionId,
-    HttpContext context,
-    SocAgentChatRequest request,
-    SocAgentService socAgent,
-    TokenService tokens,
-    IConfiguration configuration,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > 4000)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]>
-        {
-            ["message"] = new[] { "Message is required and must be 4000 characters or less." }
-        });
-    }
-
-    try
-    {
-        return Results.Ok(await socAgent.SendChatMessageAsync(sessionId, request, OperatorAuthorization.Role(context.User)!, cancellationToken));
-    }
-    catch (KeyNotFoundException)
-    {
-        return Results.NotFound();
-    }
-    catch (ArgumentException ex)
-    {
-        return SocAgentSelectionValidationProblem(ex);
-    }
-});
-
-app.MapPost("/soc-agent/live/runs", async Task<IResult> (
-    HttpContext context,
-    SocAgentLiveRunStartRequest request,
-    SocAgentLiveRunCoordinator liveRuns,
-    CancellationToken cancellationToken) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > 4000)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]>
-        {
-            ["message"] = new[] { "Message is required and must be 4000 characters or less." }
-        });
-    }
-
-    try
-    {
-        return Results.Ok(await liveRuns.StartRunAsync(request, OperatorAuthorization.Role(context.User)!, cancellationToken));
-    }
-    catch (KeyNotFoundException)
-    {
-        return Results.NotFound();
-    }
-    catch (ArgumentException ex)
-    {
-        return SocAgentSelectionValidationProblem(ex);
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.Conflict(new { error = "run_already_active", message = ex.Message });
-    }
-}).RequireAuthorization("analyst");
-
-app.MapGet("/soc-agent/live/sessions/{sessionId:guid}/active", (
-    Guid sessionId,
-    SocAgentLiveRunCoordinator liveRuns) => Results.Ok(liveRuns.GetActiveRun(sessionId)))
-    .RequireAuthorization("analyst");
-
-app.MapPost("/soc-agent/live/runs/{runId:guid}/cancel", (
-    Guid runId,
-    SocAgentLiveRunCoordinator liveRuns) =>
-{
-    var result = liveRuns.CancelRun(runId);
-    return result is null ? Results.NotFound() : Results.Ok(result);
-}).RequireAuthorization("analyst");
-
-app.MapGet("/soc-agent/live/runs/{runId:guid}/events", async Task<IResult> (
-    Guid runId,
-    HttpContext context,
-    SocAgentLiveRunRegistry liveRuns,
-    CancellationToken cancellationToken) =>
-{
-    if (!liveRuns.TryGetRun(runId, out var state))
-    {
-        return Results.NotFound();
-    }
-
-    var after = ParseLongOrDefault(context.Request.Query["after"].FirstOrDefault(), 0);
-    context.Response.Headers.CacheControl = "no-store";
-    context.Response.Headers.Connection = "keep-alive";
-    context.Response.ContentType = "text/event-stream; charset=utf-8";
-
-    var snapshot = new SocAgentLiveEvent(
-        state.LastSequence,
-        "resume_snapshot",
-        state.RunId,
-        state.SessionId,
-        DateTimeOffset.UtcNow,
-        new Dictionary<string, object?>
-        {
-            ["status"] = state.Status,
-            ["last_sequence"] = state.LastSequence,
-            ["session_id"] = state.SessionId,
-            ["model"] = state.Turn.Selection.Model,
-            ["reasoning_effort"] = state.Turn.Selection.ReasoningEffort
-        });
-    await WriteSocAgentLiveEventAsync(context, snapshot, cancellationToken);
-
-    await foreach (var liveEvent in state.ReadEventsAsync(after, cancellationToken))
-    {
-        await WriteSocAgentLiveEventAsync(context, liveEvent, cancellationToken);
-    }
-
-    return Results.Empty;
-}).RequireAuthorization("analyst");
-
-app.MapGet("/soc-agent/oauth/start", (HttpContext context, SocAgentSubscriptionOAuthConnectService connect) =>
-{
-    try
-    {
-        var authorizationUri = connect.CreateAuthorizationUri(context, "/soc-agent");
-        return Results.Redirect(authorizationUri.ToString());
-    }
-    catch (SocAgentSubscriptionOAuthConnectException ex)
-    {
-        return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
-    }
-}).RequireAuthorization("admin");
-
-app.MapGet("/soc-agent/oauth/callback", async Task<IResult> (
-    HttpContext context,
-    SocAgentSubscriptionOAuthConnectService connect,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        var result = await connect.CompleteAsync(context, cancellationToken);
-        return Results.Redirect(connect.CompleteReturnUrl(result));
-    }
-    catch (SocAgentSubscriptionOAuthConnectException ex)
-    {
-        return Results.Redirect(QueryHelpers.AddQueryString("/soc-agent", "oauth_error", ex.OperatorSafeMessage));
-    }
-}).AllowAnonymous();
-
-app.MapGet("/api/v1/detections/rules", async Task<IResult> (
+app.MapGet("/api/v2/detections/rules", async Task<IResult> (
     HttpContext context,
     AlertRepository alerts,
     DetectionManagementRepository detectionManagement,
@@ -1409,9 +993,9 @@ app.MapGet("/api/v1/detections/rules", async Task<IResult> (
     IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var rules = await alerts.GetRulesAsync(cancellationToken);
@@ -1419,7 +1003,7 @@ app.MapGet("/api/v1/detections/rules", async Task<IResult> (
     return Results.Ok(new { rules, managed_rules = managedRules });
 });
 
-app.MapPut("/api/v1/detections/rules/{ruleId}/{version:int}/settings", async Task<IResult> (
+app.MapPut("/api/v2/detections/rules/{ruleId}/{version:int}/settings", async Task<IResult> (
     string ruleId,
     int version,
     DetectionRuleSettingsRequest request,
@@ -1430,15 +1014,15 @@ app.MapPut("/api/v1/detections/rules/{ruleId}/{version:int}/settings", async Tas
     TokenService tokens,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
         var rules = await alerts.GetRulesAsync(cancellationToken);
-        var updated = await detectionManagement.UpdateSettingsAsync(rules, ruleId, version, request, context.User.Identity?.Name ?? "operator", context, audit, cancellationToken);
+        var updated = await detectionManagement.UpdateSettingsAsync(rules, ruleId, version, request, ServiceAuthentication.PrincipalName, context, audit, cancellationToken);
         return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
     }
     catch (KeyNotFoundException)
@@ -1451,105 +1035,37 @@ app.MapPut("/api/v1/detections/rules/{ruleId}/{version:int}/settings", async Tas
     }
 });
 
-app.MapGet("/api/v1/dashboards/summary", async Task<IResult> (
+app.MapGet("/api/v2/dashboards/summary", async Task<IResult> (
     HttpContext context,
     DashboardRepository dashboards,
     TokenService tokens,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     var hours = ParseIntOrDefault(context.Request.Query["time_range_hours"].FirstOrDefault(), 24);
     return Results.Ok(await dashboards.GetAggregationsAsync(hours, cancellationToken));
 });
 
-app.MapGet("/api/v1/dashboards/layouts", async Task<IResult> (
-    HttpContext context,
-    DashboardRepository dashboards,
-    TokenService tokens,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    return operatorId is null ? Results.Unauthorized() : Results.Ok(new { layouts = await dashboards.ListLayoutsAsync(operatorId.Value, cancellationToken) });
-});
-
-app.MapPost("/api/v1/dashboards/layouts", async Task<IResult> (
-    DashboardLayoutRequest request,
-    HttpContext context,
-    DashboardRepository dashboards,
-    SecurityAuditRepository audit,
-    TokenService tokens,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (operatorId is null) return Results.Unauthorized();
-    try
-    {
-        var saved = await dashboards.SaveLayoutAsync(operatorId.Value, context.User.Identity?.Name ?? "operator", OperatorAuthorization.Role(context.User)!, request, context, audit, cancellationToken);
-        return Results.Ok(saved);
-    }
-    catch (ArgumentException ex)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["layout"] = new[] { ex.Message } });
-    }
-});
-
-app.MapPut("/api/v1/dashboards/layouts/{layoutId:guid}", async Task<IResult> (
-    Guid layoutId,
-    DashboardLayoutRequest request,
-    HttpContext context,
-    DashboardRepository dashboards,
-    SecurityAuditRepository audit,
-    TokenService tokens,
-    CancellationToken cancellationToken) =>
-{
-    if (!tokens.HasOperatorAccess(context))
-    {
-        return OperatorAccessFailure(context);
-    }
-
-    var operatorId = OperatorAuthentication.OperatorId(context.User);
-    if (operatorId is null) return Results.Unauthorized();
-    try
-    {
-        var updated = await dashboards.UpdateLayoutAsync(operatorId.Value, context.User.Identity?.Name ?? "operator", OperatorAuthorization.Role(context.User)!, layoutId, request, context, audit, cancellationToken);
-        return updated is null ? Results.Conflict(new { error = "version_conflict_or_not_owner" }) : Results.Ok(updated);
-    }
-    catch (ArgumentException ex)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["layout"] = new[] { ex.Message } });
-    }
-});
-
-app.MapGet("/api/v1/admin/overview", async Task<IResult> (
+app.MapGet("/api/v2/admin/overview", async Task<IResult> (
     HttpContext context,
     AdminRepository admin,
     TokenService tokens,
     IOptions<ManagedRetentionOptions> retentionOptions,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     return Results.Ok(await admin.GetOverviewAsync(retentionOptions.Value, cancellationToken));
 });
 
-app.MapPut("/api/v1/admin/settings", async Task<IResult> (
+app.MapPut("/api/v2/admin/settings", async Task<IResult> (
     AdminConfigSettingRequest request,
     HttpContext context,
     AdminRepository admin,
@@ -1558,14 +1074,14 @@ app.MapPut("/api/v1/admin/settings", async Task<IResult> (
     IOptions<ManagedRetentionOptions> retentionOptions,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        var updated = await admin.UpdateSettingAsync(request, context.User.Identity?.Name ?? "operator", context, audit, retentionOptions.Value, cancellationToken);
+        var updated = await admin.UpdateSettingAsync(request, ServiceAuthentication.PrincipalName, context, audit, retentionOptions.Value, cancellationToken);
         return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
     }
     catch (ArgumentException ex)
@@ -1574,7 +1090,7 @@ app.MapPut("/api/v1/admin/settings", async Task<IResult> (
     }
 });
 
-app.MapPut("/api/v1/admin/sources", async Task<IResult> (
+app.MapPut("/api/v2/admin/sources", async Task<IResult> (
     AdminSourceSettingRequest request,
     HttpContext context,
     AdminRepository admin,
@@ -1582,14 +1098,14 @@ app.MapPut("/api/v1/admin/sources", async Task<IResult> (
     TokenService tokens,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasOperatorAccess(context))
+    if (!tokens.HasServiceAccess(context))
     {
-        return OperatorAccessFailure(context);
+        return ServiceAccessFailure(context);
     }
 
     try
     {
-        var updated = await admin.UpdateSourceSettingAsync(request, context.User.Identity?.Name ?? "operator", context, audit, cancellationToken);
+        var updated = await admin.UpdateSourceSettingAsync(request, ServiceAuthentication.PrincipalName, context, audit, cancellationToken);
         return updated is null ? Results.Conflict(new { error = "version_conflict" }) : Results.Ok(updated);
     }
     catch (ArgumentException ex)
@@ -1598,18 +1114,11 @@ app.MapPut("/api/v1/admin/sources", async Task<IResult> (
     }
 });
 
-app.MapMcp("/mcp").RequireAuthorization("analyst");
-app.MapRazorPages();
+app.MapMcp("/mcp").RequireAuthorization("service");
 
 app.Run();
 
-static IResult OperatorAccessFailure(HttpContext context) => context.User.Identity?.IsAuthenticated == true ? Results.Forbid() : Results.Unauthorized();
-
-static IResult SocAgentSelectionValidationProblem(ArgumentException exception)
-{
-    var field = exception is SocAgentSelectionException selection ? selection.Field : "model";
-    return Results.ValidationProblem(new Dictionary<string, string[]> { [field] = new[] { exception.Message } });
-}
+static IResult ServiceAccessFailure(HttpContext context) => context.User.Identity?.IsAuthenticated == true ? Results.Forbid() : Results.Unauthorized();
 
 static int ParseIntOrDefault(string? value, int fallback)
 {
@@ -1621,27 +1130,9 @@ static long ParseLongOrDefault(string? value, long fallback)
     return long.TryParse(value, out var parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-static WindowsCoverageLevel ParseCoverageLevelOrDefault(string? value, WindowsCoverageLevel fallback)
+static CoverageLevel ParseCoverageLevelOrDefault(string? value, CoverageLevel fallback)
 {
-    return Enum.TryParse<WindowsCoverageLevel>(value, ignoreCase: true, out var parsed) ? parsed : fallback;
-}
-
-static async Task WriteSocAgentLiveEventAsync(HttpContext context, SocAgentLiveEvent liveEvent, CancellationToken cancellationToken)
-{
-    await context.Response.WriteAsync($"id: {liveEvent.Sequence}\n", cancellationToken);
-    await context.Response.WriteAsync($"event: {liveEvent.Type}\n", cancellationToken);
-    await context.Response.WriteAsync("data: ", cancellationToken);
-    await JsonSerializer.SerializeAsync(
-        context.Response.Body,
-        liveEvent,
-        new JsonSerializerOptions(JsonSerializerDefaults.Web)
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower
-        },
-        cancellationToken);
-    await context.Response.WriteAsync("\n\n", cancellationToken);
-    await context.Response.Body.FlushAsync(cancellationToken);
+    return Enum.TryParse<CoverageLevel>(value, ignoreCase: true, out var parsed) ? parsed : fallback;
 }
 
 public partial class Program;

@@ -1,8 +1,7 @@
 # Linux server-side detections
 
-Status: implemented server-side rule metadata and bounded alert execution for accepted Linux v1 events.
+Status: implemented server-side rule metadata and bounded alert execution for accepted Linux v2 events.
 
-Linux detections run on the server after a valid `/api/v1/ingest/events` batch is stored. They are additive to the existing Windows-focused rule catalog and preserve `/api/v1` compatibility. The engine evaluates only accepted, non-duplicate events from bounded batches; duplicate ingest acknowledgements do not create duplicate alerts.
 
 ## Rule metadata contract
 
@@ -12,7 +11,6 @@ Every built-in rule, including Linux rules, exposes:
 - severity, confidence, category, ATT&CK techniques, and tactics;
 - required source IDs and structured required fields;
 - a bounded correlation window in seconds;
-- suppression keys used to deduplicate alert windows;
 - false-positive notes; and
 - response guidance.
 
@@ -28,7 +26,6 @@ Alert rows persist `rule_id` and exact `rule_version`. Alert evidence rows store
 | `ssh.root-login.linux` | Root/privileged SSH login | `linux-ssh` | 15m | Uses structured SSH user, source address, outcome, and session/authentication action. |
 | `process.suspicious-privileged-command.linux` | Suspicious privileged command pattern | `linux-sudo-su` | 15m | Uses structured command-line fields; rendered-message-only matches are not required. |
 | `process.suspicious-snapshot-command.linux` | Conservative high-risk process command pattern | `linux-process-snapshot-diff` | 15m | Matches only `observed`/`changed` structured command lines with download-to-shell, reverse-shell, encoded execution, or chained download-and-execute patterns. |
-| `persistence.service-start.linux` | Service start/reload/failure activity | `linux-service-change` | 30m | Correlate with package/change windows before escalation. |
 | `persistence.scheduler-activity.linux` | Cron or systemd timer activity | `linux-cron-timers` | 30m | Intended as persistence review signal, not a case workflow. |
 | `package.change.linux` | Package install/update/remove | `linux-package-management` | 60m | Highlights package/security-control drift context. |
 | `kernel.security-control-change.linux` | Kernel module or security-control event | `linux-kernel-security` | 30m | Covers module and LSM/security-control journal evidence. |
@@ -61,7 +58,7 @@ The six L4 role journal sources add correlation context but no application-paylo
 
 Detections consult current source-health rows for the source that satisfied the rule. Healthy prerequisites keep the rule's catalog confidence. Stale, degraded, throttled, or actively gapped prerequisite evidence lowers confidence to `low`; non-passive sources also retain the existing conservative lowering when their dropped-event counter is nonzero. Passive polling sources keep cumulative gap/drop counters as history, but those historical counters alone do not permanently lower later detections after a complete healthy scan has cleared the active gap. A directly matching accepted event is always evaluated: missing, disabled, permission-denied, unsupported, errored, or not-applicable current health lowers that event's confidence and the alert summary states the visibility gap instead of discarding the evidence. Rule-readiness views can still report the unhealthy or unavailable prerequisite when no matching event is being evaluated.
 
-This behavior prevents the server from implying that no threat exists when telemetry is missing or unhealthy. Operators should read low-confidence and unavailable readiness states as visibility gaps and review `/api/v1/source-health` and `/api/v1/telemetry-coverage` before closing an investigation.
+This behavior prevents the server from implying that no threat exists when telemetry is missing or unhealthy. Operators should read low-confidence and unavailable readiness states as visibility gaps and review `/api/v2/source-health` and `/api/v2/telemetry-coverage` before closing an investigation.
 
 After storage commits, detection evaluates the canonical stored envelope rather than the request copy. A retry whose IDs are now duplicates re-runs idempotent detection, recovering from a failure between event commit and alert creation without allowing a conflicting retry representation to replace evidence. Coalesced alerts retain at most 128 unique evidence rows under a database transaction lock, report bounded evidence metadata, refresh the retained evidence count, and conservatively keep the lowest confidence seen in the correlation bucket.
 
@@ -69,7 +66,6 @@ After storage commits, detection evaluates the canonical stored envelope rather 
 
 Linux detection alerts are review signals. They do not implement UI case workflows, host remediation, service restarts, firewall changes, authentication changes, audit-policy changes, kernel changes, package actions, or agent-side mutation. Use the exact evidence event IDs, source-health state, and synthetic-safe runbooks to decide whether separate approved response action is needed.
 
-False positives are common during maintenance, patch windows, agent upgrades, planned package or unit changes, vulnerability scans, and approved administrative access. Preserve real investigation evidence only under ignored local/runtime paths and publish only synthetic summaries.
 
 ## Validation
 

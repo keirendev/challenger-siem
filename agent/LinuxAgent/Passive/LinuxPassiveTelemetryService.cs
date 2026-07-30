@@ -1,5 +1,5 @@
 using Challenger.Siem.Agent.Core.Queue;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Microsoft.Extensions.Options;
 

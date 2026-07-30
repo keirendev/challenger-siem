@@ -25,7 +25,7 @@ public sealed record SiemMcpResult<T>
     public required string Kind { get; init; }
 
     [JsonPropertyName("data_classification")]
-    public string DataClassification { get; init; } = "operator_sensitive";
+    public string DataClassification { get; init; } = "siem_sensitive";
 
     [JsonPropertyName("redaction")]
     public required string Redaction { get; init; }
@@ -62,7 +62,7 @@ public static class SiemMcpResults
         bool truncated = false,
         IReadOnlyList<SiemMcpCitation>? citations = null,
         IReadOnlyList<string>? warnings = null,
-        string dataClassification = "operator_sensitive") => new()
+        string dataClassification = "siem_sensitive") => new()
         {
             Kind = kind,
             Data = data,

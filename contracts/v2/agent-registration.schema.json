@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v2/agent-registration.schema.json",
+  "title": "Challenger SIEM Linux Agent Registration v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "hostname", "platform", "host_id", "os_version", "agent_version"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "hostname": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "platform": { "const": "linux" },
+    "host_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "os_version": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "agent_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "host_timezone": { "$ref": "event-envelope.schema.json#/$defs/host_timezone" }
+  }
+}

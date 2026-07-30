@@ -1,5 +1,5 @@
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.LinuxAgent.Config;
 
@@ -34,12 +34,12 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && Journal.MaxRecordsPerPoll is >= 1 and <= 5000
         && Journal.MaxInputRecordBytes is >= 4096 and <= 262144
         && Journal.QueuePauseDepth is >= 100 and <= 1_000_000
-        && Journal.TargetCoverageLevel is >= WindowsCoverageLevel.L1 and <= WindowsCoverageLevel.L4
+        && Journal.TargetCoverageLevel is >= CoverageLevel.L1 and <= CoverageLevel.L4
         && Journal.DeclaredRoles is { Length: <= 16 }
         && Journal.DeclaredRoles.Distinct(StringComparer.Ordinal).Count() == Journal.DeclaredRoles.Length
         && Journal.DeclaredRoles.All(role => role.Length is >= 1 and <= 64
             && role.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'))
-        && (Journal.TargetCoverageLevel < WindowsCoverageLevel.L4
+        && (Journal.TargetCoverageLevel < CoverageLevel.L4
             || Journal.DeclaredRoles.Length > 0
                 && Journal.DeclaredRoles.All(LinuxDeclaredRoles.IsKnown));
 
@@ -106,7 +106,7 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && HasValidJournalBounds()
         && (long)L4Telemetry.SloSampleIntervalSeconds + L4Telemetry.ScanTimeoutSeconds + HeartbeatIntervalSeconds <= 270
         && (long)L4Telemetry.PostureIntervalSeconds + Inventory.CollectionTimeoutSeconds + HeartbeatIntervalSeconds <= 6_900
-        && Journal.TargetCoverageLevel == WindowsCoverageLevel.L4
+        && Journal.TargetCoverageLevel == CoverageLevel.L4
         && Journal.Enabled
         && Journal.DeclaredRoles is { Length: > 0 }
         && Journal.DeclaredRoles.All(LinuxDeclaredRoles.IsKnown);
@@ -210,7 +210,7 @@ public sealed class JournalOptions
 {
     public bool Enabled { get; set; } = true;
     public bool IncludeAccessibleUserJournals { get; set; }
-    public WindowsCoverageLevel TargetCoverageLevel { get; set; } = WindowsCoverageLevel.L1;
+    public CoverageLevel TargetCoverageLevel { get; set; } = CoverageLevel.L1;
     public string[] DeclaredRoles { get; set; } = Array.Empty<string>();
     public int PollIntervalSeconds { get; set; } = 5;
     public int MaxRecordsPerPoll { get; set; } = 500;

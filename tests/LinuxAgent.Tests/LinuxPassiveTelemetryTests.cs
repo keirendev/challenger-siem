@@ -8,7 +8,7 @@ using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Security;
 using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Passive;
@@ -76,7 +76,7 @@ public sealed class LinuxPassiveTelemetryTests
         Assert.Equal(3, LinuxTelemetrySourceCatalog.L3Passive.Count);
         Assert.All(LinuxTelemetrySourceCatalog.L3Passive, source =>
         {
-            Assert.Equal(WindowsCoverageLevel.L3, source.CoverageLevel);
+            Assert.Equal(CoverageLevel.L3, source.CoverageLevel);
             Assert.True(source.Required);
             Assert.Equal(SourceRequirementKinds.Mandatory, source.Requirement);
             Assert.False(source.EnabledByDefault);

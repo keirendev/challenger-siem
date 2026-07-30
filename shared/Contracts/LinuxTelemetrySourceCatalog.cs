@@ -1,4 +1,4 @@
-namespace Challenger.Siem.Contracts.V1;
+namespace Challenger.Siem.Contracts.V2;
 
 /// <summary>Stable source identifiers emitted by the Linux journal security pack.</summary>
 public static class LinuxTelemetrySourceIds
@@ -74,7 +74,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.JournalL1,
             "Linux L1 system journal",
-            WindowsCoverageLevel.L1,
+            CoverageLevel.L1,
             SourceRequirementKinds.Mandatory,
             "journal-l1",
             prerequisites: "systemd_journal_available,systemd_journal_readable",
@@ -88,7 +88,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.LoginSession,
             "Linux login and session activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-login-session-v1",
             prerequisites: "systemd_journal_readable,pam_or_logind_journal_visibility",
@@ -97,7 +97,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.Ssh,
             "Linux SSH activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.RoleSpecific,
             "linux-ssh-v1",
             prerequisites: "systemd_journal_readable,sshd_journal_visibility",
@@ -107,7 +107,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.Privilege,
             "Linux sudo and su activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-privilege-v1",
             prerequisites: "systemd_journal_readable,sudo_or_su_journal_visibility",
@@ -116,7 +116,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.Scheduler,
             "Linux cron and systemd timer activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-scheduler-v1",
             prerequisites: "systemd_journal_readable,cron_or_systemd_timer_visibility",
@@ -125,7 +125,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.PackageManagement,
             "Linux package-management activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-package-v1",
             prerequisites: "systemd_journal_readable,package_manager_journal_visibility",
@@ -134,7 +134,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.Firewall,
             "Linux firewall activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Optional,
             "linux-firewall-v1",
             prerequisites: "systemd_journal_readable,firewall_logging_already_enabled",
@@ -143,7 +143,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.KernelSecurity,
             "Linux kernel and security-module activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-kernel-security-v1",
             prerequisites: "systemd_journal_readable,kernel_journal_visibility",
@@ -152,7 +152,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.ServiceChange,
             "Linux service-change activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-service-change-v1",
             prerequisites: "systemd_journal_readable,systemd_unit_journal_visibility",
@@ -161,7 +161,7 @@ public static class LinuxTelemetrySourceCatalog
         Entry(
             LinuxTelemetrySourceIds.AgentLogTamper,
             "Linux agent and log-tamper activity",
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             SourceRequirementKinds.Mandatory,
             "linux-tamper-v1",
             prerequisites: "systemd_journal_readable,journald_and_agent_unit_visibility",
@@ -179,7 +179,7 @@ public static class LinuxTelemetrySourceCatalog
         ApplicabilityReason = "explicit_opt_in_required",
         CheckpointKind = SourceCheckpointKinds.Sequence,
         DisplayName = "Linux agent self-integrity snapshot",
-        CoverageLevel = WindowsCoverageLevel.L3,
+        CoverageLevel = CoverageLevel.L3,
         Required = false,
         Requirement = SourceRequirementKinds.Optional,
         EnabledByDefault = false,
@@ -207,7 +207,7 @@ public static class LinuxTelemetrySourceCatalog
         ApplicabilityReason = "collector_not_included",
         CheckpointKind = SourceCheckpointKinds.Sequence,
         DisplayName = "Linux Audit Framework",
-        CoverageLevel = WindowsCoverageLevel.L2,
+        CoverageLevel = CoverageLevel.L2,
         Required = false,
         Requirement = SourceRequirementKinds.Optional,
         EnabledByDefault = false,
@@ -289,7 +289,7 @@ public static class LinuxTelemetrySourceCatalog
         .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)
         .ToArray();
 
-    public static IReadOnlyList<SourceManifestEntry> ExpectedFor(WindowsCoverageLevel targetLevel, bool includeOptional = true) => All
+    public static IReadOnlyList<SourceManifestEntry> ExpectedFor(CoverageLevel targetLevel, bool includeOptional = true) => All
         .Where(entry => entry.CoverageLevel <= targetLevel
             && (includeOptional || entry.Requirement == SourceRequirementKinds.Mandatory))
         .OrderBy(entry => entry.CoverageLevel)
@@ -297,7 +297,7 @@ public static class LinuxTelemetrySourceCatalog
         .ToArray();
 
     public static IReadOnlyList<SourceManifestEntry> BuildHeartbeatManifest(
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         IReadOnlyCollection<string> declaredRoles,
         IReadOnlySet<string> observedSourceIds)
     {
@@ -312,7 +312,7 @@ public static class LinuxTelemetrySourceCatalog
 
     private static SourceManifestEntry ResolveApplicability(
         SourceManifestEntry entry,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         IReadOnlySet<string> declaredRoles,
         IReadOnlySet<string> observedSourceIds)
     {
@@ -379,7 +379,7 @@ public static class LinuxTelemetrySourceCatalog
     private static SourceManifestEntry Entry(
         string sourceId,
         string displayName,
-        WindowsCoverageLevel coverageLevel,
+        CoverageLevel coverageLevel,
         string requirement,
         string parserId,
         string prerequisites,
@@ -408,7 +408,7 @@ public static class LinuxTelemetrySourceCatalog
             Requirement = requirement,
             ApplicableRoles = Split(applicableRoles),
             EnabledByDefault = enabledByDefault,
-            SourcePack = coverageLevel == WindowsCoverageLevel.L1 ? L1PackId : L2PackId,
+            SourcePack = coverageLevel == CoverageLevel.L1 ? L1PackId : L2PackId,
             ParserId = parserId,
             Prerequisites = Split(prerequisites),
             EventFamilies = Split(eventFamilies),
@@ -439,7 +439,7 @@ public static class LinuxTelemetrySourceCatalog
             ApplicabilityReason = "explicit_opt_in_required",
             CheckpointKind = SourceCheckpointKinds.Sequence,
             DisplayName = displayName,
-            CoverageLevel = WindowsCoverageLevel.L3,
+            CoverageLevel = CoverageLevel.L3,
             Required = true,
             Requirement = SourceRequirementKinds.Mandatory,
             EnabledByDefault = false,
@@ -469,7 +469,7 @@ public static class LinuxTelemetrySourceCatalog
             Applicability = SourceApplicabilityStatuses.Applicable,
             CheckpointKind = SourceCheckpointKinds.Sequence,
             DisplayName = displayName,
-            CoverageLevel = WindowsCoverageLevel.L4,
+            CoverageLevel = CoverageLevel.L4,
             Required = true,
             Requirement = SourceRequirementKinds.Mandatory,
             EnabledByDefault = false,
@@ -497,7 +497,7 @@ public static class LinuxTelemetrySourceCatalog
             ApplicabilityReason = "host_role_not_declared",
             CheckpointKind = SourceCheckpointKinds.Cursor,
             DisplayName = displayName,
-            CoverageLevel = WindowsCoverageLevel.L4,
+            CoverageLevel = CoverageLevel.L4,
             Required = false,
             Requirement = SourceRequirementKinds.RoleSpecific,
             ApplicableRoles = [applicableRole],

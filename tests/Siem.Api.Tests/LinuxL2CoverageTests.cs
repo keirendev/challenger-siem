@@ -3,8 +3,7 @@ using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Ingestion;
-using Challenger.Siem.Api.Pages.Agents;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -18,7 +17,7 @@ public sealed class LinuxL2CoverageTests
     {
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
             Array.Empty<SourceHealthReport>(),
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             DateTimeOffset.Parse("2026-07-13T12:00:00Z"),
             TelemetryPlatforms.Linux);
@@ -50,7 +49,7 @@ public sealed class LinuxL2CoverageTests
         };
         var canonical = TelemetryCoverageEvaluator.MergeExpectedSources(
             [incorrectlyReportedAudit],
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.AuditFramework },
             DateTimeOffset.Parse("2026-07-13T12:00:00Z"),
             TelemetryPlatforms.Linux);
@@ -72,7 +71,7 @@ public sealed class LinuxL2CoverageTests
         };
         var requiredCanonical = TelemetryCoverageEvaluator.MergeExpectedSources(
             [incorrectlyInapplicableLogin],
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             DateTimeOffset.Parse("2026-07-13T12:00:00Z"),
             TelemetryPlatforms.Linux);
@@ -123,7 +122,7 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
-    public void FirewallApiAndWebGuidanceUsesBoundedStatesWithoutPolicyMutation()
+    public void FirewallApiGuidanceUsesBoundedStatesWithoutPolicyMutation()
     {
         var now = DateTimeOffset.Parse("2026-07-19T12:00:00Z");
         var manifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry =>
@@ -162,14 +161,7 @@ public sealed class LinuxL2CoverageTests
             null);
         Assert.Contains("current journal observation was quiet", quietCoverage.StateGuidance, StringComparison.Ordinal);
         Assert.Contains("no raw rules or records", quietCoverage.StateGuidance, StringComparison.Ordinal);
-        Assert.Contains("never enables or reconfigures logging", DetailModel.SourceStateGuidance(quietCoverage with
-        {
-            Status = SourceHealthStatuses.Disabled,
-            Details = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["firewall_inventory_state"] = "logging_disabled"
-            }
-        }), StringComparison.Ordinal);
+        Assert.Contains("no raw rules or records", quietCoverage.StateGuidance, StringComparison.Ordinal);
 
         var unhealthyEnabledCoverage = TelemetryCoverageRepository.ToSourceCoverage(
             "synthetic-firewall-agent",
@@ -179,7 +171,7 @@ public sealed class LinuxL2CoverageTests
             null);
         Assert.Contains("current source health is not healthy", unhealthyEnabledCoverage.StateGuidance, StringComparison.Ordinal);
         Assert.DoesNotContain("current journal observation was quiet", unhealthyEnabledCoverage.StateGuidance, StringComparison.Ordinal);
-        Assert.Contains("current source health is not healthy", DetailModel.SourceStateGuidance(unhealthyEnabledCoverage), StringComparison.Ordinal);
+        Assert.Contains("current source health is not healthy", unhealthyEnabledCoverage.StateGuidance, StringComparison.Ordinal);
 
         var directEvidenceCoverage = TelemetryCoverageRepository.ToSourceCoverage(
             "synthetic-firewall-agent",
@@ -196,12 +188,24 @@ public sealed class LinuxL2CoverageTests
             new Dictionary<string, int>(StringComparer.Ordinal),
             null);
         Assert.Contains("newer than the last inventory observation", directEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
-        Assert.Contains("newer than the last inventory observation", DetailModel.SourceStateGuidance(directEvidenceCoverage), StringComparison.Ordinal);
+        Assert.Contains("newer than the last inventory observation", directEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
         Assert.DoesNotContain("SYNTHETIC_PRIVATE_FIREWALL_RECORD", directEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
-        Assert.Contains(
-            "current source health is not healthy",
-            DetailModel.SourceStateGuidance(directEvidenceCoverage with { Status = SourceHealthStatuses.PermissionDenied }),
-            StringComparison.Ordinal);
+        var deniedDirectEvidenceCoverage = TelemetryCoverageRepository.ToSourceCoverage(
+            "synthetic-firewall-agent",
+            quiet with
+            {
+                Status = SourceHealthStatuses.PermissionDenied,
+                Details = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["firewall_inventory_state"] = "logging_disabled",
+                    ["firewall_producer"] = "ufw",
+                    ["firewall_journal_visibility"] = "observed"
+                }
+            },
+            now.AddHours(-24),
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            null);
+        Assert.Contains("current source health is not healthy", deniedDirectEvidenceCoverage.StateGuidance, StringComparison.Ordinal);
 
         foreach (var (state, status, applicability, expected) in new[]
         {
@@ -257,7 +261,7 @@ public sealed class LinuxL2CoverageTests
 
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
             [unsupported],
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
@@ -274,42 +278,42 @@ public sealed class LinuxL2CoverageTests
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
         var reports = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-                WindowsCoverageLevel.L1,
+                CoverageLevel.L1,
                 Array.Empty<string>(),
                 new HashSet<string>(StringComparer.Ordinal))
-            .Select(entry => entry.CoverageLevel > WindowsCoverageLevel.L1 && entry.Applicability != SourceApplicabilityStatuses.Unsupported
+            .Select(entry => entry.CoverageLevel > CoverageLevel.L1 && entry.Applicability != SourceApplicabilityStatuses.Unsupported
                 ? Report(entry, now) with { Status = SourceHealthStatuses.Disabled, Enabled = false }
                 : Report(entry, now))
             .ToArray();
 
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
             reports,
-            WindowsCoverageLevel.L1,
+            CoverageLevel.L1,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
         var l1 = Assert.Single(merged);
         Assert.Equal(LinuxTelemetrySourceIds.JournalL1, l1.SourceId);
-        var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, merged, WindowsCoverageLevel.L1);
-        Assert.Equal(WindowsCoverageLevel.L1, summary.CurrentLevel);
+        var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, merged, CoverageLevel.L1);
+        Assert.Equal(CoverageLevel.L1, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(0, summary.MissingMandatorySources);
         Assert.Equal(0, summary.UnsupportedSources);
     }
 
     [Fact]
-    public void OptionalUnsupportedAuditRemainsCapabilityOnlyForAggregateHealthAndWebPresentation()
+    public void OptionalUnsupportedAuditRemainsCapabilityOnlyForAggregateHealth()
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
         var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-                WindowsCoverageLevel.L2,
+                CoverageLevel.L2,
                 ["general_server"],
                 new HashSet<string>(StringComparer.Ordinal) { LinuxTelemetrySourceIds.Firewall })
-            .Where(entry => entry.CoverageLevel <= WindowsCoverageLevel.L2)
+            .Where(entry => entry.CoverageLevel <= CoverageLevel.L2)
             .ToArray();
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
             manifest.Select(entry => Report(entry, now)).ToArray(),
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
@@ -320,8 +324,8 @@ public sealed class LinuxL2CoverageTests
             0,
             now,
             merged,
-            WindowsCoverageLevel.L2);
-        Assert.Equal(WindowsCoverageLevel.L2, summary.CurrentLevel);
+            CoverageLevel.L2);
+        Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(1, summary.UnsupportedSources);
         Assert.Equal(0, summary.MissingMandatorySources);
@@ -335,17 +339,12 @@ public sealed class LinuxL2CoverageTests
             Requirement = audit.Requirement,
             Applicability = audit.Applicability
         };
-        Assert.Equal("informational", DetailModel.SourceStatusBadgeClass(auditCoverage));
-        Assert.Contains("does not degrade aggregate health", DetailModel.SourceStateGuidance(auditCoverage), StringComparison.Ordinal);
-
         var mandatoryUnsupported = auditCoverage with
         {
             Required = true,
             Requirement = SourceRequirementKinds.Mandatory,
             Applicability = SourceApplicabilityStatuses.Applicable
         };
-        Assert.Equal("danger", DetailModel.SourceStatusBadgeClass(mandatoryUnsupported));
-        Assert.Contains("visibility gap", DetailModel.SourceStateGuidance(mandatoryUnsupported), StringComparison.Ordinal);
         Assert.Equal(SourceHealthStatuses.Unsupported, TelemetryCoverageEvaluator.CalculateOverallStatus(
         [
             audit with
@@ -362,19 +361,19 @@ public sealed class LinuxL2CoverageTests
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
         var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             ["general_server"],
             new HashSet<string>(StringComparer.Ordinal));
         var reports = manifest.Select(entry => Report(entry, now)).ToArray();
 
         var baseline = TelemetryCoverageEvaluator.MergeExpectedSources(
             reports,
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
-        var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, baseline, WindowsCoverageLevel.L2);
-        Assert.Equal(WindowsCoverageLevel.L2, summary.CurrentLevel);
+        var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, baseline, CoverageLevel.L2);
+        Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(1, summary.DegradedSources);
         Assert.Equal(1, summary.UnsupportedSources);
@@ -390,12 +389,12 @@ public sealed class LinuxL2CoverageTests
             : report).ToArray();
         var denied = TelemetryCoverageEvaluator.MergeExpectedSources(
             deniedReports,
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
-        var deniedSummary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, denied, WindowsCoverageLevel.L2);
-        Assert.Equal(WindowsCoverageLevel.L1, deniedSummary.CurrentLevel);
+        var deniedSummary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, denied, CoverageLevel.L2);
+        Assert.Equal(CoverageLevel.L1, deniedSummary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.PermissionDenied, deniedSummary.OverallStatus);
         Assert.Equal(1, deniedSummary.PermissionDeniedSources);
 
@@ -404,12 +403,12 @@ public sealed class LinuxL2CoverageTests
             : report).ToArray();
         var stale = TelemetryCoverageEvaluator.MergeExpectedSources(
             staleReports,
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
-        var staleSummary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, stale, WindowsCoverageLevel.L2);
-        Assert.Equal(WindowsCoverageLevel.L1, staleSummary.CurrentLevel);
+        var staleSummary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, stale, CoverageLevel.L2);
+        Assert.Equal(CoverageLevel.L1, staleSummary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Stale, staleSummary.OverallStatus);
         Assert.Equal(1, staleSummary.StaleSources);
 
@@ -418,39 +417,39 @@ public sealed class LinuxL2CoverageTests
             : report).ToArray();
         var selfExcepted = TelemetryCoverageEvaluator.MergeExpectedSources(
             selfExceptedReports,
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             now,
             TelemetryPlatforms.Linux);
         Assert.Equal(SourceHealthStatuses.Degraded,
             Assert.Single(selfExcepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).Status);
-        Assert.Equal(WindowsCoverageLevel.L1,
-            TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, selfExcepted, WindowsCoverageLevel.L2).CurrentLevel);
+        Assert.Equal(CoverageLevel.L1,
+            TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, selfExcepted, CoverageLevel.L2).CurrentLevel);
 
         var missingPackage = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageManagement
             ? report with { Status = SourceHealthStatuses.Missing }
             : report).ToArray();
         var excepted = TelemetryCoverageEvaluator.MergeExpectedSources(
             missingPackage,
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.PackageManagement },
             now,
             TelemetryPlatforms.Linux);
         Assert.Equal(SourceHealthStatuses.Excepted,
             Assert.Single(excepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).Status);
-        Assert.Equal(WindowsCoverageLevel.L2,
-            TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, excepted, WindowsCoverageLevel.L2).CurrentLevel);
+        Assert.Equal(CoverageLevel.L2,
+            TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, excepted, CoverageLevel.L2).CurrentLevel);
     }
 
     [Fact]
     public void LinuxCoverageAdvancesToL3OnlyWithApplicableHealthyL3Evidence()
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
-        var reports = LinuxTelemetrySourceCatalog.ExpectedFor(WindowsCoverageLevel.L3)
+        var reports = LinuxTelemetrySourceCatalog.ExpectedFor(CoverageLevel.L3)
             .Select(entry => Report(entry, now))
             .ToArray();
         var unavailableL3 = reports
-            .Select(report => report.CoverageLevel == WindowsCoverageLevel.L3
+            .Select(report => report.CoverageLevel == CoverageLevel.L3
                 ? report with
                 {
                     Applicability = SourceApplicabilityStatuses.Unknown,
@@ -462,14 +461,14 @@ public sealed class LinuxL2CoverageTests
             .ToArray();
 
         Assert.Equal(
-            WindowsCoverageLevel.L2,
+            CoverageLevel.L2,
             TelemetryCoverageEvaluator.CalculateCurrentLevel(
                 unavailableL3,
-                WindowsCoverageLevel.L3,
+                CoverageLevel.L3,
                 TelemetryPlatforms.Linux));
 
         var healthyL3 = reports
-            .Select(report => report.CoverageLevel == WindowsCoverageLevel.L3
+            .Select(report => report.CoverageLevel == CoverageLevel.L3
                 ? report with
                 {
                     Applicability = SourceApplicabilityStatuses.Applicable,
@@ -482,27 +481,17 @@ public sealed class LinuxL2CoverageTests
             .ToArray();
 
         Assert.Equal(
-            WindowsCoverageLevel.L3,
+            CoverageLevel.L3,
             TelemetryCoverageEvaluator.CalculateCurrentLevel(
                 healthyL3,
-                WindowsCoverageLevel.L3,
+                CoverageLevel.L3,
                 TelemetryPlatforms.Linux));
         Assert.Equal(
-            WindowsCoverageLevel.L3,
+            CoverageLevel.L3,
             TelemetryCoverageEvaluator.CalculateCurrentLevel(
                 healthyL3,
-                WindowsCoverageLevel.L4,
+                CoverageLevel.L4,
                 TelemetryPlatforms.Linux));
-    }
-
-    [Fact]
-    public void AgentCoverageReviewExplainsLinuxL3AndPlatformApplicableDetections()
-    {
-        var markup = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Pages", "Agents", "Detail.cshtml"));
-        Assert.Contains("explicit-opt-in L3 sources", markup, StringComparison.Ordinal);
-        Assert.Contains("healthy applicable evidence exists at that level", markup, StringComparison.Ordinal);
-        Assert.Contains("Windows or Linux built-in detection rules", markup, StringComparison.Ordinal);
-        Assert.DoesNotContain("Executable built-ins remain Windows-focused", markup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1036,27 +1025,9 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
-    public void UnrelatedSourceRetainsLastEventFreshnessSemantics()
+    public void LinuxJournalRetainsLastEventFreshnessSemantics()
     {
         var now = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
-        var windows = new SourceHealthReport
-        {
-            SourceId = "security",
-            Platform = TelemetryPlatforms.Windows,
-            SourceKind = TelemetrySourceKinds.WindowsEventLog,
-            DisplayName = "Windows Security",
-            Channel = "Security",
-            CoverageLevel = WindowsCoverageLevel.L2,
-            Status = SourceHealthStatuses.Healthy,
-            Required = true,
-            Requirement = SourceRequirementKinds.Mandatory,
-            Enabled = true,
-            LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
-            ObservedAt = now
-        };
-
-        Assert.Equal(SourceHealthStatuses.Stale, SourceHealthRules.EffectiveStatus(windows, now));
-
         var linuxJournal = Report(LinuxTelemetrySourceCatalog.L1.Single(), now) with
         {
             LastEventTime = now.Subtract(TimeSpan.FromDays(2)),
@@ -1200,31 +1171,25 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
-    public void LinuxL2MigrationAndSchemaValidatorRemainAdditive()
+    public void LinuxL2BaselineAndSchemaValidatorContainCoverageFields()
     {
-        var migration = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "005_linux_l2_source_coverage.sql"));
+        var schema = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "001_linux_v2.sql"));
         var validator = File.ReadAllText(RepositoryFile("scripts", "validate-schema.sh"));
         foreach (var fragment in new[]
         {
-            "agents add column if not exists platform",
-            "agents add column if not exists host_id",
-            "source_health add column if not exists requirement_kind",
-            "source_health add column if not exists applicable_roles",
-            "source_health add column if not exists prerequisite_statuses",
-            "source_health add column if not exists event_family_statuses",
-            "idx_events_package_name",
-            "idx_source_health_requirement",
-            "idx_agents_platform"
+            "platform text not null default 'linux'",
+            "host_id text not null",
+            "requirement_kind text",
+            "applicable_roles jsonb",
+            "prerequisite_statuses jsonb",
+            "event_family_statuses jsonb"
         })
         {
-            Assert.Contains(fragment, migration, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(fragment, schema, StringComparison.OrdinalIgnoreCase);
         }
-        Assert.DoesNotContain("drop table", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("drop column", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("truncate ", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("idx_events_package_name", validator, StringComparison.Ordinal);
-        Assert.Contains("requirement_kind", validator, StringComparison.Ordinal);
-        Assert.Contains("event_family_statuses", validator, StringComparison.Ordinal);
+        Assert.Contains("schema_version=2", validator, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source_health", validator, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("alter table", schema, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1242,15 +1207,15 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(LinuxTelemetrySourceIds.PackageManagement, query.SourceId);
         Assert.Equal("synthetic-package", query.PackageName);
 
-        var restricted = EventFieldPolicy.Apply(new EventEnvelope
+        var visible = ServiceEventPolicy.Apply(new EventEnvelope
         {
             Normalized = new NormalizedEventFields { PackageName = "synthetic-package" }
-        }, OperatorRoles.Viewer);
-        Assert.Null(restricted.Normalized?.PackageName);
+        }, ServiceRoles.Service);
+        Assert.Equal("synthetic-package", visible.Normalized?.PackageName);
     }
 
     [Fact]
-    public void CoverageContractsSerializeNewMetadataWithoutChangingWindowsDefaults()
+    public void CoverageContractsSerializeLinuxMetadata()
     {
         var source = new SourceTelemetryCoverage
         {
@@ -1265,7 +1230,7 @@ public sealed class LinuxL2CoverageTests
             ApplicableRoles = ["ssh_server", "bastion"],
             PrerequisiteStatuses = new Dictionary<string, string> { ["sshd_journal_visibility"] = SourceEvidenceStatuses.NotApplicable },
             EventFamilyStatuses = new Dictionary<string, string> { ["ssh_authentication"] = SourceEvidenceStatuses.NotApplicable },
-            CoverageLevel = WindowsCoverageLevel.L2,
+            CoverageLevel = CoverageLevel.L2,
             Status = SourceHealthStatuses.NotApplicable,
             Reason = "synthetic",
             EventSearchUrl = "/events?source_id=linux-ssh",
@@ -1276,18 +1241,6 @@ public sealed class LinuxL2CoverageTests
         Assert.Contains("prerequisite_statuses", json, StringComparison.Ordinal);
         Assert.Contains("event_family_statuses", json, StringComparison.Ordinal);
 
-        var windows = new SourceHealthReport
-        {
-            SourceId = "system",
-            DisplayName = "Windows System",
-            Channel = "System",
-            Status = SourceHealthStatuses.Healthy,
-            Required = true,
-            Enabled = true
-        };
-        Assert.Equal(SourceHealthStatuses.Healthy, SourceHealthRules.EffectiveStatus(windows, DateTimeOffset.UtcNow));
-        Assert.Null(windows.Requirement);
-        Assert.Null(windows.PrerequisiteStatuses);
     }
 
     private static string RepositoryFile(params string[] parts)

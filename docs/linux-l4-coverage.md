@@ -140,7 +140,7 @@ An explicit server rejection is not acknowledgement. The agent may durably aband
 
 Minimal VM images commonly expose incomplete posture—for example denied/missing firewall visibility or absent/malformed `sshd`, `mokutil`, or mandatory-access-control provider observations. Only an explicit collector-returned `not_applicable` is eligible for reviewed fingerprinting. An operator cannot relabel absent, denied, unavailable, or malformed evidence to make the baseline complete, and the agent does not install a package, enable a service, broaden permission, or change policy to clear the blocker.
 
-Relevant fields are documented in [Agent configuration format](agent-config.md#linux-l4-fields). The fixed state file is `/var/lib/challenger-siem-agent/l4-telemetry-state.json`. Cleanup after disablement may remove only this pack-owned state file when explicitly requested; it does not alter the approved host posture, shared queue, journal state, credentials, or server evidence.
+Relevant fields are documented in [Linux agent configuration](linux-agent.md#configuration). The fixed state file is `/var/lib/challenger-siem-agent/l4-telemetry-state.json`. Cleanup after disablement may remove only this pack-owned state file when explicitly requested; it does not alter the approved host posture, shared queue, journal state, credentials, or server evidence.
 
 ## Rolling performance SLO evidence
 
@@ -155,7 +155,6 @@ Managed memory is emitted only as bounded context (`maximum_managed_memory_bytes
 
 A zero value is used only when measured. Unsupported or unavailable counters remain unknown and prevent healthy L4 evidence. A new agent start, plan change, insufficient rolling window, counter reset, or observation discontinuity returns a non-healthy warm-up/gap state rather than reusing old evidence. Optional L4 work pauses before mandatory L1/L2 collection under queue or resource pressure.
 
-Private validation must still measure idle, steady state, burst, server outage/queue growth, reconnect/drain, restart, role workload, per-collector CPU, and optional-collector windows over the required canary period. When all-accessible-local scope is selected it must also verify existing-identity access, independent system visibility, scope-transition/cursor recovery, sensitive-data exposure, volume, and rollback to system-only. The heartbeat/source row proves only the current implemented rolling state; it does not prove that the VM passed those broader scenarios.
 
 ## Deployment and validation state
 

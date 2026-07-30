@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -455,7 +455,7 @@ public sealed class CaseRepository(NpgsqlDataSource dataSource)
     public static string NormalizeSeverity(string? severity) { var v = (severity ?? DetectionSeverities.Medium).Trim().ToLowerInvariant(); var allowed = new[] { DetectionSeverities.Informational, DetectionSeverities.Low, DetectionSeverities.Medium, DetectionSeverities.High, DetectionSeverities.Critical }; if (!allowed.Contains(v, StringComparer.Ordinal)) throw new ArgumentException("Severity value is not recognized."); return v; }
     public static string NormalizePriority(string? priority) { var v = (priority ?? CasePriorities.Normal).Trim().ToLowerInvariant(); var allowed = new[] { CasePriorities.Low, CasePriorities.Normal, CasePriorities.High, CasePriorities.Urgent }; if (!allowed.Contains(v, StringComparer.Ordinal)) throw new ArgumentException("Priority value is not recognized."); return v; }
     private static string BoundRelationship(string? relationship) { var v = (relationship ?? "related").Trim().ToLowerInvariant(); var allowed = new[] { "primary", "related", "duplicate_of", "derived_from" }; if (!allowed.Contains(v, StringComparer.Ordinal)) throw new ArgumentException("Alert relationship value is not recognized."); return v; }
-    private static string BoundActor(string actor) => AlertRepository.BoundOptional(actor, 96, "Actor") ?? "operator";
+    private static string BoundActor(string actor) => AlertRepository.BoundOptional(actor, 96, "Actor") ?? "service";
     private static string? ReadNullableString(NpgsqlDataReader r, string n) { var i = r.GetOrdinal(n); return r.IsDBNull(i) ? null : r.GetString(i); }
     private static Guid? ReadNullableGuid(NpgsqlDataReader r, string n) { var i = r.GetOrdinal(n); return r.IsDBNull(i) ? null : r.GetGuid(i); }
     private static DateTimeOffset ReadTime(NpgsqlDataReader r, string n) { var value = r.GetValue(r.GetOrdinal(n)); return value switch { DateTimeOffset dto => dto.ToUniversalTime(), DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)), _ => throw new InvalidOperationException("Timestamp column was invalid.") }; }

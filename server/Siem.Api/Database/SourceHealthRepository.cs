@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Coverage;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
@@ -48,9 +48,9 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     ];
 
     public Task<SourceHealthResponse> SearchAsync(string? agentId, CancellationToken cancellationToken) =>
-        SearchAsync(agentId, WindowsCoverageLevel.L2, cancellationToken);
+        SearchAsync(agentId, CoverageLevel.L2, cancellationToken);
 
-    public async Task<SourceHealthResponse> SearchAsync(string? agentId, WindowsCoverageLevel targetLevel, CancellationToken cancellationToken)
+    public async Task<SourceHealthResponse> SearchAsync(string? agentId, CoverageLevel targetLevel, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var summaries = await LoadSummariesAsync(connection, agentId, targetLevel, 500, cancellationToken);
@@ -66,7 +66,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
 
     public async Task<BoundedSourceHealthResult> SearchBoundedAsync(
         string agentId,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         int nestedLimit,
         CancellationToken cancellationToken)
     {
@@ -105,7 +105,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     private static async Task<(IReadOnlyList<CoverageSummary> Summaries, IReadOnlyList<SourceHealthReport> Sources)> MergeExpectedSourcesAsync(
         NpgsqlConnection connection,
         string? agentId,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         IReadOnlyList<CoverageSummary> summaries,
         IReadOnlyList<SourceHealthReport> sources,
         CancellationToken cancellationToken)
@@ -116,7 +116,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
             var summary = summaries[0];
             var platform = summary.Platform
                 ?? sources.Select(source => source.Platform).FirstOrDefault(value => value is not null)
-                ?? TelemetryPlatforms.Windows;
+                ?? TelemetryPlatforms.Linux;
             var exceptions = await LoadActiveCoverageExceptionsAsync(connection, agentId, summary.Hostname, cancellationToken);
             sources = TelemetryCoverageEvaluator.MergeExpectedSources(sources, targetLevel, exceptions, DateTimeOffset.UtcNow, platform);
             summaries = summaries
@@ -130,7 +130,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
     private static async Task<IReadOnlyList<CoverageSummary>> LoadSummariesAsync(
         NpgsqlConnection connection,
         string? agentId,
-        WindowsCoverageLevel targetLevel,
+        CoverageLevel targetLevel,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -171,8 +171,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                     end as effective_status
                 from source_health sh
                 left join agents scoped_agent on scoped_agent.agent_id = sh.agent_id
-                where coalesce(scoped_agent.platform, sh.platform, 'windows') <> 'linux'
-                   or @target_level = 'L4'
+                where @target_level = 'L4'
                    or (@target_level = 'L3' and sh.coverage_level in ('L1', 'L2', 'L3'))
                    or (@target_level = 'L2' and sh.coverage_level in ('L1', 'L2'))
                    or (@target_level = 'L1' and sh.coverage_level = 'L1')
@@ -397,7 +396,7 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 Hostname = reader.GetString(reader.GetOrdinal("hostname")),
                 Platform = ReadNullableString(reader, "platform"),
                 TargetLevel = targetLevel,
-                CurrentLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("current_level"))),
+                CurrentLevel = Enum.Parse<CoverageLevel>(reader.GetString(reader.GetOrdinal("current_level"))),
                 OverallStatus = reader.GetString(reader.GetOrdinal("overall_status")),
                 MissingMandatorySources = reader.GetInt32(reader.GetOrdinal("missing_mandatory_sources")),
                 StaleSources = reader.GetInt32(reader.GetOrdinal("stale_sources")),
@@ -431,7 +430,6 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 display_name,
                 platform,
                 source_kind,
-                channel,
                 source_namespace,
                 facility,
                 unit,
@@ -443,9 +441,6 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 enabled,
                 last_event_time,
                 observed_at,
-                last_record_id,
-                oldest_record_id,
-                newest_record_id,
                 log_size_bytes,
                 retention_days,
                 lag_seconds,
@@ -495,22 +490,18 @@ public sealed class SourceHealthRepository(NpgsqlDataSource dataSource)
                 DisplayName = reader.GetString(reader.GetOrdinal("display_name")),
                 Platform = ReadNullableString(reader, "platform"),
                 SourceKind = ReadNullableString(reader, "source_kind"),
-                Channel = ReadNullableString(reader, "channel"),
                 SourceNamespace = ReadNullableString(reader, "source_namespace"),
                 Facility = ReadNullableString(reader, "facility"),
                 Unit = ReadNullableString(reader, "unit"),
                 Applicability = ReadNullableString(reader, "applicability"),
                 ApplicabilityReason = ReadNullableString(reader, "applicability_reason"),
-                CoverageLevel = Enum.Parse<WindowsCoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
+                CoverageLevel = Enum.Parse<CoverageLevel>(reader.GetString(reader.GetOrdinal("coverage_level"))),
                 Status = reader.GetString(reader.GetOrdinal("status")),
                 Required = reader.GetBoolean(reader.GetOrdinal("required_source")),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
                 LastEventTime = ReadNullableDateTimeOffset(reader, "last_event_time"),
                 ObservedAt = ReadNullableDateTimeOffset(reader, "observed_at"),
                 HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
-                LastRecordId = ReadNullableInt64(reader, "last_record_id"),
-                OldestRecordId = ReadNullableInt64(reader, "oldest_record_id"),
-                NewestRecordId = ReadNullableInt64(reader, "newest_record_id"),
                 LogSizeBytes = ReadNullableInt64(reader, "log_size_bytes"),
                 RetentionDays = ReadNullableInt32(reader, "retention_days"),
                 LagSeconds = ReadNullableInt64(reader, "lag_seconds"),

@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
@@ -666,7 +666,7 @@ public sealed class LinuxInventoryTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Assert.Equal("/api/v1/ingest/events", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/v2/ingest/events", request.RequestUri?.AbsolutePath);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = JsonContent.Create(new IngestBatchResponse

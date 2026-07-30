@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Transport;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;

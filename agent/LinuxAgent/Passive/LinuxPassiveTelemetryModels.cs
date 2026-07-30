@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 
 namespace Challenger.Siem.LinuxAgent.Passive;

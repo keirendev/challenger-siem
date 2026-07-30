@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Challenger.Siem.Agent.Core.Security;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.L4;
 
@@ -140,7 +140,7 @@ public sealed partial class LinuxJournalNormalizer
             var facility = FirstBounded(raw, 128, "SYSLOG_FACILITY");
             var messageId = FirstBounded(raw, 128, "MESSAGE_ID");
             LinuxJournalClassification? l2Classification = null;
-            if (options.Journal.TargetCoverageLevel >= WindowsCoverageLevel.L2)
+            if (options.Journal.TargetCoverageLevel >= CoverageLevel.L2)
             {
                 try
                 {

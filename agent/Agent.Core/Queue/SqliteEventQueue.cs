@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
-using Challenger.Siem.Contracts.V1;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Agent.Core.Reliability;
 using Microsoft.Data.Sqlite;
