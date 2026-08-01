@@ -6,8 +6,29 @@ using Challenger.Siem.LinuxAgent.Config;
 
 namespace Challenger.Siem.LinuxAgent.Passive;
 
-public sealed class LinuxProcfsNetworkSource(string procNetRoot = "/proc/net") : ILinuxNetworkSnapshotSource
+public sealed class LinuxProcfsNetworkSource : ILinuxNetworkSnapshotSource
 {
+    private readonly string procNetRoot;
+    private readonly LinuxSocketOwnershipCache? ownershipCache;
+    private readonly TimeProvider timeProvider;
+
+    internal LinuxProcfsNetworkSource(string procNetRoot = "/proc/net")
+        : this(procNetRoot, null, TimeProvider.System)
+    {
+    }
+
+    public LinuxProcfsNetworkSource(LinuxSocketOwnershipCache ownershipCache, TimeProvider timeProvider)
+        : this("/proc/net", ownershipCache, timeProvider)
+    {
+    }
+
+    internal LinuxProcfsNetworkSource(string procNetRoot, LinuxSocketOwnershipCache? ownershipCache, TimeProvider timeProvider)
+    {
+        this.procNetRoot = procNetRoot;
+        this.ownershipCache = ownershipCache;
+        this.timeProvider = timeProvider;
+    }
+
     private static readonly (string FileName, string Protocol, bool Ipv6, bool Required)[] Sources =
     [
         ("tcp", "tcp", false, true),
@@ -131,16 +152,38 @@ public sealed class LinuxProcfsNetworkSource(string procNetRoot = "/proc/net") :
             visibilityGaps++;
         }
 
+        var ownership = options.CollectSocketOwnership ? ownershipCache?.Current : null;
+        var attributionFresh = ownership is not null
+            && timeProvider.GetUtcNow() - ownership.ObservedAt <= TimeSpan.FromSeconds(options.ProcessPollIntervalSeconds * 2L);
+        var attributionStatus = !options.CollectSocketOwnership ? "not_collected"
+            : ownership is null ? "missing_process_scan"
+            : !attributionFresh ? "stale_process_scan"
+            : ownership.DescriptorCapReached ? "partial_descriptor_cap"
+            : ownership.PermissionDenied ? "partial_permission_denied"
+            : ownership.Complete ? "complete" : "partial_process_scan";
         var grouped = records
             .GroupBy(item => item.Key, StringComparer.Ordinal)
             .Select(group =>
             {
                 var first = group.First();
                 var count = group.Aggregate(0, (current, item) => SaturatingAdd(current, item.Count));
+                var owners = attributionFresh && first.Inode is { } inode && ownership!.Owners.TryGetValue(inode, out var matches)
+                    ? matches.Select(owner => owner with
+                    {
+                        Confidence = ownership.Complete ? "exact_inode_current_scan" : "exact_inode_partial_scan"
+                    }).Take(LinuxSocketOwnershipCache.MaxOwnersPerSocket).ToArray()
+                    : Array.Empty<LinuxSocketOwner>();
                 return first with
                 {
                     Count = count,
-                    Signature = HashSignature(first.Key, first.State, first.UserId, count.ToString(CultureInfo.InvariantCulture))
+                    Owners = owners,
+                    AttributionStatus = owners.Length > 1 ? "ambiguous_shared_socket" : attributionStatus,
+                    Signature = HashSignature(
+                        first.Key,
+                        first.State,
+                        first.UserId,
+                        count.ToString(CultureInfo.InvariantCulture),
+                        string.Join(',', owners.Select(owner => owner.ProcessId.ToString(CultureInfo.InvariantCulture))))
                 };
             })
             .OrderBy(item => item.Key, StringComparer.Ordinal)
@@ -174,6 +217,8 @@ public sealed class LinuxProcfsNetworkSource(string procNetRoot = "/proc/net") :
         };
         details["aggregate_scope"] = "all_visible_proc_net_inet_tables";
         details["malformed_rows"] = malformed.ToString(CultureInfo.InvariantCulture);
+        details["process_attribution"] = attributionStatus;
+        details["attribution_descriptor_links"] = (ownership?.DescriptorLinksInspected ?? 0).ToString(CultureInfo.InvariantCulture);
         return new(grouped, status, error, truncated, budget.BytesRead, skipped, visibilityGaps, details);
     }
 

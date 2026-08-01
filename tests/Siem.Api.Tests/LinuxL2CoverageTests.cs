@@ -13,7 +13,7 @@ namespace Challenger.Siem.Api.Tests;
 public sealed class LinuxL2CoverageTests
 {
     [Fact]
-    public void LinuxCatalogOverlayDistinguishesRequirementApplicabilityAndUnsupportedStates()
+    public void LinuxCatalogOverlayDistinguishesRequirementApplicabilityAndImplementedAuditStates()
     {
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
             Array.Empty<SourceHealthReport>(),
@@ -34,11 +34,11 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceApplicabilityStatuses.Unknown, firewall.Applicability);
         Assert.Equal(SourceHealthStatuses.Degraded, firewall.Status);
         var audit = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
-        Assert.Equal(SourceApplicabilityStatuses.Unsupported, audit.Applicability);
-        Assert.Equal(SourceHealthStatuses.Unsupported, audit.Status);
-        Assert.All(audit.PrerequisiteStatuses!.Values, state => Assert.Equal(SourceEvidenceStatuses.Unsupported, state));
+        Assert.Equal(SourceApplicabilityStatuses.Unknown, audit.Applicability);
+        Assert.Equal(SourceHealthStatuses.Degraded, audit.Status);
+        Assert.All(audit.PrerequisiteStatuses!.Values, state => Assert.Equal(SourceEvidenceStatuses.Unknown, state));
 
-        var incorrectlyReportedAudit = Report(LinuxTelemetrySourceCatalog.UnsupportedAuditFramework, DateTimeOffset.Parse("2026-07-13T12:00:00Z")) with
+        var reportedApprovedAudit = Report(LinuxTelemetrySourceCatalog.AuditFramework, DateTimeOffset.Parse("2026-07-13T12:00:00Z")) with
         {
             Applicability = SourceApplicabilityStatuses.Applicable,
             ApplicabilityReason = null,
@@ -48,16 +48,16 @@ public sealed class LinuxL2CoverageTests
             EventFamilyStatuses = new Dictionary<string, string> { ["audit"] = SourceEvidenceStatuses.Observed }
         };
         var canonical = TelemetryCoverageEvaluator.MergeExpectedSources(
-            [incorrectlyReportedAudit],
+            [reportedApprovedAudit],
             CoverageLevel.L2,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.AuditFramework },
             DateTimeOffset.Parse("2026-07-13T12:00:00Z"),
             TelemetryPlatforms.Linux);
         var canonicalAudit = Assert.Single(canonical, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
-        Assert.Equal(SourceApplicabilityStatuses.Unsupported, canonicalAudit.Applicability);
-        Assert.Equal(SourceHealthStatuses.Unsupported, canonicalAudit.Status);
-        Assert.False(canonicalAudit.Enabled);
-        Assert.All(canonicalAudit.EventFamilyStatuses!.Values, state => Assert.Equal(SourceEvidenceStatuses.Unsupported, state));
+        Assert.Equal(SourceApplicabilityStatuses.Applicable, canonicalAudit.Applicability);
+        Assert.Equal(SourceHealthStatuses.Excepted, canonicalAudit.Status);
+        Assert.True(canonicalAudit.Enabled);
+        Assert.All(canonicalAudit.EventFamilyStatuses!.Values, state => Assert.Equal(SourceEvidenceStatuses.Observed, state));
 
         var loginManifest = LinuxTelemetrySourceCatalog.L2Security.Single(entry => entry.SourceId == LinuxTelemetrySourceIds.LoginSession);
         var incorrectlyInapplicableLogin = Report(loginManifest, DateTimeOffset.Parse("2026-07-13T12:00:00Z")) with
@@ -302,7 +302,7 @@ public sealed class LinuxL2CoverageTests
     }
 
     [Fact]
-    public void OptionalUnsupportedAuditRemainsCapabilityOnlyForAggregateHealth()
+    public void OptionalUndeclaredAuditRemainsCapabilityOnlyForAggregateHealth()
     {
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z");
         var manifest = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
@@ -327,7 +327,8 @@ public sealed class LinuxL2CoverageTests
             CoverageLevel.L2);
         Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
-        Assert.Equal(1, summary.UnsupportedSources);
+        Assert.Equal(0, summary.UnsupportedSources);
+        Assert.Equal(1, summary.DegradedSources);
         Assert.Equal(0, summary.MissingMandatorySources);
 
         var audit = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
@@ -339,13 +340,13 @@ public sealed class LinuxL2CoverageTests
             Requirement = audit.Requirement,
             Applicability = audit.Applicability
         };
-        var mandatoryUnsupported = auditCoverage with
+        var mandatoryUndeclared = auditCoverage with
         {
             Required = true,
             Requirement = SourceRequirementKinds.Mandatory,
             Applicability = SourceApplicabilityStatuses.Applicable
         };
-        Assert.Equal(SourceHealthStatuses.Unsupported, TelemetryCoverageEvaluator.CalculateOverallStatus(
+        Assert.Equal(SourceHealthStatuses.Degraded, TelemetryCoverageEvaluator.CalculateOverallStatus(
         [
             audit with
             {
@@ -375,8 +376,8 @@ public sealed class LinuxL2CoverageTests
         var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, baseline, CoverageLevel.L2);
         Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
-        Assert.Equal(1, summary.DegradedSources);
-        Assert.Equal(1, summary.UnsupportedSources);
+        Assert.Equal(2, summary.DegradedSources);
+        Assert.Equal(0, summary.UnsupportedSources);
         Assert.Equal(1, summary.NotApplicableSources);
         Assert.Equal(0, summary.MissingMandatorySources);
 

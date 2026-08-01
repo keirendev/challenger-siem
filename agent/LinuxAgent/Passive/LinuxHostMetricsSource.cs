@@ -3,7 +3,10 @@ using Challenger.Siem.LinuxAgent.Config;
 
 namespace Challenger.Siem.LinuxAgent.Passive;
 
-public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvider? timeProvider = null) : ILinuxHostMetricsSource
+public sealed class LinuxHostMetricsSource(
+    string procRoot = "/proc",
+    TimeProvider? timeProvider = null,
+    string sysBlockRoot = "/sys/block") : ILinuxHostMetricsSource
 {
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
 
@@ -106,7 +109,8 @@ public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvid
                 Math.Max(1, skipped), Math.Max(1, visibilityGaps), details);
         }
 
-        var observation = Parse(values, clock.GetUtcNow());
+        var wholeDevices = ReadWholeDeviceNames(sysBlockRoot, details, ref visibilityGaps);
+        var observation = Parse(values, clock.GetUtcNow(), wholeDevices);
         var coreComplete = HasCoreMetrics(observation);
         if (!coreComplete)
         {
@@ -117,7 +121,7 @@ public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvid
         {
             details["core_parse"] = "complete";
         }
-        details["disk_aggregate_scope"] = "sum_all_visible_diskstats_rows_including_stacked_devices_and_partitions";
+        details["disk_aggregate_scope"] = "bounded_whole_devices_from_sys_block";
         details["network_aggregate_scope"] = "sum_all_visible_netdev_interfaces_including_loopback_and_virtual";
         var status = requiredMissing > 0 || denied > 0 || truncated || !coreComplete || visibilityGaps > 0
             ? PassiveReadStatuses.Partial
@@ -126,12 +130,17 @@ public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvid
             truncated, budget.BytesRead, skipped, visibilityGaps, details);
     }
 
-    internal static LinuxHostMetricsObservation Parse(IReadOnlyDictionary<string, string> values, DateTimeOffset observedAt)
+    internal static LinuxHostMetricsObservation Parse(
+        IReadOnlyDictionary<string, string> values,
+        DateTimeOffset observedAt,
+        IReadOnlySet<string>? wholeDevices = null)
     {
         ParseCpu(values.GetValueOrDefault("stat"), out var totalTicks, out var idleTicks, out var running, out var blocked);
         ParseMemory(values.GetValueOrDefault("meminfo"), out var memoryTotal, out var memoryAvailable, out var swapFree);
         ParseLoad(values.GetValueOrDefault("loadavg"), out var load1, out var load5, out var load15);
-        ParseDisk(values.GetValueOrDefault("diskstats"), out var readSectors, out var writtenSectors);
+        var devices = ParseDisk(values.GetValueOrDefault("diskstats"), wholeDevices);
+        long? readSectors = devices.Count == 0 ? null : devices.Aggregate(0L, (total, device) => SaturatingAdd(total, device.ReadSectors));
+        long? writtenSectors = devices.Count == 0 ? null : devices.Aggregate(0L, (total, device) => SaturatingAdd(total, device.WrittenSectors));
         ParseNetwork(values.GetValueOrDefault("netdev"), out var receiveBytes, out var transmitBytes);
         return new()
         {
@@ -154,6 +163,7 @@ public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvid
             CpuPressureSomeAvg10Milli = ParsePressure(values.GetValueOrDefault("pressure_cpu")),
             MemoryPressureSomeAvg10Milli = ParsePressure(values.GetValueOrDefault("pressure_memory")),
             IoPressureSomeAvg10Milli = ParsePressure(values.GetValueOrDefault("pressure_io"))
+            ,DiskDevices = devices
         };
     }
 
@@ -203,23 +213,66 @@ public sealed class LinuxHostMetricsSource(string procRoot = "/proc", TimeProvid
         fifteen = ParseMilli(fields[2]);
     }
 
-    private static void ParseDisk(string? content, out long? reads, out long? writes)
+    internal static IReadOnlyList<LinuxDiskDeviceObservation> ParseDisk(string? content, IReadOnlySet<string>? wholeDevices)
     {
-        long readTotal = 0;
-        long writeTotal = 0;
-        var observed = false;
+        var devices = new List<LinuxDiskDeviceObservation>();
         foreach (var line in Lines(content))
         {
             var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length < 10) continue;
-            if (ParseLong(fields[5]) is not { } read || ParseLong(fields[9]) is not { } write) continue;
-            readTotal = SaturatingAdd(readTotal, read);
-            writeTotal = SaturatingAdd(writeTotal, write);
-            observed = true;
+            if (fields.Length < 14 || !IsSafeDeviceName(fields[2])
+                || wholeDevices is not null && !wholeDevices.Contains(fields[2])) continue;
+            var numbers = new[] { 3, 5, 6, 7, 9, 10, 11, 12, 13 }.Select(index => ParseLong(fields[index])).ToArray();
+            if (numbers.Any(value => !value.HasValue)) continue;
+            devices.Add(new()
+            {
+                Name = fields[2],
+                ReadOperations = numbers[0]!.Value,
+                ReadSectors = numbers[1]!.Value,
+                ReadTimeMilliseconds = numbers[2]!.Value,
+                WriteOperations = numbers[3]!.Value,
+                WrittenSectors = numbers[4]!.Value,
+                WriteTimeMilliseconds = numbers[5]!.Value,
+                QueueDepth = numbers[6]!.Value,
+                IoTimeMilliseconds = numbers[7]!.Value,
+                WeightedIoTimeMilliseconds = numbers[8]!.Value
+            });
+            if (devices.Count == 32) break;
         }
-        reads = observed ? readTotal : null;
-        writes = observed ? writeTotal : null;
+        return devices.OrderBy(device => device.Name, StringComparer.Ordinal).ToArray();
     }
+
+    private static IReadOnlySet<string>? ReadWholeDeviceNames(
+        string root,
+        IDictionary<string, string> details,
+        ref long visibilityGaps)
+    {
+        try
+        {
+            var names = Directory.EnumerateDirectories(root)
+                .Select(Path.GetFileName)
+                .Where(name => name is not null && IsSafeDeviceName(name))
+                .Select(name => name!)
+                .Order(StringComparer.Ordinal)
+                .Take(33)
+                .ToArray();
+            if (names.Length > 32)
+            {
+                visibilityGaps++;
+                details["disk_device_inventory"] = "truncated";
+            }
+            else details["disk_device_inventory"] = "complete";
+            return names.Take(32).ToHashSet(StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            visibilityGaps++;
+            details["disk_device_inventory"] = ex is UnauthorizedAccessException ? "permission_denied" : "unavailable";
+            return null;
+        }
+    }
+
+    private static bool IsSafeDeviceName(string value) => value.Length is >= 1 and <= 64
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
 
     private static void ParseNetwork(string? content, out long? receive, out long? transmit)
     {

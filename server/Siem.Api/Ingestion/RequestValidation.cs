@@ -278,10 +278,64 @@ public static class RequestValidation
                 Add(errors, $"snapshots[{index}].items", "Snapshot contains more than 200 inventory items.");
             }
 
+            if (snapshot.Summary.Count > 64
+                || snapshot.Summary.Any(pair => pair.Key.Length is < 1 or > 128 || pair.Value.Length > 2048))
+                Add(errors, $"snapshots[{index}].summary", "Snapshot summary exceeds bounded key/value limits.");
+
+            for (var itemIndex = 0; itemIndex < snapshot.Items.Count; itemIndex++)
+            {
+                var item = snapshot.Items[itemIndex];
+                RequireLength(errors, $"snapshots[{index}].items[{itemIndex}].kind", item.Kind, 1, 128);
+                RequireLength(errors, $"snapshots[{index}].items[{itemIndex}].name", item.Name, 1, 512);
+                if (item.Metadata.Count > 32 || item.Metadata.Any(pair => pair.Key.Length is < 1 or > 128 || pair.Value.Length > 2048))
+                    Add(errors, $"snapshots[{index}].items[{itemIndex}].metadata", "Inventory item metadata exceeds bounded key/value limits.");
+            }
+
+            ValidateInventoryPaging(errors, snapshot, index);
+
             ValidateHostTimezone(errors, $"snapshots[{index}].host_timezone", snapshot.HostTimezone);
         }
 
         return ToValidationProblem(errors);
+    }
+
+    private static void ValidateInventoryPaging(
+        Dictionary<string, List<string>> errors,
+        AssetInventorySnapshot snapshot,
+        int index)
+    {
+        var summary = snapshot.Summary ?? new Dictionary<string, string>();
+        var pagingKeys = AssetInventoryPaging.TransportSummaryKeys
+            .Where(key => summary.Keys.Any(candidate => string.Equals(candidate, key, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+        if (pagingKeys.Length == 0) return;
+
+        var required = new[] { "generation_id", "page_index", "page_count", "page_item_count", "total_item_count", "source_complete", "source_truncated" };
+        foreach (var key in required)
+        {
+            if (AssetInventoryPaging.Read(summary, key) is null)
+                Add(errors, $"snapshots[{index}].summary.{key}", "Paging metadata must be supplied as a complete set.");
+        }
+
+        var generationId = AssetInventoryPaging.Read(summary, "generation_id");
+        if (generationId is null || generationId.Length is < 1 or > 64
+            || generationId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
+            Add(errors, $"snapshots[{index}].summary.generation_id", "Generation ID must be a bounded safe token.");
+        var pageIndex = AssetInventoryPaging.ReadInteger(summary, "page_index", 0);
+        var pageCount = AssetInventoryPaging.ReadInteger(summary, "page_count", 0);
+        var pageItems = AssetInventoryPaging.ReadInteger(summary, "page_item_count", -1);
+        var totalItems = AssetInventoryPaging.ReadInteger(summary, "total_item_count", -1);
+        if (pageIndex is < 1 or > AssetInventoryPaging.MaxPagesPerSource)
+            Add(errors, $"snapshots[{index}].summary.page_index", "Page index is outside the supported range.");
+        if (pageCount is < 1 or > AssetInventoryPaging.MaxPagesPerSource || pageIndex > pageCount)
+            Add(errors, $"snapshots[{index}].summary.page_count", "Page count is outside the supported range.");
+        if (pageItems != snapshot.Items.Count)
+            Add(errors, $"snapshots[{index}].summary.page_item_count", "Page item count must match the items array.");
+        if (totalItems is < 0 or > AssetInventoryPaging.MaxItemsPerSource || totalItems < pageItems)
+            Add(errors, $"snapshots[{index}].summary.total_item_count", "Total item count is outside the supported range.");
+        if (!bool.TryParse(AssetInventoryPaging.Read(summary, "source_complete"), out _)
+            || !bool.TryParse(AssetInventoryPaging.Read(summary, "source_truncated"), out _))
+            Add(errors, $"snapshots[{index}].summary", "Source completeness values must be booleans.");
     }
 
     private static void ValidateEvent(

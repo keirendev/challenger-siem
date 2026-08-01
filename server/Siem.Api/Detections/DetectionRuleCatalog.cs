@@ -105,7 +105,8 @@ public static class DetectionRuleCatalog
             1800,
             "agent_id,service_name,action",
             "Expected during package installation, boot, patching, and service restarts.",
-            "Correlate with package and administrative activity, verify the unit path/configuration through approved review channels, and do not restart/remediate from SIEM workflow."),
+            "Correlate with package and administrative activity, verify the unit path/configuration through approved review channels, and do not restart/remediate from SIEM workflow.",
+            version: 2),
         LinuxRule(
             "persistence.scheduler-activity.linux",
             "Linux cron or systemd timer activity",
@@ -119,7 +120,8 @@ public static class DetectionRuleCatalog
             1800,
             "agent_id,service_name,task_name,action",
             "Expected for routine cron maintenance, timers, backups, and monitoring agents.",
-            "Review the job/timer identity, owner, recent package or file changes, and whether timing aligns with expected maintenance."),
+            "Review the job/timer identity, owner, recent package or file changes, and whether timing aligns with expected maintenance.",
+            version: 2),
         LinuxRule(
             "package.change.linux",
             "Linux package installed, updated, or removed",
@@ -179,7 +181,7 @@ public static class DetectionRuleCatalog
         LinuxRule(
             "network.listener-observed.linux",
             "Non-loopback Linux listener observed",
-            "Reports a non-loopback or wildcard listening socket observed or changed by bounded procfs snapshot polling; it is not a kernel bind event and has no process attribution.",
+            "Reports a non-loopback or wildcard listening socket observed or changed by bounded procfs snapshot polling; it is not a kernel bind event and any plan-approved process attribution can remain partial.",
             DetectionSeverities.Low,
             "network",
             "linux-network-socket-snapshot-diff",
@@ -188,8 +190,8 @@ public static class DetectionRuleCatalog
             "discovery",
             3600,
             "agent_id,source_ip,source_port,protocol",
-            "Ordinary post-baseline service starts can create expected listener noise. Initial baseline establishment is non-alerting; polling can miss short-lived sockets and cannot prove exact bind time, owning process, or packet activity.",
-            "Compare the address and port with the approved host role and prior snapshots, then correlate service/package telemetry. Treat this as polling evidence and verify with authoritative host data before response."),
+            "Ordinary post-baseline service starts can create expected listener noise. Initial baseline establishment is non-alerting; polling can miss short-lived sockets and cannot prove exact bind time or packet activity. Ownership may be stale, capped, denied, or ambiguous.",
+            "Compare the address and port with the approved host role, bounded ownership confidence, and prior snapshots, then correlate service/package telemetry. Treat this as polling evidence and verify with authoritative host data before response."),
         LinuxRule(
             "behavior.host-resource-pressure.linux",
             "Severe Linux host resource pressure sample",
@@ -203,7 +205,8 @@ public static class DetectionRuleCatalog
             900,
             "agent_id,event_code",
             "Short load tests, builds, backups, memory reclamation, and storage bursts can exceed a threshold for one coalesced sample. Missing polling intervals are not backfilled and a single sample does not prove sustained impact.",
-            "Review consecutive bounded samples, queue/source health, workload changes, and nearby process evidence. Confirm sustained pressure through approved host monitoring before taking disruptive action."),
+            "Review consecutive bounded samples, queue/source health, workload changes, bounded whole-device diagnostics, and nearby process evidence. Confirm sustained pressure through approved host monitoring before taking disruptive action.",
+            version: 2),
         LinuxRule(
             "tamper.agent-log-source-silence.linux",
             "Linux agent/log tamper or source-health gap",
@@ -231,7 +234,63 @@ public static class DetectionRuleCatalog
             3600,
             "agent_id,file_path,event_code",
             "Expected during approved agent install, upgrade, repair, packaging validation, or service-unit maintenance.",
-            "Validate against the approved package/configuration plan, compare fingerprint metadata, and preserve local evidence under ignored or runtime paths only.")
+            "Validate against the approved package/configuration plan, compare fingerprint metadata, and preserve local evidence under ignored or runtime paths only."),
+        LinuxRule(
+            "tamper.agent-heartbeat-loss.linux",
+            "Linux agent heartbeat loss",
+            "Created by the server liveness monitor after three inferred heartbeat intervals bounded to two through fifteen minutes.",
+            DetectionSeverities.Critical,
+            "tamper",
+            "agent-health",
+            "agent_id",
+            "T1562.001",
+            "defense-evasion",
+            900,
+            "agent_id",
+            "Expected during an approved agent stop, host shutdown, service restart, or API/database outage.",
+            "Verify agent and platform service health independently. A new authenticated heartbeat resolves the outage alert without assigning disposition or closing it."),
+        LinuxRule(
+            "tamper.audit-policy-change.linux",
+            "Linux audit policy tampering",
+            "Detects normalized audit-policy change evidence from the approval-gated journal-backed audit router.",
+            DetectionSeverities.Critical,
+            "tamper",
+            "linux-audit-framework",
+            "action,outcome",
+            "T1562.001",
+            "defense-evasion",
+            900,
+            "agent_id,action",
+            "Expected only during separately approved audit policy maintenance.",
+            "Validate the policy change and approval window. Audit collection never changes rules or producer configuration."),
+        LinuxRule(
+            "process.temporary-deleted-execution.linux",
+            "Temporary, deleted, or memfd Linux execution",
+            "Detects post-baseline process snapshots whose executable is deleted, memfd-backed, or under a bounded temporary path.",
+            DetectionSeverities.High,
+            "process",
+            "linux-process-snapshot-diff",
+            "action,process_image",
+            "T1055,T1204",
+            "execution,defense-evasion",
+            900,
+            "agent_id,process_image",
+            "Updaters and temporary build tooling may legitimately replace or execute files in temporary paths.",
+            "Review process ownership, command evidence, package activity, and socket attribution; polling does not establish exact execution time."),
+        LinuxRule(
+            "privilege.dangerous-effective-capabilities.linux",
+            "Dangerous Linux effective capabilities",
+            "Detects post-baseline process snapshots with decoded high-risk effective capability bits.",
+            DetectionSeverities.High,
+            "authorization",
+            "linux-process-snapshot-diff",
+            "action,process.dangerous_effective_capabilities",
+            "T1548",
+            "privilege-escalation",
+            900,
+            "agent_id,process_image,process.dangerous_effective_capabilities",
+            "Container runtimes, networking daemons, and approved administration tools can require high-risk capabilities.",
+            "Validate the executable, service provenance, user, and expected capability boundary before response.")
     };
 
     public static bool IsLinuxRule(string ruleId) => ruleId.EndsWith(".linux", StringComparison.OrdinalIgnoreCase);
@@ -249,7 +308,8 @@ public static class DetectionRuleCatalog
         int windowSeconds,
         string suppressionKeys,
         string falsePositiveNotes,
-        string responseGuidance) => Rule(
+        string responseGuidance,
+        int version = 1) => Rule(
             id,
             name,
             description,
@@ -262,7 +322,8 @@ public static class DetectionRuleCatalog
             windowSeconds,
             suppressionKeys,
             falsePositiveNotes,
-            responseGuidance);
+            responseGuidance,
+            version);
 
     private static DetectionRuleMetadata Rule(
         string id,
@@ -277,10 +338,11 @@ public static class DetectionRuleCatalog
         int windowSeconds = DefaultWindowSeconds,
         string? suppressionKeys = null,
         string? falsePositiveNotes = null,
-        string? responseGuidance = null) => new()
+        string? responseGuidance = null,
+        int version = 1) => new()
         {
             RuleId = id,
-            Version = 1,
+            Version = version,
             Name = name,
             Description = description,
             Severity = severity,

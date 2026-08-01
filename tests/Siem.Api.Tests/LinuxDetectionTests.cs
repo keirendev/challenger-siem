@@ -46,6 +46,39 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         Assert.Contains("baseline", listener.FalsePositiveNotes, StringComparison.OrdinalIgnoreCase);
         var pressure = Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "behavior.host-resource-pressure.linux");
         Assert.Equal([LinuxTelemetrySourceIds.HostBehaviourMetrics], pressure.RequiredSources);
+        Assert.Equal(2, pressure.Version);
+        Assert.Equal(2, Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "persistence.service-start.linux").Version);
+        Assert.Equal(2, Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "persistence.scheduler-activity.linux").Version);
+    }
+
+    [Theory]
+    [InlineData("session-42.scope", true)]
+    [InlineData("user@1001.service", true)]
+    [InlineData("user-runtime-dir@1001.service", true)]
+    [InlineData("session-backup.scope", false)]
+    [InlineData("user@synthetic.service", false)]
+    [InlineData("synthetic.service", false)]
+    public void SessionScaffoldingSuppressionIsExact(string serviceName, bool expected)
+    {
+        Assert.Equal(expected, DetectionEngine.IsExactSessionScaffolding(serviceName));
+    }
+
+    [Fact]
+    public void PressureCauseDiagnosticsAreBoundedAndCauseSpecific()
+    {
+        var raw = JsonSerializer.SerializeToElement(new
+        {
+            cpu_busy_permille = 950,
+            memory_total_bytes = 10_000,
+            memory_available_bytes = 500,
+            processes_blocked = 8,
+            io_pressure_some_avg10_milli = 50_000,
+            unrelated = new string('x', 500)
+        });
+
+        Assert.Equal(
+            new[] { "cpu_busy", "memory_available", "blocked_processes", "io_psi" },
+            AlertRepository.PressureCauses(raw));
     }
 
     [Fact]
@@ -55,6 +88,7 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         var cases = LinuxRuleCases().ToArray();
         var catalogRuleIds = DetectionRuleCatalog.BuiltInRules
             .Where(rule => DetectionRuleCatalog.IsLinuxRule(rule.RuleId))
+            .Where(rule => rule.RuleId != "tamper.agent-heartbeat-loss.linux") // emitted by the server liveness monitor, not event evaluation
             .Select(rule => rule.RuleId)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -657,14 +691,17 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         const string hostname = "SYNTHETIC-LINUX-EVIDENCE-CAP";
         await InsertLinuxAgentAsync(dataSource, agentId, hostname);
         await StoreHealthyHeartbeatAsync(dataSource, agentId, hostname, LinuxTelemetrySourceIds.HostBehaviourMetrics);
-        await EnableDetectionRuleAsync(dataSource, "behavior.host-resource-pressure.linux", 1);
+        await EnableDetectionRuleAsync(dataSource, "behavior.host-resource-pressure.linux", 2);
 
         var now = DateTimeOffset.FromUnixTimeSeconds((DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 900 * 900) + 450);
         var events = Enumerable.Range(0, AlertRepository.MaxEvidencePerAlert + 5)
             .Select(index =>
             {
                 var item = HostMetricsEvent(new { cpu_busy_permille = 950 });
-                if (index == 0)
+                // Rule v2 alerts on the third same-cause sample. Make that first
+                // alert-forming sample partial so later healthy coalescing must
+                // preserve the lowest confidence seen in the bucket.
+                if (index == 2)
                 {
                     item = item with
                     {
@@ -785,6 +822,18 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
             PortableEvent(EventSources.InventoryDiff, "linux-agent-self-integrity-snapshot", "agent_self_integrity_change", new NormalizedEventFields { Category = "tamper", Action = "agent_integrity_change", Outcome = "success", FilePath = "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", Hash = new string('a', 64) }),
             PortableEvent(EventSources.InventoryDiff, "linux-agent-self-integrity-snapshot", "inventory_observed", new NormalizedEventFields { Category = "inventory", Action = "observed", Outcome = "success", FilePath = "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent" }),
             "linux-agent-self-integrity-snapshot");
+        yield return ("tamper.audit-policy-change.linux",
+            PortableEvent(EventSources.LinuxAudit, LinuxTelemetrySourceIds.AuditFramework, "audit_policy_tamper", new NormalizedEventFields { Category = "audit_policy", Action = "audit_policy_change", Outcome = "success" }),
+            PortableEvent(EventSources.LinuxAudit, LinuxTelemetrySourceIds.AuditFramework, "authentication_session", new NormalizedEventFields { Category = "authentication_session", Action = "observed", Outcome = "success" }),
+            LinuxTelemetrySourceIds.AuditFramework);
+        yield return ("process.temporary-deleted-execution.linux",
+            PassiveMarkedProcess("process.executable_deleted", "true"),
+            PassiveMarkedProcess("process.executable_deleted", "false"),
+            LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+        yield return ("privilege.dangerous-effective-capabilities.linux",
+            PassiveMarkedProcess("process.dangerous_effective_capabilities", "CAP_SYS_ADMIN"),
+            PassiveMarkedProcess("process.dangerous_effective_capabilities", "none"),
+            LinuxTelemetrySourceIds.ProcessSnapshotDiff);
     }
 
     private static DetectionEvaluationResult PassiveRuleResult(
@@ -813,6 +862,24 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
                     ParentPid = "41",
                     Executable = "/usr/bin/synthetic-shell",
                     CommandLine = commandLine
+                }
+            });
+
+    private static EventEnvelope PassiveMarkedProcess(string label, string value) =>
+        PortableEvent(
+            EventSources.InventoryDiff,
+            LinuxTelemetrySourceIds.ProcessSnapshotDiff,
+            "process_observed",
+            new NormalizedEventFields
+            {
+                Category = "process",
+                Action = "observed",
+                Outcome = "unknown",
+                ProcessImage = "/usr/bin/synthetic-process",
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["baseline.alertable"] = "true",
+                    [label] = value
                 }
             });
 

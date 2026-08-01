@@ -118,6 +118,71 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
+    public void InventoryPagingContractAcceptsCompleteMetadataAndRejectsLossyClaims()
+    {
+        var snapshot = new AssetInventorySnapshot
+        {
+            AgentId = "synthetic-agent",
+            Hostname = "SYNTHETIC-LINUX-01",
+            SnapshotType = "linux_packages",
+            CollectedAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
+            Items = [new InventoryItem { Kind = "package", Name = "synthetic-package", Status = "installed" }],
+            Summary = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["generation_id"] = "synthetic-generation",
+                ["page_index"] = "1",
+                ["page_count"] = "2",
+                ["page_item_count"] = "1",
+                ["total_item_count"] = "2",
+                ["source_complete"] = "true",
+                ["source_truncated"] = "false"
+            }
+        };
+        var request = new AssetInventoryBatchRequest
+        {
+            AgentId = snapshot.AgentId,
+            SentAt = snapshot.CollectedAt,
+            Snapshots = [snapshot]
+        };
+
+        Assert.Empty(RequestValidation.ValidateInventoryBatch(request));
+        var invalid = request with
+        {
+            Snapshots = [snapshot with { Summary = snapshot.Summary.ToDictionary(pair => pair.Key, pair => pair.Key == "page_item_count" ? "2" : pair.Value) }]
+        };
+        Assert.Contains("snapshots[0].summary.page_item_count", RequestValidation.ValidateInventoryBatch(invalid).Keys);
+    }
+
+    [Fact]
+    public void InventoryGenerationCompletenessIsDerivedFromEveryReceivedPage()
+    {
+        static AssetInventorySnapshot Page(int index) => new()
+        {
+            AgentId = "synthetic-agent",
+            Hostname = "SYNTHETIC-LINUX-01",
+            SnapshotType = "linux_timers",
+            CollectedAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
+            Items = [new InventoryItem { Kind = "timer", Name = $"synthetic-{index}.timer", Status = "enabled" }],
+            Summary = new Dictionary<string, string>
+            {
+                ["generation_id"] = "synthetic-generation",
+                ["page_index"] = index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["page_count"] = "3",
+                ["page_item_count"] = "1",
+                ["total_item_count"] = "3",
+                ["source_complete"] = "true",
+                ["source_truncated"] = "false"
+            }
+        };
+
+        Assert.False(AssetInventoryPaging.Status([Page(1), Page(3)]).Complete);
+        var complete = AssetInventoryPaging.Status([Page(3), Page(1), Page(2)]);
+        Assert.True(complete.Complete);
+        Assert.Equal(3, complete.ReceivedPageCount);
+        Assert.Equal(3, AssetInventoryPaging.Reassemble([Page(2), Page(1), Page(3)]).Items.Count);
+    }
+
+    [Fact]
     public void ValidateHeartbeatAcceptsBoundedObservabilityAndPreservesUnknownVsZero()
     {
         var heartbeat = CreateLinuxHeartbeat() with

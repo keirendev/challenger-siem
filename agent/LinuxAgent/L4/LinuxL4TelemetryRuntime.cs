@@ -167,6 +167,8 @@ public sealed class LinuxL4TelemetryRuntime(
                 var accepted = group.Select(item => item.Checkpoint!.Sequence!.Value)
                     .Where(sequence => sequence <= progress.CollectedSequence)
                     .ToHashSet();
+                var recoveryPrefix = ReconcileRecoveryPrefix(progress, accepted);
+                progress = recoveryPrefix.Progress;
                 var acknowledgementBase = Math.Max(progress.AcknowledgedSequence, progress.AbandonedThroughSequence);
                 var acknowledgementCursor = acknowledgementBase;
                 while (acknowledgementCursor < progress.CollectedSequence && accepted.Contains(acknowledgementCursor + 1)) acknowledgementCursor++;
@@ -192,6 +194,7 @@ public sealed class LinuxL4TelemetryRuntime(
                         : acknowledgementRecovered ? "acknowledgement_recovered_pending_sample" : progress.ErrorCode,
                     GapCount = groupNonContiguous && progress.ErrorCode != "l4_acknowledgement_non_contiguous"
                         ? SaturatingAdd(progress.GapCount, 1) : progress.GapCount,
+                    DroppedCount = SaturatingAdd(progress.DroppedCount, recoveryPrefix.MissingCount),
                     TransitionState = groupNonContiguous ? HealthTransitionStates.Degraded
                         : acknowledgementRecovered ? HealthTransitionStates.Recovering : progress.TransitionState,
                     TransitionedAt = groupNonContiguous || acknowledgementRecovered ? timeProvider.GetUtcNow() : progress.TransitionedAt
@@ -204,6 +207,31 @@ public sealed class LinuxL4TelemetryRuntime(
         finally { gate.Release(); }
         if (nonContiguousAccepted)
             throw new InvalidOperationException("L4 acknowledgement contained a non-contiguous accepted sequence; accepted rows remain queued for safe retry.");
+    }
+
+    private static (LinuxL4SourceProgress Progress, long MissingCount) ReconcileRecoveryPrefix(
+        LinuxL4SourceProgress progress,
+        IReadOnlySet<long> accepted)
+    {
+        if (!progress.ActiveGap || !progress.RecoveryGapSequence.HasValue
+            || !accepted.Contains(progress.RecoveryGapSequence.Value)) return (progress, 0);
+
+        var acknowledgementBase = Math.Max(progress.AcknowledgedSequence, progress.AbandonedThroughSequence);
+        if (accepted.Contains(acknowledgementBase + 1)) return (progress, 0);
+        var firstAccepted = accepted
+            .Where(sequence => sequence > acknowledgementBase && sequence <= progress.RecoveryGapSequence.Value)
+            .DefaultIfEmpty(0)
+            .Min();
+        if (firstAccepted <= acknowledgementBase + 1) return (progress, 0);
+
+        // A durably accepted recovery marker makes the absent contiguous prefix explicit.
+        // Preserve it as dropped/gapped evidence so a lost reservation cannot deadlock the queue.
+        var missingCount = firstAccepted - acknowledgementBase - 1;
+        return (progress with
+        {
+            AbandonedThroughSequence = firstAccepted - 1,
+            GapCount = SaturatingAdd(progress.GapCount, missingCount)
+        }, missingCount);
     }
 
     public bool HandlesSource(string? sourceId) => sourceId is LinuxTelemetrySourceIds.PolicyPostureDrift or LinuxTelemetrySourceIds.AgentPerformanceSlo;
@@ -463,7 +491,25 @@ public sealed class LinuxL4TelemetryRuntime(
         foreach (var sourceId in new[] { LinuxTelemetrySourceIds.PolicyPostureDrift, LinuxTelemetrySourceIds.AgentPerformanceSlo })
         {
             var progress = ProgressFor(value, sourceId);
-            if (!progress.PendingReservationStart.HasValue) continue;
+            if (!progress.PendingReservationStart.HasValue)
+            {
+                if (progress.CollectedSequence > 0
+                    && progress.AcknowledgedSequence >= progress.CollectedSequence
+                    && progress.ErrorCode == "l4_acknowledgement_state_write_failed")
+                {
+                    progress = progress with
+                    {
+                        ActiveGap = false,
+                        Status = SourceHealthStatuses.Degraded,
+                        ErrorCode = "acknowledgement_recovered_pending_sample",
+                        TransitionState = HealthTransitionStates.Recovering,
+                        TransitionedAt = now
+                    };
+                    value = WithProgress(value, sourceId, progress);
+                    changed = true;
+                }
+                continue;
+            }
             var abandoned = progress.PendingReservationEnd!.Value - progress.PendingReservationStart.Value + 1;
             progress = progress with
             {

@@ -53,6 +53,7 @@ public static class LinuxTelemetrySourceCatalog
             LinuxTelemetrySourceIds.Firewall,
             LinuxTelemetrySourceIds.KernelSecurity,
             LinuxTelemetrySourceIds.LoginSession,
+            LinuxTelemetrySourceIds.AuditFramework,
             LinuxTelemetrySourceIds.Scheduler,
             LinuxTelemetrySourceIds.Ssh
         };
@@ -193,18 +194,18 @@ public static class LinuxTelemetrySourceCatalog
     };
 
     /// <summary>
-    /// Audit is declared honestly but is not collected by this pack. The optional entry prevents an
-    /// absent collector from being mistaken for healthy collection while remaining capability-only
-    /// for aggregate health. It does not enable or alter audit policy.
+    /// The approval-gated journal-backed audit router is implemented but optional and disabled by
+    /// default. Applicability remains unknown until the operator declares the existing facility;
+    /// the agent never enables or alters audit policy.
     /// </summary>
-    public static readonly SourceManifestEntry UnsupportedAuditFramework = new()
+    public static readonly SourceManifestEntry AuditFramework = new()
     {
         SourceId = LinuxTelemetrySourceIds.AuditFramework,
         Platform = TelemetryPlatforms.Linux,
         SourceKind = TelemetrySourceKinds.LinuxAudit,
         SourceNamespace = "linux.audit",
-        Applicability = SourceApplicabilityStatuses.Unsupported,
-        ApplicabilityReason = "collector_not_included",
+        Applicability = SourceApplicabilityStatuses.Unknown,
+        ApplicabilityReason = "operator_facility_declaration_required",
         CheckpointKind = SourceCheckpointKinds.Sequence,
         DisplayName = "Linux Audit Framework",
         CoverageLevel = CoverageLevel.L2,
@@ -212,13 +213,15 @@ public static class LinuxTelemetrySourceCatalog
         Requirement = SourceRequirementKinds.Optional,
         EnabledByDefault = false,
         SourcePack = L2PackId,
-        ParserId = "unsupported",
-        Prerequisites = ["linux_audit_collector"],
-        EventFamilies = ["audit"],
-        ValidationScenarios = ["unsupported_source_reporting"],
+        ParserId = "systemd-journal-audit-router-v1",
+        Prerequisites = ["systemd_journal_audit_interface_supported", "operator_existing_audit_facility_declared", "exact_audit_plan_approved", "router_attestation_valid", "durable_audit_assembly_state_available"],
+        EventFamilies = ["authentication_session", "authorization_syscall", "process_execution", "mandatory_access_control", "audit_policy_tamper", "integrity"],
+        ValidationScenarios = ["disabled_router_interception", "compound_group_restart", "privacy_allowlist", "pressure_gap", "poison_recovery"],
         Privacy = "high_sensitivity",
         InstallerManaged = false
     };
+
+    public static SourceManifestEntry UnsupportedAuditFramework => AuditFramework;
 
     public static readonly IReadOnlyList<SourceManifestEntry> L3Passive =
     [
@@ -281,7 +284,7 @@ public static class LinuxTelemetrySourceCatalog
 
     public static readonly IReadOnlyList<SourceManifestEntry> All = L1
         .Concat(L2Security)
-        .Append(UnsupportedAuditFramework)
+        .Append(AuditFramework)
         .Append(SelfIntegritySnapshot)
         .Concat(L3Passive)
         .Concat(L4)

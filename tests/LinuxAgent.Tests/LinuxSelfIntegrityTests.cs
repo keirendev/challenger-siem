@@ -10,6 +10,19 @@ namespace Challenger.Siem.LinuxAgent.Tests;
 public sealed class LinuxSelfIntegrityTests
 {
     [Fact]
+    public void DirectorySignatureIgnoresExpectedSizeAndMtimeChurnButRetainsSecurityMetadata()
+    {
+        var entry = LinuxSelfIntegrityCollector.Allowlist.Single(item => item.PathId == "state_directory");
+        var first = new SelfIntegrityObservation(entry, "present", "none", "directory", 1001, 1001,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, 1, DateTimeOffset.Parse("2026-08-01T00:00:00Z"), null);
+        var churn = first with { SizeBytes = 999_999, MtimeUtc = DateTimeOffset.Parse("2026-08-01T01:00:00Z") };
+        var ownerChange = churn with { OwnerId = 0 };
+
+        Assert.Equal(first.Signature, churn.Signature);
+        Assert.NotEqual(first.Signature, ownerChange.Signature);
+    }
+
+    [Fact]
     public async Task SelfIntegrityIsDisabledByDefaultAndRequiresMatchingPlanHash()
     {
         if (!OperatingSystem.IsLinux()) return;

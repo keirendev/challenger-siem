@@ -85,11 +85,14 @@ public sealed class SiemIngestClient(HttpClient httpClient, IAgentTransportConfi
     }
 
     public async Task SendInventoryAsync(IReadOnlyList<AssetInventorySnapshot> snapshots, CancellationToken cancellationToken)
+        => await SendInventoryAsync(snapshots, DateTimeOffset.UtcNow, cancellationToken);
+
+    public async Task SendInventoryAsync(IReadOnlyList<AssetInventorySnapshot> snapshots, DateTimeOffset sentAt, CancellationToken cancellationToken)
     {
         var request = new AssetInventoryBatchRequest
         {
             AgentId = options.AgentId,
-            SentAt = DateTimeOffset.UtcNow,
+            SentAt = sentAt,
             Snapshots = snapshots
         };
 

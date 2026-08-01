@@ -44,7 +44,7 @@ All 16 tools are declared read-only, non-destructive, idempotent, closed-world, 
 | `siem_review_detection` | Recent outcomes and non-persisted tuning proposal | version 1–10,000; 1–168 hours; never applies proposal |
 | `siem_get_coverage` | Agent coverage/prerequisite/gap assessment | exact agent; target L0–L4; 1–168 hours |
 | `siem_get_source_health` | Gaps, freshness, permission, throttle, checkpoints | exact agent; L0–L4; 1–100 per nested collection |
-| `siem_get_inventory` | Service-only bounded endpoint inventory | exact agent; at most 20 snapshots and 50 items each; items omitted by default |
+| `siem_get_inventory` | Service-only bounded endpoint inventory | exact agent; at most 20 snapshots and 50 items each; items omitted by default; reports page count, received pages, total items, and derived completeness |
 | `siem_list_graphs` | Existing graph summaries | 1–100 rows; offset 0–10,000 |
 | `siem_get_graph` | One existing graph and collections | 1–100 records per nested collection; never applies proposals |
 

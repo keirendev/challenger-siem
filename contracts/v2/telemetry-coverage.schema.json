@@ -33,6 +33,18 @@
     "target_level": {
       "$ref": "#/$defs/coverage_level"
     },
+    "liveness_monitor": {
+      "oneOf": [
+        { "$ref": "#/$defs/liveness_monitor" },
+        { "type": "null" }
+      ]
+    },
+    "retention_scheduler": {
+      "oneOf": [
+        { "$ref": "#/$defs/retention_scheduler" },
+        { "type": "null" }
+      ]
+    },
     "agents": {
       "type": "array",
       "items": {
@@ -41,6 +53,42 @@
     }
   },
   "$defs": {
+    "liveness_monitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "scan_interval_seconds", "fresh", "active_outage_count", "independent_monitoring_required"],
+      "properties": {
+        "status": { "type": "string", "enum": ["starting", "healthy", "error", "unknown"] },
+        "scan_interval_seconds": { "const": 30 },
+        "last_attempt_at": { "type": ["string", "null"], "format": "date-time" },
+        "last_successful_run_at": { "type": ["string", "null"], "format": "date-time" },
+        "fresh": { "type": "boolean" },
+        "active_outage_count": { "type": "integer", "minimum": 0, "description": "Global count from the latest monitor pass across all registered active agents; it is not narrowed by an agent coverage-row filter." },
+        "independent_monitoring_required": { "const": true }
+      }
+    },
+    "retention_scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retention_enabled", "scheduler_enabled", "interval_minutes", "target_retention_days", "managed_capacity_bytes"],
+      "properties": {
+        "retention_enabled": { "type": "boolean" },
+        "scheduler_enabled": { "type": "boolean" },
+        "interval_minutes": { "type": "integer", "minimum": 5, "maximum": 1440 },
+        "target_retention_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "managed_capacity_bytes": { "type": "integer", "minimum": 1024, "maximum": 107374182400 }
+      }
+    },
+    "history_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready_24_hours", "ready_7_days"],
+      "properties": {
+        "oldest_observation_at": { "type": ["string", "null"], "format": "date-time" },
+        "ready_24_hours": { "type": "boolean" },
+        "ready_7_days": { "type": "boolean" }
+      }
+    },
     "coverage_level": {
       "type": "string",
       "enum": [
@@ -232,6 +280,9 @@
         },
         "host_timezone": {
           "$ref": "#/$defs/host_timezone"
+        },
+        "history_readiness": {
+          "$ref": "#/$defs/history_readiness"
         },
         "platform": {
           "$ref": "event-envelope.schema.json#/$defs/platform"

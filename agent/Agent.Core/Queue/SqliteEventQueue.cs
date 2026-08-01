@@ -72,6 +72,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
             command.Parameters.AddWithValue("$scan_limit", Math.Max(maxEvents, maxEvents * 10));
 
             var results = new List<QueuedEvent>(Math.Max(1, maxEvents));
+            var blockedSequentialSources = new HashSet<string>(StringComparer.Ordinal);
             var now = DateTimeOffset.UtcNow;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken) && results.Count < maxEvents)
@@ -80,17 +81,19 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
                 var payloadJson = reader.GetString(1);
                 var sendAttempts = reader.GetInt32(2);
                 var lastAttemptAt = reader.IsDBNull(3) ? null : ParseTimestamp(reader.GetString(3));
-                if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.MaxBackoffSeconds, now))
-                {
-                    continue;
-                }
-
                 var envelope = JsonSerializer.Deserialize<EventEnvelope>(payloadJson, JsonDefaults.Options);
                 if (envelope is null)
                 {
                     logger.LogWarning("Queued event {QueueId} could not be deserialized.", queueId);
                     continue;
                 }
+                var sequentialSource = SequentialSourceKey(envelope);
+                if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.MaxBackoffSeconds, now))
+                {
+                    if (sequentialSource is not null) blockedSequentialSources.Add(sequentialSource);
+                    continue;
+                }
+                if (sequentialSource is not null && blockedSequentialSources.Contains(sequentialSource)) continue;
 
                 results.Add(new QueuedEvent(queueId, envelope, sendAttempts, lastAttemptAt));
             }
@@ -298,6 +301,11 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
     {
         return RetrySchedule.Exponential(sendAttempts, maxBackoffSeconds);
     }
+
+    private static string? SequentialSourceKey(EventEnvelope envelope) =>
+        envelope.Checkpoint?.Sequence.HasValue == true && !string.IsNullOrWhiteSpace(envelope.SourceId)
+            ? $"{envelope.AgentId}\n{envelope.SourceId}"
+            : null;
 
     private async Task InitializeUnsafeAsync(CancellationToken cancellationToken)
     {

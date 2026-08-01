@@ -10,16 +10,28 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
 {
     private readonly string procRoot;
     private readonly ILinuxProcessProcfs procfs;
+    private readonly LinuxSocketOwnershipCache? ownershipCache;
 
-    public LinuxProcfsProcessSource(string procRoot = "/proc")
-        : this(procRoot, new SystemLinuxProcessProcfs())
+    internal LinuxProcfsProcessSource(string procRoot = "/proc")
+        : this(procRoot, new SystemLinuxProcessProcfs(), null)
+    {
+    }
+
+    public LinuxProcfsProcessSource(LinuxSocketOwnershipCache ownershipCache)
+        : this("/proc", new SystemLinuxProcessProcfs(), ownershipCache)
     {
     }
 
     internal LinuxProcfsProcessSource(string procRoot, ILinuxProcessProcfs procfs)
+        : this(procRoot, procfs, null)
+    {
+    }
+
+    internal LinuxProcfsProcessSource(string procRoot, ILinuxProcessProcfs procfs, LinuxSocketOwnershipCache? ownershipCache)
     {
         this.procRoot = procRoot;
         this.procfs = procfs;
+        this.ownershipCache = ownershipCache;
     }
 
     public async Task<PassiveReadResult<LinuxProcessObservation>> ReadAsync(
@@ -43,6 +55,13 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         var partial = false;
         var truncated = false;
         var enumeratedProcessCount = 0;
+        long eligibleProcessCount = 0;
+        long readableCommandLineCount = 0;
+        long readableExecutableCount = 0;
+        long descriptorLinksInspected = 0;
+        var descriptorCapReached = false;
+        var descriptorPermissionDenied = false;
+        var socketOwners = new Dictionary<long, List<LinuxSocketOwner>>();
         var visibilityState = "full";
         var details = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -68,7 +87,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 128,
                 budget,
                 token);
-            if (!LinuxBootIdentity.TryHash(boot, out var bootIdentitySha256))
+                if (!LinuxBootIdentity.TryHash(boot, out var bootIdentitySha256))
             {
                 visibilityGaps++;
                 details["boot_identity"] = boot.Success ? "invalid" : boot.ErrorCode;
@@ -86,6 +105,8 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     coverageGapReadSkips,
                     denied + (boot.ErrorCode == "permission_denied" ? 1 : 0),
                     malformed + (boot.Success ? 1 : 0));
+                SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
+                PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
                 return new(
                     Array.Empty<LinuxProcessObservation>(),
                     status,
@@ -172,6 +193,10 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     token);
 
                 var executable = procfs.ReadLink(Path.Combine(directory, "exe"));
+                var executableDeleted = executable.Value?.EndsWith(" (deleted)", StringComparison.Ordinal) == true;
+                var executableMemfd = executable.Value?.StartsWith("/memfd:", StringComparison.Ordinal) == true
+                    || executable.Value?.StartsWith("memfd:", StringComparison.Ordinal) == true;
+                var executableTemporary = IsTemporaryExecutable(executable.Value);
                 var executableSanitized = TelemetryTextSanitizer.SanitizeAndRedact(executable.Value, 2048);
                 var executableText = executableSanitized.Truncated || executable.ErrorCode == "field_truncated"
                     ? new SanitizedTelemetryText(string.Empty, true, executableSanitized.InvalidText, true, true)
@@ -235,6 +260,18 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 }
 
                 var command = TelemetryTextSanitizer.SanitizeAndRedact(verified.Command, 256);
+                var isKernelThread = (verified.Flags & 0x00200000UL) != 0;
+                var isZombie = string.Equals(verified.State, "Z", StringComparison.Ordinal);
+                var eligible = !isKernelThread && !isZombie;
+                if (eligible)
+                {
+                    eligibleProcessCount++;
+                    if (commandLineResult.Success && !commandLineResult.Truncated && commandLineResult.ErrorCode == "none")
+                        readableCommandLineCount++;
+                    if (executable.ErrorCode == "none" && !string.IsNullOrWhiteSpace(executable.Value))
+                        readableExecutableCount++;
+                }
+                var dangerousCapabilities = DecodeDangerousCapabilities(capEff);
                 malformedMetadata = malformedMetadata
                     || command.InvalidText
                     || command.Truncated
@@ -259,7 +296,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     tracerPid?.ToString(CultureInfo.InvariantCulture),
                     loginUserId,
                     cgroupHash);
-                var enrichmentPartial = IsVisibilityFailure(statusResult)
+                var materialEnrichmentFailure = IsVisibilityFailure(statusResult)
                     || IsVisibilityFailure(loginResult)
                     || IsVisibilityFailure(cgroupResult)
                     || IsVisibilityFailure(commandLineResult)
@@ -267,7 +304,11 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     || executableText.Truncated
                     || executableText.Dropped
                     || malformedMetadata;
-                if (enrichmentPartial)
+                // Missing optional enrichment contributes to the aggregate visibility ratios.
+                // It is not by itself a per-process collection failure unless the underlying
+                // read was denied, malformed, truncated, or otherwise materially failed.
+                var enrichmentPartial = materialEnrichmentFailure;
+                if (materialEnrichmentFailure)
                 {
                     partial = true;
                     visibilityGaps++;
@@ -309,18 +350,44 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     enrichmentPartial,
                     command.Redacted || command.Dropped,
                     executableText.Redacted || executableText.Dropped,
-                    executableText.Truncated || executable.ErrorCode == "field_truncated"));
+                    executableText.Truncated || executable.ErrorCode == "field_truncated",
+                    isKernelThread,
+                    isZombie,
+                    executableDeleted,
+                    executableMemfd,
+                    executableTemporary,
+                    dangerousCapabilities));
+
+                if (options.CollectSocketOwnership && ownershipCache is not null)
+                {
+                    CollectSocketOwners(
+                        directory,
+                        new LinuxSocketOwner(
+                            verified.ProcessId,
+                            executableText.Dropped ? null : EmptyToNull(executableText.Value),
+                            command.Value,
+                            userId,
+                            "exact_inode_current_scan"),
+                        socketOwners,
+                        ref descriptorLinksInspected,
+                        ref descriptorCapReached,
+                        ref descriptorPermissionDenied);
+                }
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied, malformed);
+            SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
+            PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
             return new(observations, PassiveReadStatuses.Partial, "process_scan_deadline", true, budget.BytesRead,
                 skipped + 1, visibilityGaps + 1, details, expectedRaceSkips, coverageGapReadSkips + 1);
         }
         catch (UnauthorizedAccessException)
         {
             SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied + 1, malformed);
+            SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
+            PublishOwnership(options, socketOwners, false, descriptorCapReached, true, descriptorLinksInspected);
             return new(observations, observations.Count == 0 ? PassiveReadStatuses.PermissionDenied : PassiveReadStatuses.Partial,
                 "procfs_process_permission_denied", truncated, budget.BytesRead, skipped + 1, visibilityGaps + 1, details,
                 expectedRaceSkips, coverageGapReadSkips + 1);
@@ -328,10 +395,30 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         catch (IOException)
         {
             SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied, malformed);
+            SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
+            PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
             return new(observations, observations.Count == 0 ? PassiveReadStatuses.Error : PassiveReadStatuses.Partial,
                 "procfs_process_io_error", truncated, budget.BytesRead, skipped + 1, visibilityGaps + 1, details,
                 expectedRaceSkips, coverageGapReadSkips + 1);
         }
+
+        var commandLinePermille = VisibilityPermille(readableCommandLineCount, eligibleProcessCount);
+        var executablePermille = VisibilityPermille(readableExecutableCount, eligibleProcessCount);
+        var belowVisibilityThreshold = eligibleProcessCount >= 10
+            && (commandLinePermille < 800 || executablePermille < 800);
+        if (belowVisibilityThreshold)
+        {
+            partial = true;
+            visibilityGaps++;
+        }
+        SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
+        PublishOwnership(
+            options,
+            socketOwners,
+            !partial && !truncated && !descriptorCapReached && !descriptorPermissionDenied,
+            descriptorCapReached,
+            descriptorPermissionDenied,
+            descriptorLinksInspected);
 
         var expectedRacesOnly = observations.Count == 0
             && enumeratedProcessCount > 0
@@ -356,6 +443,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
             _ when truncated => "process_scan_truncated",
             _ when denied > 0 => "process_metadata_permission_denied",
             _ when malformed > 0 => "process_metadata_malformed",
+            _ when belowVisibilityThreshold => "process_visibility_below_threshold",
             _ => "process_enrichment_partial"
         };
         SetCounterDetails(details, visibilityState, skipped, expectedRaceSkips, coverageGapReadSkips, denied, malformed);
@@ -376,11 +464,12 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
             || fields[0].Length != 1
             || !int.TryParse(fields[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentPid)
             || parentPid < 0
+            || !ulong.TryParse(fields[6], NumberStyles.None, CultureInfo.InvariantCulture, out var flags)
             || !long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var startTicks))
         {
             return false;
         }
-        parsed = new(pid, parentPid, startTicks, fields[0], command);
+        parsed = new(pid, parentPid, startTicks, fields[0], command, flags);
         return true;
     }
 
@@ -469,6 +558,113 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         details["malformed_metadata_records"] = malformed.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static void SetVisibilityRatioDetails(
+        IDictionary<string, string> details,
+        long eligible,
+        long readableCommandLines,
+        long readableExecutables)
+    {
+        details["eligible_processes"] = eligible.ToString(CultureInfo.InvariantCulture);
+        details["command_line_readable_count"] = readableCommandLines.ToString(CultureInfo.InvariantCulture);
+        details["executable_readable_count"] = readableExecutables.ToString(CultureInfo.InvariantCulture);
+        details["command_line_readability_permille"] = VisibilityPermille(readableCommandLines, eligible).ToString(CultureInfo.InvariantCulture);
+        details["executable_readability_permille"] = VisibilityPermille(readableExecutables, eligible).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static int VisibilityPermille(long visible, long eligible) => eligible <= 0
+        ? 1000
+        : (int)Math.Clamp(visible * 1000 / eligible, 0, 1000);
+
+    internal static string? DecodeDangerousCapabilities(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !ulong.TryParse(value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var mask))
+            return null;
+        var dangerous = new (int Bit, string Name)[]
+        {
+            (1, "dac_override"), (2, "dac_read_search"), (6, "setgid"), (7, "setuid"),
+            (12, "net_admin"), (13, "net_raw"), (16, "sys_module"), (17, "sys_rawio"),
+            (19, "sys_ptrace"), (21, "sys_admin"), (22, "sys_boot"), (33, "mac_admin"),
+            (38, "perfmon"), (39, "bpf"), (40, "checkpoint_restore")
+        };
+        var names = dangerous.Where(capability => (mask & (1UL << capability.Bit)) != 0).Select(capability => capability.Name).ToArray();
+        return names.Length == 0 ? null : string.Join(',', names);
+    }
+
+    internal static bool IsTemporaryExecutable(string? executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable)) return false;
+        var value = executable.EndsWith(" (deleted)", StringComparison.Ordinal)
+            ? executable[..^10]
+            : executable;
+        return value.StartsWith("/tmp/", StringComparison.Ordinal)
+            || value.StartsWith("/var/tmp/", StringComparison.Ordinal)
+            || value.StartsWith("/dev/shm/", StringComparison.Ordinal)
+            || value.StartsWith("/run/user/", StringComparison.Ordinal);
+    }
+
+    private void CollectSocketOwners(
+        string processDirectory,
+        LinuxSocketOwner owner,
+        IDictionary<long, List<LinuxSocketOwner>> owners,
+        ref long inspected,
+        ref bool capReached,
+        ref bool permissionDenied)
+    {
+        if (inspected >= LinuxSocketOwnershipCache.MaxDescriptorLinksPerScan)
+        {
+            capReached = true;
+            return;
+        }
+        try
+        {
+            var count = 0;
+            foreach (var descriptor in Directory.EnumerateFileSystemEntries(Path.Combine(processDirectory, "fd")))
+            {
+                if (count++ >= LinuxSocketOwnershipCache.MaxDescriptorsPerProcess
+                    || inspected >= LinuxSocketOwnershipCache.MaxDescriptorLinksPerScan)
+                {
+                    capReached = true;
+                    break;
+                }
+                inspected++;
+                string? target;
+                try { target = new FileInfo(descriptor).LinkTarget; }
+                catch (UnauthorizedAccessException) { permissionDenied = true; continue; }
+                catch (IOException) { continue; }
+                if (!LinuxSocketOwnershipCache.TryParseSocketTarget(target, out var inode)) continue;
+                if (!owners.TryGetValue(inode, out var list)) owners[inode] = list = new();
+                if (list.Count < LinuxSocketOwnershipCache.MaxOwnersPerSocket
+                    && list.All(existing => existing.ProcessId != owner.ProcessId))
+                    list.Add(owner);
+                else if (list.Count >= LinuxSocketOwnershipCache.MaxOwnersPerSocket)
+                    capReached = true;
+            }
+        }
+        catch (UnauthorizedAccessException) { permissionDenied = true; }
+        catch (DirectoryNotFoundException) { }
+        catch (IOException) { }
+    }
+
+    private void PublishOwnership(
+        PassiveTelemetryOptions options,
+        IReadOnlyDictionary<long, List<LinuxSocketOwner>> owners,
+        bool complete,
+        bool capReached,
+        bool permissionDenied,
+        long inspected)
+    {
+        if (!options.CollectSocketOwnership || ownershipCache is null) return;
+        ownershipCache.Publish(
+            owners.ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<LinuxSocketOwner>)pair.Value.OrderBy(owner => owner.ProcessId).ToArray()),
+            complete,
+            capReached,
+            permissionDenied,
+            inspected);
+    }
+
     private static int CountPermissionDenials(params string[] errorCodes) =>
         errorCodes.Count(errorCode => errorCode == "permission_denied");
 
@@ -512,7 +708,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
 
     private static string? EmptyToNull(string value) => value.Length == 0 ? null : value;
 
-    internal readonly record struct ParsedProcessStat(int ProcessId, int ParentProcessId, long StartTicks, string State, string Command);
+    internal readonly record struct ParsedProcessStat(int ProcessId, int ParentProcessId, long StartTicks, string State, string Command, ulong Flags);
 }
 
 internal interface ILinuxProcessProcfs

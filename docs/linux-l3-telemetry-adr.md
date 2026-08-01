@@ -1,6 +1,6 @@
 # ADR: optional Linux L3 telemetry selection
 
-Status: adopted narrow design; independently approval-gated self-integrity and passive procfs snapshots implemented; audit remains unimplemented under a separate accepted read-only design
+Status: adopted narrow design; independently approval-gated self-integrity/passive procfs and the separate journal-audit router are implemented; live audit parsing remains disabled and separately gated
 Date: 2026-07-14
 Scope: Linux L3 audit, eBPF, file-integrity, and passive procfs telemetry decisions
 
@@ -8,13 +8,13 @@ Scope: Linux L3 audit, eBPF, file-integrity, and passive procfs telemetry decisi
 
 Challenger SIEM does **not** add or enable Linux audit, eBPF, broad/live file-integrity collection, or any host-policy mutation. The supported Linux endpoint includes the existing passive L1 journal reader, opt-in L2 logical journal classification, bounded read-only inventory, the disabled-by-default explicit-opt-in L3 snapshot-based agent self-integrity source, and a separately approval-gated passive procfs L3 pack for polling-honest process/socket snapshots and coalesced host-behaviour samples. No audit rules, audit backlog settings, kernel parameters, capabilities, packages, modules, firewall/authentication/security policy, fanotify/inotify watches, IMA policy, or live file-integrity watches are installed or changed.
 
-The selected file-integrity candidate remains only the **snapshot-based, allowlisted agent self-integrity design** described below. Audit implementation and eBPF remain deferred until separately approved implementation work plus private compatibility and resource evidence exists. The accepted design/security/privacy boundary for a possible audit implementation is documented in [Read-only Linux Audit Framework collector boundary](linux-audit-framework-adr.md); it authorizes no implementation, live reads, or host changes. Broad or live file-integrity monitoring remains rejected as an L3 default.
+The selected file-integrity candidate remains only the **snapshot-based, allowlisted agent self-integrity design** described below. The [Read-only Linux Audit Framework collector boundary](linux-audit-framework-adr.md) now has a disabled-by-default implementation with a pre-L1 privacy router; live parsing still requires separate exact approval and compatibility/resource evidence and authorizes no host producer change. eBPF and broad/live file-integrity monitoring remain deferred or rejected as L3 defaults.
 
 A later implementation added a distinct passive procfs snapshot pack, documented in [Linux passive process, network, and behaviour telemetry](linux-passive-telemetry.md). It does not revise the eBPF decision: procfs polling cannot provide kernel-hook ordering or complete short-lived process/connection coverage, so its events deliberately use non-alertable `baseline` followed by `observed`, `disappeared`, and `changed` semantics and expose partial/truncated health. The pack is disabled until its explicit plan hash is approved, needs no new capability or host-policy change, and pauses itself before consuming the queue headroom reserved for L1/L2.
 
 | Option | Decision | Reason |
 | --- | --- | --- |
-| Existing journal-backed Linux Audit Framework integration | **Design accepted; implementation deferred** | The exact future boundary is the already-configured local systemd journal, reused through a required pre-L1 privacy router with no rule/backlog/failure/service/permission mutation. Implementation still needs separate authorization, synthetic verification, and private evidence. |
+| Existing journal-backed Linux Audit Framework integration | **Implemented; disabled and undeclared by default** | The exact boundary is the already-configured local systemd journal, reused through a pre-L1 privacy router with no rule/backlog/failure/service/permission mutation. Live parsing still needs separate exact approval and private compatibility/resource evidence. |
 | Narrow eBPF process/network visibility | **Defer** | Correctness potential is high for process/network metadata, but verifier/program/kernel/BTF/capability/package complexity and unmeasured overhead are above the current L3 gate. |
 | Bounded procfs process/socket/resource snapshots | **Adopt as explicit opt-in** | Provides useful polling evidence with ordinary read-only files, deterministic diff/health semantics, strict privacy/volume bounds, and no kernel program or policy mutation; it explicitly cannot claim complete lifecycle capture. |
 | Allowlisted file-integrity approaches | **Adopt narrow snapshot design only** | A small, explicit, no-watch agent self-integrity snapshot can extend existing inventory with bounded overhead and rollback. Broader path watches, fanotify permission workflows, IMA policy, and role config hashing remain deferred. |
@@ -81,7 +81,7 @@ Audit can include path, command, UID/GID, syscall arguments, SELinux/AppArmor la
 
 ### Packaging, maintenance, and rollback
 
-No audit userspace package is added by this change. A future passive reader may use host facilities only. Bundling or linking audit-userspace/libaudit requires a separate legal/release review because the public upstream repository is GPL-2.0. Rollback for a passive reader is removal of the source manifest/collector and persisted checkpoint only; because no policy is changed, host rollback should have nothing to restore. If any later task proposes rules, rollback must restore the exact prior audit state and prove no unrelated rule changed.
+No audit userspace package is added. The implemented router uses only the existing system-journal facility and managed runtime; bundling or linking audit-userspace/libaudit would require separate legal/release review because the public upstream repository is GPL-2.0. Rollback disables parsing and removes only agent-owned router state after queue disposition; because no host policy is changed, there is no producer state to restore. Any later rule proposal remains a separate high-risk plan that must preserve and verify the exact prior audit state.
 
 ### Decision
 

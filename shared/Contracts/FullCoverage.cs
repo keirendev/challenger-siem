@@ -533,8 +533,41 @@ public sealed record TelemetryCoverageResponse
     [JsonPropertyName("target_level")]
     public CoverageLevel TargetLevel { get; init; } = CoverageLevel.L2;
 
+    [JsonPropertyName("liveness_monitor")]
+    public CoverageLivenessMonitorStatus? LivenessMonitor { get; init; }
+
+    [JsonPropertyName("retention_scheduler")]
+    public CoverageRetentionSchedulerStatus? RetentionScheduler { get; init; }
+
     [JsonPropertyName("agents")]
     public IReadOnlyList<AgentTelemetryCoverage> Agents { get; init; } = Array.Empty<AgentTelemetryCoverage>();
+}
+
+public sealed record CoverageLivenessMonitorStatus
+{
+    [JsonPropertyName("status")] public string Status { get; init; } = "unknown";
+    [JsonPropertyName("scan_interval_seconds")] public int ScanIntervalSeconds { get; init; } = 30;
+    [JsonPropertyName("last_attempt_at")] public DateTimeOffset? LastAttemptAt { get; init; }
+    [JsonPropertyName("last_successful_run_at")] public DateTimeOffset? LastSuccessfulRunAt { get; init; }
+    [JsonPropertyName("fresh")] public bool Fresh { get; init; }
+    [JsonPropertyName("active_outage_count")] public int ActiveOutageCount { get; init; }
+    [JsonPropertyName("independent_monitoring_required")] public bool IndependentMonitoringRequired { get; init; } = true;
+}
+
+public sealed record CoverageRetentionSchedulerStatus
+{
+    [JsonPropertyName("retention_enabled")] public bool RetentionEnabled { get; init; }
+    [JsonPropertyName("scheduler_enabled")] public bool SchedulerEnabled { get; init; }
+    [JsonPropertyName("interval_minutes")] public int IntervalMinutes { get; init; }
+    [JsonPropertyName("target_retention_days")] public int TargetRetentionDays { get; init; }
+    [JsonPropertyName("managed_capacity_bytes")] public long ManagedCapacityBytes { get; init; }
+}
+
+public sealed record CoverageHistoryReadiness
+{
+    [JsonPropertyName("oldest_observation_at")] public DateTimeOffset? OldestObservationAt { get; init; }
+    [JsonPropertyName("ready_24_hours")] public bool Ready24Hours { get; init; }
+    [JsonPropertyName("ready_7_days")] public bool Ready7Days { get; init; }
 }
 
 public sealed record AgentTelemetryCoverage
@@ -553,6 +586,9 @@ public sealed record AgentTelemetryCoverage
 
     [JsonPropertyName("host_timezone")]
     public HostTimezoneMetadata? HostTimezone { get; init; }
+
+    [JsonPropertyName("history_readiness")]
+    public CoverageHistoryReadiness HistoryReadiness { get; init; } = new();
 
     [JsonPropertyName("platform")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

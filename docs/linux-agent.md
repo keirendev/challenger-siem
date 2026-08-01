@@ -10,7 +10,7 @@ The default journal target remains **L1** and the default physical scope remains
 - Pre-existing non-root `challenger-siem` passwd entry (UID must not be 0) with an existing matching `challenger-siem` primary group, shell exactly `/usr/sbin/nologin`, `/sbin/nologin`, or `/bin/false`, and a shadow password field locked with `!` or `*`. Real-host install verifies this as root before creating paths. There is no root steady state, capability grant, privileged helper, or installer-added group membership.
 - HTTPS server URL only. Configuration: `/etc/challenger-siem-agent/agentsettings.json` (0600). Queue/state: `/var/lib/challenger-siem-agent` (0700). Binary: `/opt/challenger-siem-agent`. Unit: `/etc/systemd/system/challenger-siem-agent.service`.
 - Fixed direct `/usr/bin/journalctl` or `/bin/journalctl` machine-readable invocation, with no shell, configurable executable, arbitrary arguments/path, alternate file reader, or fallback collector. The one Boolean scope choice maps only to fixed `system_only` or `all_accessible_local` argument sets.
-- No audit collector or audit-policy change, eBPF, broad/live file-integrity monitoring, firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, or general command/path interface. L3 implementations are limited to explicit-plan-hash snapshot sources. L4 adds an exact-plan/baseline posture comparison, bounded rolling agent SLOs, and structured role-journal classification only. These features create no watches or kernel programs, open no application log files, and change no host policy.
+- The journal-audit privacy router is implemented but parsing is disabled and undeclared by default. It reuses the system-journal reader and changes no audit policy, producer, privilege, package, group, ACL, capability, or retention setting. There is no eBPF, broad/live file-integrity monitoring, firewall/authentication/kernel/MAC-policy mutation, source-group enrollment, or general command/path interface.
 
 ## One durable journal path
 
@@ -32,7 +32,7 @@ Rotation, vacuum, invalid cursors, permission loss, malformed input, reordering,
 | `linux-kernel-security` | L2 | mandatory | kernel security, security modules, kernel modules | applicable when L2 is selected; current system-journal visibility establishes source freshness independently of rare family activity |
 | `linux-service-change` | L2 | mandatory | service start/stop/reload/failure | applicable when L2 is selected |
 | `linux-agent-log-tamper` | L2 | mandatory | agent/log tamper | applicable when L2 is selected |
-| `linux-audit-framework` | L2 | optional | audit | explicitly `unsupported`; no audit collector or enablement is included |
+| `linux-audit-framework` | L2 | optional | allowlisted audit authentication/session, authorization syscall, MAC, policy, and integrity families | implemented, disabled and undeclared by default; fixed interface and exact approval required; no producer enablement included |
 | `linux-agent-self-integrity-snapshot` | L3 | optional | agent-owned binary/unit/config/directory metadata snapshot | disabled by default; requires explicit self-integrity approval hash |
 | `linux-process-snapshot-diff` | L3 | mandatory for an L3 target | process baseline/observed/disappeared/changed polling evidence | disabled by default; requires passive-telemetry approval hash |
 | `linux-network-socket-snapshot-diff` | L3 | mandatory for an L3 target | socket/listener baseline/observed/disappeared/changed polling evidence | disabled by default; requires passive-telemetry approval hash |
@@ -68,7 +68,7 @@ The posture source uses fixed bounded inputs and deterministic sequence events. 
 
 Supported role declarations are `general_server`, `workstation`, `ssh_server`, `bastion`, `web_server`, `database_server`, `dns_server`, `file_server`, `container_host`, and `identity_server`. Empty or unknown declarations block L4. The six specialized role sources classify only fixed structured journal identifier/unit evidence; no application file reader or new regex/message inference is added. Successful journal reads can keep a quiet applicable role source healthy while `event_family_statuses` truthfully remains `not_observed`.
 
-L4 is strict: all mandatory L1-L4 sources and all applicable role-specific sources must be healthy. Server-side exceptions document gaps but do not satisfy L4. The optional L3 self-integrity source and optional unsupported audit source do not become mandatory merely because L4 is requested. See [Linux L4 full-target coverage](linux-l4-coverage.md).
+L4 is strict: all mandatory L1-L4 sources and all applicable role-specific sources must be healthy. Server-side exceptions document gaps but do not satisfy L4. The optional L3 self-integrity source and optional disabled audit source do not become mandatory merely because L4 is requested. See [Linux L4 full-target coverage](linux-l4-coverage.md).
 
 ## Structured normalization
 
@@ -99,14 +99,14 @@ Portable health status supports `healthy`, `missing`, `disabled`, `stale`, `degr
 - `permission_denied` means the fixed source could not be read; the agent does not retry as root or change groups/ACLs.
 - `degraded` represents pressure, unresolved optional/role applicability, or a mandatory L2 family whose producer evidence has not yet been observed; it is distinct from stale data.
 - an optional `unknown` row such as pre-inventory firewall applicability remains visible and counted without lowering aggregate health by itself; a known applicable degraded, denied, stale, or errored source remains actionable.
-- `unsupported` is explicit collector/platform capability absence, currently used for Linux Audit Framework. The optional audit row remains visible and counted as a capability limitation but does not degrade aggregate health or create a telemetry completeness gap; a mandatory or applicable unsupported source remains an aggregate gap.
+- `unsupported` is explicit collector/platform/interface capability absence. The optional audit row reports `disabled`, `not_applicable`, `unsupported`, or runtime health from declaration/interface/approval/access/state evidence; optional non-applicability does not masquerade as collected coverage.
 - `not_applicable` requires a declared role/platform reason.
 - `stale` covers age/discontinuity conditions; cursor gaps remain errors where appropriate.
 - prerequisite states and event-family states distinguish satisfied/observed, not observed, missing, disabled, stale, degraded, denied, unsupported, not applicable, excepted, and unknown.
 
 Mandatory applicable sources determine the current level. Optional sources do not lower the level; an applicable role-specific source becomes mandatory for that role. Lower-level assessments can account for server-approved exceptions, but strict L4 requires `healthy` for every mandatory/applicable source and accepts no exception as full coverage. `not_applicable` requires resolved role evidence; `unsupported`, denied, stale, degraded, disabled, missing, unresolved-role, and excepted mandatory/applicable sources do not satisfy L4.
 
-The current audit boundary remains out of scope for collection. The [read-only Linux Audit Framework ADR](linux-audit-framework-adr.md) is the reviewed design/security/privacy boundary for a possible collector that consumes only an already configured and readable audit facility. It does not authorize implementation, live audit access, package or service changes, audit-policy mutation, capability grants, permission changes, or other privilege expansion.
+The [read-only Linux Audit Framework ADR](linux-audit-framework-adr.md) defines the implemented pre-L1 router, allowlisted parser, private WAL/assembler, pressure, recovery, and health boundary. Audit parsing remains disabled unless the fixed declaration and exact approval match; neither implementation nor configuration authorizes package/service changes, audit-policy mutation, capability grants, permission changes, or other privilege expansion.
 
 ## Configuration
 
@@ -143,6 +143,7 @@ Relevant defaults:
       "QueuePauseDepth": 50000,
       "MaxProcessesPerScan": 4096,
       "MaxSocketsPerScan": 8192,
+      "CollectSocketOwnership": false,
       "MaxEventsPerScan": 500,
       "MaxProcessReadBytesPerScan": 16777216,
       "MaxNetworkReadBytesPerScan": 4194304,
@@ -174,6 +175,13 @@ Relevant defaults:
       "MaxRecordsPerPoll": 500,
       "MaxInputRecordBytes": 131072,
       "QueuePauseDepth": 100000
+    },
+    "Audit": {
+      "Enabled": false,
+      "Interface": "systemd_journal_audit_v1",
+      "FacilityDeclaration": "undeclared",
+      "ApprovedPlanHash": "",
+      "StatePath": "/var/lib/challenger-siem-agent/audit-router-state.json"
     }
   }
 }
@@ -185,10 +193,17 @@ Relevant defaults:
 
 `PassiveTelemetry.Enabled` also remains `false` until its separate `ApprovedPlanHash` matches the fixed sources and configured limits. The process/network defaults poll every 15 seconds, host metrics every 60 seconds, and pause at 50,000 queued events before the journal's default threshold. Bounds reject intervals, deadlines, item/event counts, command-line/raw sizes, and read budgets outside the supported range. Production validation accepts only the product-owned `PassiveTelemetry.StatePath` shown above; optional cleanup removes only that fixed-path, symlink-rejecting regular state file. No process, socket, host policy, shared queue, or server telemetry is changed.
 
+`Audit.Enabled=false` and `FacilityDeclaration=undeclared` are the shipping defaults.
+The router still intercepts trusted audit transport before L1 without parsing or
+retaining its message. Enabling requires system-only journal scope, an explicit
+`present_enabled` declaration for an already configured facility, and the exact
+`--audit-plan` approval. The fixed private state is not operator-selectable in
+production. The lifecycle plan performs no producer inspection or mutation.
+
 
 ## Bounded inventory snapshots
 
-The independent inventory service emits up to 20 snapshots, 200 items per snapshot, and a default 256 KiB serialized batch. Categories cover host identity, users/groups, services/units/timers, packages/updates, interfaces/listeners, mounts, firewall, SSH, MAC state, Secure Boot, and observable agent file posture. Package inventory supports fixed dpkg, rpm, and pacman queries; available-update inventory supports fixed apt, cache-only dnf, and pacman queries. Pacman uses only `-Q` and `-Qu`, and its silent exit-1 empty-update result is accepted only when stderr is also empty. Every snapshot reports `success`, `unavailable`, `not_applicable`, `permission_denied`, `timeout`, or `malformed`; the server maps these states without treating mere presence as healthy.
+The independent inventory service supports 4,096 items per type, 200 items per page, 32 pages, 512 KiB per-source output, and 4 MiB total collection memory. It sends sequential requests containing at most 20 pages and the configured serialized budget. Categories cover host identity, users/groups, services/units/timers, packages/updates, interface name/state, listeners, mounts, firewall, SSH, MAC state, Secure Boot, and observable agent file posture. Interfaces come from `/proc/net/dev` plus safe `/sys/class/net` state/type reads without addresses or MACs. Package inventory supports fixed dpkg, rpm, and pacman queries; available-update inventory supports fixed apt, cache-only dnf, and pacman queries. Every snapshot reports its state and generation/page completeness; the server derives completeness from received pages and treats missing or source-truncated generations as degraded.
 
 The fixed catalog uses exact executable candidates/arguments/files, no shell, a cleared environment, process-tree cancellation, time/output caps, and no-follow regular-file reads. It excludes raw output, arbitrary file content/path scans, account descriptions, group membership, addresses, command lines, firewall rules, repository contents, and unapproved SSH directives. Inventory remains current-state evidence, not a substitute for event-source health.
 

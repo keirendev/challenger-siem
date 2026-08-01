@@ -25,7 +25,10 @@ public sealed class LinuxInventoryTests
         foreach (var policy in LinuxInventoryCatalog.All)
         {
             Assert.InRange(policy.Timeout, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
-            Assert.InRange(policy.MaxOutputBytes, 1, policy.Kind == InventorySourceKind.Command ? 64 * 1024 : 64 * 1024 * 1024);
+            Assert.InRange(policy.MaxOutputBytes, 1,
+                policy.Kind is InventorySourceKind.Command or InventorySourceKind.Interfaces
+                    ? AssetInventoryPaging.MaxSourceOutputBytes
+                    : 64 * 1024 * 1024);
             if (policy.Kind == InventorySourceKind.Command)
             {
                 Assert.NotEmpty(policy.ExecutablePaths);
@@ -123,6 +126,44 @@ public sealed class LinuxInventoryTests
             Assert.Equal(content, result.Content);
             Assert.Equal(content.Length, result.FileSize);
             Assert.False(result.Truncated);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task InterfaceInventoryUsesOnlyBoundedProcfsAndSafeSysfsNames()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-interface-synthetic-{Guid.NewGuid():N}");
+        var proc = Path.Combine(root, "proc-net-dev");
+        var sys = Path.Combine(root, "sys-class-net");
+        Directory.CreateDirectory(Path.Combine(sys, "eth0"));
+        try
+        {
+            await File.WriteAllTextAsync(proc, "Inter-| Receive | Transmit\n face |bytes packets|bytes packets\nlo: 0 0 0 0\neth0: 0 0 0 0\n..: 0 0 0 0\n");
+            await File.WriteAllTextAsync(Path.Combine(sys, "eth0", "operstate"), "up\n");
+            await File.WriteAllTextAsync(Path.Combine(sys, "eth0", "type"), "1\n");
+            var policy = new InventorySourcePolicy(
+                LinuxInventoryOperation.Interfaces,
+                InventorySourceKind.Interfaces,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                proc,
+                TimeSpan.FromSeconds(5),
+                AssetInventoryPaging.MaxSourceOutputBytes,
+                new HashSet<int>());
+
+            var result = await LinuxInventorySource.ReadInterfacesAsync(policy, default, sys);
+
+            Assert.Equal(InventorySourceState.Success, result.State);
+            Assert.Contains("eth0\tup\tethernet", result.Content, StringComparison.Ordinal);
+            Assert.Contains("lo\tunavailable\tother", result.Content, StringComparison.Ordinal);
+            Assert.DoesNotContain("..", result.Content, StringComparison.Ordinal);
+            Assert.DoesNotContain("address", result.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("mac", result.Content, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -458,14 +499,19 @@ public sealed class LinuxInventoryTests
         var second = await Collector(source).CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
         foreach (var type in new[] { "linux_services", "linux_packages" })
         {
-            var left = first.Single(x => x.SnapshotType == type);
-            var right = second.Single(x => x.SnapshotType == type);
-            Assert.Equal(200, left.Items.Count);
-            Assert.Equal("true", left.Summary["truncated"]);
+            var leftPages = first.Where(x => x.SnapshotType == type).ToArray();
+            var rightPages = second.Where(x => x.SnapshotType == type).ToArray();
+            var left = AssetInventoryPaging.Reassemble(leftPages);
+            var right = AssetInventoryPaging.Reassemble(rightPages);
+            Assert.Equal(type == "linux_services" ? 1_000 : 2_000, left.Items.Count);
+            Assert.Equal("false", left.Summary["source_truncated"]);
+            Assert.Equal("true", left.Summary["generation_complete"]);
             Assert.Equal(left.Items.Select(ItemIdentity), right.Items.Select(ItemIdentity));
+            Assert.Equal(leftPages.Select(page => page.Summary["generation_id"]), rightPages.Select(page => page.Summary["generation_id"]));
+            Assert.All(leftPages, page => Assert.InRange(page.Items.Count, 1, AssetInventoryPaging.MaxItemsPerPage));
         }
-        Assert.All(first, snapshot => Assert.InRange(snapshot.Items.Count, 0, 200));
-        Assert.InRange(first.Count, 1, 20);
+        Assert.All(first, snapshot => Assert.InRange(snapshot.Items.Count, 0, AssetInventoryPaging.MaxItemsPerPage));
+        Assert.All(first.GroupBy(snapshot => snapshot.SnapshotType), pages => Assert.InRange(pages.Count(), 1, AssetInventoryPaging.MaxPagesPerSource));
     }
 
     [Fact]
@@ -481,9 +527,12 @@ public sealed class LinuxInventoryTests
 
         var first = await collector.CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
         var second = await collector.CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", default);
-        Assert.InRange(collector.SerializedSize("synthetic-agent", Now, first), 1, LinuxInventory.MinimumSerializedBytes);
+        var batches = collector.CreateRequestBatches("synthetic-agent", Now, first);
+        Assert.All(batches, batch => Assert.InRange(collector.SerializedSize("synthetic-agent", Now, batch), 1, LinuxInventory.MinimumSerializedBytes));
+        Assert.All(batches, batch => Assert.InRange(batch.Count, 1, AssetInventoryPaging.MaxSnapshotsPerRequest));
         Assert.Equal(JsonSerializer.Serialize(first), JsonSerializer.Serialize(second));
-        Assert.Contains(first, snapshot => snapshot.Summary.GetValueOrDefault("payload_budget_truncated") == "true");
+        Assert.All(first.GroupBy(snapshot => snapshot.SnapshotType), pages =>
+            Assert.True(AssetInventoryPaging.Status(pages.ToArray()).Complete));
     }
 
     [Fact]
@@ -589,12 +638,13 @@ public sealed class LinuxInventoryTests
             Assert.Equal(InventoryRunDecision.Started, await schedule.TryRunDueAsync(async cancellationToken =>
             {
                 var snapshots = await collector.CollectAsync("synthetic-agent", "SYNTHETIC-LINUX-01", cancellationToken);
-                payloadSizes.Add(collector.SerializedSize("synthetic-agent", clock.GetUtcNow(), snapshots));
+                payloadSizes.AddRange(collector.CreateRequestBatches("synthetic-agent", clock.GetUtcNow(), snapshots)
+                    .Select(batch => collector.SerializedSize("synthetic-agent", clock.GetUtcNow(), batch)));
             }, default));
             clock.Advance(TimeSpan.FromHours(1));
         }
 
-        Assert.Equal(24, payloadSizes.Count);
+        Assert.True(payloadSizes.Count >= 24);
         Assert.All(payloadSizes, size => Assert.InRange(size, 1, LinuxInventory.DefaultMaxSerializedBytes));
         Assert.Equal(240, passiveSteps);
     }

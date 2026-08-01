@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Challenger.Siem.Contracts.V2;
 
 namespace Challenger.Siem.LinuxAgent.Inventory;
@@ -109,8 +111,8 @@ public sealed class LinuxInventory(
         var executable = await ReadAsync(LinuxInventoryOperation.AgentExecutable, token, cancellationToken);
         snapshots.Add(Combine("linux_agent_integrity", agentId, hostname, collectedAt, config, executable));
 
-        if (snapshots.Count > MaxSnapshots) throw new InvalidOperationException("Inventory snapshot count exceeds the contract limit.");
-        return EnforceSerializedBudget(agentId, collectedAt, snapshots);
+        if (snapshots.Count > MaxSnapshots) throw new InvalidOperationException("Inventory logical snapshot count exceeds the collection limit.");
+        return PageAndBoundCollection(agentId, collectedAt, snapshots);
     }
 
     public int SerializedSize(string agentId, DateTimeOffset sentAt, IReadOnlyList<AssetInventorySnapshot> snapshots) =>
@@ -207,27 +209,147 @@ public sealed class LinuxInventory(
         return new AssetInventorySnapshot { AgentId = agentId, Hostname = hostname, SnapshotType = type, CollectedAt = collectedAt, Items = items, Summary = summary };
     }
 
-    private IReadOnlyList<AssetInventorySnapshot> EnforceSerializedBudget(string agentId, DateTimeOffset sentAt, List<AssetInventorySnapshot> snapshots)
+    public IReadOnlyList<IReadOnlyList<AssetInventorySnapshot>> CreateRequestBatches(
+        string agentId,
+        DateTimeOffset sentAt,
+        IReadOnlyList<AssetInventorySnapshot> snapshots)
     {
-        var bounded = snapshots.ToArray();
-        for (var snapshotIndex = bounded.Length - 1; snapshotIndex >= 0 && SerializedSize(agentId, sentAt, bounded) > maxSerializedBytes; snapshotIndex--)
+        var batches = new List<IReadOnlyList<AssetInventorySnapshot>>();
+        var current = new List<AssetInventorySnapshot>();
+        foreach (var snapshot in snapshots)
         {
-            while (bounded[snapshotIndex].Items.Count > 0 && SerializedSize(agentId, sentAt, bounded) > maxSerializedBytes)
+            if (SerializedSize(agentId, sentAt, new[] { snapshot }) > maxSerializedBytes)
+                throw new InvalidOperationException("One inventory page exceeds the configured serialized request budget.");
+            if (current.Count == AssetInventoryPaging.MaxSnapshotsPerRequest
+                || current.Count > 0 && SerializedSize(agentId, sentAt, current.Append(snapshot).ToArray()) > maxSerializedBytes)
             {
-                var retainedItems = bounded[snapshotIndex].Items.Take(bounded[snapshotIndex].Items.Count - 1).ToArray();
-                var summary = new Dictionary<string, string>(bounded[snapshotIndex].Summary, StringComparer.Ordinal)
+                batches.Add(current.ToArray());
+                current.Clear();
+            }
+            current.Add(snapshot);
+        }
+        if (current.Count > 0) batches.Add(current.ToArray());
+        return batches;
+    }
+
+    private IReadOnlyList<AssetInventorySnapshot> PageAndBoundCollection(
+        string agentId,
+        DateTimeOffset sentAt,
+        IReadOnlyList<AssetInventorySnapshot> snapshots)
+    {
+        var pages = new List<AssetInventorySnapshot>();
+        foreach (var snapshot in snapshots)
+        {
+            var generationId = ComputeGenerationId(agentId, snapshot);
+            var total = Math.Min(snapshot.Items.Count, AssetInventoryPaging.MaxItemsPerSource);
+            var initiallyTruncated = snapshot.Items.Count > total
+                || AssetInventoryPaging.ReadBoolean(snapshot.Summary, "truncated", false);
+            var chunks = new List<IReadOnlyList<InventoryItem>>();
+            var current = new List<InventoryItem>(AssetInventoryPaging.MaxItemsPerPage);
+            foreach (var item in snapshot.Items.Take(total))
+            {
+                var candidate = current.Append(item).ToArray();
+                var candidatePage = BuildPage(snapshot, generationId, 1, AssetInventoryPaging.MaxPagesPerSource,
+                    candidate, total, sourceTruncated: true);
+                if (current.Count > 0 && SerializedSize(agentId, sentAt, [candidatePage]) > maxSerializedBytes)
                 {
-                    ["truncated"] = "true",
-                    ["payload_budget_truncated"] = "true",
-                    ["original_item_count"] = bounded[snapshotIndex].Summary.GetValueOrDefault("original_item_count", bounded[snapshotIndex].Summary["item_count"]),
-                    ["item_count"] = retainedItems.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                };
-                bounded[snapshotIndex] = bounded[snapshotIndex] with { Items = retainedItems, Summary = summary };
+                    chunks.Add(current.ToArray());
+                    current.Clear();
+                    candidate = [item];
+                    candidatePage = BuildPage(snapshot, generationId, 1, AssetInventoryPaging.MaxPagesPerSource,
+                        candidate, total, sourceTruncated: true);
+                }
+                if (chunks.Count >= AssetInventoryPaging.MaxPagesPerSource
+                    || SerializedSize(agentId, sentAt, [candidatePage]) > maxSerializedBytes) break;
+                current.Add(item);
+                if (current.Count == AssetInventoryPaging.MaxItemsPerPage)
+                {
+                    chunks.Add(current.ToArray());
+                    current.Clear();
+                    if (chunks.Count == AssetInventoryPaging.MaxPagesPerSource) break;
+                }
+            }
+            if (current.Count > 0 && chunks.Count < AssetInventoryPaging.MaxPagesPerSource) chunks.Add(current.ToArray());
+            if (chunks.Count == 0) chunks.Add(Array.Empty<InventoryItem>());
+
+            var retainedChunks = chunks.ToList();
+            while (true)
+            {
+                if (retainedChunks.Count == 0) retainedChunks.Add(Array.Empty<InventoryItem>());
+                var retainedItems = retainedChunks.Sum(chunk => chunk.Count);
+                var sourceTruncated = initiallyTruncated || retainedItems != total;
+                var pageCount = retainedChunks.Count;
+                var sourcePages = Enumerable.Range(1, pageCount)
+                    .Select(pageIndex => BuildPage(
+                        snapshot,
+                        generationId,
+                        pageIndex,
+                        pageCount,
+                        retainedChunks[pageIndex - 1],
+                        total,
+                        sourceTruncated))
+                    .ToArray();
+                var candidatePages = pages.Concat(sourcePages).ToArray();
+                if (JsonSerializer.SerializeToUtf8Bytes(candidatePages).Length <= AssetInventoryPaging.MaxCollectionBytes)
+                {
+                    pages.AddRange(sourcePages);
+                    break;
+                }
+
+                if (retainedChunks.Count > 1)
+                {
+                    retainedChunks.RemoveAt(retainedChunks.Count - 1);
+                    continue;
+                }
+                if (retainedChunks[0].Count > 0)
+                {
+                    retainedChunks[0] = Array.Empty<InventoryItem>();
+                    continue;
+                }
+
+                throw new InvalidOperationException("Inventory paging metadata exceeds the total in-memory collection limit.");
             }
         }
-        if (SerializedSize(agentId, sentAt, bounded) > maxSerializedBytes)
-            throw new InvalidOperationException("Inventory metadata exceeds the configured serialized size budget.");
-        return bounded;
+
+        _ = CreateRequestBatches(agentId, sentAt, pages);
+        return pages;
+    }
+
+    private static AssetInventorySnapshot BuildPage(
+        AssetInventorySnapshot snapshot,
+        string generationId,
+        int pageIndex,
+        int pageCount,
+        IReadOnlyList<InventoryItem> items,
+        int total,
+        bool sourceTruncated)
+    {
+        var summary = new Dictionary<string, string>(snapshot.Summary, StringComparer.OrdinalIgnoreCase)
+        {
+            ["generation_id"] = generationId,
+            ["page_index"] = pageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["page_count"] = pageCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["page_item_count"] = items.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["total_item_count"] = total.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["source_complete"] = sourceTruncated ? "false" : "true",
+            ["source_truncated"] = sourceTruncated ? "true" : "false",
+            ["item_count"] = items.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["truncated"] = sourceTruncated ? "true" : snapshot.Summary.GetValueOrDefault("truncated", "false")
+        };
+        return snapshot with { Items = items.ToArray(), Summary = summary };
+    }
+
+    private static string ComputeGenerationId(string agentId, AssetInventorySnapshot snapshot)
+    {
+        var canonical = JsonSerializer.Serialize(new
+        {
+            agent_id = agentId,
+            snapshot.SnapshotType,
+            collected_at = snapshot.CollectedAt.ToUniversalTime(),
+            snapshot.Items,
+            summary = snapshot.Summary.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
     private static Dictionary<string, string> Summary(InventorySourceState state, string errorCode, int count, bool truncated) => new(StringComparer.Ordinal)

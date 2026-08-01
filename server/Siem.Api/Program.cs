@@ -47,6 +47,9 @@ builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<RetentionRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
+builder.Services.AddScoped<AgentLivenessMonitorRepository>();
+builder.Services.AddSingleton<AgentLivenessMonitorState>();
+builder.Services.AddHostedService<AgentLivenessMonitorHostedService>();
 builder.Services.AddScoped<SourceHealthRepository>();
 builder.Services.AddScoped<TelemetryCoverageRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
@@ -628,7 +631,29 @@ app.MapGet("/api/v2/inventory", async Task<IResult> (
 
     var agentId = context.Request.Query["agent_id"].FirstOrDefault();
     var snapshotType = context.Request.Query["snapshot_type"].FirstOrDefault();
-    return Results.Ok(new { snapshots = await inventory.SearchAsync(agentId, snapshotType, cancellationToken) });
+    var generationId = context.Request.Query["generation_id"].FirstOrDefault();
+    var pageText = context.Request.Query["page_index"].FirstOrDefault();
+    if (generationId is { Length: > 0 } && (generationId.Length > 64
+        || generationId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_')))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["generation_id"] = ["Generation ID must be a bounded safe token."] });
+    if (pageText is not null && (!int.TryParse(pageText, out var parsedPage) || parsedPage is < 1 or > AssetInventoryPaging.MaxPagesPerSource))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["page_index"] = ["Page index must be from 1 through 32."] });
+    int? pageIndex = pageText is null ? null : int.Parse(pageText, System.Globalization.CultureInfo.InvariantCulture);
+    var snapshots = await inventory.SearchAsync(agentId, snapshotType, generationId, pageIndex, cancellationToken);
+    var generationPages = pageIndex.HasValue
+        ? await inventory.SearchAsync(agentId, snapshotType, generationId, null, cancellationToken)
+        : snapshots;
+    var generations = generationPages.GroupBy(AssetInventoryPaging.GenerationKey, StringComparer.Ordinal)
+        .Select(group => AssetInventoryPaging.Status(group.ToArray())).ToArray();
+    return Results.Ok(new
+    {
+        snapshots,
+        generation_count = generations.Length,
+        complete_generation_count = generations.Count(status => status.Complete),
+        incomplete_generation_count = generations.Count(status => !status.Complete),
+        received_page_count = generationPages.Count,
+        declared_page_count = generations.Sum(status => status.PageCount)
+    });
 });
 
 app.MapGet("/api/v2/platform/capabilities", (HttpContext context, TokenService tokens, IConfiguration configuration) =>

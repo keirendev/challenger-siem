@@ -49,6 +49,33 @@ Before each risky scenario, create a named checkpoint derived from `clean-baseli
 8. Test uninstall and rollback; verify only product-owned guest files/service state are affected and the dedicated identity is retained unless a separately approved procedure says otherwise.
 9. Revert to `clean-baseline` before optional L2/L3/L4 or permission/audit/firewall experiments. Each optional source requires its own plan and approval.
 
+### 2.2.0 candidate gate
+
+Use synthetic journal records and the disposable guest only. Do not inspect, enable, or
+modify the guest audit producer. Validate the API and agent candidates as one exact
+artifact set:
+
+1. restart-always recovery while confirming intentional `systemctl stop` remains
+   stopped; server liveness timing, deterministic outage alert, and heartbeat recovery;
+2. API outage, bounded queue growth, replay/deduplication, and recovery to a drained
+   queue;
+3. multi-page inventory delivery/retry, server-derived completeness, page-loss
+   degradation, direct procfs/sysfs interfaces, and L4 fingerprint stability;
+4. process visibility ratios, PID reuse, deleted/memfd/temporary markers, capability
+   decoding, socket descriptor/owner caps and partial attribution, and bounded whole-
+   device pressure diagnostics;
+5. passive/self-integrity/L4 plan invalidation and reapproval, plus boot/session,
+   timer-inventory, sustained-pressure, and directory-signature detection behavior;
+6. `Agent:Audit:Enabled=false`, `FacilityDeclaration=undeclared`, audit/lifecycle plan
+   output, and synthetic trusted audit transport proving pre-L1 interception with no raw
+   content in queue, logs, health, state, poison, REST, or MCP;
+7. private WAL corruption/mode/restart/pressure/poison/recovery bounds using synthetic
+   state only; privacy-router failure must stop before L1;
+8. retention execution dry-run before enabling the hourly scheduler; then verify the
+   30-day/100-GiB scheduler status fields; and
+9. artifact/config rollback, service health inside five minutes, and preservation of
+   credentials, queue, checkpoints, TLS, sandboxing, and unrelated drop-ins.
+
 ## Recovery and teardown
 
 Recovery order is virt-manager/serial console, graceful shutdown, snapshot revert, and recreation from the verified base image. Do not change the host firewall, libvirt network, authentication, packages, or boot configuration to recover a guest.
@@ -68,3 +95,10 @@ For teardown, first resolve and verify the exact synthetic domain, its state, di
 - The campaign exposed and closed two release blockers: non-UEFI `mokutil` output was read from the wrong stream, and a nullable PostgreSQL detection-evidence parameter was untyped. Both gained regressions; the exact updated agent/server candidate was rerun through the affected live path.
 - Uninstall removed only product-owned paths and unit state, retained the locked non-login identity, and allowed a healthy guest reboot. The guest-only journal membership and disposable CA were removed. Reverting the pre-agent snapshot then proved the identity, CA, service, and product paths absent; SSH and systemd remained healthy.
 - The guest definition, exact disk, and recovery snapshots remain available for later approved soak/canary work, with autostart disabled. The guest is powered off.
+
+## 2026-08-01 2.2.0 aggregate result
+
+- The exact 2.2.0 API/agent set passed restart-always recovery, API outage and queue replay, deterministic heartbeat-loss timing/recovery, inventory paging and filtering, procfs/sysfs interfaces, process visibility, bounded socket ownership, per-device disk diagnostics, passive/self-integrity/L4 approval invalidation, retention dry run/scheduler exposure, rollback, and the audit-disabled resource/SLO matrix.
+- Audit remained disabled and undeclared. The router reported valid attestation/private state, synthetic trusted audit transport was intercepted before L1, and no audit package, rule, service, privilege, group, ACL, journal, firewall, authentication, or kernel change occurred.
+- Two dependency-injection constructor ambiguities and a lifecycle candidate-selection error were found and fixed before protected-host activation. Later host recovery regressions for accepted recovery prefixes, stale completed acknowledgements, and per-source backed-off queue ordering were republished and exact-hash/startup checked in the same powered-off-on-exit guest.
+- The final exact candidate ran under the packaged `Restart=always` unit with audit disabled, then the guest shut down cleanly. Long-duration evidence remains a protected-host follow-up, not a VM-unit-test inference.

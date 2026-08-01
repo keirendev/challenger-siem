@@ -9,4 +9,4 @@
 - [x] No browser application, embedded model provider, OAuth flow, user/session schema, or non-Linux endpoint artifact is present.
 - [x] Repository safety validation and `git status --short --ignored` show no private data or generated outputs staged.
 
-Sanitized results from the current validation window are recorded in [End-to-end validation](end-to-end-validation.md). The bounded repository, disposable-VM L1-L4, exact 2.1.0 lifecycle, and protected-host short L4 acceptance gates passed. The 24-hour/seven-day stability, resource, and noise soaks remain explicitly outstanding and are not implied by these checks.
+Sanitized results from the current validation window are recorded in [End-to-end validation](end-to-end-validation.md). The bounded repository, exact 2.2.0 disposable-VM artifact gate, PostgreSQL/schema gate, and protected-host rollout/recovery gate passed. The initial L4 window completed and honestly reported rollout-window write pressure; post-validation recovery plus the 24-hour/seven-day stability, resource, and noise soaks remain explicitly outstanding and are not implied by these checks.

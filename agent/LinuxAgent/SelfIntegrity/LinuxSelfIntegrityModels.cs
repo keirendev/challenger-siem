@@ -46,8 +46,8 @@ public sealed record SelfIntegrityObservation(
         OwnerId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
         GroupId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
         Mode.HasValue ? Convert.ToString((int)Mode.Value, 8) : "",
-        SizeBytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
-        MtimeUtc?.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+        Entry.Kind == SelfIntegrityEntryKind.Directory ? "" : SizeBytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+        Entry.Kind == SelfIntegrityEntryKind.Directory ? "" : MtimeUtc?.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
         Sha256 ?? "");
 }
 

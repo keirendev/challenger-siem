@@ -9,7 +9,11 @@ using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.LinuxAgent.Journal;
 
-public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, LinuxStateStore state, TimeProvider timeProvider) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
+public sealed class LinuxJournalRuntime(
+    IOptions<LinuxAgentOptions> configured,
+    LinuxStateStore state,
+    TimeProvider timeProvider,
+    LinuxAuditRouterRuntime? auditRouterRuntime = null) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
 {
     private static readonly IReadOnlySet<string> AcknowledgedSourceIds = LinuxTelemetrySourceCatalog.All
         .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
@@ -208,6 +212,23 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             sourceState = "collecting";
             permissionDenied = options.Journal.IncludeAccessibleUserJournals
                 && systemJournalVisibility == SystemJournalVisibility.PermissionDenied;
+        }
+    }
+
+    public async Task RecordRoutedPhysicalAsync(string cursor, DateTimeOffset eventTime, CancellationToken cancellationToken)
+    {
+        await state.WriteCollectedJournalAsync(
+            cursor,
+            eventTime,
+            cancellationToken,
+            activeGap: gap,
+            gapState: gapState,
+            cumulativeGapCount: cumulativeGapCount,
+            configuredScope: LinuxJournalScopes.Configured(options.Journal));
+        lock (sync)
+        {
+            checkpoint = checkpoint with { CollectedCursor = cursor, CollectedEventTime = eventTime };
+            if (latestEvent is null || eventTime > latestEvent) latestEvent = eventTime;
         }
     }
 
@@ -494,7 +515,14 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
     {
         var now = timeProvider.GetUtcNow();
         var inConfiguredLevel = manifest.CoverageLevel <= options.Journal.TargetCoverageLevel;
-        var enabled = options.Journal.Enabled && inConfiguredLevel
+        var auditSource = manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework;
+        var auditSnapshot = auditRouterRuntime?.Current;
+        var enabled = (auditSource
+                ? options.Audit.Enabled
+                    && options.Audit.FacilityDeclaration == "present_enabled"
+                    && string.Equals(options.Audit.ApprovedPlanHash, LinuxAuditRouter.ComputePlanHash(options), StringComparison.Ordinal)
+                : options.Journal.Enabled)
+            && inConfiguredLevel
             && manifest.Applicability is not SourceApplicabilityStatuses.Unsupported
             and not SourceApplicabilityStatuses.NotApplicable;
         if (manifest.CoverageLevel == CoverageLevel.L4
@@ -503,14 +531,20 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             enabled &= LinuxL4TelemetryCollector.IsConfigurationApproved(options);
         }
         var effectiveStatus = DetermineStatus(manifest, enabled);
-        DateTimeOffset? sourceLatest = manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
+        DateTimeOffset? sourceLatest = auditSource
+            ? auditSnapshot?.LastEventAt
+            : manifest.SourceId == LinuxTelemetrySourceIds.JournalL1
             ? latestEvent
             : latestBySource.TryGetValue(manifest.SourceId, out var observedLatest)
                 ? observedLatest
                 : null;
         var isJournalSource = manifest.SourceKind == TelemetrySourceKinds.LinuxJournal;
-        var collected = isJournalSource ? Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime) : null;
-        var acknowledged = isJournalSource ? Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime) : null;
+        var collected = auditSource && auditSnapshot is not null
+            ? new SourceCheckpoint { Sequence = auditSnapshot.CollectedSequence, RecordedAt = auditSnapshot.LastPhysicalObservationAt }
+            : isJournalSource ? Checkpoint(checkpoint.CollectedCursor, checkpoint.CollectedEventTime) : null;
+        var acknowledged = auditSource && auditSnapshot is not null
+            ? new SourceCheckpoint { Sequence = auditSnapshot.AcknowledgedSequence, RecordedAt = auditSnapshot.LastPhysicalObservationAt }
+            : isJournalSource ? Checkpoint(checkpoint.AcknowledgedCursor, checkpoint.AcknowledgedEventTime) : null;
 
         var details = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -560,6 +594,16 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             details["ssh_inventory_reason"] = sshInventory.Reason;
             details["ssh_journal_visibility"] = SshJournalVisibilityDetail(manifest);
         }
+        if (auditSource)
+        {
+            details["routed_interface"] = options.Audit.Interface;
+            details["facility_declaration"] = options.Audit.FacilityDeclaration;
+            details["router_attestation"] = auditSnapshot?.RouterAttested == true ? "valid" : "invalid";
+            details["state_integrity"] = auditSnapshot?.StateHealthy == true ? "valid" : "invalid";
+            details["suppressed_records"] = (auditSnapshot?.SuppressedCount ?? 0).ToString(CultureInfo.InvariantCulture);
+            details["unsupported_record_type_count"] = (auditSnapshot?.UnsupportedTypeCount ?? 0).ToString(CultureInfo.InvariantCulture);
+            details["quiet_observation"] = sourceLatest is null && auditSnapshot?.LastPhysicalObservationAt.HasValue == true ? "true" : "false";
+        }
         if (LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId))
         {
             details["freshness_basis"] = "successful_journal_read";
@@ -584,7 +628,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             ApplicableRoles = manifest.ApplicableRoles,
             Enabled = enabled,
             LastEventTime = sourceLatest,
-            ObservedAt = LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
+            ObservedAt = auditSource
+                ? auditSnapshot?.LastPhysicalObservationAt
+                : LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId)
                 || (manifest.CoverageLevel == CoverageLevel.L4
                     && manifest.Requirement == SourceRequirementKinds.RoleSpecific)
                     ? lastSuccessfulReadAt
@@ -596,9 +642,9 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
             EventRatePerMinute = EventRatePerMinute(now),
             ErrorCode = ErrorFor(manifest, effectiveStatus),
             ErrorMessage = ErrorFor(manifest, effectiveStatus),
-            GapDetected = isJournalSource && gap,
-            BookmarkGapDetected = isJournalSource && gap,
-            GapCount = cumulativeGapCount,
+            GapDetected = auditSource ? auditSnapshot?.ActiveGap == true : isJournalSource && gap,
+            BookmarkGapDetected = auditSource ? auditSnapshot?.ActiveGap == true : isJournalSource && gap,
+            GapCount = auditSource ? auditSnapshot?.GapCount : cumulativeGapCount,
             PermissionDeniedSince = permissionDenied ? permissionDeniedSince : null,
             RecoveredAt = recoveredAt,
             TransitionState = transitionState,
@@ -615,6 +661,15 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 
     private SourceManifestEntry ResolveInventoryApplicability(SourceManifestEntry manifest)
     {
+        if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework)
+        {
+            return options.Audit.FacilityDeclaration switch
+            {
+                "absent" => manifest with { Applicability = SourceApplicabilityStatuses.NotApplicable, ApplicabilityReason = "operator_declared_no_audit_facility" },
+                "present_disabled" or "present_enabled" => manifest with { Applicability = SourceApplicabilityStatuses.Applicable, ApplicabilityReason = null },
+                _ => manifest with { Applicability = SourceApplicabilityStatuses.Unknown, ApplicabilityReason = "operator_facility_declaration_required" }
+            };
+        }
         if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement)
         {
             if (observedSources.Contains(manifest.SourceId)) return manifest;
@@ -713,6 +768,19 @@ public sealed class LinuxJournalRuntime(IOptions<LinuxAgentOptions> configured, 
 
     private string DetermineStatus(SourceManifestEntry manifest, bool enabled)
     {
+        if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework)
+        {
+            if (!string.Equals(options.Audit.Interface, LinuxAuditConstants.Interface, StringComparison.Ordinal)) return SourceHealthStatuses.Unsupported;
+            if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return SourceHealthStatuses.NotApplicable;
+            if (!enabled) return SourceHealthStatuses.Disabled;
+            var audit = auditRouterRuntime?.Current;
+            if (audit is null || !audit.RouterAttested || !audit.StateHealthy) return SourceHealthStatuses.Error;
+            if (systemJournalVisibility == SystemJournalVisibility.PermissionDenied) return SourceHealthStatuses.PermissionDenied;
+            if (audit.LastPhysicalObservationAt is null) return SourceHealthStatuses.Missing;
+            if (timeProvider.GetUtcNow() - audit.LastPhysicalObservationAt.Value > TimeSpan.FromHours(2)) return SourceHealthStatuses.Stale;
+            if (audit.ActiveGap) return SourceHealthStatuses.Degraded;
+            return SourceHealthStatuses.Healthy;
+        }
         if (manifest.Applicability == SourceApplicabilityStatuses.Unsupported)
         {
             return SourceHealthStatuses.Unsupported;

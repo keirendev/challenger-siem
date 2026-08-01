@@ -17,6 +17,13 @@
       "MaxInputRecordBytes": 131072,
       "QueuePauseDepth": 100000
     },
+    "Audit": {
+      "Enabled": false,
+      "Interface": "systemd_journal_audit_v1",
+      "FacilityDeclaration": "undeclared",
+      "ApprovedPlanHash": "",
+      "StatePath": "/var/lib/challenger-siem-agent/audit-router-state.json"
+    },
     "PassiveTelemetry": {
       "Enabled": false,
       "ApprovedPlanHash": "",
@@ -28,6 +35,7 @@
       "QueuePauseDepth": 50000,
       "MaxProcessesPerScan": 4096,
       "MaxSocketsPerScan": 8192,
+      "CollectSocketOwnership": false,
       "MaxEventsPerScan": 500,
       "MaxProcessReadBytesPerScan": 16777216,
       "MaxNetworkReadBytesPerScan": 4194304,

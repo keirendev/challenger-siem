@@ -236,6 +236,11 @@ public sealed class DetectionEngine
             "behavior.host-resource-pressure.linux" => IsHostResourcePressure(envelope),
             "tamper.agent-log-source-silence.linux" => IsAgentLogOrSourceSilence(envelope),
             "tamper.agent-self-integrity.linux" => IsAgentSelfIntegrity(envelope),
+            "tamper.audit-policy-change.linux" => SourceIdEquals(envelope, LinuxTelemetrySourceIds.AuditFramework)
+                && CategoryEquals(normalized, "audit_policy")
+                && ActionIn(normalized, "audit_policy_change", "rule_change", "configuration_change"),
+            "process.temporary-deleted-execution.linux" => IsTemporaryOrDeletedExecution(envelope),
+            "privilege.dangerous-effective-capabilities.linux" => IsDangerousCapabilities(envelope),
             _ => false
         };
     }
@@ -307,8 +312,39 @@ public sealed class DetectionEngine
             && string.Equals(secondaryFamily, normalized?.Action, StringComparison.Ordinal);
         return (directSource || roleSecondarySource)
             && ActionIn(normalized, "service_start", "service_reload", "service_failure")
-            && HasValue(normalized?.ServiceName);
+            && HasValue(normalized?.ServiceName)
+            && (ActionEquals(normalized, "service_failure") || !IsExactSessionScaffolding(normalized!.ServiceName!));
     }
+
+    internal static bool IsExactSessionScaffolding(string serviceName)
+    {
+        if (serviceName.StartsWith("session-", StringComparison.Ordinal) && serviceName.EndsWith(".scope", StringComparison.Ordinal))
+            return serviceName.AsSpan(8, serviceName.Length - 14).Length > 0
+                && serviceName.AsSpan(8, serviceName.Length - 14).ToString().All(char.IsAsciiDigit);
+        foreach (var prefix in new[] { "user@", "user-runtime-dir@" })
+        {
+            if (!serviceName.StartsWith(prefix, StringComparison.Ordinal) || !serviceName.EndsWith(".service", StringComparison.Ordinal)) continue;
+            var middle = serviceName.AsSpan(prefix.Length, serviceName.Length - prefix.Length - 8);
+            return middle.Length > 0 && middle.ToString().All(char.IsAsciiDigit);
+        }
+        return false;
+    }
+
+    private static bool IsTemporaryOrDeletedExecution(EventEnvelope envelope) =>
+        SourceIdEquals(envelope, LinuxTelemetrySourceIds.ProcessSnapshotDiff)
+        && CategoryEquals(envelope.Normalized, "process")
+        && ActionIn(envelope.Normalized, "observed", "changed")
+        && !string.Equals(envelope.Normalized?.Labels.GetValueOrDefault("baseline.alertable"), "false", StringComparison.Ordinal)
+        && new[] { "process.executable_deleted", "process.executable_memfd", "process.executable_temporary" }
+            .Any(key => string.Equals(envelope.Normalized?.Labels.GetValueOrDefault(key), "true", StringComparison.Ordinal));
+
+    private static bool IsDangerousCapabilities(EventEnvelope envelope) =>
+        SourceIdEquals(envelope, LinuxTelemetrySourceIds.ProcessSnapshotDiff)
+        && CategoryEquals(envelope.Normalized, "process")
+        && ActionIn(envelope.Normalized, "observed", "changed")
+        && !string.Equals(envelope.Normalized?.Labels.GetValueOrDefault("baseline.alertable"), "false", StringComparison.Ordinal)
+        && envelope.Normalized?.Labels.GetValueOrDefault("process.dangerous_effective_capabilities") is { } value
+        && !string.Equals(value, "none", StringComparison.Ordinal);
 
     private static bool IsSuspiciousSnapshotCommand(EventEnvelope envelope)
     {

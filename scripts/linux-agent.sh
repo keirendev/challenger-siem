@@ -160,7 +160,7 @@ allowlist = [
     ('state_directory', '/var/lib/challenger-siem-agent/', 'Directory', 0, 'False'),
 ]
 canonical = '\n'.join([
-    'linux-agent-self-integrity-snapshot-v1',
+    'linux-agent-self-integrity-snapshot-v2',
     f'interval={interval}',
     f'timeout={timeout}',
     f'queue_pause={queue_pause}',
@@ -253,6 +253,7 @@ values = {
     'journal_scope': journal_scope,
     'max_processes': integer(passive, 'MaxProcessesPerScan', 4096),
     'max_sockets': integer(passive, 'MaxSocketsPerScan', 8192),
+    'collect_socket_ownership': boolean(passive, 'CollectSocketOwnership', False),
     'max_events': integer(passive, 'MaxEventsPerScan', 500),
     'process_read_bytes': integer(passive, 'MaxProcessReadBytesPerScan', 16 * 1024 * 1024),
     'network_read_bytes': integer(passive, 'MaxNetworkReadBytesPerScan', 4 * 1024 * 1024),
@@ -317,15 +318,15 @@ if maximum_passive_batch_bytes > passive_byte_limit:
     )
 
 canonical = '\n'.join([
-    'linux-passive-snapshot-v1',
+    'linux-passive-snapshot-v2',
     *(f'{name}={value}' for name, value in values.items()),
     'partial_baseline_miss_limit=12',
     f'cleanup_on_disable={cleanup}',
     f'state_path={state_path}',
-    'process=/proc/self/mountinfo,/proc/sys/kernel/random/boot_id,/proc/<numeric-pid>/{stat,status,loginuid,cgroup,cmdline,exe}',
+    'process=/proc/self/mountinfo,/proc/sys/kernel/random/boot_id,/proc/<numeric-pid>/{stat,status,loginuid,cgroup,cmdline,exe' + (',fd/*:socket-only' if values['collect_socket_ownership'] else '') + '}',
     'network=/proc/sys/kernel/random/boot_id,/proc/net/{tcp,tcp6,udp,udp6}',
-    'metrics=/proc/sys/kernel/random/boot_id,/proc/{stat,meminfo,loadavg,uptime,diskstats,net/dev,pressure/cpu,pressure/memory,pressure/io}',
-    'exclusions=environ,fd,cwd,root,maps,mem,stack,syscall,packet_payload,dns_payload,unix_socket_path',
+    'metrics=/proc/sys/kernel/random/boot_id,/proc/{stat,meminfo,loadavg,uptime,diskstats,net/dev,pressure/cpu,pressure/memory,pressure/io},/sys/block/<whole-device>',
+    'exclusions=environ,' + ('non-socket-fd-targets' if values['collect_socket_ownership'] else 'fd') + ',cwd,root,maps,mem,stack,syscall,packet_payload,dns_payload,unix_socket_path',
 ])
 plan_hash = 'sha256:' + hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 print(f'passive telemetry approval plan hash: {plan_hash}')
@@ -334,7 +335,7 @@ print(
     f"startup={values['startup_delay']}s; process={values['process_interval']}s; "
     f"network={values['network_interval']}s; metrics={values['metrics_interval']}s; "
     f"deadline={values['scan_timeout']}s; queue_pause={values['queue_pause']}; "
-    f"processes={values['max_processes']}; sockets={values['max_sockets']}; "
+    f"processes={values['max_processes']}; sockets={values['max_sockets']}; socket_ownership={values['collect_socket_ownership']}; "
     f"events_per_scan={values['max_events']}; process_read_bytes={values['process_read_bytes']}; "
     f"network_read_bytes={values['network_read_bytes']}; command_line_bytes={values['command_line_bytes']}; "
     f"raw_event_bytes={values['raw_event_bytes']}"
@@ -364,13 +365,64 @@ PY
 }
 
 l4_telemetry_binary(){
-  if [[ -x $opt/Challenger.Siem.LinuxAgent ]]; then
-    printf '%s' "$opt/Challenger.Siem.LinuxAgent"
-  elif [[ -n $payload && -x $payload/Challenger.Siem.LinuxAgent ]]; then
+  # Upgrade planning must inspect the exact published candidate. Falling back to
+  # an older installed binary can turn a newly added read-only plan flag into a
+  # normal long-running agent invocation.
+  if [[ -n $payload && -x $payload/Challenger.Siem.LinuxAgent ]]; then
     printf '%s' "$payload/Challenger.Siem.LinuxAgent"
+  elif [[ -x $opt/Challenger.Siem.LinuxAgent ]]; then
+    printf '%s' "$opt/Challenger.Siem.LinuxAgent"
   else
     return 1
   fi
+}
+
+audit_lifecycle_plan(){
+  local cfg=$1 binary=''
+  if [[ $root != / ]]; then
+    echo 'audit/lifecycle preflight: skipped for an alternate --root because the published binary must validate the real protected configuration and private state location'
+    return 0
+  fi
+  if ! binary=$(l4_telemetry_binary); then
+    echo 'audit/lifecycle preflight: published or installed agent binary unavailable; install with audit disabled, then rerun this read-only plan'
+    return 0
+  fi
+  if [[ $(stat -c %a "$cfg" 2>/dev/null || true) != 600 ]]; then
+    echo 'audit/lifecycle preflight: configuration must be a private mode-0600 file'
+    return 0
+  fi
+  if [[ ! -d $state ]]; then
+    echo 'audit/lifecycle preflight: private agent state directory is absent; install with audit disabled, then rerun the plan'
+    return 0
+  fi
+  echo 'audit/lifecycle preflight: read-only approval output follows; audit parsing and host producer changes remain disabled'
+  if [[ $EUID -eq 0 ]]; then
+    if ! validate_service_identity true || ! command -v runuser >/dev/null 2>&1; then
+      echo 'audit/lifecycle preflight: run the published agent --lifecycle-plan as the validated challenger-siem identity'
+      return 0
+    fi
+    (
+      cd "$state"
+      runuser -u challenger-siem -- env -i \
+        PATH=/usr/bin:/bin \
+        CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
+        DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
+        "$binary" --lifecycle-plan
+    )
+    return
+  fi
+  if [[ $(id -un) != challenger-siem || ! -w $state ]]; then
+    echo 'audit/lifecycle preflight: rerun as root or the installed challenger-siem service identity with access to private state'
+    return 0
+  fi
+  (
+    cd "$state"
+    env -i \
+      PATH=/usr/bin:/bin \
+      CHALLENGER_SIEM_AGENT_CONFIG="$cfg" \
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle \
+      "$binary" --lifecycle-plan
+  )
 }
 
 l4_telemetry_plan(){
@@ -511,10 +563,18 @@ plan(){
     echo 'passive telemetry approval config: default options (rerun with --config or installed config for approval)'
   fi
   echo 'passive telemetry fixed inputs: procfs mount-visibility evidence plus process identity/security metadata from /proc/<pid>; TCP/UDP tuples from /proc/net; aggregate CPU/memory/load/disk/network/PSI metrics from fixed procfs files'
-  echo 'passive telemetry exclusions: process environment/memory/maps/fd targets/cwd/root/syscalls, file contents, Unix-socket paths, packet/DNS payloads, audit, eBPF, shell history, screenshots, and keystrokes'
-  echo 'passive telemetry semantics: polling-honest observed/changed/disappeared snapshots and coalesced metrics; no exact exec/exit/bind/connect claim and no process-to-socket attribution'
+  echo 'passive telemetry exclusions: process environment/memory/maps/non-socket fd targets/cwd/root/syscalls, file contents, Unix-socket paths, packet/DNS payloads, audit, eBPF, shell history, screenshots, and keystrokes'
+  echo 'passive telemetry semantics: polling-honest observed/changed/disappeared snapshots and coalesced metrics; no exact exec/exit/bind/connect claim; socket ownership is bounded, plan-bound, and explicitly partial when stale, capped, denied, or ambiguous'
   echo 'passive telemetry sequencing/loss/pressure: durable sequence reservation before queue insertion, baseline/checkpoint commit after queue insertion, committed-row ack-before-delete, interrupted-row accepted replay with explicit non-reused recovery gaps, and passive pause before the journal threshold'
   echo 'passive telemetry rollback: disable the pack; optional cleanup removes only /var/lib/challenger-siem-agent/passive-telemetry-state.json and never processes, sockets, policy, the shared queue, or server data'
+  echo 'journal-backed audit router: always intercepts trusted audit-transport rows before generic L1 normalization; parsing is disabled by default and requires an exact facility declaration plus matching approval hash'
+  echo 'audit privacy boundary: only allowlisted normalized fields may enter the queue; raw messages, arguments, proctitles, environments, TTY data, and unknown fields are discarded before queueing'
+  echo 'audit host-policy boundary: the lifecycle helper does not inspect or modify audit rules, services, packages, capabilities, groups, ACLs, retention, producer settings, authentication, firewall, or kernel policy'
+  if [[ -n $cfg ]]; then
+    audit_lifecycle_plan "$cfg"
+  else
+    echo 'audit/lifecycle preflight: configuration unavailable; rerun with --config or the installed private configuration after installing with audit disabled'
+  fi
   echo 'linux L4 posture/SLO/role telemetry: disabled by default; requires target L4, a reviewed supported role declaration, enabled prerequisite packs, and exact separate plan plus posture-baseline approvals'
   echo 'L4 fixed posture inputs: bounded sanitized linux_agent_integrity, linux_firewall, linux_mandatory_access_control, linux_secure_boot, and linux_ssh inventory snapshots; raw values are not emitted by the L4 pack'
   echo 'L4 rolling guardrail: bounded process CPU/RSS/write-rate measurements with queue context; online health does not replace the private VM benchmark and soak'

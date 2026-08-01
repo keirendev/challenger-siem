@@ -163,6 +163,7 @@ public sealed class LinuxQueueDrainer(
     LinuxSelfIntegrityRuntime? selfIntegrityRuntime = null,
     IEnumerable<ILinuxAcknowledgementObserver>? acknowledgementObservers = null)
 {
+    internal const int MaximumAuditRowsPerBatch = 100;
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly LinuxTransportRuntimeState runtimeState = transportState ?? new LinuxTransportRuntimeState();
     private readonly IReadOnlyList<ILinuxAcknowledgementObserver> observers = BuildObservers(
@@ -172,8 +173,11 @@ public sealed class LinuxQueueDrainer(
 
     public async Task DrainAsync(CancellationToken cancellationToken)
     {
-        var batch = await queue.DequeueBatchAsync(options.DrainBatchSize, cancellationToken);
-        if (batch.Count == 0) return;
+        var dequeued = await queue.DequeueBatchAsync(options.DrainBatchSize, cancellationToken);
+        if (dequeued.Count == 0) return;
+        var auditRows = 0;
+        var batch = dequeued.TakeWhile(item => item.Envelope.Source != EventSources.LinuxAudit
+            || ++auditRows <= MaximumAuditRowsPerBatch).ToArray();
         var ids = batch.Select(item => item.QueueId).ToArray();
         await queue.MarkAttemptAsync(ids, cancellationToken);
         runtimeState.ObserveAttempt();
