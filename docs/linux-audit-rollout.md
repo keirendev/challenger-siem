@@ -48,6 +48,12 @@ No connect/bind/open/read/write blanket syscall rules are supplied because their
 volume and privacy cost are not justified for this host canary. Procfs socket-owner
 attribution can therefore remain partial across UID boundaries.
 
+Package-policy watches must target stable configuration, active mirror lists,
+administrator hooks, and static keyring configuration/rings. Do not recursively
+watch `/etc/pacman.d`: GnuPG trust databases, sockets, and other runtime state below
+`gnupg/` can change on ordinary verification and create sustained audit and agent
+write amplification without useful policy-change signal.
+
 ## Baseline and stop gates
 
 Before every material stage, record only aggregate values in a private ignored
@@ -81,11 +87,16 @@ audit-router state, audit logs, or SIEM telemetry.
    stop` plus removal of the managed rules is a viable rollback. Then repeat with the
    optional execution rules under a bounded synthetic workload.
 2. **Host foundation canary.** Re-baseline. Preserve the prior auditd/rules/config and
-   agent config/binary in a private root-only rollback location. Install auditd only
-   if already present as a package or through the approved package manager. Install
-   only paths that exist from `70-challenger-siem-foundation.rules`; never add `-D` or
-   `-e 2`. Load/verify rules, enable the health timer, then enable agent v2 with its
-   exact new plan hash and one controlled agent-only restart.
+   agent config/binary in a private root-only rollback location. First deploy the
+   candidate agent with audit parsing disabled. Activate the native journald audit
+   socket while auditd/rules are still inactive, approve v2 with its exact plan hash,
+   and restart only the agent; this prevents new audit records being durably processed
+   through the disabled-router suppression path. Start auditd with zero rules, prove
+   one trusted health sample end to end, and only then install the existing-path subset
+   of `70-challenger-siem-foundation.rules`. Never add `-D` or `-e 2`. If rules are
+   already live, add/remove only the exact delta with `auditctl`; do not reload the
+   entire generated file over existing rules because duplicate-rule failures can stop
+   a partial reload. Keep the root health timer and main agent trust boundaries separate.
 3. **Observe foundation.** Use one-, five-, and fifteen-minute windows. Require audit
    lost=0, bounded backlog, fresh healthy SIEM audit source, continuous delivery,
    stable queue/WAL, no sustained PSI/blocked tasks, and acceptable CPU/memory/write

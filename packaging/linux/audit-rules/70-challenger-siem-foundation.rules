@@ -17,7 +17,11 @@
 -w /etc/ssh/sshd_config -p wa -k challenger_ssh
 -w /etc/ssh/sshd_config.d -p wa -k challenger_ssh
 -w /etc/pacman.conf -p wa -k challenger_package_policy
--w /etc/pacman.d -p wa -k challenger_package_policy
+-w /etc/pacman.d/mirrorlist -p wa -k challenger_package_policy
+-w /etc/pacman.d/hooks -p wa -k challenger_package_policy
+-w /etc/pacman.d/gnupg/gpg.conf -p wa -k challenger_package_policy
+-w /etc/pacman.d/gnupg/pubring.gpg -p wa -k challenger_package_policy
+-w /etc/pacman.d/gnupg/pubring.kbx -p wa -k challenger_package_policy
 -w /etc/modprobe.d -p wa -k challenger_kernel_policy
 -w /etc/modules-load.d -p wa -k challenger_kernel_policy
 -w /etc/audit -p wa -k challenger_audit_policy
