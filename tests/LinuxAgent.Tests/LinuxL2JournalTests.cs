@@ -56,6 +56,7 @@ public sealed class LinuxL2JournalTests
             new[]
             {
                 LinuxTelemetrySourceIds.AgentLogTamper,
+                LinuxTelemetrySourceIds.AuditFramework,
                 LinuxTelemetrySourceIds.Firewall,
                 LinuxTelemetrySourceIds.KernelSecurity,
                 LinuxTelemetrySourceIds.LoginSession,
@@ -66,8 +67,9 @@ public sealed class LinuxL2JournalTests
         Assert.Equal(
             new[] { LinuxTelemetrySourceIds.Firewall, LinuxTelemetrySourceIds.Scheduler, LinuxTelemetrySourceIds.Ssh }.Order(StringComparer.Ordinal),
             LinuxTelemetrySourceCatalog.JournalObservationRequiresProducerEvidenceSourceIds.Order(StringComparer.Ordinal));
-        Assert.Equal(SourceApplicabilityStatuses.Unsupported, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.Applicability);
-        Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.UnsupportedAuditFramework.SourceKind);
+        Assert.Equal(SourceApplicabilityStatuses.Unknown, LinuxTelemetrySourceCatalog.AuditFramework.Applicability);
+        Assert.Equal(TelemetrySourceKinds.LinuxAudit, LinuxTelemetrySourceCatalog.AuditFramework.SourceKind);
+        Assert.Equal("systemd-journal-audit-router-v1", LinuxTelemetrySourceCatalog.AuditFramework.ParserId);
 
         var unknown = LinuxTelemetrySourceCatalog.BuildHeartbeatManifest(
             CoverageLevel.L2,
@@ -332,7 +334,7 @@ public sealed class LinuxL2JournalTests
             l1Snapshot.Manifest.Count);
         Assert.All(l1Snapshot.Health.Where(item => item.CoverageLevel == CoverageLevel.L2 && item.SourceId != LinuxTelemetrySourceIds.AuditFramework),
             item => Assert.Equal(SourceHealthStatuses.Disabled, item.Status));
-        Assert.Equal(SourceHealthStatuses.Unsupported,
+        Assert.Equal(SourceHealthStatuses.Disabled,
             Assert.Single(l1Snapshot.Health, item => item.SourceId == LinuxTelemetrySourceIds.AuditFramework).Status);
 
         options.Journal.TargetCoverageLevel = CoverageLevel.L2;

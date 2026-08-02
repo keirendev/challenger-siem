@@ -1,6 +1,6 @@
 # Architecture
 
-The Linux agent collects approved journal, inventory, health, and opt-in higher-tier sources. Linux Audit Framework ingestion remains an explicit unsupported capability; the agent does not install rules or read audit records through a separate collector. Collected records are normalized into the v2 envelope, persisted in a local SQLite queue, and sent in bounded HTTPS batches. The server validates identity and deduplication metadata before writing PostgreSQL.
+The Linux agent collects approved journal, paged inventory, health, and opt-in higher-tier sources. A disabled-by-default privacy router intercepts trusted Linux Audit Framework journal transport before L1; its allowlisted parser requires a separate declaration and exact approval and never installs rules or adds a second reader. Collected records are normalized into the v2 envelope, persisted in a local SQLite queue, and sent in bounded HTTPS batches. The server validates identity and deduplication metadata before writing PostgreSQL.
 
 The ASP.NET Core service owns registration, ingestion, search, coverage, inventory, detections, alerts, cases, investigation graphs, administrative settings, and managed retention. It serves JSON only. Human or agent-driven review happens through `/api/v2` or the read-only `/mcp` Streamable HTTP endpoint.
 

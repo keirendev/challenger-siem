@@ -12,6 +12,7 @@ using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.Passive;
+using Microsoft.Extensions.DependencyInjection;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,21 @@ namespace Challenger.Siem.LinuxAgent.Tests;
 
 public sealed class LinuxPassiveTelemetryTests
 {
+    [Fact]
+    public void ProductionProcfsSourceConstructorsAreUnambiguousForDependencyInjection()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<LinuxSocketOwnershipCache>();
+        services.AddSingleton<ILinuxProcessSnapshotSource, LinuxProcfsProcessSource>();
+        services.AddSingleton<ILinuxNetworkSnapshotSource, LinuxProcfsNetworkSource>();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType<LinuxProcfsProcessSource>(provider.GetRequiredService<ILinuxProcessSnapshotSource>());
+        Assert.IsType<LinuxProcfsNetworkSource>(provider.GetRequiredService<ILinuxNetworkSnapshotSource>());
+    }
+
     private static readonly DateTimeOffset SyntheticNow = DateTimeOffset.Parse("2026-07-16T00:00:00Z");
     private const string SyntheticBootId = "11111111-2222-4333-8444-555555555555";
     private static readonly string SyntheticBootHash = Sha256(SyntheticBootId);
@@ -216,6 +232,8 @@ public sealed class LinuxPassiveTelemetryTests
         Assert.Equal(42, parsed.ProcessId);
         Assert.Equal(7, parsed.ParentProcessId);
         Assert.Equal(98765, parsed.StartTicks);
+        Assert.Equal("S", parsed.State);
+        Assert.Equal(0UL, parsed.Flags);
         Assert.Equal("synthetic worker (one)", parsed.Command);
         Assert.True(LinuxProcfsProcessSource.TryParseStat(
             "42 (synthetic worker (one)) R 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 98766 0 0",
@@ -236,6 +254,20 @@ public sealed class LinuxPassiveTelemetryTests
             """);
         Assert.Equal(6, status.Count);
         Assert.DoesNotContain("VmRSS", status.Keys);
+
+        Assert.True(LinuxProcfsProcessSource.TryParseStat(
+            "77 (synthetic kernel thread) Z 2 0 0 0 0 2097152 0 0 0 0 0 0 0 0 0 0 0 0 555 0 0",
+            out var flagged));
+        Assert.Equal("Z", flagged.State);
+        Assert.Equal(0x00200000UL, flagged.Flags);
+        Assert.Equal("setuid,sys_admin", LinuxProcfsProcessSource.DecodeDangerousCapabilities("0000000000200080"));
+        Assert.Null(LinuxProcfsProcessSource.DecodeDangerousCapabilities("0000000000000000"));
+        Assert.True(LinuxProcfsProcessSource.IsTemporaryExecutable("/dev/shm/synthetic (deleted)"));
+        Assert.False(LinuxProcfsProcessSource.IsTemporaryExecutable("/usr/bin/synthetic"));
+        Assert.True(LinuxSocketOwnershipCache.TryParseSocketTarget("socket:[12345]", out var socketInode));
+        Assert.Equal(12345, socketInode);
+        Assert.False(LinuxSocketOwnershipCache.TryParseSocketTarget("pipe:[12345]", out _));
+        Assert.False(LinuxSocketOwnershipCache.TryParseSocketTarget("/tmp/socket:[12345]", out _));
     }
 
     [Fact]
@@ -328,6 +360,12 @@ public sealed class LinuxPassiveTelemetryTests
         Assert.Equal(410, metrics.CpuIdleTicks);
         Assert.Equal(11, metrics.DiskReadSectors);
         Assert.Equal(22, metrics.DiskWrittenSectors);
+        var device = Assert.Single(metrics.DiskDevices);
+        Assert.Equal("sda", device.Name);
+        Assert.Equal(1, device.ReadOperations);
+        Assert.Equal(2, device.WriteOperations);
+        Assert.Equal(0, device.QueueDepth);
+        Assert.Equal(0, device.WeightedIoTimeMilliseconds);
         Assert.Equal(100, metrics.NetworkReceiveBytes);
         Assert.Equal(200, metrics.NetworkTransmitBytes);
         Assert.Equal(1500, metrics.CpuPressureSomeAvg10Milli);
@@ -341,6 +379,8 @@ public sealed class LinuxPassiveTelemetryTests
         var net = Path.Combine(root, "net");
         Directory.CreateDirectory(net);
         Directory.CreateDirectory(Path.Combine(root, "sys", "kernel", "random"));
+        var sysBlock = Path.Combine(root, "synthetic-sys-block");
+        Directory.CreateDirectory(Path.Combine(sysBlock, "sda"));
         try
         {
             await File.WriteAllTextAsync(Path.Combine(root, "sys", "kernel", "random", "boot_id"), SyntheticBootId + "\n");
@@ -365,7 +405,7 @@ public sealed class LinuxPassiveTelemetryTests
             await File.WriteAllTextAsync(Path.Combine(root, "diskstats"), "8 0 sda 1 0 11 0 2 0 22 0 0 0 0 0 0 0 0\n");
             await File.WriteAllTextAsync(Path.Combine(net, "dev"),
                 "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\nlo: 100 1 0 0 0 0 0 0 200 1 0 0 0 0 0 0\n");
-            var metrics = await new LinuxHostMetricsSource(root, new FixedTimeProvider(SyntheticNow))
+            var metrics = await new LinuxHostMetricsSource(root, new FixedTimeProvider(SyntheticNow), sysBlock)
                 .ReadAsync(options.PassiveTelemetry, default);
 
             Assert.Equal(PassiveReadStatuses.Success, metrics.Status);
@@ -374,11 +414,59 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal("complete", metrics.Details["core_parse"]);
 
             await File.WriteAllTextAsync(Path.Combine(root, "loadavg"), "1.25 malformed 0.10 2/100 1\n");
-            var malformed = await new LinuxHostMetricsSource(root, new FixedTimeProvider(SyntheticNow))
+            var malformed = await new LinuxHostMetricsSource(root, new FixedTimeProvider(SyntheticNow), sysBlock)
                 .ReadAsync(options.PassiveTelemetry, default);
             Assert.Equal(PassiveReadStatuses.Partial, malformed.Status);
             Assert.Equal("incomplete", malformed.Details!["core_parse"]);
             Assert.Null(Assert.Single(malformed.Items).Load5Milli);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SocketAttributionIsExactBoundedAndExplicitWhenSharedOrStale()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-socket-owner-synthetic-{Guid.NewGuid():N}");
+        var net = Path.Combine(root, "net");
+        Directory.CreateDirectory(net);
+        Directory.CreateDirectory(Path.Combine(root, "sys", "kernel", "random"));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "sys", "kernel", "random", "boot_id"), SyntheticBootId + "\n");
+            const string header = "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n";
+            const string socket = "0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1001 0 12345 1\n";
+            await File.WriteAllTextAsync(Path.Combine(net, "tcp"), header + socket);
+            await File.WriteAllTextAsync(Path.Combine(net, "udp"), header);
+            var observedClock = new FixedTimeProvider(SyntheticNow);
+            var cache = new LinuxSocketOwnershipCache(observedClock);
+            cache.Publish(new Dictionary<long, IReadOnlyList<LinuxSocketOwner>>
+            {
+                [12345] =
+                [
+                    new(101, "/usr/bin/synthetic-one", "synthetic-one", "1001", "exact_inode_current_scan"),
+                    new(202, "/usr/bin/synthetic-two", "synthetic-two", "1002", "exact_inode_current_scan")
+                ]
+            }, complete: true, descriptorCapReached: false, permissionDenied: false, descriptorLinksInspected: 2);
+            var options = CreateAgentOptions(enabled: true).PassiveTelemetry;
+            options.CollectSocketOwnership = true;
+
+            var current = await new LinuxProcfsNetworkSource(net, cache, observedClock).ReadAsync(options, default);
+            var attributed = Assert.Single(current.Items);
+            Assert.Equal("ambiguous_shared_socket", attributed.AttributionStatus);
+            Assert.Equal(2, attributed.Owners!.Count);
+            Assert.All(attributed.Owners, owner => Assert.StartsWith("exact_inode_", owner.Confidence, StringComparison.Ordinal));
+
+            var stale = await new LinuxProcfsNetworkSource(net, cache, new FixedTimeProvider(SyntheticNow.AddMinutes(5)))
+                .ReadAsync(options, default);
+            Assert.Empty(Assert.Single(stale.Items).Owners!);
+            Assert.Equal("stale_process_scan", Assert.Single(stale.Items).AttributionStatus);
+            Assert.Equal(256, LinuxSocketOwnershipCache.MaxDescriptorsPerProcess);
+            Assert.Equal(32_768, LinuxSocketOwnershipCache.MaxDescriptorLinksPerScan);
+            Assert.Equal(4, LinuxSocketOwnershipCache.MaxOwnersPerSocket);
         }
         finally
         {
@@ -430,6 +518,54 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(0, result.GapCount);
             Assert.Equal(0, result.DroppedCount);
             Assert.False(result.Partial);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EligibleProcessVisibilityRatiosExcludeKernelThreadsAndZombiesAndDegradeBelowEightyPercent()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-process-ratio-synthetic-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "self"));
+        Directory.CreateDirectory(Path.Combine(root, "sys", "kernel", "random"));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "self", "mountinfo"),
+                "24 22 0:21 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw\n");
+            await File.WriteAllTextAsync(Path.Combine(root, "sys", "kernel", "random", "boot_id"), SyntheticBootId + "\n");
+            for (var index = 0; index < 12; index++)
+            {
+                var pid = 100 + index;
+                var directory = Path.Combine(root, pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                Directory.CreateDirectory(directory);
+                var state = index == 11 ? "Z" : "S";
+                var flags = index == 10 ? 0x00200000UL : 0UL;
+                var stat = $"{pid} (synthetic-{pid}) {state} 1 0 0 0 0 {flags} 0 0 0 0 0 0 0 0 0 0 0 0 {1000 + pid} 0 0";
+                await File.WriteAllTextAsync(Path.Combine(directory, "stat"), stat);
+                await File.WriteAllTextAsync(Path.Combine(directory, "status"),
+                    "Uid:\t1001\t1001\t1001\t1001\nGid:\t1001\t1001\t1001\t1001\nCapEff:\t0000000000000000\nNoNewPrivs:\t1\nSeccomp:\t2\nTracerPid:\t0\n");
+                await File.WriteAllTextAsync(Path.Combine(directory, "loginuid"), "1001\n");
+                await File.WriteAllTextAsync(Path.Combine(directory, "cgroup"), "0::/synthetic\n");
+                if (index < 7)
+                {
+                    await File.WriteAllBytesAsync(Path.Combine(directory, "cmdline"), Encoding.UTF8.GetBytes("/usr/bin/synthetic\0--safe\0"));
+                    File.CreateSymbolicLink(Path.Combine(directory, "exe"), "/usr/bin/synthetic");
+                }
+            }
+
+            var result = await new LinuxProcfsProcessSource(root).ReadAsync(CreateAgentOptions(enabled: true).PassiveTelemetry, default);
+
+            Assert.Equal(PassiveReadStatuses.Partial, result.Status);
+            Assert.Equal("process_visibility_below_threshold", result.ErrorCode);
+            Assert.Equal("10", result.Details!["eligible_processes"]);
+            Assert.Equal("700", result.Details["command_line_readability_permille"]);
+            Assert.Equal("700", result.Details["executable_readability_permille"]);
+            Assert.Contains(result.Items, item => item.IsKernelThread);
+            Assert.Contains(result.Items, item => item.IsZombie);
         }
         finally
         {

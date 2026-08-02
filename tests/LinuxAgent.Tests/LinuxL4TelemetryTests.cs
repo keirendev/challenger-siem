@@ -542,6 +542,110 @@ public sealed class LinuxL4TelemetryTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task AcceptedRecoveryMarkerDurablyAccountsForALostReservationPrefix()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "challenger-l4-recovery-prefix-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = BaseOptions();
+            var store = new LinuxL4TelemetryStateStore(Path.Combine(root, "state.json"), root);
+            await store.WriteAsync(new LinuxL4TelemetryState
+            {
+                Slo = new LinuxL4SloState
+                {
+                    Progress = new LinuxL4SourceProgress
+                    {
+                        NextSequence = 821,
+                        CollectedSequence = 820,
+                        AcknowledgedSequence = 802,
+                        RecoveryGapSequence = 806,
+                        ActiveGap = true,
+                        GapCount = 1,
+                        Status = SourceHealthStatuses.Error,
+                        ErrorCode = "l4_acknowledgement_non_contiguous"
+                    }
+                }
+            }, default);
+            var runtime = new LinuxL4TelemetryRuntime(Options.Create(options), store,
+                Collector(options, new SyntheticSloSource()), new MemoryQueue(HealthyQueue()), new TestTimeProvider(Start));
+            await runtime.InitializeAsync(default);
+            var accepted = Enumerable.Range(805, 16).Select(sequence => new EventEnvelope
+            {
+                EventId = Guid.NewGuid(),
+                AgentId = options.AgentId,
+                Hostname = "SYNTHETIC-LINUX-01",
+                Platform = TelemetryPlatforms.Linux,
+                Source = EventSources.AgentHealth,
+                SourceId = LinuxTelemetrySourceIds.AgentPerformanceSlo,
+                EventTime = Start,
+                Checkpoint = new SourceCheckpoint { Sequence = sequence, EventTime = Start, RecordedAt = Start }
+            }).ToArray();
+
+            await runtime.RecordAcknowledgedAsync(accepted, default);
+
+            var progress = runtime.CurrentState.Slo.Progress;
+            Assert.Equal(820, progress.AcknowledgedSequence);
+            Assert.Equal(804, progress.AbandonedThroughSequence);
+            Assert.Equal(2, progress.DroppedCount);
+            Assert.Equal(3, progress.GapCount);
+            Assert.False(progress.ActiveGap);
+            Assert.Null(progress.RecoveryGapSequence);
+            Assert.Equal("acknowledgement_recovered_pending_sample", progress.ErrorCode);
+
+            var persisted = await store.ReadAsync(default);
+            Assert.Equal(820, persisted.State.Slo.Progress.AcknowledgedSequence);
+            Assert.Equal(804, persisted.State.Slo.Progress.AbandonedThroughSequence);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task CompletedAcknowledgementClearsAStaleStateWriteFailureOnRestart()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "challenger-l4-completed-ack-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = BaseOptions();
+            var store = new LinuxL4TelemetryStateStore(Path.Combine(root, "state.json"), root);
+            await store.WriteAsync(new LinuxL4TelemetryState
+            {
+                Policy = new LinuxL4PolicyState
+                {
+                    Progress = new LinuxL4SourceProgress
+                    {
+                        NextSequence = 17,
+                        CollectedSequence = 16,
+                        AcknowledgedSequence = 16,
+                        ActiveGap = true,
+                        GapCount = 1,
+                        Status = SourceHealthStatuses.Error,
+                        ErrorCode = "l4_acknowledgement_state_write_failed"
+                    }
+                }
+            }, default);
+
+            var runtime = new LinuxL4TelemetryRuntime(Options.Create(options), store,
+                Collector(options, new SyntheticSloSource()), new MemoryQueue(HealthyQueue()), new TestTimeProvider(Start));
+            await runtime.InitializeAsync(default);
+
+            var progress = runtime.CurrentState.Policy.Progress;
+            Assert.False(progress.ActiveGap);
+            Assert.Equal(SourceHealthStatuses.Degraded, progress.Status);
+            Assert.Equal("acknowledgement_recovered_pending_sample", progress.ErrorCode);
+            Assert.Equal(HealthTransitionStates.Recovering, progress.TransitionState);
+            Assert.Equal(1, progress.GapCount);
+            var persisted = await store.ReadAsync(default);
+            Assert.False(persisted.State.Policy.Progress.ActiveGap);
+            Assert.Equal("acknowledgement_recovered_pending_sample", persisted.State.Policy.Progress.ErrorCode);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

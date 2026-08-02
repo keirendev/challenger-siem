@@ -1,18 +1,18 @@
 # ADR: read-only Linux Audit Framework collector boundary
 
-Status: reviewed and accepted design/security/privacy boundary; implementation, live access, and rollout are not authorized
+Status: implemented in the 2.2.0 candidate; disabled and undeclared by default; live enablement and host producer changes are not authorized
 Date: 2026-07-19
 Scope: a future optional `linux-audit-framework` source
 
 Approval record: independent contract, reliability, and privacy review found no
 content blocker on 2026-07-19. Maintainer acceptance of issue #241 and the merge that
-carries this ADR are the explicit design and security/privacy approval. They do not
-approve an implementation issue, collector code, live reads, deployment, host change,
-or rollout.
+carries this ADR are the explicit design and security/privacy approval. The 2.2.0
+implementation preserves this boundary, but neither it nor this ADR approves live
+audit parsing, host producer changes, privilege expansion, or a wider rollout.
 
 ## Decision
 
-Challenger SIEM may consider one future audit collector only: a disabled-by-default,
+Challenger SIEM implements one audit collector only: a disabled-by-default,
 read-only logical source over Linux Audit Framework records that an operator-owned
 systemd journal already stores and that the existing non-root agent identity can
 already read. The collector would extend the existing fixed system-journal reader;
@@ -22,21 +22,20 @@ The first implementation boundary supports exactly one producer/interface pair. 
 also requires a journal router in front of the existing generic L1 normalizer. That
 router must inspect trusted journal metadata and intercept every
 `_TRANSPORT=audit` entry before the generic normalizer can retain `MESSAGE`,
-`_CMDLINE`, or other generic journal fields. The current implementation has no such
-router and can retain audit-transport entries as high-sensitivity L1 journal data;
-therefore this prerequisite is not satisfied by the present agent.
+`_CMDLINE`, or other generic journal fields. The 2.2.0 router now owns trusted audit
+transport before generic L1 normalization even when audit parsing is disabled.
 
 | Producer | Read interface | Decision |
 | --- | --- | --- |
-| Linux kernel Audit Framework records already persisted by the local systemd journal with trusted `_TRANSPORT=audit` metadata | The agent's existing fixed absolute-path `journalctl --system` JSON stream, `IncludeAccessibleUserJournals=false`, and durable physical journal cursor | Design supported, but not implemented or enabled; the broader all-accessible-local scope is not an audit-source interface in the first milestone |
+| Linux kernel Audit Framework records already persisted by the local systemd journal with trusted `_TRANSPORT=audit` metadata | The agent's existing fixed absolute-path `journalctl --system` JSON stream, `IncludeAccessibleUserJournals=false`, and durable physical journal cursor | Router and bounded collector implemented; parsing remains disabled unless the exact declaration and plan approval match; broader all-accessible-local scope cannot satisfy this interface |
 | `/var/log/audit/audit.log`, rotated audit files, stdin, pipes, arbitrary paths, syslog text, remote journal namespaces, or exported journal files | Direct file or operator-selected input | Unsupported |
 | Audit netlink, audit multicast, auditd dispatcher/plugin sockets, `audisp`, `auplugin`, or `libaudit`/`libauparse` callbacks | Socket, plugin, or native-library reader | Unsupported for the first milestone |
 | Any producer that requires package installation, service enablement/reload, rule or backlog changes, a capability grant, group/ACL change, or permission widening | Mutating prerequisite workflow | Prohibited |
 
-The source remains the current visible optional `unsupported` catalog entry until a
-separate implementation proposal passes the review and rollout gates below. This ADR
-does not authorize code, live audit reads, deployment, package/service changes,
-audit-policy changes, capability grants, permission changes, or production rollout.
+The source is now a visible optional implemented catalog entry. It remains disabled
+and undeclared by default. This ADR does not authorize live enablement, package/service
+changes, audit-policy changes, capability grants, permission changes, or production
+audit rollout.
 
 This deliberately narrow choice reuses one journal access process, physical cursor,
 queue, transport, redaction, and source-health boundary. It adds a logical router and
@@ -47,7 +46,7 @@ audit control, but the first milestone does not request or consume either capabi
 
 ## Preconditions and applicability
 
-A future implementation must add an exact-plan approval independent of requested
+The implementation uses an exact-plan approval independent of requested
 coverage level. The approved plan binds the source ID, interface name, fixed limits,
 privacy contract, agent configuration hash, and an explicit operator declaration
 that a local journal-backed audit facility already exists.
@@ -78,12 +77,11 @@ to `observed`, but is not required for quiet health. It does not require generat
 audit activity, and event-dependent detection prerequisites remain unsatisfied while
 quiet.
 
-The first implementation must retain the v2 Linux catalog and envelope contract,
+The implementation retains the v2 Linux catalog and envelope contract and does
 not silently migrate it: optional requirement, source kind `linux_audit`, namespace
 `linux.audit`, sequence checkpoint, `high_sensitivity` privacy, event source
 `linux_audit`, and disabled-by-default behavior. A manifest migration would require a
-separate contract proposal. The implementation may replace the current `unsupported`
-parser and applicability reason only after review. Its prerequisites are:
+separate contract proposal. The implemented parser and applicability state require:
 
 - `collector_implementation_available`;
 - `systemd_journal_audit_interface_supported`;
@@ -98,8 +96,7 @@ It must never pass one to the generic L1 normalizer. When the audit logical sour
 unsupported, disabled, not applicable, or unapproved, the router performs no audit
 field parsing: it durably finalizes the physical entry as locally suppressed and
 increments bounded type-free counts. This prevents raw audit text from leaking into
-L1 without claiming that the current, unimplemented router already provides that
-property.
+L1 while keeping disabled or undeclared collection distinct from observed coverage.
 
 The privacy router must still intercept trusted audit transport if the separately
 configured generic reader uses the broader all-accessible-local scope, but that scope
@@ -242,10 +239,10 @@ raw object, data-handling metadata, and deterministic recipe already support the
 shape. Synthetic contract validation of the exact envelope is an implementation
 gate.
 
-Until then, the source remains `degraded`, `permission_denied`, `stale`, or `error`
-as appropriate. Unrecoverable missing records are not backfilled or described as
-complete. The web/API retain the cumulative gap/drop counters after current health
-recovers.
+Until an exact recovery is acknowledged, the source remains `degraded`,
+`permission_denied`, `stale`, or `error` as appropriate. Unrecoverable missing records
+are not backfilled or described as complete. The API retains cumulative gap/drop
+counters after current health recovers.
 
 ### Shutdown and removal
 
@@ -270,7 +267,7 @@ guarded lifecycle after queue disposition; there is no host audit state to resto
 | `healthy` | Every prerequisite including `systemd_journal_audit_v1` router attestation is satisfied, the last physical journal observation is no more than two hours old, and no active gap exists | Any fault transition above |
 | `healthy` with quiet detail | Same as healthy, with zero allowlisted audit families observed in the current bounded window | A matching event changes family evidence to `observed`; quiet itself is not a fault |
 
-The future implementation uses this exact precedence. An inability to inspect trusted
+The implementation uses this exact precedence. An inability to inspect trusted
 transport metadata or guarantee interception before L1 is a router-integrity `error`
 and stops the shared reader before the next generic normalization; it overrides every
 logical audit state because privacy cannot be asserted. With the classifier intact,
@@ -500,7 +497,7 @@ satisfy strict coverage or detection readiness.
 
 All public tests use hand-authored records with synthetic identities, times, cursors,
 and paths. No live audit access, host output, raw telemetry, or copied audit example is
-allowed. A future implementation PR must include:
+allowed. The implementation review includes:
 
 1. **Producer/interface fixtures:** trusted journal transport intercepted before L1;
    proof that audit sentinels never reach generic L1; type-free durable suppression
@@ -547,7 +544,7 @@ allowed. A future implementation PR must include:
    Router-integrity failure must stop before L1; audit-state-only failure must suppress
    audit transport while allowing bounded non-audit L1 progress and then create a
    durable state-discontinuity gap on recovery.
-8. **API/web fixtures:** optional unsupported remains informational; applicable faults
+8. **API fixtures:** optional disabled/unsupported states remain informational; applicable faults
    remain explicit; healthy quiet does not fabricate observed event families; raw
    records and excluded fields never render or serialize.
 
@@ -607,10 +604,11 @@ audit-log/netlink coverage, non-systemd support, arbitrary producer compatibilit
 and automatic prerequisite remediation. Those are separate security decisions, not
 fallbacks.
 
-No implementation issue is created by this ADR. A maintainer must first record
-explicit design and security/privacy approval, then deliberately authorize a separate
-implementation milestone. Until that happens, `linux-audit-framework` remains
-`unsupported` and no live audit validation is appropriate.
+The 2.2.0 implementation milestone does not authorize live audit parsing. A separate
+operator decision and the compatibility, privacy, reliability, resource, and rollback
+gates above remain mandatory before any host declares an existing facility and enables
+the source. Disabled-router validation must not inspect or modify the host audit
+producer.
 
 ## Primary references
 

@@ -213,6 +213,63 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public async Task FailedQuietRecoveryEnqueueIsFinalizedAndRetriedWithoutRestart()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Audit = new AuditOptions
+        {
+            Enabled = true,
+            FacilityDeclaration = "present_enabled",
+            StatePath = temporary.AuditState
+        };
+        options.Audit.ApprovedPlanHash = LinuxAuditRouter.ComputePlanHash(options);
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-08-01T00:00:00Z"));
+        var auditRuntime = new LinuxAuditRouterRuntime();
+        var auditRouter = new LinuxAuditRouter(
+            options,
+            clock,
+            auditRuntime,
+            new LinuxAuditStateStore(temporary.AuditState, enforceFixedPath: false));
+        var gap = await auditRouter.RouteAsync(
+            AuditRecord("gap", clock.GetUtcNow(), "type=SYSCALL malformed"),
+            options.AgentId,
+            "SYNTHETIC-LINUX-01",
+            default);
+        Assert.Equal(LinuxAuditRouteKind.Gap, gap.Kind);
+        clock.Advance(TimeSpan.FromSeconds(6));
+
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = new LinuxJournalRuntime(Options.Create(options), state, clock);
+        await runtime.InitializeAsync("test", "config", default);
+        var queue = new FailOnceQueue();
+        var service = new LinuxJournalService(
+            Options.Create(options),
+            new FakeSource(new(JournalReadStatus.Success, Array.Empty<string>())),
+            new LinuxJournalNormalizer(),
+            auditRouter,
+            runtime,
+            queue,
+            clock,
+            NullLogger<LinuxJournalService>.Instance);
+
+        await service.CollectOnceAsync(null, default);
+        Assert.Equal(1, queue.Attempts);
+        Assert.Equal("audit_queue_insertion_failed", auditRuntime.Current.ErrorCode);
+        Assert.Empty(auditRouter.ReplayQueued(options.AgentId, "SYNTHETIC-LINUX-01"));
+
+        await service.CollectOnceAsync(null, default);
+        var recovery = Assert.IsType<EventEnvelope>(queue.Enqueued);
+        Assert.Equal(2, queue.Attempts);
+        Assert.Equal("audit_source_recovery", recovery.EventCode);
+        Assert.Single(auditRouter.ReplayQueued(options.AgentId, "SYNTHETIC-LINUX-01"));
+
+        await auditRouter.RecordAcknowledgedAsync([recovery], default);
+        Assert.Equal(2, auditRuntime.Current.AcknowledgedSequence);
+        Assert.False(auditRuntime.Current.ActiveGap);
+    }
+
+    [Fact]
     public async Task AccessibleScopePreservesCursorAndInvalidCursorResetSurvivesRestart()
     {
         using var temporary = new TemporaryPaths();
@@ -460,6 +517,15 @@ public sealed class LinuxJournalTests
         ["__CURSOR"] = cursor, ["__REALTIME_TIMESTAMP"] = timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture),
         ["_BOOT_ID"] = "00000000000000000000000000000001", ["_TRANSPORT"] = "journal", ["PRIORITY"] = "6", ["MESSAGE"] = message
     });
+    private static string AuditRecord(string cursor, DateTimeOffset observedAt, string message) => JsonSerializer.Serialize(new Dictionary<string, string>
+    {
+        ["__CURSOR"] = $"s=synthetic;i={cursor}",
+        ["__REALTIME_TIMESTAMP"] = (observedAt.ToUnixTimeMilliseconds() * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["_BOOT_ID"] = "00000000000000000000000000000001",
+        ["_TRANSPORT"] = "audit",
+        ["AUDIT_TYPE_NAME"] = "SYSCALL",
+        ["MESSAGE"] = message
+    });
 
     private sealed class FakeSource(JournalReadResult result) : ILinuxJournalSource
     {
@@ -471,6 +537,7 @@ public sealed class LinuxJournalTests
         public TemporaryPaths() => Directory.CreateDirectory(root);
         public string Queue => Path.Combine(root, "queue.sqlite");
         public string State => Path.Combine(root, "state.json");
+        public string AuditState => Path.Combine(root, "audit-router.wal");
         public void Dispose() => Directory.Delete(root, true);
     }
     private class CountQueue(int count) : IEventQueue
@@ -489,6 +556,25 @@ public sealed class LinuxJournalTests
     {
         public ThrowingQueue() : base(0) { }
         public override Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) => throw new IOException("synthetic queue failure");
+    }
+    private sealed class FailOnceQueue : CountQueue
+    {
+        public FailOnceQueue() : base(0) { }
+        public int Attempts { get; private set; }
+        public EventEnvelope? Enqueued { get; private set; }
+        public override Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Attempts++;
+            if (Attempts == 1) throw new IOException("synthetic first queue failure");
+            Enqueued = envelope;
+            return Task.CompletedTask;
+        }
+    }
+    private sealed class MutableTimeProvider(DateTimeOffset value) : TimeProvider
+    {
+        private DateTimeOffset current = value;
+        public override DateTimeOffset GetUtcNow() => current;
+        public void Advance(TimeSpan by) => current += by;
     }
     private sealed class SwitchingHandler : HttpMessageHandler
     {

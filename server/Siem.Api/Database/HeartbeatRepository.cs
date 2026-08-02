@@ -319,12 +319,89 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await AgentLivenessDatabaseLock.AcquireAsync(connection, transaction, request.AgentId, cancellationToken);
+        await ResolveHeartbeatLossAlertsAsync(connection, transaction, request.AgentId, cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static async Task ResolveHeartbeatLossAlertsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string agentId,
+        CancellationToken cancellationToken)
+    {
+        var recovered = new List<(Guid AlertId, string FromStatus)>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                with candidate as materialized (
+                    select alert_id, status
+                    from alerts
+                    where agent_id = @agent_id
+                      and rule_id = 'tamper.agent-heartbeat-loss.linux'
+                      and status not in ('resolved', 'closed')
+                    for update
+                ), updated as (
+                update alerts a
+                set status = 'resolved',
+                    triaged_at = coalesce(triaged_at, now()),
+                    updated_at = now(),
+                    last_activity_at = now(),
+                    last_actor = 'system:liveness',
+                    last_action = 'heartbeat_recovered',
+                    version = version + 1
+                from candidate c
+                where a.alert_id = c.alert_id
+                returning a.alert_id, c.status as from_status
+                ) select alert_id, from_status from updated;
+                """;
+            command.Parameters.AddWithValue("agent_id", agentId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                recovered.Add((reader.GetGuid(0), reader.GetString(1)));
+        }
+        foreach (var alert in recovered)
+        {
+            await using var activity = connection.CreateCommand();
+            activity.Transaction = transaction;
+            activity.CommandText = """
+                insert into alert_activities(activity_id, alert_id, actor, action, from_status, to_status, summary, idempotency_key)
+                values(@activity_id, @alert_id, 'system:liveness', 'heartbeat_recovered', @from_status, 'resolved',
+                       'A new authenticated heartbeat ended the outage; disposition and closure remain unchanged.', @idempotency_key)
+                on conflict do nothing;
+                """;
+            activity.Parameters.AddWithValue("activity_id", Guid.NewGuid());
+            activity.Parameters.AddWithValue("alert_id", alert.AlertId);
+            activity.Parameters.AddWithValue("from_status", alert.FromStatus);
+            activity.Parameters.AddWithValue("idempotency_key", $"liveness-recovery:{alert.AlertId:N}");
+            await activity.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static void AddJsonb(NpgsqlCommand command, string name, object? value)
     {
         var parameter = command.Parameters.Add(name, NpgsqlDbType.Jsonb);
         parameter.Value = value is null ? DBNull.Value : JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+}
+
+internal static class AgentLivenessDatabaseLock
+{
+    private const int NamespaceKey = 0x4C495645; // LIVE
+
+    public static async Task AcquireAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string agentId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "select pg_advisory_xact_lock(@namespace_key, hashtext(@agent_id));";
+        command.Parameters.AddWithValue("namespace_key", NamespaceKey);
+        command.Parameters.AddWithValue("agent_id", agentId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

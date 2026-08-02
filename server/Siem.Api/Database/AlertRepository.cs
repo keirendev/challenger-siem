@@ -364,13 +364,16 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
                         continue;
                     }
 
-                    var evidenceIds = await ResolveEvidenceEventIdsAsync(connection, envelope, evaluation.Rule, cancellationToken);
-                    if (evidenceIds.Count == 0)
+                    var evidence = await ResolveEvidenceAsync(connection, envelope, evaluation.Rule, cancellationToken);
+                    if (evidence.EventIds.Count == 0)
                     {
                         continue;
                     }
 
-                    await InsertDetectionAlertAsync(connection, envelope, evaluation, evidenceIds, cancellationToken);
+                    var effectiveEvaluation = evidence.LowerConfidence
+                        ? evaluation with { EffectiveConfidence = "low", Reason = $"{evaluation.Reason}; inventory/correlation context is incomplete or stale" }
+                        : evaluation;
+                    await InsertDetectionAlertAsync(connection, envelope, effectiveEvaluation, evidence.EventIds, cancellationToken);
                 }
             }
         }
@@ -444,19 +447,167 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
         return results;
     }
 
-    private static async Task<IReadOnlyList<Guid>> ResolveEvidenceEventIdsAsync(
+    private static async Task<DetectionEvidenceResolution> ResolveEvidenceAsync(
         NpgsqlConnection connection,
         EventEnvelope envelope,
         DetectionRuleMetadata rule,
         CancellationToken cancellationToken)
     {
-        return rule.RuleId switch
+        if (rule.RuleId == "persistence.service-start.linux"
+            && !string.Equals(envelope.Normalized?.Action, "service_failure", StringComparison.OrdinalIgnoreCase)
+            && await IsWithinBootWarmupAsync(connection, envelope, cancellationToken))
+            return new(Array.Empty<Guid>(), false);
+        if (rule.RuleId == "persistence.scheduler-activity.linux"
+            && string.Equals(envelope.Normalized?.Action, "timer_trigger", StringComparison.OrdinalIgnoreCase))
+            return await ResolveTimerEvidenceAsync(connection, envelope, cancellationToken);
+        if (rule.RuleId == "behavior.host-resource-pressure.linux")
+            return new(await QuerySustainedPressureAsync(connection, envelope, cancellationToken), false);
+
+        var ids = rule.RuleId switch
         {
             "auth.bruteforce.linux" => await QueryLinuxAuthenticationFailuresAsync(connection, envelope, rule.CorrelationWindowSeconds, minimumFailures: 5, cancellationToken),
             "auth.success-after-failures.linux" => await QueryLinuxSuccessAfterFailuresAsync(connection, envelope, rule.CorrelationWindowSeconds, minimumFailures: 3, cancellationToken),
             _ => new[] { envelope.EventId }
         };
+        return new(ids, false);
     }
+
+    private static async Task<bool> IsWithinBootWarmupAsync(
+        NpgsqlConnection connection,
+        EventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        var bootId = envelope.Normalized?.Labels.GetValueOrDefault("journal.boot_id");
+        if (string.IsNullOrWhiteSpace(bootId)) return false;
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select min(event_time)
+            from events
+            where agent_id = @agent_id
+              and event_category = 'boot'
+              and normalized_json->'labels'->>'journal.boot_id' = @boot_id
+              and event_time <= @event_time;
+            """;
+        command.Parameters.AddWithValue("agent_id", envelope.AgentId);
+        command.Parameters.AddWithValue("boot_id", bootId);
+        command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is null or DBNull) return false;
+        var bootTime = value switch
+        {
+            DateTimeOffset dto => dto.ToUniversalTime(),
+            DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+            _ => envelope.EventTime.AddHours(-1)
+        };
+        return envelope.EventTime >= bootTime && envelope.EventTime - bootTime <= TimeSpan.FromMinutes(5);
+    }
+
+    private static async Task<DetectionEvidenceResolution> ResolveTimerEvidenceAsync(
+        NpgsqlConnection connection,
+        EventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        var timer = envelope.Normalized?.TaskName ?? envelope.Normalized?.ServiceName;
+        if (string.IsNullOrWhiteSpace(timer)) return new([envelope.EventId], true);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select hostname, collected_at, host_timezone, items, summary
+            from asset_inventory_snapshots
+            where agent_id = @agent_id and snapshot_type = 'linux_timers' and collected_at <= @event_time
+            order by collected_at desc
+            limit 32;
+            """;
+        command.Parameters.AddWithValue("agent_id", envelope.AgentId);
+        command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
+        var snapshots = new List<AssetInventorySnapshot>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                snapshots.Add(new AssetInventorySnapshot
+                {
+                    AgentId = envelope.AgentId,
+                    Hostname = reader.GetString(0),
+                    SnapshotType = "linux_timers",
+                    CollectedAt = ReadDateTimeOffset(reader, "collected_at"),
+                    HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
+                    Items = JsonSerializer.Deserialize<IReadOnlyList<InventoryItem>>(reader.GetString(reader.GetOrdinal("items")), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? Array.Empty<InventoryItem>(),
+                    Summary = ReadStringDictionary(reader, "summary")
+                });
+            }
+        }
+        if (snapshots.Count == 0) return new([envelope.EventId], true);
+        var latest = AssetInventoryPaging.ReassembleLatest(snapshots).Single();
+        var complete = AssetInventoryPaging.ReadBoolean(latest.Summary, "generation_complete",
+            !AssetInventoryPaging.ReadBoolean(latest.Summary, "truncated", false));
+        var recent = envelope.EventTime - latest.CollectedAt <= TimeSpan.FromHours(2);
+        if (complete && recent && latest.Items.Any(item => string.Equals(item.Name, timer, StringComparison.Ordinal)))
+            return new(Array.Empty<Guid>(), false);
+        return new([envelope.EventId], !complete || !recent);
+    }
+
+    private static async Task<IReadOnlyList<Guid>> QuerySustainedPressureAsync(
+        NpgsqlConnection connection,
+        EventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        var causes = PressureCauses(envelope.Raw).Order(StringComparer.Ordinal).ToArray();
+        if (causes.Length == 0) return Array.Empty<Guid>();
+        var evidenceByCause = causes.ToDictionary(cause => cause, _ => new List<Guid>(), StringComparer.Ordinal);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select event_id, raw_json
+            from events
+            where agent_id = @agent_id
+              and source_id = @source_id
+              and event_time between @window_start and @event_time
+            order by event_time desc
+            limit 10;
+            """;
+        command.Parameters.AddWithValue("agent_id", envelope.AgentId);
+        command.Parameters.AddWithValue("source_id", LinuxTelemetrySourceIds.HostBehaviourMetrics);
+        command.Parameters.AddWithValue("window_start", envelope.EventTime.AddMinutes(-5).ToUniversalTime());
+        command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            using var document = JsonDocument.Parse(reader.GetString(1));
+            var rowCauses = PressureCauses(document.RootElement);
+            foreach (var cause in causes)
+                if (rowCauses.Contains(cause, StringComparer.Ordinal)) evidenceByCause[cause].Add(reader.GetGuid(0));
+        }
+        return evidenceByCause.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => pair.Value)
+            .FirstOrDefault(ids => ids.Count >= 3)?
+            .Take(5).ToArray() ?? Array.Empty<Guid>();
+    }
+
+    internal static IReadOnlyList<string> PressureCauses(JsonElement raw)
+    {
+        if (raw.ValueKind != JsonValueKind.Object) return Array.Empty<string>();
+        var causes = new List<string>();
+        if (ReadRaw(raw, "cpu_busy_permille", out var cpu) && cpu >= 950) causes.Add("cpu_busy");
+        if (ReadRaw(raw, "memory_total_bytes", out var total) && total > 0
+            && ReadRaw(raw, "memory_available_bytes", out var available) && available >= 0 && available <= total / 20)
+            causes.Add("memory_available");
+        if (ReadRaw(raw, "processes_blocked", out var blocked) && blocked >= 8) causes.Add("blocked_processes");
+        foreach (var pair in new[]
+        {
+            ("cpu_pressure_some_avg10_milli", "cpu_psi"),
+            ("memory_pressure_some_avg10_milli", "memory_psi"),
+            ("io_pressure_some_avg10_milli", "io_psi")
+        })
+            if (ReadRaw(raw, pair.Item1, out var value) && value >= 50_000) causes.Add(pair.Item2);
+        return causes;
+    }
+
+    private static bool ReadRaw(JsonElement raw, string name, out long value)
+    {
+        value = 0;
+        return raw.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out value);
+    }
+
+    private sealed record DetectionEvidenceResolution(IReadOnlyList<Guid> EventIds, bool LowerConfidence);
 
     private static async Task<IReadOnlyList<Guid>> QueryLinuxAuthenticationFailuresAsync(
         NpgsqlConnection connection,

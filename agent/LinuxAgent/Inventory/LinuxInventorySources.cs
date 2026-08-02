@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Challenger.Siem.Contracts.V2;
 using Microsoft.Win32.SafeHandles;
 
 namespace Challenger.Siem.LinuxAgent.Inventory;
@@ -68,7 +69,7 @@ public sealed record InventorySourceResult(
         new(InventorySourceState.Success, "none", content, truncated, mode, size, ownerId, exitCode, sha256);
 }
 
-public enum InventorySourceKind { Command, File, FileMetadata }
+public enum InventorySourceKind { Command, File, FileMetadata, Interfaces }
 
 public sealed record InventorySourcePolicy(
     LinuxInventoryOperation Operation,
@@ -92,7 +93,7 @@ public static class LinuxInventoryCatalog
     private static IReadOnlyDictionary<LinuxInventoryOperation, InventorySourcePolicy> Build()
     {
         const int small = 16 * 1024;
-        const int listing = 64 * 1024;
+        const int listing = AssetInventoryPaging.MaxSourceOutputBytes;
         var result = new Dictionary<LinuxInventoryOperation, InventorySourcePolicy>();
         void Command(LinuxInventoryOperation operation, string[] paths, string[] arguments, int bytes = listing, int seconds = 10, params int[] exitCodes) =>
             result.Add(operation, new(operation, InventorySourceKind.Command, Array.AsReadOnly(paths), Array.AsReadOnly(arguments), null, TimeSpan.FromSeconds(seconds), bytes,
@@ -120,7 +121,15 @@ public static class LinuxInventoryCatalog
         {
             AcceptedSilentExitCodes = new[] { 1 }.ToFrozenSet()
         };
-        Command(LinuxInventoryOperation.Interfaces, new[] { "/usr/sbin/ip", "/usr/bin/ip", "/sbin/ip" }, new[] { "-o", "link", "show" });
+        result.Add(LinuxInventoryOperation.Interfaces, new(
+            LinuxInventoryOperation.Interfaces,
+            InventorySourceKind.Interfaces,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            "/proc/net/dev",
+            TimeSpan.FromSeconds(5),
+            AssetInventoryPaging.MaxSourceOutputBytes,
+            Array.Empty<int>().ToFrozenSet()));
         Command(LinuxInventoryOperation.Listeners, new[] { "/usr/sbin/ss", "/usr/bin/ss", "/sbin/ss" }, new[] { "-H", "-lntu" });
         Command(LinuxInventoryOperation.Mounts, new[] { "/usr/bin/findmnt", "/bin/findmnt" }, new[] { "--raw", "--noheadings", "--output", "FSTYPE" });
         Command(LinuxInventoryOperation.Nftables, new[] { "/usr/sbin/nft", "/sbin/nft" }, new[] { "-j", "list", "ruleset" });
@@ -153,9 +162,113 @@ public sealed class LinuxInventorySource : ILinuxInventorySource
     public Task<InventorySourceResult> ReadAsync(LinuxInventoryOperation operation, CancellationToken cancellationToken)
     {
         var policy = LinuxInventoryCatalog.Get(operation);
-        return policy.Kind == InventorySourceKind.Command
-            ? RunCommandAsync(policy, cancellationToken)
-            : ReadFileAsync(policy, cancellationToken);
+        return policy.Kind switch
+        {
+            InventorySourceKind.Command => RunCommandAsync(policy, cancellationToken),
+            InventorySourceKind.Interfaces => ReadInterfacesAsync(policy, cancellationToken),
+            _ => ReadFileAsync(policy, cancellationToken)
+        };
+    }
+
+    internal static async Task<InventorySourceResult> ReadInterfacesAsync(
+        InventorySourcePolicy policy,
+        CancellationToken cancellationToken,
+        string sysClassNetRoot = "/sys/class/net")
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var source = await ReadBoundedTextFileAsync(policy.FilePath!, policy.MaxOutputBytes, cancellationToken);
+        if (source.State != InventorySourceState.Success) return source;
+        var names = (source.Content ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split(':', 2)[0].Trim())
+            .Where(IsSafeInterfaceName)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .Take(AssetInventoryPaging.MaxItemsPerSource + 1)
+            .ToArray();
+        var truncated = source.Truncated || names.Length > AssetInventoryPaging.MaxItemsPerSource;
+        var output = new StringBuilder();
+        foreach (var name in names.Take(AssetInventoryPaging.MaxItemsPerSource))
+        {
+            var operstate = await ReadSmallSysfsValueAsync(Path.Combine(sysClassNetRoot, name, "operstate"), cancellationToken);
+            var type = await ReadSmallSysfsValueAsync(Path.Combine(sysClassNetRoot, name, "type"), cancellationToken);
+            output.Append(name).Append('\t')
+                .Append(SafeInterfaceState(operstate)).Append('\t')
+                .Append(SafeInterfaceType(type)).Append('\n');
+        }
+        return InventorySourceResult.Success(output.ToString(), truncated);
+    }
+
+    private static bool IsSafeInterfaceName(string value) => value.Length is >= 1 and <= 15
+        && value is not "." and not ".."
+        && value[0] != '.'
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or '.');
+
+    private static string SafeInterfaceState(string? value) => value?.Trim() switch
+    {
+        "up" => "up",
+        "down" => "down",
+        "dormant" => "dormant",
+        "lowerlayerdown" => "lower_layer_down",
+        "notpresent" => "not_present",
+        "testing" => "testing",
+        "unknown" => "unknown",
+        _ => "unavailable"
+    };
+
+    private static string SafeInterfaceType(string? value) => value?.Trim() switch
+    {
+        "1" => "ethernet",
+        "772" => "loopback",
+        "776" => "sit",
+        "778" => "gre",
+        "801" => "wireless",
+        _ => "other"
+    };
+
+    private static async Task<string?> ReadSmallSysfsValueAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bytes = new byte[64];
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var count = await stream.ReadAsync(bytes, cancellationToken);
+            return count == 0 ? null : Encoding.UTF8.GetString(bytes, 0, count);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<InventorySourceResult> ReadBoundedTextFileAsync(
+        string path,
+        int maxBytes,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var memory = new MemoryStream(Math.Min(maxBytes, 4096));
+            var buffer = new byte[4096];
+            while (true)
+            {
+                var count = await stream.ReadAsync(buffer, cancellationToken);
+                if (count == 0) return InventorySourceResult.Success(Encoding.UTF8.GetString(memory.ToArray()));
+                var retained = Math.Min(count, maxBytes - (int)memory.Length);
+                if (retained > 0) memory.Write(buffer, 0, retained);
+                if (retained < count) return InventorySourceResult.Success(Encoding.UTF8.GetString(memory.ToArray()), truncated: true);
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new(InventorySourceState.PermissionDenied, "interface_permission_denied");
+        }
+        catch (IOException)
+        {
+            return new(InventorySourceState.Unavailable, "interface_unavailable");
+        }
     }
 
     private static async Task<InventorySourceResult> RunCommandAsync(InventorySourcePolicy policy, CancellationToken cancellationToken)

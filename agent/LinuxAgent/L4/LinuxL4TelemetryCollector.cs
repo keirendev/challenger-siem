@@ -549,7 +549,8 @@ public sealed class LinuxL4TelemetryCollector(
                 continue;
             }
             var canonical = new StringBuilder(type);
-            foreach (var pair in snapshot.Summary.OrderBy(item => item.Key, StringComparer.Ordinal))
+            foreach (var pair in snapshot.Summary.Where(item => !AssetInventoryPaging.TransportSummaryKeys.Contains(item.Key))
+                .OrderBy(item => item.Key, StringComparer.Ordinal))
                 canonical.Append('\n').Append("summary:").Append(pair.Key).Append('=').Append(pair.Value);
             foreach (var item in snapshot.Items.OrderBy(item => item.Kind, StringComparer.Ordinal)
                 .ThenBy(item => item.Name, StringComparer.Ordinal).ThenBy(item => item.Identity, StringComparer.Ordinal))

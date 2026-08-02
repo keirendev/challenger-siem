@@ -139,6 +139,10 @@ public sealed record SiemMcpInventorySnapshot(
     DateTimeOffset CollectedAt,
     IReadOnlyDictionary<string, string> Summary,
     int AvailableItemCount,
+    int PageCount,
+    int ReceivedPageCount,
+    int TotalItemCount,
+    bool Complete,
     IReadOnlyList<InventoryItem> Items);
 
 public sealed record SiemMcpDetectionRecommendation(
@@ -628,6 +632,8 @@ public sealed class SiemMcpTools(
                     boundedAgentId,
                     SiemMcpValidation.Optional(snapshotType, 80, nameof(snapshotType)),
                     ct);
+                var generationStatuses = snapshots.GroupBy(AssetInventoryPaging.GenerationKey, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => AssetInventoryPaging.Status(group.ToArray()), StringComparer.Ordinal);
                 var selected = snapshots.Take(boundedLimit).Select(item => new SiemMcpInventorySnapshot(
                     item.AgentId,
                     item.Hostname,
@@ -635,6 +641,10 @@ public sealed class SiemMcpTools(
                     item.CollectedAt,
                     SiemMcpInventoryPolicy.RedactMap(item.Summary),
                     item.Items.Count,
+                    generationStatuses[AssetInventoryPaging.GenerationKey(item)].PageCount,
+                    generationStatuses[AssetInventoryPaging.GenerationKey(item)].ReceivedPageCount,
+                    generationStatuses[AssetInventoryPaging.GenerationKey(item)].TotalItemCount,
+                    generationStatuses[AssetInventoryPaging.GenerationKey(item)].Complete,
                     includeItems
                         ? item.Items.Take(boundedItems).Select(SiemMcpInventoryPolicy.RedactItem).ToArray()
                         : Array.Empty<InventoryItem>())).ToArray();

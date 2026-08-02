@@ -7,7 +7,18 @@ namespace Challenger.Siem.Api.Database;
 
 public sealed class AssetInventoryRepository(NpgsqlDataSource dataSource)
 {
-    public async Task<IReadOnlyList<AssetInventorySnapshot>> SearchAsync(string? agentId, string? snapshotType, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AssetInventorySnapshot>> SearchAsync(
+        string? agentId,
+        string? snapshotType,
+        CancellationToken cancellationToken) =>
+        await SearchAsync(agentId, snapshotType, null, null, cancellationToken);
+
+    public async Task<IReadOnlyList<AssetInventorySnapshot>> SearchAsync(
+        string? agentId,
+        string? snapshotType,
+        string? generationId,
+        int? pageIndex,
+        CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -28,12 +39,24 @@ public sealed class AssetInventoryRepository(NpgsqlDataSource dataSource)
             command.Parameters.AddWithValue("snapshot_type", snapshotType);
         }
 
+        if (!string.IsNullOrWhiteSpace(generationId))
+        {
+            where.Add("summary ->> 'generation_id' = @generation_id");
+            command.Parameters.AddWithValue("generation_id", generationId);
+        }
+
+        if (pageIndex.HasValue)
+        {
+            where.Add("summary ->> 'page_index' = @page_index");
+            command.Parameters.AddWithValue("page_index", pageIndex.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
         if (where.Count > 0)
         {
             command.CommandText += " where " + string.Join(" and ", where);
         }
 
-        command.CommandText += " order by collected_at desc limit 200;";
+        command.CommandText += " order by collected_at desc limit 640;";
         var results = new List<AssetInventorySnapshot>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

@@ -14,7 +14,7 @@ public sealed class LinuxSelfIntegrityCollector(
     ILinuxSelfIntegritySource source,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-agent-self-integrity-snapshot-v1";
+    public const string CollectorVersion = "linux-agent-self-integrity-snapshot-v2";
     public static readonly IReadOnlyList<SelfIntegrityAllowlistEntry> Allowlist =
     [
         new("agent_binary", "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", SelfIntegrityEntryKind.HashedFile, 64 * 1024 * 1024, "agent_executable_digest", false),

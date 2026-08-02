@@ -36,7 +36,7 @@ Canonical mandatory families are `policy_baseline`, `policy_drift`, `policy_rest
 
 `general_server` and `workstation` are supported declarations with no specialized role pack. Existing `ssh_server` and `bastion` declarations continue to make the L2 `linux-ssh` source applicable. A host may declare more than one role; every corresponding applicable source must then pass.
 
-Linux Audit Framework remains the explicit optional `unsupported` catalog entry. Audit, eBPF, broad file-integrity monitoring, packet capture, and unrestricted application-log ingestion are not hidden prerequisites for L4 and are not enabled by this implementation.
+Linux Audit Framework is an optional implemented source whose parsing remains disabled and undeclared by default. Its pre-L1 privacy router remains active, but neither L4 nor its approvals enable audit collection or change a producer. Audit parsing, eBPF, broad file-integrity monitoring, packet capture, and unrestricted application-log ingestion are not hidden L4 prerequisites.
 
 ## Strict L4 calculation
 
@@ -54,7 +54,7 @@ This last rule is intentionally stricter than lower levels. An approved exceptio
 
 Policy-posture and role-journal observations become stale after two hours; the rolling performance row becomes stale after five minutes. An observation more than five minutes in the future degrades. These server-enforced freshness rules prevent a stopped collector or old SLO window from retaining L4.
 
-Optional unsupported sources, including the current Linux Audit Framework catalog entry, remain visible but do not independently block L4. Their status must not be summarized as collected coverage.
+Optional disabled, not-applicable, or unsupported sources, including Linux Audit Framework, remain visible but do not independently block L4. Their status must not be summarized as collected coverage.
 
 ## Role declaration and resolution
 

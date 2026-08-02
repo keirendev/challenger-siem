@@ -12,7 +12,7 @@ Group=challenger-siem
 Environment=CHALLENGER_SIEM_AGENT_CONFIG=/etc/challenger-siem-agent/agentsettings.json
 Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/challenger-siem-agent/.dotnet-bundle
 ExecStart=/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent
-Restart=on-failure
+Restart=always
 RestartSec=10s
 UMask=0077
 NoNewPrivileges=yes

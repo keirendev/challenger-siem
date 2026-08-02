@@ -1,4 +1,5 @@
 using Challenger.Siem.Agent.Core.Transport;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.L4;
@@ -56,16 +57,22 @@ public sealed class LinuxInventoryService(
                 await schedule.TryRunDueAsync(async cancellationToken =>
                 {
                     var snapshots = await collector.CollectAsync(options.AgentId, Environment.MachineName, cancellationToken);
+                    var logicalSnapshots = AssetInventoryPaging.ReassembleLatest(snapshots);
                     foreach (var observer in observers)
                     {
-                        try { await observer.ObserveInventoryAsync(snapshots, cancellationToken); }
+                        try { await observer.ObserveInventoryAsync(logicalSnapshots, cancellationToken); }
                         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                         catch (Exception ex)
                         {
                             logger.LogWarning("Linux inventory observer failed ({ErrorType}); inventory delivery continues independently.", ex.GetType().Name);
                         }
                     }
-                    await client.SendInventoryAsync(snapshots, cancellationToken);
+                    var sentAt = timeProvider.GetUtcNow();
+                    var batches = collector is LinuxInventory inventory
+                        ? inventory.CreateRequestBatches(options.AgentId, sentAt, snapshots)
+                        : snapshots.Chunk(AssetInventoryPaging.MaxSnapshotsPerRequest).Select(chunk => (IReadOnlyList<AssetInventorySnapshot>)chunk).ToArray();
+                    foreach (var batch in batches)
+                        await client.SendInventoryAsync(batch, sentAt, cancellationToken);
                 }, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

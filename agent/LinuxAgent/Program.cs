@@ -33,6 +33,7 @@ builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetS
         "Heartbeat interval or drain batch size is outside the supported range")
     .Validate(options => options.HasValidInventoryBounds(), "Inventory bounds are outside the supported range")
     .Validate(options => options.HasValidJournalBounds(), "Journal bounds are outside the supported range")
+    .Validate(options => options.HasValidAuditBounds(), "Audit router bounds are outside the supported range")
     .Validate(options => options.HasValidQueueBounds(), "Queue bounds are outside the supported range")
     .Validate(options => options.HasValidSelfIntegrityBounds(), "Self-integrity bounds are outside the supported range")
     .Validate(options => options.HasValidPassiveTelemetryBounds(), "Passive telemetry bounds are outside the supported range")
@@ -69,12 +70,16 @@ builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => service
 builder.Services.AddSingleton<ILinuxSelfIntegritySource, LinuxSelfIntegritySource>();
 builder.Services.AddSingleton<LinuxSelfIntegrityCollector>();
 builder.Services.AddSingleton<LinuxJournalNormalizer>();
+builder.Services.AddSingleton<LinuxAuditRouterRuntime>();
+builder.Services.AddSingleton<LinuxAuditRouter>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxAuditRouter>());
 builder.Services.AddSingleton<ILinuxJournalSource, LinuxJournalProcessSource>();
 builder.Services.AddSingleton<LinuxTransportRuntimeState>();
 builder.Services.AddSingleton<LinuxPassiveTelemetryStateStore>(services =>
     new LinuxPassiveTelemetryStateStore(
         services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.PassiveTelemetry.StatePath,
         "/var/lib/challenger-siem-agent"));
+builder.Services.AddSingleton<LinuxSocketOwnershipCache>();
 builder.Services.AddSingleton<ILinuxProcessSnapshotSource, LinuxProcfsProcessSource>();
 builder.Services.AddSingleton<ILinuxNetworkSnapshotSource, LinuxProcfsNetworkSource>();
 builder.Services.AddSingleton<ILinuxHostMetricsSource, LinuxHostMetricsSource>();
@@ -121,6 +126,24 @@ if (args.Contains("--passive-telemetry-plan", StringComparer.Ordinal))
 {
     var collector = app.Services.GetRequiredService<LinuxPassiveTelemetryCollector>();
     Console.WriteLine(JsonSerializer.Serialize(collector.Preflight(), JsonDefaults.Options));
+    return 0;
+}
+if (args.Contains("--audit-plan", StringComparer.Ordinal))
+{
+    var router = app.Services.GetRequiredService<LinuxAuditRouter>();
+    Console.WriteLine(JsonSerializer.Serialize(router.Preflight(), JsonDefaults.Options));
+    return 0;
+}
+if (args.Contains("--lifecycle-plan", StringComparer.Ordinal))
+{
+    var audit = app.Services.GetRequiredService<LinuxAuditRouter>();
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        audit = audit.Preflight(),
+        host_changes = "none",
+        service_scope = "challenger-siem-agent-only",
+        rollback = "Disable logical sources and preserve queue, checkpoints, credentials, TLS, private state, and host producer configuration."
+    }, JsonDefaults.Options));
     return 0;
 }
 if (args.Contains("--l4-telemetry-plan", StringComparer.Ordinal))

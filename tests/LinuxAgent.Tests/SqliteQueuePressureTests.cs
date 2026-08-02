@@ -62,6 +62,67 @@ public sealed class SqliteQueuePressureTests
         }
     }
 
+    [Fact]
+    public async Task BackedOffSequenceBlocksOnlyLaterRowsFromTheSameCheckpointSource()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-order-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var queue = new SqliteEventQueue(new AgentQueueOptions
+            {
+                Path = Path.Combine(root, "queue.sqlite"),
+                MaxBackoffSeconds = 300
+            }, new CountingLogger());
+            await queue.InitializeAsync(default);
+            await queue.EnqueueAsync(SequencedEvent(1), default);
+            await queue.EnqueueAsync(SequencedEvent(2), default);
+            await queue.EnqueueAsync(Event(3) with { SourceId = LinuxTelemetrySourceIds.JournalL1 }, default);
+            var initial = await queue.DequeueBatchAsync(10, default);
+            Assert.Equal(3, initial.Count);
+            await queue.MarkAttemptAsync([initial[0].QueueId], default);
+
+            var retry = await queue.DequeueBatchAsync(10, default);
+
+            var remaining = Assert.Single(retry);
+            Assert.Equal(LinuxTelemetrySourceIds.JournalL1, remaining.Envelope.SourceId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BackedOffSequenceDoesNotHideReadySourcesBeyondTheFirstScanPage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-page-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var queue = new SqliteEventQueue(new AgentQueueOptions
+            {
+                Path = Path.Combine(root, "queue.sqlite"),
+                MaxBackoffSeconds = 300
+            }, new CountingLogger());
+            await queue.InitializeAsync(default);
+            await queue.EnqueueAsync(SequencedEvent(1), default);
+            var head = Assert.Single(await queue.DequeueBatchAsync(1, default));
+            await queue.MarkAttemptAsync([head.QueueId], default);
+            for (var sequence = 2; sequence <= 11; sequence++)
+                await queue.EnqueueAsync(SequencedEvent(sequence), default);
+            await queue.EnqueueAsync(Event(12) with { SourceId = LinuxTelemetrySourceIds.JournalL1 }, default);
+
+            var retry = Assert.Single(await queue.DequeueBatchAsync(1, default));
+
+            Assert.Equal(LinuxTelemetrySourceIds.JournalL1, retry.Envelope.SourceId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static EventEnvelope Event(int sequence) => new()
     {
         EventId = Guid.NewGuid(),
@@ -73,6 +134,16 @@ public sealed class SqliteQueuePressureTests
         EventTime = DateTimeOffset.UtcNow,
         Message = $"synthetic queue pressure {sequence}",
         Raw = JsonSerializer.SerializeToElement(new { padding = new string('x', 48 * 1024) })
+    };
+
+    private static EventEnvelope SequencedEvent(long sequence) => Event((int)sequence) with
+    {
+        Checkpoint = new SourceCheckpoint
+        {
+            Sequence = sequence,
+            EventTime = DateTimeOffset.UtcNow,
+            RecordedAt = DateTimeOffset.UtcNow
+        }
     };
 
     private static long QueueBytes(string path) => new[] { path, path + "-wal", path + "-shm" }

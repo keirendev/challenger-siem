@@ -179,20 +179,20 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         Assert.Equal(CoverageLevel.L3, l3Summary.TargetLevel);
         Assert.Equal(CoverageLevel.L3, l3Summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, l3Summary.OverallStatus);
-        Assert.Equal(1, l3Summary.UnsupportedSources);
+        Assert.Equal(0, l3Summary.UnsupportedSources);
 
         var l2 = await repository.SearchAsync(null, CoverageLevel.L2, CancellationToken.None);
         var l2Summary = Assert.Single(l2.Summaries, summary => summary.AgentId == agentId);
         Assert.Equal(CoverageLevel.L2, l2Summary.TargetLevel);
         Assert.Equal(CoverageLevel.L2, l2Summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, l2Summary.OverallStatus);
-        Assert.Equal(1, l2Summary.UnsupportedSources);
+        Assert.Equal(0, l2Summary.UnsupportedSources);
 
         var telemetry = await new TelemetryCoverageRepository(dataSource, repository, new AlertRepository(dataSource))
             .AssessAsync(agentId, CoverageLevel.L2, 24, CancellationToken.None);
         var agentCoverage = Assert.Single(telemetry.Agents);
         Assert.Equal(SourceHealthStatuses.Healthy, agentCoverage.OverallStatus);
-        Assert.Equal(1, agentCoverage.UnsupportedSources);
+        Assert.Equal(0, agentCoverage.UnsupportedSources);
         Assert.DoesNotContain(agentCoverage.Gaps, gap =>
             gap.Contains("unsupported by the current collector set", StringComparison.OrdinalIgnoreCase));
 
@@ -204,13 +204,13 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
         var fullInventoryItem = Assert.Single(fullInventory);
         Assert.Equal(CoverageLevel.L3, fullInventoryItem.CurrentCoverageLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, fullInventoryItem.CoverageStatus);
-        Assert.Equal(1, fullInventoryItem.UnsupportedSources);
+        Assert.Equal(0, fullInventoryItem.UnsupportedSources);
 
         var unsupportedCapabilityInventory = await review.SearchAgentsAsync(
             new AgentInventoryQuery(null, agentId, null, "all", null, null, "unsupported", null, null, null),
             TimeSpan.FromDays(1),
             CancellationToken.None);
-        Assert.Equal(agentId, Assert.Single(unsupportedCapabilityInventory).AgentId);
+        Assert.Empty(unsupportedCapabilityInventory);
 
         var incompleteAgentId = $"linux-l3-incomplete-{Guid.NewGuid():N}";
         const string incompleteHostname = "SYNTHETIC-LINUX-L3-INCOMPLETE";
@@ -514,15 +514,20 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
     {
         var unsupported = entry.Applicability == SourceApplicabilityStatuses.Unsupported;
         var roleSpecific = entry.Requirement == SourceRequirementKinds.RoleSpecific;
+        var disabled = entry.SourceId == LinuxTelemetrySourceIds.AuditFramework;
         var applicability = unsupported
             ? SourceApplicabilityStatuses.Unsupported
             : roleSpecific
                 ? SourceApplicabilityStatuses.NotApplicable
+                : disabled
+                    ? SourceApplicabilityStatuses.Unknown
                 : SourceApplicabilityStatuses.Applicable;
         var status = unsupported
             ? SourceHealthStatuses.Unsupported
             : roleSpecific
                 ? SourceHealthStatuses.NotApplicable
+                : disabled
+                    ? SourceHealthStatuses.Disabled
                 : SourceHealthStatuses.Healthy;
         return new SourceHealthReport
         {
@@ -538,7 +543,7 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
             Required = entry.Required,
             Requirement = entry.Requirement,
             ApplicableRoles = entry.ApplicableRoles,
-            Enabled = !unsupported && !roleSpecific,
+            Enabled = !unsupported && !roleSpecific && !disabled,
             LastEventTime = status == SourceHealthStatuses.Healthy ? now : null,
             ObservedAt = now,
             PrerequisiteStatuses = entry.Prerequisites.ToDictionary(
@@ -547,6 +552,8 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
                     ? SourceEvidenceStatuses.Satisfied
                     : status == SourceHealthStatuses.Unsupported
                         ? SourceEvidenceStatuses.Unsupported
+                        : status == SourceHealthStatuses.Disabled
+                            ? SourceEvidenceStatuses.Disabled
                         : SourceEvidenceStatuses.NotApplicable,
                 StringComparer.Ordinal),
             EventFamilyStatuses = entry.EventFamilies.ToDictionary(
@@ -555,6 +562,8 @@ public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase databas
                     ? SourceEvidenceStatuses.Observed
                     : status == SourceHealthStatuses.Unsupported
                         ? SourceEvidenceStatuses.Unsupported
+                        : status == SourceHealthStatuses.Disabled
+                            ? SourceEvidenceStatuses.NotObserved
                         : SourceEvidenceStatuses.NotApplicable,
                 StringComparer.Ordinal),
             Details = new Dictionary<string, string>(StringComparer.Ordinal)

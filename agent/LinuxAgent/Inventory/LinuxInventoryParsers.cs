@@ -6,7 +6,7 @@ namespace Challenger.Siem.LinuxAgent.Inventory;
 
 public static class LinuxInventoryParsers
 {
-    public const int MaxItemsPerSnapshot = 200;
+    public const int MaxItemsPerSnapshot = AssetInventoryPaging.MaxItemsPerSource;
     private const int MaxTokenLength = 96;
 
     public static (InventorySourceState State, IReadOnlyList<InventoryItem> Items, bool Truncated, string ErrorCode) Parse(
@@ -240,14 +240,26 @@ public static class LinuxInventoryParsers
         var items = new List<InventoryItem>();
         foreach (var line in Lines(content))
         {
-            var firstColon = line.IndexOf(':');
-            var secondColon = firstColon < 0 ? -1 : line.IndexOf(':', firstColon + 1);
-            if (firstColon < 1 || secondColon < 0) continue;
-            var rawName = line[(firstColon + 1)..secondColon].Trim().Split('@')[0];
-            var name = SafeToken(rawName);
-            var stateAt = line.IndexOf(" state ", StringComparison.Ordinal);
-            var state = stateAt < 0 ? "unknown" : SafeEnum(SplitFields(line[(stateAt + 7)..]).FirstOrDefault(), "up", "down", "unknown", "dormant", "lowerlayerdown");
-            if (name is not null && state is not null) items.Add(Item("network_interface", name, state));
+            var fields = line.Split('\t');
+            if (fields.Length != 3)
+            {
+                var firstColon = line.IndexOf(':');
+                var secondColon = firstColon < 0 ? -1 : line.IndexOf(':', firstColon + 1);
+                if (firstColon < 1 || secondColon < 0) continue;
+                var legacyName = SafeToken(line[(firstColon + 1)..secondColon].Trim().Split('@')[0]);
+                var stateAt = line.IndexOf(" state ", StringComparison.Ordinal);
+                var legacyState = stateAt < 0 ? "unknown" : SafeEnum(
+                    SplitFields(line[(stateAt + 7)..]).FirstOrDefault()?.ToLowerInvariant(),
+                    "up", "down", "unknown", "dormant", "lowerlayerdown");
+                if (legacyName is not null && legacyState is not null)
+                    items.Add(Item("network_interface", legacyName, legacyState));
+                continue;
+            }
+            var name = SafeToken(fields[0]);
+            var state = SafeEnum(fields[1], "up", "down", "unknown", "dormant", "lower_layer_down", "not_present", "testing", "unavailable");
+            var type = SafeEnum(fields[2], "ethernet", "loopback", "sit", "gre", "wireless", "other");
+            if (name is not null && state is not null && type is not null)
+                items.Add(Item("network_interface", name, state, new Dictionary<string, string> { ["type"] = type }));
         }
         return items;
     }

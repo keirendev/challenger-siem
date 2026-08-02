@@ -1,5 +1,7 @@
 using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.Contracts.V2;
+using Challenger.Siem.LinuxAgent.Passive;
+using Challenger.Siem.LinuxAgent.Journal;
 
 namespace Challenger.Siem.LinuxAgent.Config;
 
@@ -17,6 +19,7 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
     public int DrainBatchSize { get; set; } = 100;
     public InventoryOptions Inventory { get; set; } = new();
     public JournalOptions Journal { get; set; } = new();
+    public AuditOptions Audit { get; set; } = new();
     public SelfIntegrityOptions SelfIntegrity { get; set; } = new();
     public PassiveTelemetryOptions PassiveTelemetry { get; set; } = new();
     public L4TelemetryOptions L4Telemetry { get; set; } = new();
@@ -42,6 +45,16 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && (Journal.TargetCoverageLevel < CoverageLevel.L4
             || Journal.DeclaredRoles.Length > 0
                 && Journal.DeclaredRoles.All(LinuxDeclaredRoles.IsKnown));
+
+    public bool HasValidAuditBounds() =>
+        string.Equals(Audit.Interface, LinuxAuditConstants.Interface, StringComparison.Ordinal)
+        && Audit.FacilityDeclaration is "undeclared" or "absent" or "present_disabled" or "present_enabled"
+        && string.Equals(Path.GetFullPath(Audit.StatePath), LinuxAuditConstants.StatePath, StringComparison.Ordinal)
+        && IsOptionalSha256(Audit.ApprovedPlanHash)
+        && (!Audit.Enabled
+            || Audit.FacilityDeclaration == "present_enabled"
+                && !Journal.IncludeAccessibleUserJournals
+                && LinuxAuditRouter.AuditRowCapacity(Journal.QueuePauseDepth) > 0);
 
     public bool HasValidSelfIntegrityBounds() =>
         SelfIntegrity.IntervalSeconds >= MinimumInventoryIntervalSeconds
@@ -71,6 +84,8 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && PassiveTelemetry.QueuePauseDepth <= Journal.QueuePauseDepth
         && PassiveTelemetry.MaxProcessesPerScan is >= 1 and <= 4096
         && PassiveTelemetry.MaxSocketsPerScan is >= 1 and <= 8192
+        && (!PassiveTelemetry.CollectSocketOwnership
+            || PassiveTelemetry.MaxProcessesPerScan <= LinuxPassiveTelemetryLimits.MaximumProcesses)
         && PassiveTelemetry.MaxEventsPerScan is >= 1 and <= 5_000
         && PassiveTelemetry.MaxEventsPerScan <= PassiveTelemetry.QueuePauseDepth
         && PassiveTelemetry.MaxProcessReadBytesPerScan is >= 1024 * 1024 and <= 64 * 1024 * 1024
@@ -243,6 +258,7 @@ public sealed class PassiveTelemetryOptions
     public int QueuePauseDepth { get; set; } = 50_000;
     public int MaxProcessesPerScan { get; set; } = 4096;
     public int MaxSocketsPerScan { get; set; } = 8192;
+    public bool CollectSocketOwnership { get; set; }
     public int MaxEventsPerScan { get; set; } = 500;
     public int MaxProcessReadBytesPerScan { get; set; } = 16 * 1024 * 1024;
     public int MaxNetworkReadBytesPerScan { get; set; } = 4 * 1024 * 1024;
@@ -250,6 +266,15 @@ public sealed class PassiveTelemetryOptions
     public int MaxRawEventBytes { get; set; } = 16 * 1024;
     public bool CleanupStateOnDisable { get; set; }
     public string StatePath { get; set; } = "/var/lib/challenger-siem-agent/passive-telemetry-state.json";
+}
+
+public sealed class AuditOptions
+{
+    public bool Enabled { get; set; }
+    public string Interface { get; set; } = LinuxAuditConstants.Interface;
+    public string FacilityDeclaration { get; set; } = "undeclared";
+    public string ApprovedPlanHash { get; set; } = string.Empty;
+    public string StatePath { get; set; } = LinuxAuditConstants.StatePath;
 }
 
 public sealed class L4TelemetryOptions

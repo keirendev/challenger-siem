@@ -60,7 +60,20 @@ public sealed record LinuxProcessObservation(
     bool EnrichmentPartial,
     bool CommandRedacted = false,
     bool ExecutableRedacted = false,
-    bool ExecutableTruncated = false);
+    bool ExecutableTruncated = false,
+    bool IsKernelThread = false,
+    bool IsZombie = false,
+    bool ExecutableDeleted = false,
+    bool ExecutableMemfd = false,
+    bool ExecutableTemporary = false,
+    string? DangerousEffectiveCapabilities = null);
+
+public sealed record LinuxSocketOwner(
+    int ProcessId,
+    string? Executable,
+    string Command,
+    string? UserId,
+    string Confidence);
 
 public sealed record LinuxProcessBaseline
 {
@@ -82,7 +95,9 @@ public sealed record LinuxSocketObservation(
     int? RemotePort,
     long? Inode,
     string? UserId,
-    int Count);
+    int Count,
+    IReadOnlyList<LinuxSocketOwner>? Owners = null,
+    string AttributionStatus = "not_collected");
 
 public sealed record LinuxSocketBaseline
 {
@@ -120,6 +135,21 @@ public sealed record LinuxHostMetricsObservation
     [JsonPropertyName("cpu_pressure_some_avg10_milli")] public long? CpuPressureSomeAvg10Milli { get; init; }
     [JsonPropertyName("memory_pressure_some_avg10_milli")] public long? MemoryPressureSomeAvg10Milli { get; init; }
     [JsonPropertyName("io_pressure_some_avg10_milli")] public long? IoPressureSomeAvg10Milli { get; init; }
+    [JsonPropertyName("disk_devices")] public IReadOnlyList<LinuxDiskDeviceObservation> DiskDevices { get; init; } = Array.Empty<LinuxDiskDeviceObservation>();
+}
+
+public sealed record LinuxDiskDeviceObservation
+{
+    [JsonPropertyName("name")] public string Name { get; init; } = string.Empty;
+    [JsonPropertyName("read_operations")] public long ReadOperations { get; init; }
+    [JsonPropertyName("write_operations")] public long WriteOperations { get; init; }
+    [JsonPropertyName("read_sectors")] public long ReadSectors { get; init; }
+    [JsonPropertyName("written_sectors")] public long WrittenSectors { get; init; }
+    [JsonPropertyName("read_time_ms")] public long ReadTimeMilliseconds { get; init; }
+    [JsonPropertyName("write_time_ms")] public long WriteTimeMilliseconds { get; init; }
+    [JsonPropertyName("queue_depth")] public long QueueDepth { get; init; }
+    [JsonPropertyName("io_time_ms")] public long IoTimeMilliseconds { get; init; }
+    [JsonPropertyName("weighted_io_time_ms")] public long WeightedIoTimeMilliseconds { get; init; }
 }
 
 public sealed record PassiveSourceProgress

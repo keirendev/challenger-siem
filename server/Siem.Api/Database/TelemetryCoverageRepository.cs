@@ -1,7 +1,10 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Coverage;
 using Challenger.Siem.Api.Detections;
+using Challenger.Siem.Api.Configuration;
+using Challenger.Siem.Api.Storage;
 using Challenger.Siem.Contracts.V2;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Challenger.Siem.Api.Database;
@@ -9,7 +12,9 @@ namespace Challenger.Siem.Api.Database;
 public sealed class TelemetryCoverageRepository(
     NpgsqlDataSource dataSource,
     SourceHealthRepository sourceHealth,
-    AlertRepository alerts)
+    AlertRepository alerts,
+    AgentLivenessMonitorState? livenessState = null,
+    IOptions<ManagedRetentionOptions>? retentionOptions = null)
 {
     private static readonly IReadOnlyList<string> LinuxInventorySnapshotTypes = new[]
     {
@@ -80,6 +85,7 @@ public sealed class TelemetryCoverageRepository(
             var gaps = BuildGaps(summary, recentEventCount, expectedSourceCount, reportedSourceCount, sourceCoverage, inventory, detectionPrerequisites);
             var pressureState = AgentPressureState(summary.QueueMetrics, sourceCoverage);
             var capacityState = CapacityState(summary.QueueMetrics?.UsedPercent);
+            var historyReadiness = await LoadHistoryReadinessAsync(agent.AgentId, lookbackEnd, cancellationToken);
 
             results.Add(new AgentTelemetryCoverage
             {
@@ -89,6 +95,7 @@ public sealed class TelemetryCoverageRepository(
                 AgentStatus = agent.Status,
                 LastSeen = agent.LastSeen,
                 HostTimezone = agent.HostTimezone,
+                HistoryReadiness = historyReadiness,
                 TargetLevel = targetLevel,
                 CurrentLevel = summary.CurrentLevel,
                 OverallStatus = summary.OverallStatus,
@@ -120,6 +127,8 @@ public sealed class TelemetryCoverageRepository(
             });
         }
 
+        var liveness = livenessState?.Current;
+        var retention = retentionOptions?.Value ?? new ManagedRetentionOptions();
         return new TelemetryCoverageResponse
         {
             GeneratedAt = lookbackEnd,
@@ -127,7 +136,54 @@ public sealed class TelemetryCoverageRepository(
             LookbackEnd = lookbackEnd,
             LookbackHours = clampedLookbackHours,
             TargetLevel = targetLevel,
+            LivenessMonitor = liveness is null ? null : new CoverageLivenessMonitorStatus
+            {
+                Status = liveness.Status,
+                ScanIntervalSeconds = (int)AgentLivenessMonitorRepository.ScanInterval.TotalSeconds,
+                LastAttemptAt = liveness.LastAttemptAt,
+                LastSuccessfulRunAt = liveness.LastSuccessfulRunAt,
+                Fresh = liveness.LastSuccessfulRunAt.HasValue
+                    && lookbackEnd - liveness.LastSuccessfulRunAt.Value <= AgentLivenessMonitorRepository.ScanInterval * 3,
+                ActiveOutageCount = liveness.ActiveOutageCount,
+                IndependentMonitoringRequired = true
+            },
+            RetentionScheduler = new CoverageRetentionSchedulerStatus
+            {
+                RetentionEnabled = retention.Enabled,
+                SchedulerEnabled = retention.HostedServiceEnabled,
+                IntervalMinutes = retention.HostedServiceIntervalMinutes,
+                TargetRetentionDays = retention.TargetRetentionDays,
+                ManagedCapacityBytes = retention.ManagedCapacityBytes
+            },
             Agents = results
+        };
+    }
+
+    private async Task<CoverageHistoryReadiness> LoadHistoryReadinessAsync(
+        string agentId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select least(
+                (select min(heartbeat_time) from agent_heartbeats where agent_id = @agent_id),
+                (select min(event_time) from events where agent_id = @agent_id)) as oldest;
+            """;
+        command.Parameters.AddWithValue("agent_id", agentId);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        var oldest = value is null or DBNull ? (DateTimeOffset?)null : value switch
+        {
+            DateTimeOffset dto => dto.ToUniversalTime(),
+            DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+            _ => null
+        };
+        return new CoverageHistoryReadiness
+        {
+            OldestObservationAt = oldest,
+            Ready24Hours = oldest.HasValue && oldest.Value <= now.AddHours(-24),
+            Ready7Days = oldest.HasValue && oldest.Value <= now.AddDays(-7)
         };
     }
 
@@ -209,31 +265,35 @@ public sealed class TelemetryCoverageRepository(
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select distinct on (snapshot_type)
-                snapshot_type,
-                collected_at,
-                host_timezone,
-                jsonb_array_length(items) as item_count,
-                summary
+            select agent_id, hostname, snapshot_type, collected_at, host_timezone, items, summary
             from asset_inventory_snapshots
             where agent_id = @agent_id
-            order by snapshot_type, collected_at desc;
+            order by collected_at desc
+            limit 640;
             """;
         command.Parameters.AddWithValue("agent_id", agentId);
-        var latest = new Dictionary<string, InventorySnapshotRecord>(StringComparer.OrdinalIgnoreCase);
+        var stored = new List<AssetInventorySnapshot>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             while (await reader.ReadAsync(cancellationToken))
             {
-                var snapshotType = reader.GetString(reader.GetOrdinal("snapshot_type"));
-                latest[snapshotType] = new InventorySnapshotRecord(
-                    snapshotType,
-                    ReadDateTimeOffset(reader, "collected_at"),
-                    Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
-                    reader.GetInt32(reader.GetOrdinal("item_count")),
-                    ReadStringDictionary(reader, "summary"));
+                stored.Add(new AssetInventorySnapshot
+                {
+                    AgentId = reader.GetString(reader.GetOrdinal("agent_id")),
+                    Hostname = reader.GetString(reader.GetOrdinal("hostname")),
+                    SnapshotType = reader.GetString(reader.GetOrdinal("snapshot_type")),
+                    CollectedAt = ReadDateTimeOffset(reader, "collected_at"),
+                    HostTimezone = Jsonb.Read<HostTimezoneMetadata>(reader, "host_timezone"),
+                    Items = JsonSerializer.Deserialize<IReadOnlyList<InventoryItem>>(reader.GetString(reader.GetOrdinal("items")), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? Array.Empty<InventoryItem>(),
+                    Summary = ReadStringDictionary(reader, "summary")
+                });
             }
         }
+
+        var latest = AssetInventoryPaging.ReassembleLatest(stored).ToDictionary(
+            snapshot => snapshot.SnapshotType,
+            snapshot => new InventorySnapshotRecord(snapshot.SnapshotType, snapshot.CollectedAt, snapshot.HostTimezone, snapshot.Items.Count, snapshot.Summary),
+            StringComparer.OrdinalIgnoreCase);
 
         var expectedTypes = LinuxInventorySnapshotTypes;
         return expectedTypes
@@ -366,6 +426,21 @@ public sealed class TelemetryCoverageRepository(
                 HostTimezone = snapshot.HostTimezone,
                 ItemCount = snapshot.ItemCount,
                 Reason = "Latest inventory snapshot is older than the validation lookback.",
+                Url = url
+            };
+        }
+
+        if (snapshot.Summary.TryGetValue("generation_complete", out var generationComplete)
+            && !string.Equals(generationComplete, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return new InventoryTelemetryStatus
+            {
+                SnapshotType = snapshotType,
+                Status = SourceHealthStatuses.Degraded,
+                LatestCollectedAt = snapshot.CollectedAt,
+                HostTimezone = snapshot.HostTimezone,
+                ItemCount = snapshot.ItemCount,
+                Reason = "Latest inventory generation is incomplete or source-truncated.",
                 Url = url
             };
         }

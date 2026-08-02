@@ -137,7 +137,7 @@ During the soak, privately verify L1 criteria plus:
 - the effective scope and independent system-journal visibility are reported truthfully; a successful broad read cannot hide missing or denied system visibility;
 - SSH, login/session, sudo/su, scheduler, package, firewall, kernel/security-module, service-change, and agent/log-tamper families report truthful applicable/not-applicable/unknown/degraded states;
 - scope expansion preserves the durable cursor, does not claim historical backfill, and treats any rejected cursor as a persisted gap/reset before bounded recovery;
-- `linux-audit-framework` remains explicitly `unsupported` unless a future approved implementation exists;
+- `linux-audit-framework` remains disabled and undeclared unless its implemented fixed interface and exact plan receive a separate live approval; disabled-router validation must not inspect or change host audit facilities;
 - structured fields take precedence and ambiguous messages do not invent users, addresses, packages, processes, or outcomes;
 - detections with degraded prerequisites lower confidence or suppress evaluation instead of implying safety;
 

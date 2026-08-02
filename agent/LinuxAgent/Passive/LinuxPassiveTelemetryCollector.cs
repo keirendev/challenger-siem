@@ -17,7 +17,7 @@ public sealed class LinuxPassiveTelemetryCollector(
     ILinuxHostMetricsSource metricsSource,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-passive-snapshot-v1";
+    public const string CollectorVersion = "linux-passive-snapshot-v2";
     private readonly LinuxAgentOptions options = configured.Value;
 
     public string PlanHash => ComputePlanHash(options);
@@ -44,6 +44,7 @@ public sealed class LinuxPassiveTelemetryCollector(
             $"journal_scope={LinuxJournalScopes.Configured(configured.Journal)}",
             $"max_processes={options.MaxProcessesPerScan}",
             $"max_sockets={options.MaxSocketsPerScan}",
+            $"collect_socket_ownership={options.CollectSocketOwnership}",
             $"max_events={options.MaxEventsPerScan}",
             $"process_read_bytes={options.MaxProcessReadBytesPerScan}",
             $"network_read_bytes={options.MaxNetworkReadBytesPerScan}",
@@ -52,10 +53,10 @@ public sealed class LinuxPassiveTelemetryCollector(
             $"partial_baseline_miss_limit={LinuxPassiveTelemetryLimits.PartialBaselineMissLimit}",
             $"cleanup_on_disable={options.CleanupStateOnDisable}",
             $"state_path={options.StatePath}",
-            "process=/proc/self/mountinfo,/proc/sys/kernel/random/boot_id,/proc/<numeric-pid>/{stat,status,loginuid,cgroup,cmdline,exe}",
+            $"process=/proc/self/mountinfo,/proc/sys/kernel/random/boot_id,/proc/<numeric-pid>/{{stat,status,loginuid,cgroup,cmdline,exe{(options.CollectSocketOwnership ? ",fd/*:socket-only" : string.Empty)}}}",
             "network=/proc/sys/kernel/random/boot_id,/proc/net/{tcp,tcp6,udp,udp6}",
-            "metrics=/proc/sys/kernel/random/boot_id,/proc/{stat,meminfo,loadavg,uptime,diskstats,net/dev,pressure/cpu,pressure/memory,pressure/io}",
-            "exclusions=environ,fd,cwd,root,maps,mem,stack,syscall,packet_payload,dns_payload,unix_socket_path");
+            "metrics=/proc/sys/kernel/random/boot_id,/proc/{stat,meminfo,loadavg,uptime,diskstats,net/dev,pressure/cpu,pressure/memory,pressure/io},/sys/block/<whole-device>",
+            $"exclusions=environ,{(options.CollectSocketOwnership ? "non-socket-fd-targets" : "fd")},cwd,root,maps,mem,stack,syscall,packet_payload,dns_payload,unix_socket_path");
         return "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
@@ -71,21 +72,31 @@ public sealed class LinuxPassiveTelemetryCollector(
             IsEnabledAndApproved,
             "Existing unprivileged agent identity only. Missing or denied procfs fields remain explicit partial or permission-denied health; no privilege expansion is attempted.",
             "None. The pack reads fixed procfs metadata and writes only its protected agent queue/state files.",
-            "No environment values, fd targets, cwd/root links, memory, maps, stack, syscall arguments, shell history, file contents, packet/DNS payloads, Unix-socket paths, audit, or eBPF.",
+            settings.CollectSocketOwnership
+                ? "No environment values, non-socket fd targets, cwd/root links, memory, maps, stack, syscall arguments, shell history, file contents, packet/DNS payloads, Unix-socket paths, audit, or eBPF. Exact socket:[inode] fd targets are retained only in the in-memory attribution cache."
+                : "No environment values, fd targets, cwd/root links, memory, maps, stack, syscall arguments, shell history, file contents, packet/DNS payloads, Unix-socket paths, audit, or eBPF.",
             $"Pause this L3 pack before journal L1/L2 at row depth {settings.QueuePauseDepth} or before estimated batch bytes {options.PassiveMaximumEstimatedBatchBytes()} would cross passive byte limit {options.PassiveQueueByteLimit()} after the queue warning threshold and one-journal-poll reserve; coalesce host metrics and persist bounded gap/drop/pressure counts.",
             settings.StatePath,
             [
                 new(
                     LinuxTelemetrySourceIds.ProcessSnapshotDiff,
-                    ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe"],
+                    settings.CollectSocketOwnership
+                        ? ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe", "/proc/<numeric-pid>/fd/* (exact socket:[inode] targets only)"]
+                        : ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe"],
                     "Polling-honest baseline, observed, disappeared, and changed process snapshot differences; expected PID disappearance/identity races are counted separately from denied, malformed, truncated, or bounded coverage gaps; no exact exec/exit claim.",
                     "High-sensitivity process metadata. Command lines are bounded, common credential forms are redacted, and malformed/truncated sensitive text fails closed before queueing; this is not a guarantee that arbitrary unlabeled secrets can be identified. Raw procfs records are not retained.",
                     $"{settings.MaxProcessesPerScan} processes, {settings.MaxProcessReadBytesPerScan} read bytes, {settings.MaxEventsPerScan} events, {settings.ScanTimeoutSeconds}s deadline."),
                 new(
                     LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff,
-                    ["/proc/sys/kernel/random/boot_id", "/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"],
-                    "Polling-honest baseline, observed, disappeared, and changed socket tuple differences without process attribution.",
-                    "High-sensitivity addresses, ports, state, UID, and socket inode only; no packet payload or fd scan.",
+                    settings.CollectSocketOwnership
+                        ? ["/proc/sys/kernel/random/boot_id", "/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6", "bounded in-memory exact-inode process attribution cache"]
+                        : ["/proc/sys/kernel/random/boot_id", "/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"],
+                    settings.CollectSocketOwnership
+                        ? "Polling-honest socket differences with bounded exact-inode attribution; stale, capped, denied, absent, or shared ownership remains explicit partial attribution."
+                        : "Polling-honest baseline, observed, disappeared, and changed socket tuple differences without process attribution.",
+                    settings.CollectSocketOwnership
+                        ? "High-sensitivity addresses, ports, state, UID, socket inode, and at most four bounded owner records; non-socket fd targets are immediately discarded."
+                        : "High-sensitivity addresses, ports, state, UID, and socket inode only; no packet payload or fd scan.",
                     $"{settings.MaxSocketsPerScan} sockets, {settings.MaxNetworkReadBytesPerScan} read bytes, {settings.MaxEventsPerScan} events, {settings.ScanTimeoutSeconds}s deadline."),
                 new(
                     LinuxTelemetrySourceIds.HostBehaviourMetrics,
@@ -393,7 +404,13 @@ public sealed class LinuxPassiveTelemetryCollector(
             ["tracer_process_id"] = current?.TracerProcessId,
             ["login_user_id"] = current?.LoginUserId,
             ["cgroup_sha256"] = current?.CgroupSha256,
-            ["enrichment_partial"] = current is null || current.EnrichmentPartial
+            ["enrichment_partial"] = current is null || current.EnrichmentPartial,
+            ["kernel_thread"] = current?.IsKernelThread,
+            ["zombie"] = current?.IsZombie,
+            ["executable_deleted"] = current?.ExecutableDeleted,
+            ["executable_memfd"] = current?.ExecutableMemfd,
+            ["executable_temporary"] = current?.ExecutableTemporary,
+            ["dangerous_effective_capabilities"] = current?.DangerousEffectiveCapabilities
         };
         var redactedFields = new List<string>();
         if (current?.CommandRedacted == true)
@@ -442,7 +459,13 @@ public sealed class LinuxPassiveTelemetryCollector(
                     ["baseline.alertable"] = action.StartsWith("baseline", StringComparison.Ordinal) ? "false" : "not_baseline",
                     ["process.command"] = command,
                     ["process.state"] = current?.State ?? "unknown",
-                    ["process.enrichment"] = current is null ? "unavailable" : current.EnrichmentPartial ? "partial" : "observed"
+                    ["process.enrichment"] = current is null ? "unavailable" : current.EnrichmentPartial ? "partial" : "observed",
+                    ["process.kernel_thread"] = current?.IsKernelThread == true ? "true" : "false",
+                    ["process.zombie"] = current?.IsZombie == true ? "true" : "false",
+                    ["process.executable_deleted"] = current?.ExecutableDeleted == true ? "true" : "false",
+                    ["process.executable_memfd"] = current?.ExecutableMemfd == true ? "true" : "false",
+                    ["process.executable_temporary"] = current?.ExecutableTemporary == true ? "true" : "false",
+                    ["process.dangerous_effective_capabilities"] = current?.DangerousEffectiveCapabilities ?? "none"
                 }
             },
             raw,
@@ -471,6 +494,9 @@ public sealed class LinuxPassiveTelemetryCollector(
         var inode = current?.Inode ?? prior?.Inode;
         var userId = current?.UserId ?? prior?.UserId;
         var count = current?.Count ?? prior?.Count ?? 1;
+        var owners = current?.Owners ?? Array.Empty<LinuxSocketOwner>();
+        var primaryOwner = owners.Count == 1 ? owners[0] : null;
+        var attributionStatus = current?.AttributionStatus ?? "unavailable";
         var raw = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
             ["schema"] = "linux-network-snapshot-v1",
@@ -486,7 +512,13 @@ public sealed class LinuxPassiveTelemetryCollector(
             ["socket_inode"] = inode,
             ["user_id"] = userId,
             ["tuple_count"] = count,
-            ["process_attribution"] = "not_collected"
+            ["process_attribution"] = attributionStatus,
+            ["owner_count"] = owners.Count,
+            ["owner_process_id"] = primaryOwner?.ProcessId,
+            ["owner_executable"] = primaryOwner?.Executable,
+            ["owner_command"] = primaryOwner?.Command,
+            ["owner_user_id"] = primaryOwner?.UserId,
+            ["owner_confidence"] = primaryOwner?.Confidence
         };
         return BuildEnvelope(
             agentId,
@@ -507,6 +539,8 @@ public sealed class LinuxPassiveTelemetryCollector(
                 DestinationIp = remoteAddress,
                 DestinationPort = remotePort?.ToString(CultureInfo.InvariantCulture),
                 Protocol = protocol,
+                ProcessId = primaryOwner?.ProcessId.ToString(CultureInfo.InvariantCulture),
+                ProcessImage = primaryOwner?.Executable,
                 User = userId is null ? null : new UserTelemetryConcept { Id = userId },
                 Network = new NetworkTelemetryConcept
                 {
@@ -522,7 +556,8 @@ public sealed class LinuxPassiveTelemetryCollector(
                     ["telemetry.sensitivity"] = "high",
                     ["baseline.alertable"] = action.StartsWith("baseline", StringComparison.Ordinal) ? "false" : "not_baseline",
                     ["network.state"] = state,
-                    ["network.process_attribution"] = "not_collected",
+                    ["network.process_attribution"] = attributionStatus,
+                    ["network.owner_count"] = owners.Count.ToString(CultureInfo.InvariantCulture),
                     ["network.tuple_count"] = count.ToString(CultureInfo.InvariantCulture)
                 }
             },
@@ -543,6 +578,31 @@ public sealed class LinuxPassiveTelemetryCollector(
         bool complete)
     {
         var cpuBusyPermille = DeltaRatioPermille(current.CpuTotalTicks, previous?.CpuTotalTicks, current.CpuIdleTicks, previous?.CpuIdleTicks);
+        var previousDevices = previous?.DiskDevices.ToDictionary(device => device.Name, StringComparer.Ordinal)
+            ?? new Dictionary<string, LinuxDiskDeviceObservation>(StringComparer.Ordinal);
+        var diskDiagnostics = current.DiskDevices.Select(device =>
+        {
+            previousDevices.TryGetValue(device.Name, out var prior);
+            var operations = AddNullable(Delta(device.ReadOperations, prior?.ReadOperations), Delta(device.WriteOperations, prior?.WriteOperations));
+            var serviceTime = AddNullable(Delta(device.ReadTimeMilliseconds, prior?.ReadTimeMilliseconds), Delta(device.WriteTimeMilliseconds, prior?.WriteTimeMilliseconds));
+            var weighted = Delta(device.WeightedIoTimeMilliseconds, prior?.WeightedIoTimeMilliseconds);
+            return new
+            {
+                name = device.Name,
+                read_operations_delta = Delta(device.ReadOperations, prior?.ReadOperations),
+                write_operations_delta = Delta(device.WriteOperations, prior?.WriteOperations),
+                read_sectors_delta = Delta(device.ReadSectors, prior?.ReadSectors),
+                written_sectors_delta = Delta(device.WrittenSectors, prior?.WrittenSectors),
+                queue_depth = device.QueueDepth,
+                io_time_ms_delta = Delta(device.IoTimeMilliseconds, prior?.IoTimeMilliseconds),
+                weighted_io_time_ms_delta = weighted,
+                derived_latency_micros = operations is > 0 && serviceTime is { } milliseconds
+                    ? milliseconds * 1000 / operations
+                    : (long?)null
+            };
+        }).OrderByDescending(device => device.weighted_io_time_ms_delta ?? -1)
+            .ThenBy(device => device.name, StringComparer.Ordinal)
+            .Take(8).ToArray();
         var raw = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
             ["schema"] = "linux-host-behaviour-v1",
@@ -564,7 +624,8 @@ public sealed class LinuxPassiveTelemetryCollector(
             ["cpu_pressure_some_avg10_milli"] = current.CpuPressureSomeAvg10Milli,
             ["memory_pressure_some_avg10_milli"] = current.MemoryPressureSomeAvg10Milli,
             ["io_pressure_some_avg10_milli"] = current.IoPressureSomeAvg10Milli,
-            ["disk_aggregate_scope"] = "sum_all_visible_diskstats_rows_including_stacked_devices_and_partitions",
+            ["disk_devices"] = diskDiagnostics,
+            ["disk_aggregate_scope"] = "bounded_whole_devices_from_sys_block",
             ["network_aggregate_scope"] = "sum_all_visible_netdev_interfaces_including_loopback_and_virtual"
         };
         return BuildEnvelope(
@@ -585,7 +646,7 @@ public sealed class LinuxPassiveTelemetryCollector(
                 {
                     ["evidence_mode"] = "coalesced_procfs_sample",
                     ["metrics.completeness"] = complete ? "complete" : "partial",
-                    ["disk.aggregate_scope"] = "all_visible_rows_including_stacked_and_partitions",
+                    ["disk.aggregate_scope"] = "bounded_whole_devices_from_sys_block",
                     ["network.aggregate_scope"] = "all_visible_interfaces_including_loopback_and_virtual",
                     ["metrics.interval_seconds"] = options.PassiveTelemetry.HostMetricsIntervalSeconds.ToString(CultureInfo.InvariantCulture)
                 }
@@ -596,6 +657,10 @@ public sealed class LinuxPassiveTelemetryCollector(
             false,
             []);
     }
+
+    private static long? AddNullable(long? left, long? right) => left.HasValue && right.HasValue
+        ? left.Value > long.MaxValue - right.Value ? long.MaxValue : left.Value + right.Value
+        : null;
 
     private EventEnvelope BuildEnvelope(
         string agentId,
