@@ -1,0 +1,29 @@
+## Challenger SIEM foundation audit policy.
+## Install only after confirming every watched path exists on the target.
+## No -D, immutable mode, global syscall coverage, or rate-limit override is included.
+
+-b 8192
+-f 1
+
+-w /etc/passwd -p wa -k challenger_identity
+-w /etc/group -p wa -k challenger_identity
+-w /etc/shadow -p wa -k challenger_identity
+-w /etc/gshadow -p wa -k challenger_identity
+-w /etc/sudoers -p wa -k challenger_privilege
+-w /etc/sudoers.d -p wa -k challenger_privilege
+-w /etc/systemd/system -p wa -k challenger_persistence
+-w /etc/cron.d -p wa -k challenger_persistence
+-w /var/spool/cron -p wa -k challenger_persistence
+-w /etc/ssh/sshd_config -p wa -k challenger_ssh
+-w /etc/ssh/sshd_config.d -p wa -k challenger_ssh
+-w /etc/pacman.conf -p wa -k challenger_package_policy
+-w /etc/pacman.d -p wa -k challenger_package_policy
+-w /etc/modprobe.d -p wa -k challenger_kernel_policy
+-w /etc/modules-load.d -p wa -k challenger_kernel_policy
+-w /etc/audit -p wa -k challenger_audit_policy
+-w /opt/challenger-siem-agent/Challenger.Siem.LinuxAgent -p wa -k challenger_siem_integrity
+-w /etc/challenger-siem-agent -p wa -k challenger_siem_integrity
+-w /etc/systemd/system/challenger-siem-agent.service -p wa -k challenger_siem_integrity
+
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module,kexec_load,kexec_file_load -k challenger_kernel_syscall
+-a always,exit -F arch=b32 -S init_module,delete_module -k challenger_kernel_syscall

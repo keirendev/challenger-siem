@@ -90,6 +90,155 @@ public sealed class LinuxAuditRouterTests
     }
 
     [Fact]
+    public async Task SharedJournalV2PreservesBroaderScopeAndRoutesTaggedPathEvidence()
+    {
+        using var state = new TemporaryAuditState();
+        var options = Options(enabled: true);
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit.Interface = LinuxAuditConstants.SharedJournalInterface;
+        options.Audit.ApprovedPlanHash = LinuxAuditRouter.ComputePlanHash(options);
+        Assert.True(options.HasValidAuditBounds());
+        var router = Router(options, state, new MutableTimeProvider(Now), new LinuxAuditRouterRuntime());
+
+        Assert.Equal(LinuxAuditRouteKind.Pending, (await router.RouteAsync(Record("scope-one", Now, "SYSCALL",
+            "type=SYSCALL msg=audit(1785542400.000:70) arch=c000003e syscall=257 success=yes pid=4242 ppid=41 uid=0 auid=1001 exe=\"/usr/bin/synthetic\" key=\"challenger_identity\""),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Kind);
+        Assert.Equal(LinuxAuditRouteKind.Pending, (await router.RouteAsync(Record("scope-two", Now.AddMilliseconds(1), "PATH",
+            "type=PATH msg=audit(1785542400.000:70) item=0 name=\"/etc/passwd\" inode=42 dev=08:01 mode=0100644 nametype=NORMAL"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Kind);
+        var envelope = Assert.Single((await router.RouteAsync(Record("scope-three", Now.AddMilliseconds(2), "EOE",
+            "type=EOE msg=audit(1785542400.000:70)"), "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Events);
+
+        Assert.Equal("/etc/passwd", envelope.Normalized!.FilePath);
+        Assert.Equal("challenger_identity", envelope.Normalized.Labels["audit.rule_key"]);
+        Assert.Equal(LinuxAuditConstants.SharedJournalInterface, envelope.Normalized.Labels["audit.routed_interface"]);
+    }
+
+    [Fact]
+    public async Task StructuredSystemdAuditIdentityRoutesWithoutLegacyMessagePrefix()
+    {
+        using var state = new TemporaryAuditState();
+        var options = SharedJournalOptions();
+        var router = Router(options, state, new MutableTimeProvider(Now), new LinuxAuditRouterRuntime());
+
+        Assert.Equal(LinuxAuditRouteKind.Pending, (await router.RouteAsync(StructuredRecord("structured-one", Now, "90", "SYSCALL",
+            "SYSCALL arch=c000003e syscall=257 success=yes pid=4242 ppid=41 uid=0 auid=1001 exe=\"/usr/bin/synthetic\" key=\"challenger_persistence\""),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Kind);
+        Assert.Equal(LinuxAuditRouteKind.Pending, (await router.RouteAsync(StructuredRecord("structured-two", Now.AddMilliseconds(1), "90", "PATH",
+            "PATH item=0 name=\"/etc/cron.d/synthetic\" inode=42 dev=08:01 mode=0100644 nametype=CREATE"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Kind);
+        var envelope = Assert.Single((await router.RouteAsync(StructuredRecord("structured-three", Now.AddMilliseconds(2), "90", "EOE", "EOE"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Events);
+
+        Assert.Equal("authorization_syscall", envelope.EventCode);
+        Assert.Equal("/etc/cron.d/synthetic", envelope.Normalized!.FilePath);
+        Assert.Equal("challenger_persistence", envelope.Normalized.Labels["audit.rule_key"]);
+        Assert.Equal(Now, envelope.EventTime);
+    }
+
+    [Fact]
+    public async Task HealthBoundaryFinalizesStructuredWatchWithoutEoe()
+    {
+        using var state = new TemporaryAuditState();
+        var options = SharedJournalOptions();
+        var router = Router(options, state, new MutableTimeProvider(Now), new LinuxAuditRouterRuntime());
+
+        await router.RouteAsync(StructuredRecord("quiet-one", Now, "91", "SYSCALL",
+            "SYSCALL arch=c000003e syscall=257 success=yes pid=4242 ppid=41 uid=0 auid=1001 exe=\"/usr/bin/synthetic\" key=\"challenger_persistence\""),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        await router.RouteAsync(StructuredRecord("quiet-two", Now.AddMilliseconds(1), "91", "PROCTITLE", "PROCTITLE proctitle=never-retain"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        await router.RouteAsync(StructuredRecord("quiet-three", Now.AddMilliseconds(2), "91", "PATH",
+            "PATH item=0 name=\"/etc/cron.d/synthetic\" inode=42 dev=08:01 mode=0100644 nametype=CREATE"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+
+        var boundary = await router.RouteAsync(
+            HealthRecord("quiet-health", Now.AddSeconds(6), enabled: 1, processId: 4242, backlogLimit: 8192, lost: 0, backlog: 0),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+
+        Assert.Equal(2, boundary.Events.Count);
+        var watched = Assert.Single(boundary.Events, item => item.EventCode == "authorization_syscall");
+        Assert.Equal("/etc/cron.d/synthetic", watched.Normalized!.FilePath);
+        Assert.Equal("challenger_persistence", watched.Normalized.Labels["audit.rule_key"]);
+        Assert.DoesNotContain("never-retain", JsonSerializer.Serialize(watched), StringComparison.Ordinal);
+        Assert.DoesNotContain("PROCTITLE", JsonSerializer.Serialize(watched), StringComparison.Ordinal);
+        Assert.Contains(boundary.Events, item => item.EventCode == "audit_health_sample");
+    }
+
+    [Fact]
+    public void LegacyAuditInterfaceRejectsBroaderJournalScope()
+    {
+        var options = Options(enabled: true);
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit.ApprovedPlanHash = LinuxAuditRouter.ComputePlanHash(options);
+
+        Assert.False(options.HasValidAuditBounds());
+    }
+
+    [Fact]
+    public async Task TrustedAuditHealthIsPrivacyBoundedCrashStableAndAcknowledged()
+    {
+        using var state = new TemporaryAuditState();
+        var options = SharedJournalOptions();
+        var runtime = new LinuxAuditRouterRuntime();
+        var router = Router(options, state, new MutableTimeProvider(Now), runtime);
+
+        var result = await router.RouteAsync(
+            HealthRecord("health-one", Now, enabled: 1, processId: 4242, backlogLimit: 8192, lost: 0, backlog: 3),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+
+        var envelope = Assert.Single(result.Events);
+        Assert.Equal(LinuxAuditRouteKind.Queued, result.Kind);
+        Assert.Equal("audit_health_sample", envelope.EventCode);
+        Assert.Equal("success", envelope.Normalized!.Outcome);
+        Assert.Equal("healthy", runtime.Current.KernelHealthStatus);
+        Assert.Equal(0, runtime.Current.KernelLost);
+        Assert.Equal(3, runtime.Current.KernelBacklog);
+        Assert.Equal(8192, runtime.Current.KernelBacklogLimit);
+        var serialized = JsonSerializer.Serialize(envelope);
+        Assert.DoesNotContain("4242", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("pid", serialized, StringComparison.OrdinalIgnoreCase);
+
+        var restartedRuntime = new LinuxAuditRouterRuntime();
+        var restarted = Router(options, state, new MutableTimeProvider(Now), restartedRuntime);
+        await restarted.InitializeAsync(default);
+        var replay = Assert.Single(restarted.ReplayQueued("synthetic-agent", "SYNTHETIC-LINUX-01"));
+        Assert.Equal(envelope.EventId, replay.EventId);
+        Assert.Equal("healthy", restartedRuntime.Current.KernelHealthStatus);
+        await restarted.RecordAcknowledgedAsync([replay], default);
+        Assert.Empty(restarted.ReplayQueued("synthetic-agent", "SYNTHETIC-LINUX-01"));
+    }
+
+    [Fact]
+    public async Task AuditHealthLossIsDegradedAndSpoofedProducerIsNotAuditOwned()
+    {
+        using var state = new TemporaryAuditState();
+        var options = SharedJournalOptions();
+        var runtime = new LinuxAuditRouterRuntime();
+        var router = Router(options, state, new MutableTimeProvider(Now), runtime);
+
+        var trustedRecord = HealthRecord("health-degraded", Now, enabled: 1, processId: 4242, backlogLimit: 8192, lost: 2, backlog: 7000);
+        Assert.True(LinuxAuditRouter.IsAuditTransport(trustedRecord));
+        var degraded = await router.RouteAsync(
+            trustedRecord,
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        var envelope = Assert.Single(degraded.Events);
+        Assert.Equal("failure", envelope.Normalized!.Outcome);
+        Assert.Equal("lost_records", envelope.Normalized.Labels["audit.loss_state"]);
+        Assert.Equal("high", envelope.Normalized.Labels["audit.backlog_state"]);
+        Assert.Equal("degraded", runtime.Current.KernelHealthStatus);
+        Assert.Equal("audit_kernel_health_degraded", runtime.Current.ErrorCode);
+
+        var spoofedRecord = HealthRecord("health-spoofed", Now.AddSeconds(1), enabled: 1, processId: 4242, backlogLimit: 8192, lost: 0, backlog: 0, userId: "950");
+        Assert.False(LinuxAuditRouter.IsAuditTransport(spoofedRecord));
+        var spoofed = await router.RouteAsync(
+            spoofedRecord,
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        Assert.Equal(LinuxAuditRouteKind.NotAudit, spoofed.Kind);
+        Assert.Empty(spoofed.Events);
+    }
+
+    [Fact]
     public async Task MandatoryL1ReserveTurnsAuditAdmissionIntoExplicitPressureGap()
     {
         using var state = new TemporaryAuditState();
@@ -317,6 +466,15 @@ public sealed class LinuxAuditRouterTests
         return options;
     }
 
+    private static LinuxAgentOptions SharedJournalOptions()
+    {
+        var options = Options(enabled: true);
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit.Interface = LinuxAuditConstants.SharedJournalInterface;
+        options.Audit.ApprovedPlanHash = LinuxAuditRouter.ComputePlanHash(options);
+        return options;
+    }
+
     private static string Record(string cursor, DateTimeOffset observedAt, string type, string message) =>
         JsonSerializer.Serialize(new Dictionary<string, string>
         {
@@ -325,6 +483,45 @@ public sealed class LinuxAuditRouterTests
             ["_BOOT_ID"] = BootId,
             ["_TRANSPORT"] = "audit",
             ["AUDIT_TYPE_NAME"] = type,
+            ["MESSAGE"] = message
+        });
+
+    private static string HealthRecord(
+        string cursor,
+        DateTimeOffset observedAt,
+        long enabled,
+        long processId,
+        long backlogLimit,
+        long lost,
+        long backlog,
+        string userId = "0") =>
+        JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = $"s=synthetic;i={cursor}",
+            ["__REALTIME_TIMESTAMP"] = (observedAt.ToUnixTimeMilliseconds() * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["_BOOT_ID"] = BootId,
+            ["_TRANSPORT"] = "journal",
+            ["SYSLOG_IDENTIFIER"] = "challenger-siem-audit-health",
+            ["_SYSTEMD_UNIT"] = "challenger-siem-audit-health.service",
+            ["_UID"] = userId,
+            ["_EXE"] = "/usr/bin/logger",
+            ["MESSAGE"] = $"challenger_audit_health_v1 enabled={enabled} failure=1 pid={processId} rate_limit=250 backlog_limit={backlogLimit} lost={lost} backlog={backlog} loginuid_immutable=0"
+        });
+
+    private static string StructuredRecord(
+        string cursor,
+        DateTimeOffset observedAt,
+        string auditId,
+        string type,
+        string message) =>
+        JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["__CURSOR"] = $"s=synthetic;i={cursor}",
+            ["__REALTIME_TIMESTAMP"] = (observedAt.ToUnixTimeMilliseconds() * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["_BOOT_ID"] = BootId,
+            ["_TRANSPORT"] = "audit",
+            ["_AUDIT_ID"] = auditId,
+            ["_AUDIT_TYPE_NAME"] = type,
             ["MESSAGE"] = message
         });
 

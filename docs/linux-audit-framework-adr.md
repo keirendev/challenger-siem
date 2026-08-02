@@ -1,14 +1,43 @@
 # ADR: read-only Linux Audit Framework collector boundary
 
-Status: implemented in the 2.2.0 candidate; disabled and undeclared by default; live enablement and host producer changes are not authorized
-Date: 2026-07-19
-Scope: a future optional `linux-audit-framework` source
+Status: implemented; disabled and undeclared by default; optional producer rollout requires a separate reviewed host plan
+Date: 2026-07-19; compatible shared-scope and health extension 2026-08-02
+Scope: optional `linux-audit-framework` source and its separated health/policy boundary
 
 Approval record: independent contract, reliability, and privacy review found no
 content blocker on 2026-07-19. Maintainer acceptance of issue #241 and the merge that
 carries this ADR are the explicit design and security/privacy approval. The 2.2.0
-implementation preserves this boundary, but neither it nor this ADR approves live
-audit parsing, host producer changes, privilege expansion, or a wider rollout.
+implementation preserves this boundary. Shipping the code does not itself approve
+live parsing, producer changes, privilege expansion, or a wider rollout; those remain
+operator-controlled changes with the staged gates below.
+
+## 2026-08-02 compatible-scope and producer-health extension
+
+The original `systemd_journal_audit_v1` interface remains supported and keeps its
+system-only requirement. `systemd_journal_audit_v2` is an additive interface for a
+deployment that has already reviewed `all_accessible_local`: it routes audit records
+inside the existing broader reader and cursor, while the independent system-journal
+probe continues to gate system visibility. This avoids silently discarding user-unit
+journal coverage to enable audit collection. Changing interface or scope changes the
+exact plan hash; there is no implicit migration or backfill.
+
+The main agent remains the existing non-root `challenger-siem` service with an empty
+capability set. A separate root one-shot service may run the fixed packaged health
+script once per minute with only `CAP_AUDIT_CONTROL` in its capability bounding set.
+It reads `auditctl -s` and emits one numeric, schema-fixed journal record. The router
+accepts that record only when journald's trusted metadata identifies UID 0, the exact
+health unit, `/usr/bin/logger`, and journal/syslog transport. It does not trust message
+fields that claim those identities. The event omits the daemon PID, paths, command
+arguments, audit records, and user data. Missing samples, a stopped/disabled daemon,
+lost records, or backlog at 80% of its configured limit make v2 audit health non-
+healthy and alertable; a sample older than three minutes is stale.
+
+Auditd and any host rules remain an operator-owned privileged producer boundary, not
+part of the main agent. The packaged policy is deliberately split into a narrow
+foundation and a separately staged login-session execution layer. It contains no
+global open/read/write/connect rule, audit rule reset, immutable mode, unlimited rate
+override, argument retention, or prevention action. See
+[Linux audit visibility rollout](linux-audit-rollout.md).
 
 ## Decision
 
@@ -18,8 +47,8 @@ systemd journal already stores and that the existing non-root agent identity can
 already read. The collector would extend the existing fixed system-journal reader;
 it would not add a second audit reader or checkpoint.
 
-The first implementation boundary supports exactly one producer/interface pair. It
-also requires a journal router in front of the existing generic L1 normalizer. That
+The implementation supports the two compatible scope-bound interfaces above. It
+requires a journal router in front of the existing generic L1 normalizer. That
 router must inspect trusted journal metadata and intercept every
 `_TRANSPORT=audit` entry before the generic normalizer can retain `MESSAGE`,
 `_CMDLINE`, or other generic journal fields. The 2.2.0 router now owns trusted audit
@@ -27,15 +56,21 @@ transport before generic L1 normalization even when audit parsing is disabled.
 
 | Producer | Read interface | Decision |
 | --- | --- | --- |
-| Linux kernel Audit Framework records already persisted by the local systemd journal with trusted `_TRANSPORT=audit` metadata | The agent's existing fixed absolute-path `journalctl --system` JSON stream, `IncludeAccessibleUserJournals=false`, and durable physical journal cursor | Router and bounded collector implemented; parsing remains disabled unless the exact declaration and plan approval match; broader all-accessible-local scope cannot satisfy this interface |
+| Linux kernel Audit Framework records already persisted by the local systemd journal with trusted `_TRANSPORT=audit` metadata | The agent's existing fixed absolute-path journal stream and durable physical cursor | `systemd_journal_audit_v1` requires system-only scope; additive v2 supports the already-reviewed all-accessible-local scope without a second reader or checkpoint |
 | `/var/log/audit/audit.log`, rotated audit files, stdin, pipes, arbitrary paths, syslog text, remote journal namespaces, or exported journal files | Direct file or operator-selected input | Unsupported |
 | Audit netlink, audit multicast, auditd dispatcher/plugin sockets, `audisp`, `auplugin`, or `libaudit`/`libauparse` callbacks | Socket, plugin, or native-library reader | Unsupported for the first milestone |
-| Any producer that requires package installation, service enablement/reload, rule or backlog changes, a capability grant, group/ACL change, or permission widening | Mutating prerequisite workflow | Prohibited |
+| Separately installed auditd, reviewed staged rules, and the fixed audit-health timer | Operator-owned privileged producer plan | Supported only through the explicit staged rollout; never inferred or performed by the main agent |
 
 The source is now a visible optional implemented catalog entry. It remains disabled
-and undeclared by default. This ADR does not authorize live enablement, package/service
-changes, audit-policy changes, capability grants, permission changes, or production
-audit rollout.
+and undeclared by default. A deployment must separately authorize and validate every
+package/service, audit-policy, capability, permission, and parsing change.
+
+For systemd's native audit socket, the fixed journal projection includes only the two
+additional trusted routing fields `_AUDIT_ID` and `_AUDIT_TYPE_NAME`; allowlisted
+content still comes from the bounded `MESSAGE` parser. The structured serial is
+grouped with boot ID and journal timestamp. The legacy embedded `msg=audit(...)`
+identity remains supported. `PROCTITLE`, `EXECVE` arguments, and unknown structured
+audit fields never enter the private assembler or queue.
 
 This deliberately narrow choice reuses one journal access process, physical cursor,
 queue, transport, redaction, and source-health boundary. It adds a logical router and
@@ -57,7 +92,7 @@ files, service names, an empty journal interval, or ordinary syslog text.
 
 | Condition | Applicability | Health | Required detail and operator meaning |
 | --- | --- | --- | --- |
-| Collector is absent from the binary, platform is not Linux/systemd, or the declared interface is not `systemd_journal_audit_v1` | `unsupported` | `unsupported` | Current capability boundary; optional and informational |
+| Collector is absent from the binary, platform is not Linux/systemd, or the declared interface is neither `systemd_journal_audit_v1` nor `systemd_journal_audit_v2` | `unsupported` | `unsupported` | Current capability boundary; optional and informational |
 | Collector exists but is not enabled or its exact plan is not approved | `unknown` | `disabled` | The shared journal read continues for L1, but the router discards audit-transport entries without audit parsing and records only bounded suppression counts |
 | Operator explicitly declares that no applicable audit facility exists | `not_applicable` | `not_applicable` | No scan or package/service inference overrides the declaration |
 | Operator declares a facility exists but also declares its audit production disabled | `applicable` | `disabled` | The agent does not enable it |
@@ -67,11 +102,12 @@ files, service names, an empty journal interval, or ordinary syslog text.
 | Audit-shaped text lacks trusted journal transport metadata | unchanged | unchanged for audit; record stays on its existing source | Untrusted text cannot impersonate the audit source |
 
 A healthy-but-quiet source requires all of the following: a matching exact approval;
-an explicit plan-bound declaration of interface `systemd_journal_audit_v1`; successful
+an explicit plan-bound declaration of a supported interface and compatible scope; successful
 current reads from the mandatory system journal; a successful physical journal
 observation no more than two hours old; durable router/group state; and no active
 cursor, assembly, suppression, or drop gap. Merely reading the journal is insufficient:
-the running binary must attest that audit transport is routed before generic L1.
+the running binary must attest that audit transport is routed before generic L1. A
+v2 source additionally requires a fresh healthy trusted kernel/daemon health sample.
 Seeing a trusted audit-transport entry upgrades family evidence from `not_observed`
 to `observed`, but is not required for quiet health. It does not require generating
 audit activity, and event-dependent detection prerequisites remain unsatisfied while
@@ -98,11 +134,10 @@ field parsing: it durably finalizes the physical entry as locally suppressed and
 increments bounded type-free counts. This prevents raw audit text from leaking into
 L1 while keeping disabled or undeclared collection distinct from observed coverage.
 
-The privacy router must still intercept trusted audit transport if the separately
-configured generic reader uses the broader all-accessible-local scope, but that scope
-cannot satisfy audit applicability or health in this milestone. An enabled audit
-source with that scope is `unsupported`; system-only configuration is an exact-plan
-input. A future scope expansion requires separate privacy and cursor review.
+The privacy router intercepts trusted audit transport in either scope. The legacy v1
+interface rejects all-accessible-local; v2 binds that scope into the approval hash and
+uses the same cursor. Returning to system-only requires selecting v1 or a compatible
+v2 plan and reapproving the exact hash; neither direction backfills the other scope.
 
 ## Startup, steady state, shutdown, and recovery
 
@@ -112,8 +147,10 @@ input. A future scope expansion requires separate privacy and cursor review.
    state. Reject unknown interfaces, limits, and plan hashes before opening the
    journal.
 2. Reuse the existing fixed journal executable and system-only visibility probe.
-   Do not call `auditctl`, `ausearch`, `aureport`, `systemctl`, `service`, package
-   tools, or auditd control/plugin interfaces.
+   The main agent does not call `auditctl`, `ausearch`, `aureport`, `systemctl`,
+   `service`, package tools, or auditd control/plugin interfaces. The separated
+   health unit calls only fixed `/usr/bin/auditctl -s` or
+   `/usr/sbin/auditctl -s`, and `/usr/bin/logger --journald`.
 3. Load the physical collected and finalized journal cursors, boot ID, bounded
    router write-ahead log (WAL), next audit sequence, pending groups, cumulative
    counters, and any active gap. Reject symlinks, unexpected file types,
@@ -221,7 +258,7 @@ agent ID and hostname use the existing bounded enrolled-agent values, and every 
 common envelope field follows the current v2 defaults. Its compact canonical
 `raw` object contains exactly schema
 version, `record_kind=source_health_recovery`, hashed gap ID, fixed reason code,
-`content_collected=false`, `routed_interface=systemd_journal_audit_v1`, and observation
+`content_collected=false`, the active bounded `routed_interface`, and observation
 time. It contains no audit record, cursor, producer text, path, identity, or event
 field. Its normalized shape is exactly `category=source_health`, `action=recovered`,
 and `outcome=success`, with all process/user/network/file/label concepts absent.
@@ -264,7 +301,7 @@ guarded lifecycle after queue disposition; there is no host audit state to resto
 | `stale` | The age of the last successful physical journal observation is greater than two hours; exactly two hours remains current to match the existing shared comparator | A successful current observation followed by acknowledged recovery when a gap was active |
 | `degraded` | Active cursor/assembly/rate/drop/pressure gap, incomplete group, or routing-attestation/declaration mismatch | Fault absent plus the acknowledged recovery sequence above |
 | `error` | Agent-owned state denial/corruption, internal invariant, parser, or queue failure not represented by a more specific state | Successful bounded retry and acknowledged recovery; repeated error detail is type-only and secret-free |
-| `healthy` | Every prerequisite including `systemd_journal_audit_v1` router attestation is satisfied, the last physical journal observation is no more than two hours old, and no active gap exists | Any fault transition above |
+| `healthy` | Every interface/scope prerequisite and router attestation is satisfied, the last physical journal observation is no more than two hours old, no active gap exists, and v2 has a healthy sample no more than three minutes old | Any fault transition above |
 | `healthy` with quiet detail | Same as healthy, with zero allowlisted audit families observed in the current bounded window | A matching event changes family evidence to `observed`; quiet itself is not a fault |
 
 The implementation uses this exact precedence. An inability to inspect trusted
@@ -504,7 +541,7 @@ allowed. The implementation review includes:
    while unsupported, disabled, not applicable, or unapproved; spoofed audit text on
    another transport remaining ordinary L1; unsupported platform/interface;
    undeclared, explicitly absent, quiet, journal-access-denied, and agent-state-denied
-   cases; and explicit `systemd_journal_audit_v1` routing attestation.
+   cases; explicit v1/v2 routing attestation; and v2 health trust/freshness cases.
 2. **Grouping fixtures:** simple event, interleaved compound events, duplicate records,
    missing end marker, out-of-order records, malformed/overflowing serial/time, 64/65
    record boundary, timeout, pending-map pressure, eviction, and restart with a pending

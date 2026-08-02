@@ -239,6 +239,13 @@ public sealed class DetectionEngine
             "tamper.audit-policy-change.linux" => SourceIdEquals(envelope, LinuxTelemetrySourceIds.AuditFramework)
                 && CategoryEquals(normalized, "audit_policy")
                 && ActionIn(normalized, "audit_policy_change", "rule_change", "configuration_change"),
+            "tamper.audit-health-degraded.linux" => SourceIdEquals(envelope, LinuxTelemetrySourceIds.AuditFramework)
+                && string.Equals(envelope.EventCode, "audit_health_sample", StringComparison.Ordinal)
+                && CategoryEquals(normalized, "source_health")
+                && ActionEquals(normalized, "observed")
+                && OutcomeEquals(normalized, "failure"),
+            "persistence.audited-sensitive-file-change.linux" => IsAuditedSensitiveFileChange(envelope),
+            "kernel.audited-security-syscall.linux" => IsAuditedKernelControl(envelope),
             "process.temporary-deleted-execution.linux" => IsTemporaryOrDeletedExecution(envelope),
             "privilege.dangerous-effective-capabilities.linux" => IsDangerousCapabilities(envelope),
             _ => false
@@ -343,8 +350,29 @@ public sealed class DetectionEngine
         && CategoryEquals(envelope.Normalized, "process")
         && ActionIn(envelope.Normalized, "observed", "changed")
         && !string.Equals(envelope.Normalized?.Labels.GetValueOrDefault("baseline.alertable"), "false", StringComparison.Ordinal)
+        && !string.Equals(envelope.Normalized?.Labels.GetValueOrDefault("process.kernel_thread"), "true", StringComparison.Ordinal)
         && envelope.Normalized?.Labels.GetValueOrDefault("process.dangerous_effective_capabilities") is { } value
         && !string.Equals(value, "none", StringComparison.Ordinal);
+
+    private static bool IsAuditedSensitiveFileChange(EventEnvelope envelope) =>
+        SourceIdEquals(envelope, LinuxTelemetrySourceIds.AuditFramework)
+        && CategoryEquals(envelope.Normalized, "authorization_syscall")
+        && ActionEquals(envelope.Normalized, "observed")
+        && OutcomeEquals(envelope.Normalized, "success")
+        && HasValue(envelope.Normalized?.FilePath)
+        && envelope.Normalized?.Labels.GetValueOrDefault("audit.rule_key") is { } key
+        && new[]
+        {
+            "challenger_identity", "challenger_privilege", "challenger_persistence", "challenger_ssh",
+            "challenger_package_policy", "challenger_kernel_policy", "challenger_siem_integrity", "challenger_audit_policy"
+        }.Contains(key, StringComparer.Ordinal);
+
+    private static bool IsAuditedKernelControl(EventEnvelope envelope) =>
+        SourceIdEquals(envelope, LinuxTelemetrySourceIds.AuditFramework)
+        && CategoryEquals(envelope.Normalized, "authorization_syscall")
+        && ActionEquals(envelope.Normalized, "observed")
+        && OutcomeEquals(envelope.Normalized, "success")
+        && string.Equals(envelope.Normalized?.Labels.GetValueOrDefault("audit.rule_key"), "challenger_kernel_syscall", StringComparison.Ordinal);
 
     private static bool IsSuspiciousSnapshotCommand(EventEnvelope envelope)
     {

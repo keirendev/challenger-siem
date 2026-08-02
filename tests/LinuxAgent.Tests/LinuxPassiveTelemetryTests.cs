@@ -459,11 +459,18 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal("ambiguous_shared_socket", attributed.AttributionStatus);
             Assert.Equal(2, attributed.Owners!.Count);
             Assert.All(attributed.Owners, owner => Assert.StartsWith("exact_inode_", owner.Confidence, StringComparison.Ordinal));
+            Assert.Equal("1", current.Details!["attribution_eligible_sockets"]);
+            Assert.Equal("1", current.Details["attributed_sockets"]);
+            Assert.Equal("1000", current.Details["socket_attribution_permille"]);
+            Assert.Equal("healthy", current.Details["socket_attribution_health"]);
 
             var stale = await new LinuxProcfsNetworkSource(net, cache, new FixedTimeProvider(SyntheticNow.AddMinutes(5)))
                 .ReadAsync(options, default);
             Assert.Empty(Assert.Single(stale.Items).Owners!);
             Assert.Equal("stale_process_scan", Assert.Single(stale.Items).AttributionStatus);
+            Assert.Equal("0", stale.Details!["attributed_sockets"]);
+            Assert.Equal("0", stale.Details["socket_attribution_permille"]);
+            Assert.Equal("degraded", stale.Details["socket_attribution_health"]);
             Assert.Equal(256, LinuxSocketOwnershipCache.MaxDescriptorsPerProcess);
             Assert.Equal(32_768, LinuxSocketOwnershipCache.MaxDescriptorLinksPerScan);
             Assert.Equal(4, LinuxSocketOwnershipCache.MaxOwnersPerSocket);
@@ -564,6 +571,8 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal("10", result.Details!["eligible_processes"]);
             Assert.Equal("700", result.Details["command_line_readability_permille"]);
             Assert.Equal("700", result.Details["executable_readability_permille"]);
+            Assert.Equal("partial", result.Details["command_line_visibility"]);
+            Assert.Equal("partial", result.Details["executable_visibility"]);
             Assert.Contains(result.Items, item => item.IsKernelThread);
             Assert.Contains(result.Items, item => item.IsZombie);
         }

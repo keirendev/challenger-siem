@@ -1,0 +1,8 @@
+## Optional second-stage execution coverage.
+## Captures only successful or failed exec metadata for attributable login sessions.
+## The agent discards EXECVE arguments and PROCTITLE before durable queueing.
+
+-a always,exit -F arch=b64 -S execve,execveat -F auid>=1000 -F auid!=4294967295 -k challenger_user_exec
+-a always,exit -F arch=b32 -S execve,execveat -F auid>=1000 -F auid!=4294967295 -k challenger_user_exec
+-a always,exit -F arch=b64 -S execve,execveat -F auid=0 -k challenger_root_exec
+-a always,exit -F arch=b32 -S execve,execveat -F auid=0 -k challenger_root_exec

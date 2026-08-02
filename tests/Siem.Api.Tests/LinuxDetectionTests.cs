@@ -264,6 +264,20 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     }
 
     [Fact]
+    public void DangerousCapabilityDetectionExcludesKernelThreadsButRetainsUserlandEvidence()
+    {
+        var engine = new DetectionEngine();
+        var health = HealthySources(LinuxTelemetrySourceIds.ProcessSnapshotDiff);
+
+        Assert.True(PassiveRuleResult(engine,
+            PassiveMarkedProcess("process.dangerous_effective_capabilities", "sys_admin"),
+            health, "privilege.dangerous-effective-capabilities.linux").Matched);
+        Assert.False(PassiveRuleResult(engine,
+            PassiveMarkedProcess("process.dangerous_effective_capabilities", "sys_admin", kernelThread: true),
+            health, "privilege.dangerous-effective-capabilities.linux").Matched);
+    }
+
+    [Fact]
     public void PassiveDetectionConfidenceDoesNotRequireEveryRareLifecycleFamilyToHaveOccurred()
     {
         var engine = new DetectionEngine();
@@ -826,6 +840,18 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
             PortableEvent(EventSources.LinuxAudit, LinuxTelemetrySourceIds.AuditFramework, "audit_policy_tamper", new NormalizedEventFields { Category = "audit_policy", Action = "audit_policy_change", Outcome = "success" }),
             PortableEvent(EventSources.LinuxAudit, LinuxTelemetrySourceIds.AuditFramework, "authentication_session", new NormalizedEventFields { Category = "authentication_session", Action = "observed", Outcome = "success" }),
             LinuxTelemetrySourceIds.AuditFramework);
+        yield return ("tamper.audit-health-degraded.linux",
+            AuditHealthEvent("failure", "lost_records", "high"),
+            AuditHealthEvent("success", "none", "normal"),
+            LinuxTelemetrySourceIds.AuditFramework);
+        yield return ("persistence.audited-sensitive-file-change.linux",
+            AuditedSyscall("challenger_identity", "/etc/passwd"),
+            AuditedSyscall("challenger_user_exec", "/usr/bin/synthetic"),
+            LinuxTelemetrySourceIds.AuditFramework);
+        yield return ("kernel.audited-security-syscall.linux",
+            AuditedSyscall("challenger_kernel_syscall", null),
+            AuditedSyscall("challenger_user_exec", null),
+            LinuxTelemetrySourceIds.AuditFramework);
         yield return ("process.temporary-deleted-execution.linux",
             PassiveMarkedProcess("process.executable_deleted", "true"),
             PassiveMarkedProcess("process.executable_deleted", "false"),
@@ -865,7 +891,7 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
                 }
             });
 
-    private static EventEnvelope PassiveMarkedProcess(string label, string value) =>
+    private static EventEnvelope PassiveMarkedProcess(string label, string value, bool kernelThread = false) =>
         PortableEvent(
             EventSources.InventoryDiff,
             LinuxTelemetrySourceIds.ProcessSnapshotDiff,
@@ -879,7 +905,43 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
                 Labels = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["baseline.alertable"] = "true",
+                    ["process.kernel_thread"] = kernelThread ? "true" : "false",
                     [label] = value
+                }
+            });
+
+    private static EventEnvelope AuditedSyscall(string ruleKey, string? filePath) =>
+        PortableEvent(
+            EventSources.LinuxAudit,
+            LinuxTelemetrySourceIds.AuditFramework,
+            "authorization_syscall",
+            new NormalizedEventFields
+            {
+                Category = "authorization_syscall",
+                Action = "observed",
+                Outcome = "success",
+                FilePath = filePath,
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["audit.rule_key"] = ruleKey,
+                    ["audit.syscall"] = "257"
+                }
+            });
+
+    private static EventEnvelope AuditHealthEvent(string outcome, string lossState, string backlogState) =>
+        PortableEvent(
+            EventSources.LinuxAudit,
+            LinuxTelemetrySourceIds.AuditFramework,
+            "audit_health_sample",
+            new NormalizedEventFields
+            {
+                Category = "source_health",
+                Action = "observed",
+                Outcome = outcome,
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["audit.loss_state"] = lossState,
+                    ["audit.backlog_state"] = backlogState
                 }
             });
 

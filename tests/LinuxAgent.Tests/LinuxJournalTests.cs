@@ -26,6 +26,9 @@ public sealed class LinuxJournalTests
         Assert.Contains("--system", systemArguments);
         Assert.Equal(1, systemArguments.Count(value => value == "--system"));
         Assert.Contains("--lines=500", systemArguments);
+        Assert.Contains(systemArguments, value => value.StartsWith("--output-fields=", StringComparison.Ordinal)
+            && value.Contains("_AUDIT_ID", StringComparison.Ordinal)
+            && value.Contains("_AUDIT_TYPE_NAME", StringComparison.Ordinal));
         Assert.DoesNotContain(systemArguments, value => value.StartsWith("--after-cursor=", StringComparison.Ordinal));
 
         var accessible = LinuxJournalProcessSource.BuildReadStartInfo(
@@ -354,6 +357,50 @@ public sealed class LinuxJournalTests
         await auditRouter.RecordAcknowledgedAsync([recovery], default);
         Assert.Equal(2, auditRuntime.Current.AcknowledgedSequence);
         Assert.False(auditRuntime.Current.ActiveGap);
+    }
+
+    [Fact]
+    public async Task SharedAuditInterfaceRequiresFreshHealthyKernelStatus()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit = new AuditOptions
+        {
+            Enabled = true,
+            Interface = LinuxAuditConstants.SharedJournalInterface,
+            FacilityDeclaration = "present_enabled",
+            StatePath = temporary.AuditState
+        };
+        options.Audit.ApprovedPlanHash = LinuxAuditRouter.ComputePlanHash(options);
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-08-01T00:00:00Z"));
+        var auditRuntime = new LinuxAuditRouterRuntime();
+        var runtime = new LinuxJournalRuntime(Options.Create(options), new LinuxStateStore(temporary.State), clock, auditRuntime);
+        await runtime.InitializeAsync("test", "config", default);
+
+        auditRuntime.Publish(new(true, true, clock.GetUtcNow(), clock.GetUtcNow(), 1, 1, 0, 0, 0, false, "healthy", null));
+        var missing = Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        Assert.Equal(SourceHealthStatuses.Missing, missing.Status);
+        Assert.Equal("audit_kernel_health_not_observed", missing.ErrorCode);
+        Assert.Equal("not_collected", missing.Details["kernel_health_status"]);
+
+        auditRuntime.Publish(new(true, true, clock.GetUtcNow(), clock.GetUtcNow(), 2, 2, 0, 0, 0, false, "healthy", null,
+            clock.GetUtcNow(), "healthy", 0, 0, 8192));
+        var healthy = Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        Assert.Equal(SourceHealthStatuses.Healthy, healthy.Status);
+        Assert.Equal("0", healthy.Details["kernel_lost_records"]);
+
+        clock.Advance(TimeSpan.FromMinutes(4));
+        var stale = Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        Assert.Equal(SourceHealthStatuses.Stale, stale.Status);
+        Assert.Equal("audit_kernel_health_stale", stale.ErrorCode);
+
+        auditRuntime.Publish(new(true, true, clock.GetUtcNow(), clock.GetUtcNow(), 3, 2, 0, 0, 0, false, "degraded", "audit_kernel_health_degraded",
+            clock.GetUtcNow(), "degraded", 1, 7000, 8192));
+        var degraded = Assert.Single(runtime.Snapshot().Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        Assert.Equal(SourceHealthStatuses.Degraded, degraded.Status);
+        Assert.Equal("audit_kernel_health_degraded", degraded.ErrorCode);
     }
 
     [Fact]

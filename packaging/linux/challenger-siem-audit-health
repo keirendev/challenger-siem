@@ -1,0 +1,35 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+if [[ -x /usr/bin/auditctl ]]; then
+    auditctl_path=/usr/bin/auditctl
+elif [[ -x /usr/sbin/auditctl ]]; then
+    auditctl_path=/usr/sbin/auditctl
+else
+    exit 69
+fi
+
+audit_status=$("$auditctl_path" -s)
+
+read_status_value() {
+    local status_key="$1"
+    /usr/bin/awk -v expected="$status_key" '
+        $1 == expected && $2 ~ /^[0-9]+$/ { print $2; found = 1; exit }
+        END { if (!found) exit 1 }
+    ' <<<"$audit_status"
+}
+
+enabled=$(read_status_value enabled)
+failure=$(read_status_value failure)
+audit_pid=$(read_status_value pid)
+rate_limit=$(read_status_value rate_limit)
+backlog_limit=$(read_status_value backlog_limit)
+lost=$(read_status_value lost)
+backlog=$(read_status_value backlog)
+loginuid_immutable=$(read_status_value loginuid_immutable)
+
+/usr/bin/logger --journald <<EOF
+MESSAGE=challenger_audit_health_v1 enabled=${enabled} failure=${failure} pid=${audit_pid} rate_limit=${rate_limit} backlog_limit=${backlog_limit} lost=${lost} backlog=${backlog} loginuid_immutable=${loginuid_immutable}
+SYSLOG_IDENTIFIER=challenger-siem-audit-health
+PRIORITY=6
+EOF

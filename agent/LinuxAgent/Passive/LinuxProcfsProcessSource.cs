@@ -564,12 +564,20 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         long readableCommandLines,
         long readableExecutables)
     {
+        var commandLinePermille = VisibilityPermille(readableCommandLines, eligible);
+        var executablePermille = VisibilityPermille(readableExecutables, eligible);
         details["eligible_processes"] = eligible.ToString(CultureInfo.InvariantCulture);
         details["command_line_readable_count"] = readableCommandLines.ToString(CultureInfo.InvariantCulture);
         details["executable_readable_count"] = readableExecutables.ToString(CultureInfo.InvariantCulture);
-        details["command_line_readability_permille"] = VisibilityPermille(readableCommandLines, eligible).ToString(CultureInfo.InvariantCulture);
-        details["executable_readability_permille"] = VisibilityPermille(readableExecutables, eligible).ToString(CultureInfo.InvariantCulture);
+        details["command_line_readability_permille"] = commandLinePermille.ToString(CultureInfo.InvariantCulture);
+        details["executable_readability_permille"] = executablePermille.ToString(CultureInfo.InvariantCulture);
+        details["command_line_visibility"] = VisibilityDimension(commandLinePermille, eligible);
+        details["executable_visibility"] = VisibilityDimension(executablePermille, eligible);
     }
+
+    private static string VisibilityDimension(int permille, long eligible) => eligible < 10
+        ? "insufficient_population"
+        : permille >= 800 ? "sufficient" : "partial";
 
     private static int VisibilityPermille(long visible, long eligible) => eligible <= 0
         ? 1000

@@ -47,13 +47,13 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
                 && Journal.DeclaredRoles.All(LinuxDeclaredRoles.IsKnown));
 
     public bool HasValidAuditBounds() =>
-        string.Equals(Audit.Interface, LinuxAuditConstants.Interface, StringComparison.Ordinal)
+        LinuxAuditConstants.IsSupportedInterface(Audit.Interface)
         && Audit.FacilityDeclaration is "undeclared" or "absent" or "present_disabled" or "present_enabled"
         && string.Equals(Path.GetFullPath(Audit.StatePath), LinuxAuditConstants.StatePath, StringComparison.Ordinal)
         && IsOptionalSha256(Audit.ApprovedPlanHash)
         && (!Audit.Enabled
             || Audit.FacilityDeclaration == "present_enabled"
-                && !Journal.IncludeAccessibleUserJournals
+                && LinuxAuditConstants.SupportsJournalScope(Audit.Interface, Journal.IncludeAccessibleUserJournals)
                 && LinuxAuditRouter.AuditRowCapacity(Journal.QueuePauseDepth) > 0);
 
     public bool HasValidSelfIntegrityBounds() =>

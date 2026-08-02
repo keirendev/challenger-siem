@@ -36,7 +36,7 @@ This queue change uses the existing tables and WAL files and needs no data or co
 | `linux-kernel-security` | L2 | mandatory | kernel security, security modules, kernel modules | applicable when L2 is selected; current system-journal visibility establishes source freshness independently of rare family activity |
 | `linux-service-change` | L2 | mandatory | service start/stop/reload/failure | applicable when L2 is selected |
 | `linux-agent-log-tamper` | L2 | mandatory | agent/log tamper | applicable when L2 is selected |
-| `linux-audit-framework` | L2 | optional | allowlisted audit authentication/session, authorization syscall, MAC, policy, and integrity families | implemented, disabled and undeclared by default; fixed interface and exact approval required; no producer enablement included |
+| `linux-audit-framework` | L2 | optional | allowlisted audit authentication/session, authorization syscall, MAC, policy, integrity, and source-health families | implemented, disabled and undeclared by default; exact interface/scope approval required; producer rollout is a separate staged host operation |
 | `linux-agent-self-integrity-snapshot` | L3 | optional | agent-owned binary/unit/config/directory metadata snapshot | disabled by default; requires explicit self-integrity approval hash |
 | `linux-process-snapshot-diff` | L3 | mandatory for an L3 target | process baseline/observed/disappeared/changed polling evidence | disabled by default; requires passive-telemetry approval hash |
 | `linux-network-socket-snapshot-diff` | L3 | mandatory for an L3 target | socket/listener baseline/observed/disappeared/changed polling evidence | disabled by default; requires passive-telemetry approval hash |
@@ -199,10 +199,14 @@ Relevant defaults:
 
 `Audit.Enabled=false` and `FacilityDeclaration=undeclared` are the shipping defaults.
 The router still intercepts trusted audit transport before L1 without parsing or
-retaining its message. Enabling requires system-only journal scope, an explicit
-`present_enabled` declaration for an already configured facility, and the exact
-`--audit-plan` approval. The fixed private state is not operator-selectable in
-production. The lifecycle plan performs no producer inspection or mutation.
+retaining its message. Legacy `systemd_journal_audit_v1` requires system-only scope.
+`systemd_journal_audit_v2` preserves a separately reviewed all-accessible-local scope
+inside the same reader and cursor, and also requires the fixed root health sampler to
+remain fresh and healthy. Both require an explicit `present_enabled` declaration and
+the exact `--audit-plan` approval. The fixed private state is not operator-selectable
+in production. The main-agent lifecycle performs no producer inspection or mutation;
+the optional auditd/rule/health-unit procedure is documented separately in
+[Linux audit visibility rollout](linux-audit-rollout.md).
 
 
 ## Bounded inventory snapshots

@@ -1,0 +1,13 @@
+[Unit]
+Description=Sample Linux audit health for Challenger SIEM
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+RandomizedDelaySec=5s
+Persistent=false
+Unit=challenger-siem-audit-health.service
+
+[Install]
+WantedBy=timers.target

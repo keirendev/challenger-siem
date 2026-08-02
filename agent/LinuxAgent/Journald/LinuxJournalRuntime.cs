@@ -621,6 +621,11 @@ public sealed class LinuxJournalRuntime(
             details["suppressed_records"] = (auditSnapshot?.SuppressedCount ?? 0).ToString(CultureInfo.InvariantCulture);
             details["unsupported_record_type_count"] = (auditSnapshot?.UnsupportedTypeCount ?? 0).ToString(CultureInfo.InvariantCulture);
             details["quiet_observation"] = sourceLatest is null && auditSnapshot?.LastPhysicalObservationAt.HasValue == true ? "true" : "false";
+            details["kernel_health_status"] = auditSnapshot?.KernelHealthStatus ?? "not_collected";
+            details["kernel_health_observed_at"] = auditSnapshot?.LastKernelHealthAt?.ToString("O", CultureInfo.InvariantCulture) ?? "not_observed";
+            details["kernel_lost_records"] = auditSnapshot?.KernelLost?.ToString(CultureInfo.InvariantCulture) ?? "unknown";
+            details["kernel_backlog"] = auditSnapshot?.KernelBacklog?.ToString(CultureInfo.InvariantCulture) ?? "unknown";
+            details["kernel_backlog_limit"] = auditSnapshot?.KernelBacklogLimit?.ToString(CultureInfo.InvariantCulture) ?? "unknown";
         }
         if (LinuxTelemetrySourceCatalog.SuccessfulJournalObservationSourceIds.Contains(manifest.SourceId))
         {
@@ -788,7 +793,9 @@ public sealed class LinuxJournalRuntime(
     {
         if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework)
         {
-            if (!string.Equals(options.Audit.Interface, LinuxAuditConstants.Interface, StringComparison.Ordinal)) return SourceHealthStatuses.Unsupported;
+            if (!LinuxAuditConstants.IsSupportedInterface(options.Audit.Interface)
+                || !LinuxAuditConstants.SupportsJournalScope(options.Audit.Interface, options.Journal.IncludeAccessibleUserJournals))
+                return SourceHealthStatuses.Unsupported;
             if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return SourceHealthStatuses.NotApplicable;
             if (!enabled) return SourceHealthStatuses.Disabled;
             var audit = auditRouterRuntime?.Current;
@@ -797,6 +804,12 @@ public sealed class LinuxJournalRuntime(
             if (audit.LastPhysicalObservationAt is null) return SourceHealthStatuses.Missing;
             if (timeProvider.GetUtcNow() - audit.LastPhysicalObservationAt.Value > TimeSpan.FromHours(2)) return SourceHealthStatuses.Stale;
             if (audit.ActiveGap) return SourceHealthStatuses.Degraded;
+            if (options.Audit.Interface == LinuxAuditConstants.SharedJournalInterface)
+            {
+                if (audit.LastKernelHealthAt is null) return SourceHealthStatuses.Missing;
+                if (timeProvider.GetUtcNow() - audit.LastKernelHealthAt.Value > TimeSpan.FromMinutes(3)) return SourceHealthStatuses.Stale;
+                if (audit.KernelHealthStatus != "healthy") return SourceHealthStatuses.Degraded;
+            }
             return SourceHealthStatuses.Healthy;
         }
         if (manifest.Applicability == SourceApplicabilityStatuses.Unsupported)
@@ -916,6 +929,18 @@ public sealed class LinuxJournalRuntime(
 
     private string? ErrorFor(SourceManifestEntry manifest, string effectiveStatus)
     {
+        if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework
+            && options.Audit.Interface == LinuxAuditConstants.SharedJournalInterface)
+        {
+            var audit = auditRouterRuntime?.Current;
+            if (effectiveStatus == SourceHealthStatuses.Missing && audit?.LastKernelHealthAt is null)
+                return "audit_kernel_health_not_observed";
+            if (effectiveStatus == SourceHealthStatuses.Stale && audit?.LastKernelHealthAt is not null
+                && timeProvider.GetUtcNow() - audit.LastKernelHealthAt.Value > TimeSpan.FromMinutes(3))
+                return "audit_kernel_health_stale";
+            if (effectiveStatus == SourceHealthStatuses.Degraded && audit?.KernelHealthStatus == "degraded")
+                return "audit_kernel_health_degraded";
+        }
         if (effectiveStatus == SourceHealthStatuses.Unsupported)
         {
             return manifest.ApplicabilityReason ?? "source_unsupported";

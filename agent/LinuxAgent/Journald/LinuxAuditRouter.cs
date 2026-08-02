@@ -15,7 +15,9 @@ namespace Challenger.Siem.LinuxAgent.Journal;
 
 public static class LinuxAuditConstants
 {
-    public const string Interface = "systemd_journal_audit_v1";
+    public const string SystemOnlyInterface = "systemd_journal_audit_v1";
+    public const string SharedJournalInterface = "systemd_journal_audit_v2";
+    public const string Interface = SystemOnlyInterface;
     public const string StatePath = "/var/lib/challenger-siem-agent/audit-router-state.json";
     public const string RouterVersion = "systemd-journal-audit-router-v1";
     public const int MaxInputBytes = 131_072;
@@ -29,6 +31,11 @@ public static class LinuxAuditConstants
     public const int MaxWalRecordBytes = 4096;
     public const int MaxCursorBytes = 1024;
     public const int MaxRawBytes = 32 * 1024;
+
+    public static bool IsSupportedInterface(string value) => value is SystemOnlyInterface or SharedJournalInterface;
+
+    public static bool SupportsJournalScope(string value, bool includeAccessibleUserJournals) =>
+        value == SharedJournalInterface || value == SystemOnlyInterface && !includeAccessibleUserJournals;
 }
 
 public sealed record LinuxAuditPlan(
@@ -55,7 +62,12 @@ public sealed record LinuxAuditRouterSnapshot(
     long GapCount,
     bool ActiveGap,
     string Status,
-    string? ErrorCode);
+    string? ErrorCode,
+    DateTimeOffset? LastKernelHealthAt = null,
+    string KernelHealthStatus = "not_collected",
+    long? KernelLost = null,
+    long? KernelBacklog = null,
+    long? KernelBacklogLimit = null);
 
 public sealed class LinuxAuditRouterRuntime
 {
@@ -83,7 +95,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
 {
     private static readonly IReadOnlyDictionary<string, string> Families = BuildFamilies();
     private static readonly IReadOnlySet<string> ExplicitlyExcludedTypes = new HashSet<string>(StringComparer.Ordinal)
-    { "TTY", "USER_TTY", "USER_CMD" };
+    { "TTY", "USER_TTY", "USER_CMD", "PROCTITLE" };
     private static readonly IReadOnlySet<string> AllowedFields = new HashSet<string>(StringComparer.Ordinal)
     {
         "uid", "gid", "auid", "ses", "pid", "ppid", "arch", "syscall", "success", "res", "exit",
@@ -139,7 +151,8 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         try
         {
             using var document = JsonDocument.Parse(rawJournalJson, new JsonDocumentOptions { MaxDepth = 8 });
-            return TryString(document.RootElement, "_TRANSPORT", out var transport) && transport == "audit";
+            return TryString(document.RootElement, "_TRANSPORT", out var transport) && transport == "audit"
+                || IsTrustedAuditHealthRecord(document.RootElement);
         }
         catch (JsonException)
         {
@@ -268,7 +281,9 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         using (document)
         {
         var root = document.RootElement;
-        if (!TryString(root, "_TRANSPORT", out var transport) || transport != "audit") return new(LinuxAuditRouteKind.NotAudit);
+        var auditTransport = TryString(root, "_TRANSPORT", out var transport) && transport == "audit";
+        var auditHealthTransport = IsTrustedAuditHealthRecord(root);
+        if (!auditTransport && !auditHealthTransport) return new(LinuxAuditRouteKind.NotAudit);
         if (!TryJournalIdentity(root, out var cursor, out var bootId, out var journalTime))
             return await GapAsync(null, null, "audit_journal_identity_invalid", cancellationToken);
 
@@ -304,9 +319,36 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         if (inputBytes > Math.Min(options.Journal.MaxInputRecordBytes, LinuxAuditConstants.MaxInputBytes))
             return await GapAsync(cursor, journalTime, "audit_input_oversized", cancellationToken);
 
+        if (auditHealthTransport)
+        {
+            if (!TryParseAuditHealth(root, out var health))
+                return await GapAsync(cursor, journalTime, "audit_health_input_invalid", cancellationToken);
+            var healthExpiredEvents = await FinalizeExpiredAsync(journalTime, agentId, hostname, queueDepth, cancellationToken);
+            if (!TryAdmit(queueDepth + healthExpiredEvents.Count, out var healthPressureReason))
+                return WithPrior(await GapAsync(cursor, journalTime, healthPressureReason, cancellationToken), healthExpiredEvents);
+            var sequence = state.NextSequence;
+            var envelope = BuildAuditHealthEnvelope(health, agentId, hostname, sequence, journalTime);
+            state = state with
+            {
+                NextSequence = checked(sequence + 1),
+                CollectedSequence = sequence,
+                LastEventAt = journalTime,
+                LastKernelHealthAt = journalTime,
+                KernelHealthStatus = health.Healthy ? "healthy" : "degraded",
+                KernelLost = health.Lost,
+                KernelBacklog = health.Backlog,
+                KernelBacklogLimit = health.BacklogLimit
+            };
+            AppendWal("audit_queued", cursor, cursor, sequence, "audit_health_sample", false);
+            state.Queued[cursor] = new(null, "source_health", false, sequence, false, envelope);
+            await PersistAsync(cancellationToken);
+            Publish(health.Healthy && !state.ActiveGap ? "healthy" : "degraded", health.Healthy ? state.ErrorCode : "audit_kernel_health_degraded");
+            return new(LinuxAuditRouteKind.Queued, cursor, journalTime, envelope, PriorEnvelopes: healthExpiredEvents);
+        }
+
         if (!TryString(root, "MESSAGE", out var message)
             || Encoding.UTF8.GetByteCount(message) > LinuxAuditConstants.MaxMessageBytes
-            || !TryAuditIdentity(message, out var auditTime, out var serial)
+            || !TryAuditIdentity(root, message, journalTime, out var auditTime, out var serial)
             || !TryRecordType(root, message, out var recordType))
             return await GapAsync(cursor, journalTime, "audit_input_invalid", cancellationToken);
 
@@ -578,11 +620,14 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             ProcessId = group.Fields.GetValueOrDefault("pid"),
             ParentProcessId = group.Fields.GetValueOrDefault("ppid"),
             ProcessImage = group.Fields.GetValueOrDefault("exe"),
+            FilePath = group.Paths.OrderBy(path => path.Item).Select(path => path.Path).FirstOrDefault(path => !string.IsNullOrWhiteSpace(path)),
             User = group.Fields.GetValueOrDefault("uid") is { } uid ? new UserTelemetryConcept { Id = uid } : null,
             Labels = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["audit.partial"] = partial ? "true" : "false",
-                ["audit.routed_interface"] = LinuxAuditConstants.Interface
+                ["audit.routed_interface"] = options.Audit.Interface,
+                ["audit.rule_key"] = group.Fields.GetValueOrDefault("key") ?? "none",
+                ["audit.syscall"] = group.Fields.GetValueOrDefault("syscall") ?? "unknown"
             }
         };
         var rawHash = DeterministicEventIdentity.ComputeRawSha256(raw);
@@ -630,7 +675,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             ["gap_id_hash"] = gapIdHash,
             ["reason_code"] = "audit_continuity_recovered",
             ["content_collected"] = false,
-            ["routed_interface"] = LinuxAuditConstants.Interface,
+            ["routed_interface"] = options.Audit.Interface,
             ["observation_time"] = observedAt
         }, JsonDefaults.Options);
         var rawBytes = JsonSerializer.SerializeToUtf8Bytes(raw, JsonDefaults.Options).Length;
@@ -647,6 +692,66 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             Severity = "information",
             Message = "Linux audit source continuity recovered without collecting audit activity.",
             Normalized = new NormalizedEventFields { Category = "source_health", Action = "recovered", Outcome = "success" },
+            Raw = raw,
+            Deduplication = new EventDeduplicationMetadata
+            {
+                Algorithm = DeduplicationAlgorithms.Sha256Uuid,
+                Inputs = [DeduplicationInputs.AgentId, DeduplicationInputs.SourceId, DeduplicationInputs.CheckpointSequence, DeduplicationInputs.EventCode, DeduplicationInputs.EventTime, DeduplicationInputs.RawSha256],
+                RawSha256 = DeterministicEventIdentity.ComputeRawSha256(raw)
+            },
+            DataHandling = new DataHandlingMetadata { RawSizeBytes = rawBytes }
+        };
+        return withoutId with { EventId = DeterministicEventIdentity.ComputeSha256Uuid(withoutId) };
+    }
+
+    private EventEnvelope BuildAuditHealthEnvelope(
+        LinuxAuditKernelHealthSample sample,
+        string agentId,
+        string hostname,
+        long sequence,
+        DateTimeOffset observedAt)
+    {
+        var raw = JsonSerializer.SerializeToElement(new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["schema"] = "challenger-audit-health-v1",
+            ["enabled"] = sample.Enabled,
+            ["failure_mode"] = sample.Failure,
+            ["daemon_present"] = sample.ProcessId > 0,
+            ["rate_limit"] = sample.RateLimit,
+            ["backlog_limit"] = sample.BacklogLimit,
+            ["lost"] = sample.Lost,
+            ["backlog"] = sample.Backlog,
+            ["loginuid_immutable"] = sample.LoginUidImmutable,
+            ["content_collected"] = false,
+            ["routed_interface"] = options.Audit.Interface
+        }, JsonDefaults.Options);
+        var rawBytes = JsonSerializer.SerializeToUtf8Bytes(raw, JsonDefaults.Options).Length;
+        var withoutId = new EventEnvelope
+        {
+            AgentId = agentId,
+            Hostname = hostname,
+            Platform = TelemetryPlatforms.Linux,
+            Source = EventSources.LinuxAudit,
+            SourceId = LinuxTelemetrySourceIds.AuditFramework,
+            EventCode = "audit_health_sample",
+            Checkpoint = new SourceCheckpoint { Sequence = sequence, EventTime = observedAt, RecordedAt = observedAt },
+            EventTime = observedAt,
+            Severity = sample.Healthy ? "information" : "warning",
+            Message = sample.Healthy ? "Linux audit kernel health is within the reviewed bounds." : "Linux audit kernel health is degraded.",
+            Normalized = new NormalizedEventFields
+            {
+                Category = "source_health",
+                Action = "observed",
+                Outcome = sample.Healthy ? "success" : "failure",
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["audit.kernel_enabled"] = sample.Enabled > 0 ? "true" : "false",
+                    ["audit.daemon_present"] = sample.ProcessId > 0 ? "true" : "false",
+                    ["audit.loss_state"] = sample.Lost == 0 ? "none" : "lost_records",
+                    ["audit.backlog_state"] = sample.Backlog * 5 < sample.BacklogLimit * 4 ? "normal" : "high",
+                    ["audit.routed_interface"] = options.Audit.Interface
+                }
+            },
             Raw = raw,
             Deduplication = new EventDeduplicationMetadata
             {
@@ -734,7 +839,53 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         state.GapCount,
         state.ActiveGap,
         status,
-        errorCode));
+        errorCode,
+        state.LastKernelHealthAt,
+        state.KernelHealthStatus,
+        state.KernelLost,
+        state.KernelBacklog,
+        state.KernelBacklogLimit));
+
+    private static bool IsTrustedAuditHealthRecord(JsonElement root) =>
+        TryString(root, "_TRANSPORT", out var transport)
+        && transport is "journal" or "syslog"
+        && TryString(root, "SYSLOG_IDENTIFIER", out var identifier)
+        && identifier == "challenger-siem-audit-health"
+        && TryString(root, "_SYSTEMD_UNIT", out var unit)
+        && unit == "challenger-siem-audit-health.service"
+        && TryString(root, "_UID", out var userId)
+        && userId == "0"
+        && TryString(root, "_EXE", out var executable)
+        && executable == "/usr/bin/logger";
+
+    private static bool TryParseAuditHealth(JsonElement root, out LinuxAuditKernelHealthSample sample)
+    {
+        sample = default;
+        if (!TryString(root, "MESSAGE", out var message)
+            || Encoding.UTF8.GetByteCount(message) > 1024) return false;
+        var tokens = message.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length != 9 || tokens[0] != "challenger_audit_health_v1") return false;
+        var values = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var token in tokens.Skip(1))
+        {
+            var separator = token.IndexOf('=');
+            if (separator <= 0 || separator == token.Length - 1
+                || !long.TryParse(token.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+                || value < 0 || !values.TryAdd(token[..separator], value)) return false;
+        }
+        string[] required = ["enabled", "failure", "pid", "rate_limit", "backlog_limit", "lost", "backlog", "loginuid_immutable"];
+        if (values.Count != required.Length || required.Any(key => !values.ContainsKey(key))
+            || values.Values.Any(value => value > int.MaxValue)
+            || values["enabled"] > 2 || values["failure"] > 2 || values["loginuid_immutable"] > 1
+            || values["backlog_limit"] <= 0 || values["backlog"] > values["backlog_limit"] * 4) return false;
+        var healthy = values["enabled"] > 0
+            && values["pid"] > 0
+            && values["lost"] == 0
+            && values["backlog"] * 5 < values["backlog_limit"] * 4;
+        sample = new(values["enabled"], values["failure"], values["pid"], values["rate_limit"],
+            values["backlog_limit"], values["lost"], values["backlog"], values["loginuid_immutable"], healthy);
+        return true;
+    }
 
     private static void ExtractAllowedFields(JsonElement root, string message, string recordType, LinuxAuditPendingGroup group)
     {
@@ -977,6 +1128,24 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         catch (ArgumentOutOfRangeException) { return false; }
     }
 
+    private static bool TryAuditIdentity(
+        JsonElement root,
+        string message,
+        DateTimeOffset journalTime,
+        out DateTimeOffset eventTime,
+        out ulong serial)
+    {
+        eventTime = default;
+        serial = 0;
+        if (!TryString(root, "_AUDIT_ID", out var structured))
+            return TryAuditIdentity(message, out eventTime, out serial);
+        if (structured.Length > 1 && structured[0] == '0'
+            || !ulong.TryParse(structured, NumberStyles.None, CultureInfo.InvariantCulture, out serial))
+            return false;
+        eventTime = journalTime;
+        return true;
+    }
+
     private static bool TryRecordType(JsonElement root, string message, out string type)
     {
         foreach (var key in new[] { "AUDIT_TYPE_NAME", "_AUDIT_TYPE_NAME", "TYPE" })
@@ -991,7 +1160,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
     private static bool IsType(string value) => value.Length is >= 1 and <= 32 && value.All(character => character is >= 'A' and <= 'Z' or '_' or >= '0' and <= '9');
     private static string? DetermineFamily(IReadOnlySet<string> types)
     {
-        if (types.Contains("SYSCALL")) return types.Contains("EXECVE") || types.Contains("PROCTITLE") ? "process_execution" : "authorization_syscall";
+        if (types.Contains("SYSCALL")) return types.Contains("EXECVE") ? "process_execution" : "authorization_syscall";
         return types.Select(type => Families.GetValueOrDefault(type)).FirstOrDefault(value => value is not null);
     }
     private static bool IsSingleRecordCandidate(LinuxAuditPendingGroup group) => group.RecordCount == 1 && group.Types.SingleOrDefault() is { } type && Families.ContainsKey(type) && type != "SYSCALL";
@@ -1278,10 +1447,26 @@ internal sealed record LinuxAuditPrivateState
     [JsonPropertyName("active_plan_hash")] public string? ActivePlanHash { get; init; }
     [JsonPropertyName("last_physical_observation_at")] public DateTimeOffset? LastPhysicalObservationAt { get; init; }
     [JsonPropertyName("last_event_at")] public DateTimeOffset? LastEventAt { get; init; }
+    [JsonPropertyName("last_kernel_health_at")] public DateTimeOffset? LastKernelHealthAt { get; init; }
+    [JsonPropertyName("kernel_health_status")] public string KernelHealthStatus { get; init; } = "not_collected";
+    [JsonPropertyName("kernel_lost")] public long? KernelLost { get; init; }
+    [JsonPropertyName("kernel_backlog")] public long? KernelBacklog { get; init; }
+    [JsonPropertyName("kernel_backlog_limit")] public long? KernelBacklogLimit { get; init; }
     [JsonPropertyName("pending")] public Dictionary<string, LinuxAuditPendingGroup> Pending { get; init; } = new(StringComparer.Ordinal);
     [JsonPropertyName("queued")] public Dictionary<string, LinuxAuditQueuedGroup> Queued { get; init; } = new(StringComparer.Ordinal);
     [JsonPropertyName("wal")] public List<LinuxAuditWalEntry> Wal { get; init; } = new();
 }
+
+internal readonly record struct LinuxAuditKernelHealthSample(
+    long Enabled,
+    long Failure,
+    long ProcessId,
+    long RateLimit,
+    long BacklogLimit,
+    long Lost,
+    long Backlog,
+    long LoginUidImmutable,
+    bool Healthy);
 
 internal sealed record LinuxAuditPendingGroup
 {
@@ -1413,7 +1598,11 @@ internal sealed class LinuxAuditStateStore
             || state.AbandonedThroughSequence < 0 || state.AbandonedThroughSequence > state.CollectedSequence
             || state.AcceptedSequences.Count + state.AbandonedSequences.Count > LinuxAuditConstants.MaxWalRecords
             || state.AcceptedSequences.Any(sequence => sequence <= 0 || sequence > state.CollectedSequence)
-            || state.AbandonedSequences.Any(sequence => sequence <= 0 || sequence > state.CollectedSequence))
+            || state.AbandonedSequences.Any(sequence => sequence <= 0 || sequence > state.CollectedSequence)
+            || state.KernelHealthStatus is not "not_collected" and not "healthy" and not "degraded"
+            || state.KernelLost is < 0 || state.KernelBacklog is < 0 || state.KernelBacklogLimit is <= 0
+            || state.KernelBacklog.HasValue != state.KernelBacklogLimit.HasValue
+            || state.LastKernelHealthAt.HasValue != state.KernelLost.HasValue)
             throw new InvalidDataException("audit_state_invalid");
         return state;
     }

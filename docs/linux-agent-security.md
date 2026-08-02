@@ -6,7 +6,7 @@ Primary audience: security reviewers, Linux agent engineers, packagers, operator
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). Bounded paged inventory, the passive journal reader, opt-in L2 normalization, approval-gated L3/L4, and the [journal-backed Linux audit router](linux-audit-framework-adr.md) are implemented. Audit parsing remains disabled and undeclared by default; eBPF, broad/live file collectors, and application-log readers remain deferred. The [passive telemetry contract](linux-passive-telemetry.md) defines polling limits and [Linux L4 full-target coverage](linux-l4-coverage.md) defines the strict approval/validation boundary. This document does not authorize deployment, live audit enablement, or host producer changes.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). Bounded paged inventory, the passive journal reader, opt-in L2 normalization, approval-gated L3/L4, and the [journal-backed Linux audit router](linux-audit-framework-adr.md) are implemented. Audit parsing remains disabled and undeclared by default; eBPF, broad/live file collectors, and application-log readers remain deferred. The [passive telemetry contract](linux-passive-telemetry.md) defines polling limits and [Linux L4 full-target coverage](linux-l4-coverage.md) defines the strict approval/validation boundary. Deployment, live audit enablement, and host producer changes require an explicit operator-approved plan and the staged rollback gates in the audit rollout guide.
 
 
 Principles:
@@ -83,9 +83,11 @@ Each event commits to the private Agent.Core SQLite queue before the collected c
 Every trusted `_TRANSPORT=audit` entry is intercepted before generic L1, including
 while audit parsing is disabled, undeclared, unapproved, malformed, or oversized. The
 disabled router does not parse audit fields and durably records only bounded type-free
-suppression metadata. Enabled parsing requires the fixed
-`systemd_journal_audit_v1` interface, system-only journal scope, explicit existing-
-facility declaration, and exact approval hash.
+suppression metadata. Enabled parsing requires either the legacy
+`systemd_journal_audit_v1` system-only interface or the separately reviewed
+`systemd_journal_audit_v2` shared-scope interface, an explicit existing-facility
+declaration, and an exact approval hash. V2 also requires fresh trusted health from a
+separate root one-shot unit; the main agent remains non-root with no capabilities.
 
 The compound assembler retains only allowlisted normalized fields. Raw messages,
 arguments, proctitles, environments, TTY data, and unknown fields are discarded before

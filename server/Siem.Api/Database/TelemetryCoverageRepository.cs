@@ -670,7 +670,9 @@ public sealed class TelemetryCoverageRepository(
         || (source.Details.TryGetValue("throttle_state", out var throttleState) && string.Equals(throttleState, "throttled", StringComparison.OrdinalIgnoreCase));
 
     private static string SourceStateGuidance(SourceHealthReport source, int recentCount) =>
-        FirewallStateGuidance(source, recentCount) ?? source.Status switch
+        FirewallStateGuidance(source, recentCount)
+        ?? PassiveVisibilityStateGuidance(source)
+        ?? source.Status switch
         {
             SourceHealthStatuses.Missing => "Expected telemetry is absent; do not infer completeness without source evidence.",
             SourceHealthStatuses.Unsupported => "Source is unsupported by the current collector set and remains a documented visibility limit.",
@@ -686,6 +688,23 @@ public sealed class TelemetryCoverageRepository(
             _ when recentCount == 0 => "Source reports healthy but has no recent normalized events in the lookback.",
             _ => "Recent source evidence is present."
         };
+
+    private static string? PassiveVisibilityStateGuidance(SourceHealthReport source)
+    {
+        if (string.Equals(source.SourceId, LinuxTelemetrySourceIds.ProcessSnapshotDiff, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(source.Details.GetValueOrDefault("executable_visibility"), "partial", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Process enumeration remains available, but executable-link visibility is partial ({source.Details.GetValueOrDefault("executable_readable_count") ?? "unknown"}/{source.Details.GetValueOrDefault("eligible_processes") ?? "unknown"} eligible processes). Command-line and executable coverage are separate; do not infer a complete executable inventory.";
+        }
+
+        if (string.Equals(source.SourceId, LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(source.Details.GetValueOrDefault("socket_attribution_health"), "degraded", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Socket tuple collection is current, but process attribution is {source.Details.GetValueOrDefault("process_attribution") ?? "partial"} ({source.Details.GetValueOrDefault("attributed_sockets") ?? "unknown"}/{source.Details.GetValueOrDefault("attribution_eligible_sockets") ?? "unknown"} visible sockets attributed). Treat owner absence as a coverage gap, not as no owning process.";
+        }
+
+        return null;
+    }
 
     private static string? FirewallStateGuidance(SourceHealthReport source, int recentCount)
     {

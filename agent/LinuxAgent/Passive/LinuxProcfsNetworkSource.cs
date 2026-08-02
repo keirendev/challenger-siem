@@ -219,6 +219,19 @@ public sealed class LinuxProcfsNetworkSource : ILinuxNetworkSnapshotSource
         details["malformed_rows"] = malformed.ToString(CultureInfo.InvariantCulture);
         details["process_attribution"] = attributionStatus;
         details["attribution_descriptor_links"] = (ownership?.DescriptorLinksInspected ?? 0).ToString(CultureInfo.InvariantCulture);
+        var attributionEligible = grouped.LongCount(item => item.Inode.HasValue);
+        var attributed = grouped.LongCount(item => item.Owners is { Count: > 0 });
+        details["attribution_eligible_sockets"] = attributionEligible.ToString(CultureInfo.InvariantCulture);
+        details["attributed_sockets"] = attributed.ToString(CultureInfo.InvariantCulture);
+        details["socket_attribution_permille"] = (attributionEligible == 0
+            ? 1000
+            : Math.Clamp(attributed * 1000 / attributionEligible, 0, 1000)).ToString(CultureInfo.InvariantCulture);
+        details["socket_attribution_health"] = attributionStatus switch
+        {
+            "complete" => "healthy",
+            "not_collected" => "disabled",
+            _ => "degraded"
+        };
         return new(grouped, status, error, truncated, budget.BytesRead, skipped, visibilityGaps, details);
     }
 
