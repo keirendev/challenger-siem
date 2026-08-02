@@ -48,6 +48,42 @@ public sealed class LinuxStateStore(string path)
             }, sourceId, eventFamily), additionalEvidence)
         }, cancellationToken);
 
+    public async Task WriteCollectedJournalBatchAsync(
+        IReadOnlyList<NormalizedJournalRecord> records,
+        CancellationToken cancellationToken,
+        bool activeGap = false,
+        string gapState = "none",
+        long cumulativeGapCount = 0,
+        string? configuredScope = null,
+        bool clearObservedEvidence = false)
+    {
+        if (records.Count == 0) return;
+        await UpdateAsync(state =>
+        {
+            var last = records[^1];
+            var journal = (state.Journal ?? new()) with
+            {
+                CollectedCursor = last.Cursor,
+                CollectedEventTime = last.Envelope.EventTime,
+                ActiveGap = activeGap,
+                GapState = gapState,
+                CumulativeGapCount = cumulativeGapCount,
+                ConfiguredScope = configuredScope ?? state.Journal?.ConfiguredScope,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : state.Journal?.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : state.Journal?.ObservedFamilies
+            };
+            foreach (var record in records)
+            {
+                journal = AddEvidence(
+                    AddEvidence(journal, record.Envelope.SourceId, record.EventFamily),
+                    record.AdditionalEvidence);
+            }
+            return state with { Journal = journal };
+        }, cancellationToken);
+    }
+
     public async Task WriteJournalReadObservationAsync(
         DateTimeOffset observedAt,
         bool activeGap,

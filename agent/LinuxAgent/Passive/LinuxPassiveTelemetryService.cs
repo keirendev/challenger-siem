@@ -123,7 +123,8 @@ public sealed class LinuxPassiveTelemetryService(
             result,
             async (events, token) =>
             {
-                foreach (var envelope in events) await queue.EnqueueAsync(envelope, token);
+                foreach (var batch in EventQueueBatcher.Partition(events))
+                    await queue.EnqueueBatchAsync(batch, token);
             },
             cancellationToken);
     }

@@ -40,10 +40,12 @@ public sealed class LinuxSelfIntegrityService(
                             ? collector.BuildPressureGap(previous, options.AgentId, Environment.MachineName, depth)
                             : await collector.CollectAsync(previous, options.AgentId, Environment.MachineName, cancellationToken);
 
-                        foreach (var collected in result.Events)
-                        {
-                            await queue.EnqueueAsync(collected.Envelope, cancellationToken);
-                        }
+                        foreach (var batch in EventQueueBatcher.Partition(
+                            result.Events,
+                            collected => collected.Envelope))
+                            await queue.EnqueueBatchAsync(
+                                batch.Select(collected => collected.Envelope).ToArray(),
+                                cancellationToken);
                         await runtime.RecordCollectedAsync(result, cancellationToken);
                     }, stoppingToken);
                 }

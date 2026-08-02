@@ -57,8 +57,9 @@ public sealed class LinuxJournalService(
         await auditRouter.InitializeAsync(stoppingToken);
         if (!options.Journal.Enabled) return;
 
-        foreach (var replay in auditRouter.ReplayQueued(options.AgentId, Environment.MachineName))
-            await queue.EnqueueAsync(replay, stoppingToken);
+        foreach (var replayBatch in EventQueueBatcher.Partition(
+            auditRouter.ReplayQueued(options.AgentId, Environment.MachineName)))
+            await queue.EnqueueBatchAsync(replayBatch, stoppingToken);
 
         var cursor = runtime.CollectedCursor;
         while (!stoppingToken.IsCancellationRequested)
@@ -101,26 +102,54 @@ public sealed class LinuxJournalService(
             runtime.RecordGap("bounded_history_window");
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var pendingL1 = new List<NormalizedJournalRecord>();
+        async Task FlushPendingL1Async()
+        {
+            if (pendingL1.Count == 0) return;
+            foreach (var batch in EventQueueBatcher.Partition(pendingL1, record => record.Envelope))
+            {
+                // The router marker and queue transaction are both durable before this chunk's
+                // collected cursor moves. A crash between them can only replay deterministic IDs.
+                await auditRouter.RecordL1QueuedBatchAsync(batch, cancellationToken);
+                await queue.EnqueueBatchAsync(
+                    batch.Select(record => record.Envelope).ToArray(),
+                    cancellationToken);
+                var previousEventTime = runtime.CollectedEventTime;
+                foreach (var record in batch)
+                {
+                    if (previousEventTime.HasValue && record.Envelope.EventTime < previousEventTime.Value)
+                        runtime.RecordReordered();
+                    previousEventTime = record.Envelope.EventTime;
+                }
+                await runtime.RecordCollectedBatchAsync(batch, cancellationToken);
+                queueDepth += batch.Count;
+                cursor = batch[^1].Cursor;
+            }
+            pendingL1.Clear();
+        }
+
         foreach (var raw in result.Records)
         {
-            var audit = await auditRouter.RouteAsync(raw, options.AgentId, Environment.MachineName, cancellationToken, queueDepth);
-            if (audit.Kind != LinuxAuditRouteKind.NotAudit)
+            if (LinuxAuditRouter.IsAuditTransport(raw))
             {
+                await FlushPendingL1Async();
+                var audit = await auditRouter.RouteAsync(raw, options.AgentId, Environment.MachineName, cancellationToken, queueDepth);
                 if (audit.Kind == LinuxAuditRouteKind.Stop || audit.Cursor is null || !audit.EventTime.HasValue)
                 {
                     runtime.RecordThrottle(audit.ErrorCode ?? "journal_audit_router_stopped");
                     return cursor;
                 }
-                foreach (var envelope in audit.Events)
+                foreach (var batch in EventQueueBatcher.Partition(audit.Events))
                 {
                     try
                     {
-                        await queue.EnqueueAsync(envelope, cancellationToken);
-                        queueDepth++;
+                        await queue.EnqueueBatchAsync(batch, cancellationToken);
+                        queueDepth += batch.Count;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        await auditRouter.RecordQueueInsertionFailureAsync(envelope, cancellationToken);
+                        foreach (var envelope in batch)
+                            await auditRouter.RecordQueueInsertionFailureAsync(envelope, cancellationToken);
                         runtime.RecordThrottle("journal_audit_queue_insertion_gap");
                     }
                 }
@@ -128,6 +157,7 @@ public sealed class LinuxJournalService(
                 cursor = audit.Cursor;
                 continue;
             }
+
             if (!normalizer.TryNormalize(raw, options, timeProvider.GetUtcNow(), out var record, out var errorCode) || record is null)
             {
                 runtime.RecordMalformed(errorCode);
@@ -139,21 +169,9 @@ public sealed class LinuxJournalService(
                 runtime.RecordDuplicate();
                 continue;
             }
-
-            // This await is the reliability boundary: state can advance only after SQLite commits.
-            await auditRouter.RecordL1QueuedAsync(record, cancellationToken);
-            await queue.EnqueueAsync(record.Envelope, cancellationToken);
-            queueDepth++;
-            if (runtime.CollectedEventTime is { } collectedTime && record.Envelope.EventTime < collectedTime)
-            {
-                runtime.RecordReordered();
-            }
-
-            // Cursor advances after durable enqueue even when event time moves backward so reordered
-            // tails cannot stall collection or force endless replay of already-queued records.
-            await runtime.RecordCollectedAsync(record, cancellationToken);
-            cursor = record.Cursor;
+            pendingL1.Add(record);
         }
+        await FlushPendingL1Async();
         await runtime.RecordSuccessfulReadObservationAsync(cancellationToken);
         await auditRouter.RecordSuccessfulPhysicalReadAsync(cancellationToken);
         if (await auditRouter.TryCreateQuietRecoveryAsync(options.AgentId, Environment.MachineName, queueDepth, cancellationToken) is { } recovery)

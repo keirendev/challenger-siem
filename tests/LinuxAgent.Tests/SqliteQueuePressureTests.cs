@@ -1,6 +1,9 @@
+using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Agent.Core.Queue;
+using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Contracts.V2;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
@@ -8,6 +11,99 @@ namespace Challenger.Siem.LinuxAgent.Tests;
 
 public sealed class SqliteQueuePressureTests
 {
+    [Fact]
+    public async Task SmallBatchIsOneAtomicFullDurabilityTransactionAndPreservesOrder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-batch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "queue.sqlite");
+            var queue = new SqliteEventQueue(new AgentQueueOptions { Path = path }, new CountingLogger());
+            await queue.InitializeAsync(default);
+            var first = Event(1);
+            var second = Event(2);
+
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Cache = SqliteCacheMode.Shared
+            }.ToString();
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync();
+            await using (var trigger = connection.CreateCommand())
+            {
+                trigger.CommandText = $"""
+                    create trigger synthetic_batch_failure
+                    before insert on queued_events
+                    when new.event_id = '{second.EventId:D}'
+                    begin
+                        select raise(abort, 'synthetic batch failure');
+                    end;
+                    """;
+                await trigger.ExecuteNonQueryAsync();
+            }
+
+            await Assert.ThrowsAsync<SqliteException>(() => queue.EnqueueBatchAsync([first, second], default));
+            Assert.Equal(0, await queue.CountAsync(default));
+
+            await using (var drop = connection.CreateCommand())
+            {
+                drop.CommandText = "drop trigger synthetic_batch_failure;";
+                await drop.ExecuteNonQueryAsync();
+            }
+            await queue.EnqueueBatchAsync([first, second], default);
+
+            var batch = await queue.DequeueBatchAsync(10, default);
+            Assert.Equal([first.EventId, second.EventId], batch.Select(item => item.Envelope.EventId).ToArray());
+            await using var durability = connection.CreateCommand();
+            durability.CommandText = "pragma synchronous;";
+            Assert.Equal(2L, (long)(await durability.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LargeCollectionPartitionsIntoBoundedAtomicTransactions()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-partition-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "queue.sqlite");
+            var queue = new SqliteEventQueue(new AgentQueueOptions { Path = path }, new CountingLogger());
+            var events = Enumerable.Range(1, 101).Select(sequence => Event(sequence, 64)).ToArray();
+            var batches = EventQueueBatcher.Partition(events);
+            var payloadBatches = EventQueueBatcher.Partition(
+                Enumerable.Range(1_000, 20).Select(sequence => Event(sequence, 60 * 1024)).ToArray());
+
+            Assert.Equal([100, 1], batches.Select(batch => batch.Count));
+            Assert.True(payloadBatches.Count > 1);
+            Assert.All(batches, batch => Assert.InRange(batch.Count, 1, 100));
+            Assert.All(payloadBatches, batch => Assert.InRange(
+                batch.Sum(item => (long)Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(item, JsonDefaults.Options))),
+                1,
+                1024 * 1024));
+            Assert.Equal(events.Select(item => item.EventId), batches.SelectMany(batch => batch).Select(item => item.EventId));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => queue.EnqueueBatchAsync(events, default));
+            Assert.Equal(0, await queue.CountAsync(default));
+            foreach (var batch in batches) await queue.EnqueueBatchAsync(batch, default);
+
+            Assert.Equal(events.Length, await queue.CountAsync(default));
+            Assert.Equal(
+                events.Select(item => item.EventId),
+                (await queue.DequeueBatchAsync(events.Length, default)).Select(item => item.Envelope.EventId));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task DrainedQueueReusesAllocatedPagesAfterPhysicalLimitWithoutWarningFeedback()
     {
@@ -123,7 +219,7 @@ public sealed class SqliteQueuePressureTests
         }
     }
 
-    private static EventEnvelope Event(int sequence) => new()
+    private static EventEnvelope Event(int sequence, int paddingBytes = 48 * 1024) => new()
     {
         EventId = Guid.NewGuid(),
         AgentId = "synthetic-pressure-agent",
@@ -133,7 +229,7 @@ public sealed class SqliteQueuePressureTests
         SourceId = LinuxTelemetrySourceIds.AgentPerformanceSlo,
         EventTime = DateTimeOffset.UtcNow,
         Message = $"synthetic queue pressure {sequence}",
-        Raw = JsonSerializer.SerializeToElement(new { padding = new string('x', 48 * 1024) })
+        Raw = JsonSerializer.SerializeToElement(new { padding = new string('x', paddingBytes) })
     };
 
     private static EventEnvelope SequencedEvent(long sequence) => Event((int)sequence) with

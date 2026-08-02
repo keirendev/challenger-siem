@@ -345,7 +345,8 @@ public sealed class LinuxL4TelemetryRuntime(
             await stateStore.WriteAsync(reserved, cancellationToken);
             lock (sync) state = reserved;
 
-            foreach (var envelope in result.Events) await queue.EnqueueAsync(envelope, cancellationToken);
+            foreach (var batch in EventQueueBatcher.Partition(result.Events))
+                await queue.EnqueueBatchAsync(batch, cancellationToken);
 
             var mergedResult = MergeSourceState(current, result.NewState, result.SourceId);
             var committedProgress = ProgressFor(mergedResult, result.SourceId) with

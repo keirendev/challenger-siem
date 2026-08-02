@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.Agent.Core.Serialization;
@@ -10,6 +11,8 @@ namespace Challenger.Siem.Agent.Core.Queue;
 
 public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEventQueue> logger) : IEventQueue
 {
+    internal const int MaximumEventsPerTransaction = 100;
+    internal const int MaximumPayloadBytesPerTransaction = 1024 * 1024;
     private static readonly TimeSpan QueueWarningInterval = TimeSpan.FromMinutes(5);
     private readonly SemaphoreSlim gate = new(1, 1);
 
@@ -29,25 +32,34 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         }
     }
 
-    public async Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken)
+    public Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) =>
+        EnqueueBatchAsync([envelope], cancellationToken);
+
+    public async Task EnqueueBatchAsync(
+        IReadOnlyCollection<EventEnvelope> envelopes,
+        CancellationToken cancellationToken)
     {
+        if (envelopes.Count == 0) return;
+        if (envelopes.Count > MaximumEventsPerTransaction)
+            throw new InvalidOperationException("Queue batch exceeds the durable transaction event limit.");
+
+        var pending = new List<PendingEnqueue>(envelopes.Count);
+        long pendingPayloadBytes = 0;
+        foreach (var envelope in envelopes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var payloadJson = JsonSerializer.Serialize(envelope, JsonDefaults.Options);
+            pendingPayloadBytes += Encoding.UTF8.GetByteCount(payloadJson);
+            if (pendingPayloadBytes > MaximumPayloadBytesPerTransaction)
+                throw new InvalidOperationException("Queue batch exceeds the durable transaction payload limit.");
+            pending.Add(new(envelope.EventId.ToString(), envelope.AgentId, payloadJson));
+        }
+
         await gate.WaitAsync(cancellationToken);
         try
         {
             await InitializeUnsafeAsync(cancellationToken);
-            EnforceQueueSizeLimit();
-
-            await using var connection = OpenConnection();
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                insert or ignore into queued_events (event_id, agent_id, payload_json, enqueued_at)
-                values ($event_id, $agent_id, $payload_json, $enqueued_at);
-                """;
-            command.Parameters.AddWithValue("$event_id", envelope.EventId.ToString());
-            command.Parameters.AddWithValue("$agent_id", envelope.AgentId);
-            command.Parameters.AddWithValue("$payload_json", JsonSerializer.Serialize(envelope, JsonDefaults.Options));
-            command.Parameters.AddWithValue("$enqueued_at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            await InsertBatchUnsafeAsync(pending, cancellationToken);
         }
         finally
         {
@@ -373,6 +385,34 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         initialized = true;
     }
 
+    private async Task InsertBatchUnsafeAsync(
+        IReadOnlyList<PendingEnqueue> pending,
+        CancellationToken cancellationToken)
+    {
+        EnforceQueueSizeLimit();
+        await using var connection = OpenConnection();
+        await using var transaction = connection.BeginTransaction();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            insert or ignore into queued_events (event_id, agent_id, payload_json, enqueued_at)
+            values ($event_id, $agent_id, $payload_json, $enqueued_at);
+            """;
+        var eventId = command.Parameters.Add("$event_id", SqliteType.Text);
+        var agentId = command.Parameters.Add("$agent_id", SqliteType.Text);
+        var payloadJson = command.Parameters.Add("$payload_json", SqliteType.Text);
+        var enqueuedAt = command.Parameters.Add("$enqueued_at", SqliteType.Text);
+        enqueuedAt.Value = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+        foreach (var item in pending)
+        {
+            eventId.Value = item.EventId;
+            agentId.Value = item.AgentId;
+            payloadJson.Value = item.PayloadJson;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     private static async Task<int> CountRowsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -391,6 +431,11 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         };
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
+        // Keep the existing power-loss durability boundary explicit on every pooled connection;
+        // write amplification is reduced by transactions, never by relaxing synchronous mode.
+        using var synchronous = connection.CreateCommand();
+        synchronous.CommandText = "pragma synchronous = full;";
+        synchronous.ExecuteNonQuery();
         return connection;
     }
 
@@ -525,4 +570,42 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
     {
         return value.Length <= maxLength ? value : value[..maxLength];
     }
+
+    private sealed record PendingEnqueue(string EventId, string AgentId, string PayloadJson);
+}
+
+public static class EventQueueBatcher
+{
+    public static IReadOnlyList<IReadOnlyList<T>> Partition<T>(
+        IReadOnlyCollection<T> items,
+        Func<T, EventEnvelope> envelopeSelector)
+    {
+        if (items.Count == 0) return Array.Empty<IReadOnlyList<T>>();
+
+        var result = new List<IReadOnlyList<T>>();
+        var pending = new List<T>(Math.Min(items.Count, SqliteEventQueue.MaximumEventsPerTransaction));
+        long pendingPayloadBytes = 0;
+        foreach (var item in items)
+        {
+            var payloadBytes = Encoding.UTF8.GetByteCount(
+                JsonSerializer.Serialize(envelopeSelector(item), JsonDefaults.Options));
+            if (payloadBytes > SqliteEventQueue.MaximumPayloadBytesPerTransaction)
+                throw new InvalidOperationException("A serialized event exceeds the durable queue transaction limit.");
+            if (pending.Count > 0
+                && (pending.Count >= SqliteEventQueue.MaximumEventsPerTransaction
+                    || pendingPayloadBytes + payloadBytes > SqliteEventQueue.MaximumPayloadBytesPerTransaction))
+            {
+                result.Add(pending.ToArray());
+                pending.Clear();
+                pendingPayloadBytes = 0;
+            }
+            pending.Add(item);
+            pendingPayloadBytes += payloadBytes;
+        }
+        if (pending.Count > 0) result.Add(pending.ToArray());
+        return result;
+    }
+
+    public static IReadOnlyList<IReadOnlyList<EventEnvelope>> Partition(IReadOnlyCollection<EventEnvelope> envelopes) =>
+        Partition(envelopes, envelope => envelope);
 }

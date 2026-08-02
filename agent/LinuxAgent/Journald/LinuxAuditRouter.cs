@@ -134,6 +134,19 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         && options.Audit.FacilityDeclaration == "present_enabled"
         && string.Equals(options.Audit.ApprovedPlanHash, PlanHash, StringComparison.Ordinal);
 
+    internal static bool IsAuditTransport(string rawJournalJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawJournalJson, new JsonDocumentOptions { MaxDepth = 8 });
+            return TryString(document.RootElement, "_TRANSPORT", out var transport) && transport == "audit";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     public static string ComputePlanHash(LinuxAgentOptions configured)
     {
         var auditRows = AuditRowCapacity(configured.Journal.QueuePauseDepth);
@@ -282,7 +295,8 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         if (!IsEnabledAndApproved)
         {
             state = state with { SuppressedCount = SaturatingIncrement(state.SuppressedCount) };
-            await AppendWalAsync("audit_suppressed", cursor, cursor, null, "disabled_or_unapproved", true, cancellationToken);
+            AppendWal("audit_suppressed", cursor, cursor, null, "disabled_or_unapproved", true);
+            await PersistAsync(cancellationToken);
             Publish("disabled", null);
             return new(LinuxAuditRouteKind.Suppressed, cursor, journalTime);
         }
@@ -299,7 +313,8 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         if (ExplicitlyExcludedTypes.Contains(recordType) || !Families.ContainsKey(recordType) && recordType is not "EOE" and not "EXECVE" and not "PROCTITLE" and not "PATH" and not "SOCKADDR")
         {
             state = state with { UnsupportedTypeCount = SaturatingIncrement(state.UnsupportedTypeCount) };
-            await AppendWalAsync("audit_contract_filtered", cursor, cursor, null, "record_type_filtered", true, cancellationToken);
+            AppendWal("audit_contract_filtered", cursor, cursor, null, "record_type_filtered", true);
+            await PersistAsync(cancellationToken);
             Publish("healthy", null);
             return new(LinuxAuditRouteKind.Filtered, cursor, journalTime);
         }
@@ -343,7 +358,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             state.Pending.Remove(identity);
             return WithPrior(await FinalizePendingGapAsync(group, "audit_assembly_bound_exceeded", "audit_pressure_gap", cancellationToken), expiredEvents);
         }
-        await AppendWalAsync("audit_pending", group.FirstCursor, cursor, null, null, false, cancellationToken, group.Identity);
+        AppendWal("audit_pending", group.FirstCursor, cursor, null, null, false, group.Identity);
         if (recordType != "EOE")
         {
             await PersistAsync(cancellationToken);
@@ -414,7 +429,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         var sequence = state.NextSequence;
         var envelope = BuildRecoveryEnvelope(agentId, hostname, sequence, now, state.ActiveGapIdHash ?? HashText("audit-gap"));
         state = state with { NextSequence = checked(sequence + 1), CollectedSequence = sequence, LastEventAt = now };
-        await AppendWalAsync("audit_queued", state.CollectedCursor, state.CollectedCursor, sequence, "audit_source_recovery", false, cancellationToken);
+        AppendWal("audit_queued", state.CollectedCursor, state.CollectedCursor, sequence, "audit_source_recovery", false);
         state.Queued[$"{state.CollectedCursor}#recovery#{sequence.ToString(CultureInfo.InvariantCulture)}"] =
             new(null, "source_health_recovery", false, sequence, true, envelope);
         await PersistAsync(cancellationToken);
@@ -453,7 +468,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         if (family is null)
         {
             FinalizePendingWal(group.Identity);
-            await AppendWalAsync("audit_contract_filtered", group.FirstCursor, group.LastCursor, null, "no_allowlisted_family", true, cancellationToken);
+            AppendWal("audit_contract_filtered", group.FirstCursor, group.LastCursor, null, "no_allowlisted_family", true);
             await PersistAsync(cancellationToken);
             return new(LinuxAuditRouteKind.Filtered, group.LastCursor, group.EventTime);
         }
@@ -462,7 +477,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         var sequence = state.NextSequence;
         state = state with { NextSequence = checked(sequence + 1), CollectedSequence = sequence };
         FinalizePendingWal(group.Identity);
-        await AppendWalAsync("audit_queued", group.FirstCursor, group.LastCursor, sequence, null, false, cancellationToken);
+        AppendWal("audit_queued", group.FirstCursor, group.LastCursor, sequence, null, false);
         state.Queued[group.LastCursor] = new(group, family, partial, sequence, state.ActiveGap && !partial);
         state = state with { LastEventAt = group.EventTime };
         await PersistAsync(cancellationToken);
@@ -516,7 +531,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             GapStartedAt = state.GapStartedAt ?? timeProvider.GetUtcNow(),
             ErrorCode = reason
         };
-        await AppendWalAsync(disposition, group.FirstCursor, group.LastCursor, null, reason, true, cancellationToken);
+        AppendWal(disposition, group.FirstCursor, group.LastCursor, null, reason, true);
         await PersistAsync(cancellationToken);
         Publish("degraded", reason);
         return new(LinuxAuditRouteKind.Gap, group.LastCursor, group.EventTime, ErrorCode: reason);
@@ -654,20 +669,19 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             GapStartedAt = state.GapStartedAt ?? timeProvider.GetUtcNow(),
             ErrorCode = reason
         };
-        if (cursor is not null) await AppendWalAsync("audit_input_gap", cursor, cursor, null, reason, true, cancellationToken);
+        if (cursor is not null) AppendWal("audit_input_gap", cursor, cursor, null, reason, true);
         await PersistAsync(cancellationToken);
         Publish("degraded", reason);
         return new(LinuxAuditRouteKind.Gap, cursor, time, ErrorCode: reason);
     }
 
-    private async Task AppendWalAsync(
+    private void AppendWal(
         string disposition,
         string firstCursor,
         string lastCursor,
         long? sequence,
         string? reason,
         bool final,
-        CancellationToken cancellationToken,
         string? groupIdentity = null,
         string? rowId = null)
     {
@@ -692,7 +706,6 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         state.Wal.Add(entry);
         state = state with { CollectedCursor = lastCursor };
         CompactWal();
-        await PersistAsync(cancellationToken);
     }
 
     private void CompactWal()
@@ -1065,16 +1078,49 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
 
     public bool HandlesSource(string? sourceId) => sourceId is not null && RoutedSourceIds.Contains(sourceId);
 
-    public async Task RecordL1QueuedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken)
+    public Task RecordL1QueuedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken) =>
+        RecordL1QueuedBatchAsync([record], cancellationToken);
+
+    public async Task RecordL1QueuedBatchAsync(
+        IReadOnlyCollection<NormalizedJournalRecord> records,
+        CancellationToken cancellationToken)
     {
+        if (records.Count == 0) return;
+
         await stateGate.WaitAsync(cancellationToken);
         try
         {
             if (!initialized) await InitializeCoreAsync(cancellationToken);
-            var rowId = record.Envelope.EventId.ToString("D");
-            if (state.Wal.Any(item => item.Disposition == "l1_queued" && item.RowId == rowId)) return;
-            await AppendWalAsync("l1_queued", record.Cursor, record.Cursor, null, null, false, cancellationToken, rowId: rowId);
-            await PersistAsync(cancellationToken);
+            var existing = state.Wal
+                .Where(item => item.Disposition == "l1_queued" && item.RowId is not null)
+                .Select(item => item.RowId!)
+                .ToHashSet(StringComparer.Ordinal);
+            var pending = records
+                .Where(record => existing.Add(record.Envelope.EventId.ToString("D")))
+                .ToArray();
+            if (pending.Length == 0) return;
+
+            var previousState = state with { Wal = state.Wal.ToList() };
+            try
+            {
+                foreach (var record in pending)
+                {
+                    AppendWal(
+                        "l1_queued",
+                        record.Cursor,
+                        record.Cursor,
+                        null,
+                        null,
+                        false,
+                        rowId: record.Envelope.EventId.ToString("D"));
+                }
+                await PersistAsync(cancellationToken);
+            }
+            catch
+            {
+                state = previousState;
+                throw;
+            }
         }
         finally { stateGate.Release(); }
     }

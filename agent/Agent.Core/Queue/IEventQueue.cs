@@ -8,6 +8,14 @@ public interface IEventQueue
 
     Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken);
 
+    async Task EnqueueBatchAsync(IReadOnlyCollection<EventEnvelope> envelopes, CancellationToken cancellationToken)
+    {
+        foreach (var envelope in envelopes)
+        {
+            await EnqueueAsync(envelope, cancellationToken);
+        }
+    }
+
     Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int maxEvents, CancellationToken cancellationToken);
 
     Task MarkAttemptAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken);

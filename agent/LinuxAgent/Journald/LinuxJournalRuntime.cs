@@ -141,29 +141,42 @@ public sealed class LinuxJournalRuntime(
     public string? CollectedCursor { get { lock (sync) return checkpoint.CollectedCursor; } }
     public DateTimeOffset? CollectedEventTime { get { lock (sync) return checkpoint.CollectedEventTime; } }
 
-    public async Task RecordCollectedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken)
+    public Task RecordCollectedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken) =>
+        RecordCollectedBatchAsync([record], cancellationToken);
+
+    public async Task RecordCollectedBatchAsync(
+        IReadOnlyList<NormalizedJournalRecord> records,
+        CancellationToken cancellationToken)
     {
+        if (records.Count == 0) return;
+
         bool clearObservedEvidence;
-        lock (sync) clearObservedEvidence = clearObservedEvidenceOnScopeApply;
-        await state.WriteCollectedJournalAsync(
-            record.Cursor,
-            record.Envelope.EventTime,
+        bool activeGap;
+        string currentGapState;
+        long currentGapCount;
+        lock (sync)
+        {
+            clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+            activeGap = gap;
+            currentGapState = gapState;
+            currentGapCount = cumulativeGapCount;
+        }
+        await state.WriteCollectedJournalBatchAsync(
+            records,
             cancellationToken,
-            record.Envelope.SourceId,
-            record.EventFamily,
-            record.AdditionalEvidence,
-            gap,
-            gapState,
-            cumulativeGapCount,
+            activeGap,
+            currentGapState,
+            currentGapCount,
             LinuxJournalScopes.Configured(options.Journal),
             clearObservedEvidence);
         lock (sync)
         {
             if (clearObservedEvidence) ClearObservedEvidence();
+            var last = records[^1];
             checkpoint = checkpoint with
             {
-                CollectedCursor = record.Cursor,
-                CollectedEventTime = record.Envelope.EventTime,
+                CollectedCursor = last.Cursor,
+                CollectedEventTime = last.Envelope.EventTime,
                 ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
                 ObservedFamilies = clearObservedEvidence
                     ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
@@ -171,48 +184,53 @@ public sealed class LinuxJournalRuntime(
                 ConfiguredScope = LinuxJournalScopes.Configured(options.Journal)
             };
             clearObservedEvidenceOnScopeApply = false;
-            if (latestEvent is null || record.Envelope.EventTime > latestEvent)
-            {
-                latestEvent = record.Envelope.EventTime;
-            }
-            if (!latestBySource.TryGetValue(record.Envelope.SourceId!, out var sourceLatest)
-                || record.Envelope.EventTime > sourceLatest)
-            {
-                latestBySource[record.Envelope.SourceId!] = record.Envelope.EventTime;
-            }
-            observedSources.Add(record.Envelope.SourceId!);
-            RecordCurrentProducerObservation(record.Envelope.SourceId!, record.Envelope.EventTime);
-            if (!observedFamilies.TryGetValue(record.Envelope.SourceId!, out var families))
-            {
-                families = new HashSet<string>(StringComparer.Ordinal);
-                observedFamilies[record.Envelope.SourceId!] = families;
-            }
-            families.Add(record.EventFamily);
-            foreach (var evidence in record.AdditionalEvidence ?? Array.Empty<JournalSourceEvidence>())
-            {
-                observedSources.Add(evidence.SourceId);
-                RecordCurrentProducerObservation(evidence.SourceId, record.Envelope.EventTime);
-                if (!observedFamilies.TryGetValue(evidence.SourceId, out var additionalFamilies))
-                    observedFamilies[evidence.SourceId] = additionalFamilies = new(StringComparer.Ordinal);
-                additionalFamilies.Add(evidence.EventFamily);
-                if (!latestBySource.TryGetValue(evidence.SourceId, out var additionalLatest)
-                    || record.Envelope.EventTime > additionalLatest)
-                    latestBySource[evidence.SourceId] = record.Envelope.EventTime;
-            }
-            collectedCount++;
-            firstCollectedAt ??= DateTimeOffset.UtcNow;
-            if (status is not SourceHealthStatuses.Healthy)
-            {
-                recoveredAt = DateTimeOffset.UtcNow;
-                transitionedAt = recoveredAt;
-                transitionState = HealthTransitionStates.Recovered;
-            }
-            status = SourceHealthStatuses.Healthy;
-            errorCode = null;
-            sourceState = "collecting";
-            permissionDenied = options.Journal.IncludeAccessibleUserJournals
-                && systemJournalVisibility == SystemJournalVisibility.PermissionDenied;
+            foreach (var record in records) RecordCollectedUnsafe(record);
         }
+    }
+
+    private void RecordCollectedUnsafe(NormalizedJournalRecord record)
+    {
+        if (latestEvent is null || record.Envelope.EventTime > latestEvent)
+        {
+            latestEvent = record.Envelope.EventTime;
+        }
+        if (!latestBySource.TryGetValue(record.Envelope.SourceId!, out var sourceLatest)
+            || record.Envelope.EventTime > sourceLatest)
+        {
+            latestBySource[record.Envelope.SourceId!] = record.Envelope.EventTime;
+        }
+        observedSources.Add(record.Envelope.SourceId!);
+        RecordCurrentProducerObservation(record.Envelope.SourceId!, record.Envelope.EventTime);
+        if (!observedFamilies.TryGetValue(record.Envelope.SourceId!, out var families))
+        {
+            families = new HashSet<string>(StringComparer.Ordinal);
+            observedFamilies[record.Envelope.SourceId!] = families;
+        }
+        families.Add(record.EventFamily);
+        foreach (var evidence in record.AdditionalEvidence ?? Array.Empty<JournalSourceEvidence>())
+        {
+            observedSources.Add(evidence.SourceId);
+            RecordCurrentProducerObservation(evidence.SourceId, record.Envelope.EventTime);
+            if (!observedFamilies.TryGetValue(evidence.SourceId, out var additionalFamilies))
+                observedFamilies[evidence.SourceId] = additionalFamilies = new(StringComparer.Ordinal);
+            additionalFamilies.Add(evidence.EventFamily);
+            if (!latestBySource.TryGetValue(evidence.SourceId, out var additionalLatest)
+                || record.Envelope.EventTime > additionalLatest)
+                latestBySource[evidence.SourceId] = record.Envelope.EventTime;
+        }
+        collectedCount++;
+        firstCollectedAt ??= DateTimeOffset.UtcNow;
+        if (status is not SourceHealthStatuses.Healthy)
+        {
+            recoveredAt = DateTimeOffset.UtcNow;
+            transitionedAt = recoveredAt;
+            transitionState = HealthTransitionStates.Recovered;
+        }
+        status = SourceHealthStatuses.Healthy;
+        errorCode = null;
+        sourceState = "collecting";
+        permissionDenied = options.Journal.IncludeAccessibleUserJournals
+            && systemJournalVisibility == SystemJournalVisibility.PermissionDenied;
     }
 
     public async Task RecordRoutedPhysicalAsync(string cursor, DateTimeOffset eventTime, CancellationToken cancellationToken)

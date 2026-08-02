@@ -213,6 +213,93 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public async Task JournalPollUsesOneBatchBeforeAdvancingItsFinalCursor()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var queue = new BatchCountingQueue();
+
+        var cursor = await Service(
+            options,
+            new FakeSource(new(JournalReadStatus.Success, FixtureRecords())),
+            runtime,
+            queue).CollectOnceAsync(null, default);
+
+        Assert.Equal(1, queue.BatchCalls);
+        Assert.Equal([5], queue.BatchSizes);
+        Assert.Equal(0, queue.EnqueueCalls);
+        Assert.Equal("s=synthetic;i=5;b=fake", cursor);
+        Assert.Equal(cursor, (await state.ReadJournalAsync(default)).CollectedCursor);
+    }
+
+    [Fact]
+    public async Task AuditTransportSplitsAdjacentL1BatchesWithoutReorderingTheCursor()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var queue = new BatchCountingQueue();
+        var observedAt = DateTimeOffset.Parse("2026-08-01T00:00:00Z");
+        var records = new[]
+        {
+            Record("s=synthetic;i=1;b=fake", observedAt.ToUnixTimeMilliseconds() * 1000, "first-l1"),
+            AuditRecord("2", observedAt.AddMilliseconds(1), "suppressed audit transport"),
+            Record("s=synthetic;i=3;b=fake", observedAt.AddMilliseconds(2).ToUnixTimeMilliseconds() * 1000, "second-l1")
+        };
+
+        var cursor = await Service(
+            options,
+            new FakeSource(new(JournalReadStatus.Success, records)),
+            runtime,
+            queue).CollectOnceAsync(null, default);
+
+        Assert.Equal(2, queue.BatchCalls);
+        Assert.Equal([1, 1], queue.BatchSizes);
+        Assert.Equal("s=synthetic;i=3;b=fake", cursor);
+        Assert.Equal(cursor, (await state.ReadJournalAsync(default)).CollectedCursor);
+    }
+
+    [Fact]
+    public async Task QueueBatchReplaysWithoutDuplicatesWhenFinalCursorWriteFails()
+    {
+        using var temporary = new TemporaryPaths();
+        var invalidStatePath = Path.Combine(Path.GetDirectoryName(temporary.State)!, "state-directory");
+        Directory.CreateDirectory(invalidStatePath);
+        var options = TestOptions(temporary.Queue, invalidStatePath);
+        var queue = CreateQueue(temporary.Queue);
+        var interruptedRuntime = Runtime(options, new LinuxStateStore(invalidStatePath));
+        await interruptedRuntime.InitializeAsync("test", "config", default);
+
+        await Assert.ThrowsAsync<IOException>(() => Service(
+            options,
+            new FakeSource(new(JournalReadStatus.Success, FixtureRecords())),
+            interruptedRuntime,
+            queue).CollectOnceAsync(null, default));
+
+        Assert.Equal(5, await queue.CountAsync(default));
+        Assert.Null(interruptedRuntime.CollectedCursor);
+
+        var recoveredOptions = TestOptions(temporary.Queue, temporary.State);
+        var recoveredState = new LinuxStateStore(temporary.State);
+        var recoveredRuntime = Runtime(recoveredOptions, recoveredState);
+        await recoveredRuntime.InitializeAsync("test", "config", default);
+        var cursor = await Service(
+            recoveredOptions,
+            new FakeSource(new(JournalReadStatus.Success, FixtureRecords())),
+            recoveredRuntime,
+            queue).CollectOnceAsync(null, default);
+
+        Assert.Equal(5, await queue.CountAsync(default));
+        Assert.Equal("s=synthetic;i=5;b=fake", cursor);
+        Assert.Equal(cursor, (await recoveredState.ReadJournalAsync(default)).CollectedCursor);
+    }
+
+    [Fact]
     public async Task FailedQuietRecoveryEnqueueIsFinalizedAndRetriedWithoutRestart()
     {
         using var temporary = new TemporaryPaths();
@@ -545,12 +632,28 @@ public sealed class LinuxJournalTests
         public int EnqueueCalls { get; private set; }
         public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public virtual Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) { EnqueueCalls++; return Task.CompletedTask; }
+        public virtual async Task EnqueueBatchAsync(IReadOnlyCollection<EventEnvelope> envelopes, CancellationToken cancellationToken)
+        {
+            foreach (var envelope in envelopes) await EnqueueAsync(envelope, cancellationToken);
+        }
         public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int maxEvents, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<QueuedEvent>>(Array.Empty<QueuedEvent>());
         public Task MarkAttemptAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task DeleteAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<int> CountAsync(CancellationToken cancellationToken) => Task.FromResult(count);
         public Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken) => Task.FromResult(new QueueSloMetrics { QueueDepth = count });
+    }
+    private sealed class BatchCountingQueue : CountQueue
+    {
+        public BatchCountingQueue() : base(0) { }
+        public int BatchCalls { get; private set; }
+        public List<int> BatchSizes { get; } = new();
+        public override Task EnqueueBatchAsync(IReadOnlyCollection<EventEnvelope> envelopes, CancellationToken cancellationToken)
+        {
+            BatchCalls++;
+            BatchSizes.Add(envelopes.Count);
+            return Task.CompletedTask;
+        }
     }
     private sealed class ThrowingQueue : CountQueue
     {
