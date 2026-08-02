@@ -686,9 +686,27 @@ public sealed class LinuxJournalRuntime(
     {
         if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework)
         {
+            if (options.Audit.FacilityDeclaration == "absent")
+            {
+                return manifest with
+                {
+                    Applicability = SourceApplicabilityStatuses.NotApplicable,
+                    ApplicabilityReason = "operator_declared_no_audit_facility"
+                };
+            }
+            if (!LinuxAuditConstants.IsSupportedInterface(options.Audit.Interface)
+                || !LinuxAuditConstants.SupportsJournalScope(
+                    options.Audit.Interface,
+                    options.Journal.IncludeAccessibleUserJournals))
+            {
+                return manifest with
+                {
+                    Applicability = SourceApplicabilityStatuses.Unsupported,
+                    ApplicabilityReason = LinuxAuditConstants.IncompatibleJournalScopeReason
+                };
+            }
             return options.Audit.FacilityDeclaration switch
             {
-                "absent" => manifest with { Applicability = SourceApplicabilityStatuses.NotApplicable, ApplicabilityReason = "operator_declared_no_audit_facility" },
                 "present_disabled" or "present_enabled" => manifest with { Applicability = SourceApplicabilityStatuses.Applicable, ApplicabilityReason = null },
                 _ => manifest with { Applicability = SourceApplicabilityStatuses.Unknown, ApplicabilityReason = "operator_facility_declaration_required" }
             };
@@ -793,10 +811,11 @@ public sealed class LinuxJournalRuntime(
     {
         if (manifest.SourceId == LinuxTelemetrySourceIds.AuditFramework)
         {
+            if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return SourceHealthStatuses.NotApplicable;
+            if (manifest.Applicability == SourceApplicabilityStatuses.Unsupported) return SourceHealthStatuses.Unsupported;
             if (!LinuxAuditConstants.IsSupportedInterface(options.Audit.Interface)
                 || !LinuxAuditConstants.SupportsJournalScope(options.Audit.Interface, options.Journal.IncludeAccessibleUserJournals))
                 return SourceHealthStatuses.Unsupported;
-            if (manifest.Applicability == SourceApplicabilityStatuses.NotApplicable) return SourceHealthStatuses.NotApplicable;
             if (!enabled) return SourceHealthStatuses.Disabled;
             var audit = auditRouterRuntime?.Current;
             if (audit is null || !audit.RouterAttested || !audit.StateHealthy) return SourceHealthStatuses.Error;

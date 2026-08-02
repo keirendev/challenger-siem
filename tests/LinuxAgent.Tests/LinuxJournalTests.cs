@@ -404,6 +404,58 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public async Task LegacyAuditInterfaceReportsMatchingUnsupportedApplicabilityForAccessibleScope()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit.Enabled = false;
+        options.Audit.Interface = LinuxAuditConstants.SystemOnlyInterface;
+        options.Audit.FacilityDeclaration = "undeclared";
+        var runtime = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.State),
+            TimeProvider.System);
+        await runtime.InitializeAsync("test", "config", default);
+
+        var snapshot = runtime.Snapshot();
+        var manifest = Assert.Single(snapshot.Manifest, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        var health = Assert.Single(snapshot.Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+
+        Assert.Equal(SourceApplicabilityStatuses.Unsupported, manifest.Applicability);
+        Assert.Equal(LinuxAuditConstants.IncompatibleJournalScopeReason, manifest.ApplicabilityReason);
+        Assert.Equal(manifest.Applicability, health.Applicability);
+        Assert.Equal(manifest.ApplicabilityReason, health.ApplicabilityReason);
+        Assert.Equal(SourceHealthStatuses.Unsupported, health.Status);
+    }
+
+    [Fact]
+    public async Task DeclaredAbsentAuditFacilityRemainsNotApplicableAcrossJournalScopes()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.Journal.TargetCoverageLevel = CoverageLevel.L2;
+        options.Journal.IncludeAccessibleUserJournals = true;
+        options.Audit.Enabled = false;
+        options.Audit.Interface = LinuxAuditConstants.SystemOnlyInterface;
+        options.Audit.FacilityDeclaration = "absent";
+        var runtime = new LinuxJournalRuntime(
+            Options.Create(options),
+            new LinuxStateStore(temporary.State),
+            TimeProvider.System);
+        await runtime.InitializeAsync("test", "config", default);
+
+        var snapshot = runtime.Snapshot();
+        var manifest = Assert.Single(snapshot.Manifest, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+        var health = Assert.Single(snapshot.Health, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
+
+        Assert.Equal(SourceApplicabilityStatuses.NotApplicable, manifest.Applicability);
+        Assert.Equal(manifest.Applicability, health.Applicability);
+        Assert.Equal(SourceHealthStatuses.NotApplicable, health.Status);
+    }
+
+    [Fact]
     public async Task AccessibleScopePreservesCursorAndInvalidCursorResetSurvivesRestart()
     {
         using var temporary = new TemporaryPaths();

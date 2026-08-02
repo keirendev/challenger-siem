@@ -31,6 +31,7 @@ public static class LinuxAuditConstants
     public const int MaxWalRecordBytes = 4096;
     public const int MaxCursorBytes = 1024;
     public const int MaxRawBytes = 32 * 1024;
+    public const string IncompatibleJournalScopeReason = "audit_interface_incompatible_with_journal_scope";
 
     public static bool IsSupportedInterface(string value) => value is SystemOnlyInterface or SharedJournalInterface;
 
