@@ -500,11 +500,11 @@ public sealed class LinuxAuditRouterTests
             ["__CURSOR"] = $"s=synthetic;i={cursor}",
             ["__REALTIME_TIMESTAMP"] = (observedAt.ToUnixTimeMilliseconds() * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["_BOOT_ID"] = BootId,
-            ["_TRANSPORT"] = "journal",
+            ["_TRANSPORT"] = "stdout",
             ["SYSLOG_IDENTIFIER"] = "challenger-siem-audit-health",
             ["_SYSTEMD_UNIT"] = "challenger-siem-audit-health.service",
             ["_UID"] = userId,
-            ["_EXE"] = "/usr/bin/systemd-cat",
+            ["_EXE"] = "/usr/bin/cat",
             ["MESSAGE"] = $"challenger_audit_health_v1 enabled={enabled} failure=1 pid={processId} rate_limit=250 backlog_limit={backlogLimit} lost={lost} backlog={backlog} loginuid_immutable=0"
         });
 

@@ -36,4 +36,4 @@ health_message="challenger_audit_health_v1 enabled=${enabled} failure=${failure}
 {
     /usr/bin/printf '%s\n' "$health_message"
     /usr/bin/sleep 1
-} | /usr/bin/systemd-cat --identifier=challenger-siem-audit-health --priority=info
+} | /usr/bin/systemd-cat --identifier=challenger-siem-audit-health --priority=info -- /usr/bin/cat

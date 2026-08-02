@@ -849,7 +849,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
 
     private static bool IsTrustedAuditHealthRecord(JsonElement root) =>
         TryString(root, "_TRANSPORT", out var transport)
-        && transport is "journal" or "syslog"
+        && transport == "stdout"
         && TryString(root, "SYSLOG_IDENTIFIER", out var identifier)
         && identifier == "challenger-siem-audit-health"
         && TryString(root, "_SYSTEMD_UNIT", out var unit)
@@ -857,7 +857,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         && TryString(root, "_UID", out var userId)
         && userId == "0"
         && TryString(root, "_EXE", out var executable)
-        && executable == "/usr/bin/systemd-cat";
+        && executable == "/usr/bin/cat";
 
     private static bool TryParseAuditHealth(JsonElement root, out LinuxAuditKernelHealthSample sample)
     {
