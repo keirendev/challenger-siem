@@ -857,7 +857,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         && TryString(root, "_UID", out var userId)
         && userId == "0"
         && TryString(root, "_EXE", out var executable)
-        && executable == "/usr/bin/logger";
+        && executable == "/usr/bin/systemd-cat";
 
     private static bool TryParseAuditHealth(JsonElement root, out LinuxAuditKernelHealthSample sample)
     {

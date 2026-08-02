@@ -26,7 +26,7 @@ capability set. A separate root one-shot service may run the fixed packaged heal
 script once per minute with only `CAP_AUDIT_CONTROL` in its capability bounding set.
 It reads `auditctl -s` and emits one numeric, schema-fixed journal record. The router
 accepts that record only when journald's trusted metadata identifies UID 0, the exact
-health unit, `/usr/bin/logger`, and journal/syslog transport. It does not trust message
+health unit, `/usr/bin/systemd-cat`, and journal transport. It does not trust message
 fields that claim those identities. The event omits the daemon PID, paths, command
 arguments, audit records, and user data. Missing samples, a stopped/disabled daemon,
 lost records, or backlog at 80% of its configured limit make v2 audit health non-
@@ -150,7 +150,8 @@ v2 plan and reapproving the exact hash; neither direction backfills the other sc
    The main agent does not call `auditctl`, `ausearch`, `aureport`, `systemctl`,
    `service`, package tools, or auditd control/plugin interfaces. The separated
    health unit calls only fixed `/usr/bin/auditctl -s` or
-   `/usr/sbin/auditctl -s`, and `/usr/bin/logger --journald`.
+   `/usr/sbin/auditctl -s`, and `/usr/bin/systemd-cat` with a one-second
+   attribution grace period.
 3. Load the physical collected and finalized journal cursors, boot ID, bounded
    router write-ahead log (WAL), next audit sequence, pending groups, cumulative
    counters, and any active gap. Reject symlinks, unexpected file types,

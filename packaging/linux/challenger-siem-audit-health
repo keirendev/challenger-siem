@@ -28,8 +28,12 @@ lost=$(read_status_value lost)
 backlog=$(read_status_value backlog)
 loginuid_immutable=$(read_status_value loginuid_immutable)
 
-/usr/bin/logger --journald <<EOF
-MESSAGE=challenger_audit_health_v1 enabled=${enabled} failure=${failure} pid=${audit_pid} rate_limit=${rate_limit} backlog_limit=${backlog_limit} lost=${lost} backlog=${backlog} loginuid_immutable=${loginuid_immutable}
-SYSLOG_IDENTIFIER=challenger-siem-audit-health
-PRIORITY=6
-EOF
+health_message="challenger_audit_health_v1 enabled=${enabled} failure=${failure} pid=${audit_pid} rate_limit=${rate_limit} backlog_limit=${backlog_limit} lost=${lost} backlog=${backlog} loginuid_immutable=${loginuid_immutable}"
+
+# Keep the journal sender alive briefly after writing. Short-lived logger
+# processes can exit before journald resolves their trusted cgroup/executable
+# metadata, which correctly causes the agent to reject the sample.
+{
+    /usr/bin/printf '%s\n' "$health_message"
+    /usr/bin/sleep 1
+} | /usr/bin/systemd-cat --identifier=challenger-siem-audit-health --priority=info

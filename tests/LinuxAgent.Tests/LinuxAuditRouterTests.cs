@@ -504,7 +504,7 @@ public sealed class LinuxAuditRouterTests
             ["SYSLOG_IDENTIFIER"] = "challenger-siem-audit-health",
             ["_SYSTEMD_UNIT"] = "challenger-siem-audit-health.service",
             ["_UID"] = userId,
-            ["_EXE"] = "/usr/bin/logger",
+            ["_EXE"] = "/usr/bin/systemd-cat",
             ["MESSAGE"] = $"challenger_audit_health_v1 enabled={enabled} failure=1 pid={processId} rate_limit=250 backlog_limit={backlogLimit} lost={lost} backlog={backlog} loginuid_immutable=0"
         });
 
