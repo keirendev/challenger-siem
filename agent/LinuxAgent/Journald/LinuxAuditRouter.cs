@@ -1013,6 +1013,39 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         return Math.Min(10_000, Math.Max(0, queuePauseDepth - reserve) / 10);
     }
     private static long SaturatingIncrement(long value) => value == long.MaxValue ? value : value + 1;
+
+    private static LinuxAuditPrivateState ReconcileSequenceProgress(LinuxAuditPrivateState value)
+    {
+        var cursor = Math.Max(value.AcknowledgedSequence, value.AbandonedThroughSequence);
+        var acknowledged = value.AcknowledgedSequence;
+        var abandonedThrough = value.AbandonedThroughSequence;
+        value.AcceptedSequences.RemoveWhere(sequence => sequence <= cursor);
+        value.AbandonedSequences.RemoveWhere(sequence => sequence <= cursor);
+        while (cursor < value.CollectedSequence && cursor < long.MaxValue)
+        {
+            var next = cursor + 1;
+            if (value.AcceptedSequences.Remove(next))
+            {
+                cursor = next;
+                acknowledged = next;
+                value.AbandonedSequences.Remove(next);
+                continue;
+            }
+            if (value.AbandonedSequences.Remove(next))
+            {
+                cursor = next;
+                abandonedThrough = next;
+                continue;
+            }
+            break;
+        }
+        return value with
+        {
+            AcknowledgedSequence = acknowledged,
+            AbandonedThroughSequence = abandonedThrough
+        };
+    }
+
     private static string HashText(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     private static IReadOnlyDictionary<string, string> BuildFamilies()
     {
@@ -1064,12 +1097,11 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
         foreach (var entry in state.Wal.Where(entry => entry.RowId is not null && l1RowIds.Contains(entry.RowId)))
             entry.Final = true;
         foreach (var pair in state.Queued.Where(pair => sequences.Contains(pair.Value.Sequence)).ToArray()) state.Queued.Remove(pair.Key);
-        foreach (var sequence in sequences) state.AcceptedSequences.Add(sequence);
-        var acknowledged = state.AcknowledgedSequence;
-        while (state.AcceptedSequences.Remove(acknowledged + 1)) acknowledged++;
+        foreach (var sequence in sequences.Where(sequence => sequence <= state.CollectedSequence))
+            state.AcceptedSequences.Add(sequence);
+        state = ReconcileSequenceProgress(state);
         state = state with
         {
-            AcknowledgedSequence = acknowledged,
             ActiveGap = clearsGap ? false : state.ActiveGap,
             ActiveGapIdHash = clearsGap ? null : state.ActiveGapIdHash,
             GapStartedAt = clearsGap ? null : state.GapStartedAt,
@@ -1108,6 +1140,8 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             entry.Final = true;
         }
         foreach (var pair in state.Queued.Where(pair => sequences.Contains(pair.Value.Sequence)).ToArray()) state.Queued.Remove(pair.Key);
+        foreach (var sequence in sequences.Where(sequence => sequence <= state.CollectedSequence))
+            state.AbandonedSequences.Add(sequence);
         if (sequences.Count > 0) state = state with
         {
             ActiveGap = true,
@@ -1116,6 +1150,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
             GapCount = SaturatingIncrement(state.GapCount),
             ErrorCode = "audit_poison_gap"
         };
+        state = ReconcileSequenceProgress(state);
         CompactWal();
         await PersistAsync(cancellationToken);
         Publish(state.ActiveGap ? "degraded" : "healthy", state.ErrorCode);
@@ -1136,6 +1171,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
                 entry.Final = true;
             }
             foreach (var pair in state.Queued.Where(item => item.Value.Sequence == sequence).ToArray()) state.Queued.Remove(pair.Key);
+            if (sequence <= state.CollectedSequence) state.AbandonedSequences.Add(sequence);
             state = state with
             {
                 ActiveGap = true,
@@ -1144,6 +1180,7 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
                 GapCount = SaturatingIncrement(state.GapCount),
                 ErrorCode = "audit_queue_insertion_failed"
             };
+            state = ReconcileSequenceProgress(state);
             CompactWal();
             await PersistAsync(cancellationToken);
             Publish("degraded", state.ErrorCode);
@@ -1179,7 +1216,9 @@ internal sealed record LinuxAuditPrivateState
     [JsonPropertyName("next_sequence")] public long NextSequence { get; init; } = 1;
     [JsonPropertyName("collected_sequence")] public long CollectedSequence { get; init; }
     [JsonPropertyName("acknowledged_sequence")] public long AcknowledgedSequence { get; init; }
+    [JsonPropertyName("abandoned_through_sequence")] public long AbandonedThroughSequence { get; init; }
     [JsonPropertyName("accepted_sequences")] public SortedSet<long> AcceptedSequences { get; init; } = new();
+    [JsonPropertyName("abandoned_sequences")] public SortedSet<long> AbandonedSequences { get; init; } = new();
     [JsonPropertyName("collected_cursor")] public string? CollectedCursor { get; init; }
     [JsonPropertyName("finalized_cursor")] public string? FinalizedCursor { get; init; }
     [JsonPropertyName("physical_record_count")] public long PhysicalRecordCount { get; init; }
@@ -1323,7 +1362,12 @@ internal sealed class LinuxAuditStateStore
             if (wal.Count > LinuxAuditConstants.MaxWalRecords) throw new InvalidDataException("audit_state_invalid");
         }
         state = state with { Wal = wal };
-        if (state.SchemaVersion != 1 || state.Wal.Count > LinuxAuditConstants.MaxWalRecords || state.Pending.Count > LinuxAuditConstants.MaxPendingGroups)
+        if (state.SchemaVersion != 1 || state.Wal.Count > LinuxAuditConstants.MaxWalRecords || state.Pending.Count > LinuxAuditConstants.MaxPendingGroups
+            || state.AcknowledgedSequence < 0 || state.AcknowledgedSequence > state.CollectedSequence
+            || state.AbandonedThroughSequence < 0 || state.AbandonedThroughSequence > state.CollectedSequence
+            || state.AcceptedSequences.Count + state.AbandonedSequences.Count > LinuxAuditConstants.MaxWalRecords
+            || state.AcceptedSequences.Any(sequence => sequence <= 0 || sequence > state.CollectedSequence)
+            || state.AbandonedSequences.Any(sequence => sequence <= 0 || sequence > state.CollectedSequence))
             throw new InvalidDataException("audit_state_invalid");
         return state;
     }

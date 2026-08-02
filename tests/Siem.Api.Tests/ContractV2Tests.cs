@@ -56,6 +56,55 @@ public sealed class ContractV2Tests
     }
 
     [Fact]
+    public void InventorySchemaRejectsEveryIncompletePagingMetadataShape()
+    {
+        static JsonNode Instance(IReadOnlyDictionary<string, string> summary)
+        {
+            var instance = JsonNode.Parse("""
+                {
+                  "agent_id": "synthetic-agent",
+                  "sent_at": "2026-08-01T12:00:00Z",
+                  "snapshots": [{
+                    "agent_id": "synthetic-agent",
+                    "hostname": "SYNTHETIC-LINUX-01",
+                    "snapshot_type": "linux_packages",
+                    "collected_at": "2026-08-01T12:00:00Z",
+                    "items": [],
+                    "summary": {}
+                  }]
+                }
+                """)!;
+            var summaryNode = instance["snapshots"]![0]!["summary"]!.AsObject();
+            foreach (var pair in summary) summaryNode[pair.Key] = pair.Value;
+            return instance;
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["generation_id"] = "synthetic-generation",
+            ["page_index"] = "1",
+            ["page_count"] = "1",
+            ["page_item_count"] = "0",
+            ["total_item_count"] = "0",
+            ["source_complete"] = "true",
+            ["source_truncated"] = "false",
+            ["generation_complete"] = "true",
+            ["received_page_count"] = "1"
+        };
+
+        foreach (var key in AssetInventoryPaging.TransportSummaryKeys)
+        {
+            Assert.False(
+                Evaluate("asset-inventory.schema.json", Instance(new Dictionary<string, string> { [key] = values[key] })).IsValid,
+                $"A lone {key} field must trigger the complete paging metadata requirement.");
+        }
+
+        Assert.True(Evaluate("asset-inventory.schema.json", Instance(values
+            .Where(pair => pair.Key is not "generation_complete" and not "received_page_count")
+            .ToDictionary())).IsValid);
+    }
+
+    [Fact]
     public void EveryPublishedV2SchemaParsesAndUsesTheV2Identifier()
     {
         foreach (var path in Directory.GetFiles(SchemasRoot, "*.schema.json"))

@@ -49,8 +49,8 @@ public sealed class AgentLivenessMonitorRepository(NpgsqlDataSource dataSource, 
             var cadence = InferCadence(agent.HeartbeatTimes);
             var threshold = AlertThreshold(cadence);
             if (now - boundary < threshold) continue;
-            outages++;
-            await InsertOutageAsync(connection, agent.AgentId, agent.Hostname, boundary, cadence, threshold, cancellationToken);
+            if (await InsertOutageAsync(connection, agent.AgentId, agent.Hostname, boundary, cadence, threshold, cancellationToken))
+                outages++;
         }
         return outages;
     }
@@ -113,7 +113,7 @@ public sealed class AgentLivenessMonitorRepository(NpgsqlDataSource dataSource, 
             .ToArray();
     }
 
-    private static async Task InsertOutageAsync(
+    internal static async Task<bool> InsertOutageAsync(
         NpgsqlConnection connection,
         string agentId,
         string hostname,
@@ -124,6 +124,25 @@ public sealed class AgentLivenessMonitorRepository(NpgsqlDataSource dataSource, 
     {
         var alertId = OutageAlertId(agentId, boundary);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await AgentLivenessDatabaseLock.AcquireAsync(connection, transaction, agentId, cancellationToken);
+        await using (var freshness = connection.CreateCommand())
+        {
+            freshness.Transaction = transaction;
+            freshness.CommandText = """
+                select exists (
+                    select 1
+                    from agent_heartbeats
+                    where agent_id = @agent_id and heartbeat_time > @boundary
+                );
+                """;
+            freshness.Parameters.AddWithValue("agent_id", agentId);
+            freshness.Parameters.AddWithValue("boundary", boundary.ToUniversalTime());
+            if (await freshness.ExecuteScalarAsync(cancellationToken) is true)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return false;
+            }
+        }
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
@@ -159,6 +178,7 @@ public sealed class AgentLivenessMonitorRepository(NpgsqlDataSource dataSource, 
             await activity.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     private static DateTimeOffset ReadTime(NpgsqlDataReader reader, int ordinal) => reader.GetValue(ordinal) switch

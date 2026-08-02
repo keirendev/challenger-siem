@@ -319,6 +319,7 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await AgentLivenessDatabaseLock.AcquireAsync(connection, transaction, request.AgentId, cancellationToken);
         await ResolveHeartbeatLossAlertsAsync(connection, transaction, request.AgentId, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
@@ -383,5 +384,24 @@ public sealed class HeartbeatRepository(NpgsqlDataSource dataSource)
     {
         var parameter = command.Parameters.Add(name, NpgsqlDbType.Jsonb);
         parameter.Value = value is null ? DBNull.Value : JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+}
+
+internal static class AgentLivenessDatabaseLock
+{
+    private const int NamespaceKey = 0x4C495645; // LIVE
+
+    public static async Task AcquireAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string agentId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "select pg_advisory_xact_lock(@namespace_key, hashtext(@agent_id));";
+        command.Parameters.AddWithValue("namespace_key", NamespaceKey);
+        command.Parameters.AddWithValue("agent_id", agentId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

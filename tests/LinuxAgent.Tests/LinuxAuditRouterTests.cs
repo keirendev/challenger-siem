@@ -216,6 +216,50 @@ public sealed class LinuxAuditRouterTests
     }
 
     [Fact]
+    public async Task PermanentlyRejectedSequenceDoesNotBlockLaterAcceptedProgress()
+    {
+        using var state = new TemporaryAuditState();
+        var options = Options(enabled: true);
+        var clock = new MutableTimeProvider(Now);
+        var runtime = new LinuxAuditRouterRuntime();
+        var router = Router(options, state, clock, runtime);
+
+        async Task<EventEnvelope> QueueAsync(string cursor, int serial)
+        {
+            await router.RouteAsync(Record($"{cursor}-one", clock.GetUtcNow(), "CONFIG_CHANGE",
+                $"type=CONFIG_CHANGE msg=audit(1785542400.000:{serial}) auid=1001 success=yes action=changed"),
+                "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+            return Assert.Single((await router.RouteAsync(Record($"{cursor}-two", clock.GetUtcNow().AddMilliseconds(1), "EOE",
+                $"type=EOE msg=audit(1785542400.000:{serial})"),
+                "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Events);
+        }
+
+        var rejected = await QueueAsync("rejected", 60);
+        var accepted = await QueueAsync("accepted", 61);
+        await router.RecordAcknowledgedAsync([accepted], default);
+        Assert.Equal(0, runtime.Current.AcknowledgedSequence);
+
+        runtime = new LinuxAuditRouterRuntime();
+        router = Router(options, state, clock, runtime);
+        await router.InitializeAsync(default);
+        Assert.Equal(0, runtime.Current.AcknowledgedSequence);
+        await router.RecordRejectedAsync([rejected], default);
+        Assert.Equal(2, runtime.Current.AcknowledgedSequence);
+        Assert.True(runtime.Current.ActiveGap);
+
+        var restartedRuntime = new LinuxAuditRouterRuntime();
+        router = Router(options, state, clock, restartedRuntime);
+        await router.InitializeAsync(default);
+        Assert.Equal(2, restartedRuntime.Current.AcknowledgedSequence);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var next = await QueueAsync("next", 62);
+        await router.RecordAcknowledgedAsync([next], default);
+        Assert.Equal(3, restartedRuntime.Current.AcknowledgedSequence);
+        Assert.False(restartedRuntime.Current.ActiveGap);
+    }
+
+    [Fact]
     public async Task CorruptOrOverexposedPrivateStateFailsClosed()
     {
         using var state = new TemporaryAuditState();

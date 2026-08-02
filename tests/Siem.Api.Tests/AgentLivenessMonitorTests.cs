@@ -155,6 +155,61 @@ public sealed class AgentLivenessMonitorTests(IntegrationTestDatabase database)
         Assert.Equal(AlertDispositions.Benign, preservedReader.GetString(1));
     }
 
+    [PostgresFact]
+    public async Task ConcurrentCommittedHeartbeatPreventsStaleOutageInsertion()
+    {
+        await using var dataSource = NpgsqlDataSource.Create(database.RequireConnectionString());
+        var agentId = $"liveness-race-{Guid.NewGuid():N}";
+        const string hostname = "SYNTHETIC-LINUX-LIVENESS-RACE";
+        var boundary = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await using (var agent = dataSource.CreateCommand("""
+            insert into agents(agent_id, hostname, os_version, agent_version, api_token_hash, platform, host_id, first_seen, last_seen)
+            values(@agent_id, @hostname, 'Synthetic Linux', '2.2.0-test', 'synthetic-hash', 'linux', @host_id, @first_seen, @last_seen);
+            """))
+        {
+            agent.Parameters.AddWithValue("agent_id", agentId);
+            agent.Parameters.AddWithValue("hostname", hostname);
+            agent.Parameters.AddWithValue("host_id", $"{agentId}-host");
+            agent.Parameters.AddWithValue("first_seen", boundary.AddHours(-1));
+            agent.Parameters.AddWithValue("last_seen", boundary);
+            await agent.ExecuteNonQueryAsync();
+        }
+
+        await using var heartbeatConnection = await dataSource.OpenConnectionAsync();
+        await using var heartbeatTransaction = await heartbeatConnection.BeginTransactionAsync();
+        await using (var heartbeat = heartbeatConnection.CreateCommand())
+        {
+            heartbeat.Transaction = heartbeatTransaction;
+            heartbeat.CommandText = """
+                insert into agent_heartbeats(agent_id, heartbeat_time, hostname, agent_version, os, queue_depth)
+                values(@agent_id, @heartbeat_time, @hostname, '2.2.0-test', 'Synthetic Linux', 0);
+                """;
+            heartbeat.Parameters.AddWithValue("agent_id", agentId);
+            heartbeat.Parameters.AddWithValue("heartbeat_time", DateTimeOffset.UtcNow);
+            heartbeat.Parameters.AddWithValue("hostname", hostname);
+            await heartbeat.ExecuteNonQueryAsync();
+        }
+        await AgentLivenessDatabaseLock.AcquireAsync(
+            heartbeatConnection, heartbeatTransaction, agentId, default);
+
+        await using var monitorConnection = await dataSource.OpenConnectionAsync();
+        var insertion = AgentLivenessMonitorRepository.InsertOutageAsync(
+            monitorConnection,
+            agentId,
+            hostname,
+            boundary,
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(3),
+            default);
+        await heartbeatTransaction.CommitAsync();
+
+        Assert.False(await insertion);
+        await using var count = dataSource.CreateCommand(
+            "select count(*)::int from alerts where agent_id = @agent_id and rule_id = 'tamper.agent-heartbeat-loss.linux';");
+        count.Parameters.AddWithValue("agent_id", agentId);
+        Assert.Equal(0, await count.ExecuteScalarAsync());
+    }
+
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;

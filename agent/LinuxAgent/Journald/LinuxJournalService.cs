@@ -157,7 +157,17 @@ public sealed class LinuxJournalService(
         await runtime.RecordSuccessfulReadObservationAsync(cancellationToken);
         await auditRouter.RecordSuccessfulPhysicalReadAsync(cancellationToken);
         if (await auditRouter.TryCreateQuietRecoveryAsync(options.AgentId, Environment.MachineName, queueDepth, cancellationToken) is { } recovery)
-            await queue.EnqueueAsync(recovery, cancellationToken);
+        {
+            try
+            {
+                await queue.EnqueueAsync(recovery, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await auditRouter.RecordQueueInsertionFailureAsync(recovery, cancellationToken);
+                runtime.RecordThrottle("journal_audit_queue_insertion_gap");
+            }
+        }
         return cursor;
     }
 }

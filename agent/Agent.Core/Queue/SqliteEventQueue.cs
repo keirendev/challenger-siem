@@ -61,41 +61,53 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         try
         {
             await InitializeUnsafeAsync(cancellationToken);
+            if (maxEvents <= 0) return Array.Empty<QueuedEvent>();
             await using var connection = OpenConnection();
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                select id, payload_json, send_attempts, last_attempt_at
-                from queued_events
-                order by id
-                limit $scan_limit;
-                """;
-            command.Parameters.AddWithValue("$scan_limit", Math.Max(maxEvents, maxEvents * 10));
-
             var results = new List<QueuedEvent>(Math.Max(1, maxEvents));
             var blockedSequentialSources = new HashSet<string>(StringComparer.Ordinal);
             var now = DateTimeOffset.UtcNow;
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken) && results.Count < maxEvents)
+            var scanLimit = Math.Max(maxEvents, maxEvents * 10);
+            long lastScannedQueueId = 0;
+            while (results.Count < maxEvents)
             {
-                var queueId = reader.GetInt64(0);
-                var payloadJson = reader.GetString(1);
-                var sendAttempts = reader.GetInt32(2);
-                var lastAttemptAt = reader.IsDBNull(3) ? null : ParseTimestamp(reader.GetString(3));
-                var envelope = JsonSerializer.Deserialize<EventEnvelope>(payloadJson, JsonDefaults.Options);
-                if (envelope is null)
-                {
-                    logger.LogWarning("Queued event {QueueId} could not be deserialized.", queueId);
-                    continue;
-                }
-                var sequentialSource = SequentialSourceKey(envelope);
-                if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.MaxBackoffSeconds, now))
-                {
-                    if (sequentialSource is not null) blockedSequentialSources.Add(sequentialSource);
-                    continue;
-                }
-                if (sequentialSource is not null && blockedSequentialSources.Contains(sequentialSource)) continue;
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    select id, payload_json, send_attempts, last_attempt_at
+                    from queued_events
+                    where id > $after_id
+                    order by id
+                    limit $scan_limit;
+                    """;
+                command.Parameters.AddWithValue("$after_id", lastScannedQueueId);
+                command.Parameters.AddWithValue("$scan_limit", scanLimit);
 
-                results.Add(new QueuedEvent(queueId, envelope, sendAttempts, lastAttemptAt));
+                var scanned = 0;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken) && results.Count < maxEvents)
+                {
+                    scanned++;
+                    var queueId = reader.GetInt64(0);
+                    lastScannedQueueId = queueId;
+                    var payloadJson = reader.GetString(1);
+                    var sendAttempts = reader.GetInt32(2);
+                    var lastAttemptAt = reader.IsDBNull(3) ? null : ParseTimestamp(reader.GetString(3));
+                    var envelope = JsonSerializer.Deserialize<EventEnvelope>(payloadJson, JsonDefaults.Options);
+                    if (envelope is null)
+                    {
+                        logger.LogWarning("Queued event {QueueId} could not be deserialized.", queueId);
+                        continue;
+                    }
+                    var sequentialSource = SequentialSourceKey(envelope);
+                    if (!IsReadyForAttempt(sendAttempts, lastAttemptAt, options.MaxBackoffSeconds, now))
+                    {
+                        if (sequentialSource is not null) blockedSequentialSources.Add(sequentialSource);
+                        continue;
+                    }
+                    if (sequentialSource is not null && blockedSequentialSources.Contains(sequentialSource)) continue;
+
+                    results.Add(new QueuedEvent(queueId, envelope, sendAttempts, lastAttemptAt));
+                }
+                if (scanned < scanLimit) break;
             }
 
             return results;

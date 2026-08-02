@@ -93,6 +93,36 @@ public sealed class SqliteQueuePressureTests
         }
     }
 
+    [Fact]
+    public async Task BackedOffSequenceDoesNotHideReadySourcesBeyondTheFirstScanPage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-page-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var queue = new SqliteEventQueue(new AgentQueueOptions
+            {
+                Path = Path.Combine(root, "queue.sqlite"),
+                MaxBackoffSeconds = 300
+            }, new CountingLogger());
+            await queue.InitializeAsync(default);
+            await queue.EnqueueAsync(SequencedEvent(1), default);
+            var head = Assert.Single(await queue.DequeueBatchAsync(1, default));
+            await queue.MarkAttemptAsync([head.QueueId], default);
+            for (var sequence = 2; sequence <= 11; sequence++)
+                await queue.EnqueueAsync(SequencedEvent(sequence), default);
+            await queue.EnqueueAsync(Event(12) with { SourceId = LinuxTelemetrySourceIds.JournalL1 }, default);
+
+            var retry = Assert.Single(await queue.DequeueBatchAsync(1, default));
+
+            Assert.Equal(LinuxTelemetrySourceIds.JournalL1, retry.Envelope.SourceId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static EventEnvelope Event(int sequence) => new()
     {
         EventId = Guid.NewGuid(),

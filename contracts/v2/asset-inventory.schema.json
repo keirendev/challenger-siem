@@ -68,7 +68,13 @@
       "dependentRequired": {
         "generation_id": ["page_index", "page_count", "page_item_count", "total_item_count", "source_complete", "source_truncated"],
         "page_index": ["generation_id", "page_count", "page_item_count", "total_item_count", "source_complete", "source_truncated"],
-        "page_count": ["generation_id", "page_index", "page_item_count", "total_item_count", "source_complete", "source_truncated"]
+        "page_count": ["generation_id", "page_index", "page_item_count", "total_item_count", "source_complete", "source_truncated"],
+        "page_item_count": ["generation_id", "page_index", "page_count", "total_item_count", "source_complete", "source_truncated"],
+        "total_item_count": ["generation_id", "page_index", "page_count", "page_item_count", "source_complete", "source_truncated"],
+        "source_complete": ["generation_id", "page_index", "page_count", "page_item_count", "total_item_count", "source_truncated"],
+        "source_truncated": ["generation_id", "page_index", "page_count", "page_item_count", "total_item_count", "source_complete"],
+        "generation_complete": ["generation_id", "page_index", "page_count", "page_item_count", "total_item_count", "source_complete", "source_truncated"],
+        "received_page_count": ["generation_id", "page_index", "page_count", "page_item_count", "total_item_count", "source_complete", "source_truncated"]
       }
     }
   }
