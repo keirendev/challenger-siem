@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Challenger.Siem.LinuxAgent.Config;
@@ -221,16 +222,18 @@ public sealed class LinuxJournalProcessSource(
             || normalized.Contains("no journal files were opened due to", StringComparison.Ordinal);
     }
 
-    private static async Task<(IReadOnlyList<string> Records, bool LimitReached)> ReadBoundedRecordsAsync(
+    internal static async Task<(IReadOnlyList<JournalInputRecord> Records, bool LimitReached)> ReadBoundedRecordsAsync(
         Stream stream,
         int maxRecords,
         int maxRecordBytes,
         CancellationToken cancellationToken)
     {
-        var records = new List<string>(maxRecords);
+        var records = new List<JournalInputRecord>(maxRecords);
         var readBuffer = new byte[8192];
         var recordBuffer = new MemoryStream(Math.Min(maxRecordBytes, 8192));
+        var metadata = new JournalMetadataExtractor();
         var oversized = false;
+        long recordBytes = 0;
         while (records.Count < maxRecords)
         {
             var read = await stream.ReadAsync(readBuffer, cancellationToken);
@@ -240,21 +243,309 @@ public sealed class LinuxJournalProcessSource(
                 var value = readBuffer[index];
                 if (value == (byte)'\n')
                 {
-                    records.Add(oversized ? "{}" : Encoding.UTF8.GetString(recordBuffer.GetBuffer(), 0, (int)recordBuffer.Length));
+                    records.Add(CompleteRecord());
                     recordBuffer.SetLength(0);
+                    metadata = new JournalMetadataExtractor();
                     oversized = false;
+                    recordBytes = 0;
                     if (records.Count == maxRecords) return (records, true);
                 }
-                else if (!oversized)
+                else
                 {
-                    if (recordBuffer.Length >= maxRecordBytes) oversized = true;
-                    else recordBuffer.WriteByte(value);
+                    if (recordBytes < long.MaxValue) recordBytes++;
+                    metadata.Observe(value);
+                    if (!oversized)
+                    {
+                        if (recordBuffer.Length >= maxRecordBytes) oversized = true;
+                        else recordBuffer.WriteByte(value);
+                    }
                 }
             }
         }
-        if ((recordBuffer.Length > 0 || oversized) && records.Count < maxRecords)
-            records.Add(oversized ? "{}" : Encoding.UTF8.GetString(recordBuffer.GetBuffer(), 0, (int)recordBuffer.Length));
+        if (recordBytes > 0 && records.Count < maxRecords)
+            records.Add(CompleteRecord());
         return (records, false);
+
+        JournalInputRecord CompleteRecord()
+        {
+            if (!oversized)
+            {
+                return JournalInputRecord.FromRaw(
+                    Encoding.UTF8.GetString(recordBuffer.GetBuffer(), 0, (int)recordBuffer.Length));
+            }
+
+            var completed = metadata.TryCreateOversizedRecord(recordBytes, out var omitted) && omitted is not null
+                ? JournalInputRecord.OmitOversized(omitted)
+                : JournalInputRecord.UnrecoverableOversized(recordBytes);
+            recordBuffer.GetBuffer().AsSpan(0, (int)recordBuffer.Length).Clear();
+            return completed;
+        }
+    }
+
+    private sealed class JournalMetadataExtractor
+    {
+        private const int MaxKeyBytes = 64;
+        private const int MaxCursorBytes = 4096;
+        private const int MaxBootIdBytes = 512;
+        private const int MaxTimestampBytes = 64;
+        private readonly List<byte> token = new(MaxKeyBytes);
+        private ParseState state = ParseState.Start;
+        private string? pendingKey;
+        private string? cursor;
+        private string? bootId;
+        private string? realtimeTimestamp;
+        private bool inString;
+        private bool stringEscape;
+        private bool readingKey;
+        private bool captureString;
+        private bool tokenOverflow;
+        private int tokenLimit;
+        private int compositeDepth;
+        private bool compositeInString;
+        private bool compositeEscape;
+
+        public void Observe(byte value)
+        {
+            if (state == ParseState.Invalid) return;
+            if (inString)
+            {
+                ObserveString(value);
+                return;
+            }
+            if (state == ParseState.Composite)
+            {
+                ObserveComposite(value);
+                return;
+            }
+
+            switch (state)
+            {
+                case ParseState.Start:
+                    if (IsWhitespace(value)) return;
+                    state = value == (byte)'{' ? ParseState.KeyOrEnd : ParseState.Invalid;
+                    return;
+                case ParseState.KeyOrEnd:
+                    if (IsWhitespace(value)) return;
+                    if (value == (byte)'}')
+                    {
+                        state = ParseState.Done;
+                        return;
+                    }
+                    if (value == (byte)'"')
+                    {
+                        BeginString(isKey: true);
+                        return;
+                    }
+                    state = ParseState.Invalid;
+                    return;
+                case ParseState.Colon:
+                    if (IsWhitespace(value)) return;
+                    state = value == (byte)':' ? ParseState.Value : ParseState.Invalid;
+                    return;
+                case ParseState.Value:
+                    if (IsWhitespace(value)) return;
+                    if (value == (byte)'"')
+                    {
+                        BeginString(isKey: false);
+                        return;
+                    }
+                    if (value is (byte)'{' or (byte)'[')
+                    {
+                        compositeDepth = 1;
+                        compositeInString = false;
+                        compositeEscape = false;
+                        state = ParseState.Composite;
+                        return;
+                    }
+                    BeginBareValue(value);
+                    return;
+                case ParseState.BareValue:
+                    ObserveBareValue(value);
+                    return;
+                case ParseState.AfterValue:
+                    if (IsWhitespace(value)) return;
+                    if (value == (byte)',')
+                    {
+                        pendingKey = null;
+                        state = ParseState.KeyOrEnd;
+                        return;
+                    }
+                    if (value == (byte)'}')
+                    {
+                        pendingKey = null;
+                        state = ParseState.Done;
+                        return;
+                    }
+                    state = ParseState.Invalid;
+                    return;
+                case ParseState.Done:
+                    if (!IsWhitespace(value)) state = ParseState.Invalid;
+                    return;
+            }
+        }
+
+        public bool TryCreateOversizedRecord(long recordBytes, out OversizedJournalRecord? record)
+        {
+            record = null;
+            return state == ParseState.Done
+                && long.TryParse(realtimeTimestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var microseconds)
+                && OversizedJournalRecord.TryCreate(cursor, bootId, microseconds, recordBytes, out record);
+        }
+
+        private void BeginString(bool isKey)
+        {
+            inString = true;
+            stringEscape = false;
+            readingKey = isKey;
+            captureString = isKey || IsMetadataKey(pendingKey);
+            tokenOverflow = false;
+            token.Clear();
+            tokenLimit = isKey ? MaxKeyBytes : pendingKey switch
+            {
+                "__CURSOR" => MaxCursorBytes,
+                "_BOOT_ID" => MaxBootIdBytes,
+                "__REALTIME_TIMESTAMP" => MaxTimestampBytes,
+                _ => 0
+            };
+        }
+
+        private void ObserveString(byte value)
+        {
+            if (stringEscape)
+            {
+                AppendToken(value);
+                stringEscape = false;
+                return;
+            }
+            if (value == (byte)'\\')
+            {
+                AppendToken(value);
+                stringEscape = true;
+                return;
+            }
+            if (value != (byte)'"')
+            {
+                AppendToken(value);
+                return;
+            }
+
+            inString = false;
+            var decoded = captureString && !tokenOverflow ? DecodeJsonString(token) : null;
+            if (readingKey)
+            {
+                pendingKey = decoded;
+                state = decoded is null ? ParseState.Invalid : ParseState.Colon;
+                return;
+            }
+
+            StoreMetadata(decoded);
+            pendingKey = null;
+            state = ParseState.AfterValue;
+        }
+
+        private void BeginBareValue(byte value)
+        {
+            token.Clear();
+            tokenOverflow = false;
+            tokenLimit = MaxTimestampBytes;
+            captureString = string.Equals(pendingKey, "__REALTIME_TIMESTAMP", StringComparison.Ordinal);
+            state = ParseState.BareValue;
+            ObserveBareValue(value);
+        }
+
+        private void ObserveBareValue(byte value)
+        {
+            if (value is (byte)',' or (byte)'}')
+            {
+                var decoded = captureString && !tokenOverflow
+                    ? Encoding.ASCII.GetString(token.ToArray()).Trim()
+                    : null;
+                StoreMetadata(decoded);
+                pendingKey = null;
+                state = value == (byte)',' ? ParseState.KeyOrEnd : ParseState.Done;
+                return;
+            }
+            AppendToken(value);
+        }
+
+        private void ObserveComposite(byte value)
+        {
+            if (compositeInString)
+            {
+                if (compositeEscape)
+                {
+                    compositeEscape = false;
+                    return;
+                }
+                if (value == (byte)'\\')
+                {
+                    compositeEscape = true;
+                    return;
+                }
+                if (value == (byte)'"') compositeInString = false;
+                return;
+            }
+
+            if (value == (byte)'"')
+            {
+                compositeInString = true;
+                return;
+            }
+            if (value is (byte)'{' or (byte)'[') compositeDepth++;
+            else if (value is (byte)'}' or (byte)']') compositeDepth--;
+            if (compositeDepth != 0) return;
+            pendingKey = null;
+            state = ParseState.AfterValue;
+        }
+
+        private void AppendToken(byte value)
+        {
+            if (!captureString || tokenOverflow) return;
+            if (token.Count >= tokenLimit)
+            {
+                tokenOverflow = true;
+                token.Clear();
+                return;
+            }
+            token.Add(value);
+        }
+
+        private void StoreMetadata(string? value)
+        {
+            if (value is null) return;
+            switch (pendingKey)
+            {
+                case "__CURSOR": cursor = value; break;
+                case "_BOOT_ID": bootId = value; break;
+                case "__REALTIME_TIMESTAMP": realtimeTimestamp = value; break;
+            }
+        }
+
+        private static string? DecodeJsonString(List<byte> raw)
+        {
+            var encoded = new byte[raw.Count + 2];
+            encoded[0] = (byte)'"';
+            raw.CopyTo(encoded, 1);
+            encoded[^1] = (byte)'"';
+            try { return JsonSerializer.Deserialize<string>(encoded); }
+            catch (JsonException) { return null; }
+        }
+
+        private static bool IsMetadataKey(string? key) => key is "__CURSOR" or "_BOOT_ID" or "__REALTIME_TIMESTAMP";
+        private static bool IsWhitespace(byte value) => value is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n';
+
+        private enum ParseState
+        {
+            Start,
+            KeyOrEnd,
+            Colon,
+            Value,
+            BareValue,
+            Composite,
+            AfterValue,
+            Done,
+            Invalid
+        }
     }
 
     private static async Task<string> ReadDiagnosticAsync(StreamReader reader, int maxBytes, CancellationToken cancellationToken)

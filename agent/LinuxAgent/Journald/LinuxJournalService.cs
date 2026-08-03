@@ -103,6 +103,7 @@ public sealed class LinuxJournalService(
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var pendingL1 = new List<NormalizedJournalRecord>();
+        var pendingOversized = new List<OversizedJournalRecord>();
         async Task FlushPendingL1Async()
         {
             if (pendingL1.Count == 0) return;
@@ -128,8 +129,42 @@ public sealed class LinuxJournalService(
             pendingL1.Clear();
         }
 
-        foreach (var raw in result.Records)
+        async Task FlushPendingOversizedAsync()
         {
+            if (pendingOversized.Count == 0) return;
+            await runtime.RecordOversizedBatchAsync(pendingOversized, cancellationToken);
+            cursor = pendingOversized[^1].Cursor;
+            pendingOversized.Clear();
+        }
+
+        foreach (var input in result.Records)
+        {
+            if (input.Oversized is { } oversized)
+            {
+                await FlushPendingL1Async();
+                if (!oversized.HasValidIdentity())
+                {
+                    await FlushPendingOversizedAsync();
+                    runtime.RecordMalformed("journal_oversized_identity_missing");
+                    return cursor;
+                }
+                pendingOversized.Add(oversized);
+                continue;
+            }
+            if (input.UnrecoverableOversizedBytes.HasValue)
+            {
+                await FlushPendingL1Async();
+                await FlushPendingOversizedAsync();
+                runtime.RecordMalformed("journal_oversized_identity_missing");
+                return cursor;
+            }
+
+            await FlushPendingOversizedAsync();
+            if (input.RawJson is not { } raw)
+            {
+                runtime.RecordMalformed("journal_record_malformed");
+                continue;
+            }
             if (LinuxAuditRouter.IsAuditTransport(raw))
             {
                 await FlushPendingL1Async();
@@ -172,6 +207,7 @@ public sealed class LinuxJournalService(
             pendingL1.Add(record);
         }
         await FlushPendingL1Async();
+        await FlushPendingOversizedAsync();
         await runtime.RecordSuccessfulReadObservationAsync(cancellationToken);
         await auditRouter.RecordSuccessfulPhysicalReadAsync(cancellationToken);
         if (await auditRouter.TryCreateQuietRecoveryAsync(options.AgentId, Environment.MachineName, queueDepth, cancellationToken) is { } recovery)

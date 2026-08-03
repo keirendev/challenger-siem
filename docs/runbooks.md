@@ -73,6 +73,45 @@ remaining blind spots. After 24 hours, remove only a verified validation-specifi
 memory-limit override when RSS p95 is below 175 MiB, no OOM/restart occurred, and the
 tracked 250 MiB limit retains adequate headroom; preserve TLS and a recoverable backup.
 
+## 2.4.1 agent-only oversized-journal recovery rollout
+
+Preparing or reviewing this patch does not authorize deployment or a service restart.
+Activation requires separate operator approval naming the endpoint, maintenance window,
+candidate artifact, agent-only restart, verification window, and exact rollback artifact.
+
+1. Pass the synthetic Linux journal suite, full solution build/test, contract validation,
+   repository-safety validation, and shell syntax checks. Confirm the greater-than-128-KiB
+   parser case, 500-record omission burst, persisted restart, next-cursor resume, and
+   recovery-state transition all pass without real journal fixtures.
+2. Under ignored private storage, retain exact rollback copies and hashes for the installed
+   agent artifact and protected configuration. Record only secret-safe aggregates for
+   service state, restart count, heartbeat age, queue depth/bytes, collected-versus-
+   acknowledged position presence, active/cumulative gaps, and oversized counters. Do not
+   print cursor values, boot IDs, raw records, settings, credentials, or queue/state content.
+3. Stage only the 2.4.1 agent artifact. Do not change the API, database, `/api/v2`,
+   `contracts/v2`, journal scope/retention, producer logging, configuration, credentials,
+   permissions, groups, ACLs, capabilities, audit policy, firewall, authentication, kernel,
+   or MAC policy. Complete the authenticated versioned-route preflight before replacement.
+4. After the separate activation approval, replace only the agent artifact while preserving
+   its configuration, queue, state, TLS trust, systemd unit/drop-ins, and ownership/modes;
+   restart only the Challenger SIEM agent within the approved window.
+5. Verify a fresh heartbeat, stable single service instance/restart count, available queue
+   delivery, no poison/drop increase, and cursor advancement beyond the omission burst.
+   Source health must show bounded omitted-record/byte counters, an explicit
+   `oversized_record_omitted` gap, and recovery after a later clean poll; omitted content
+   must produce no event or source-family evidence. Keep L4 failed while any applicable
+   journal gap remains active.
+6. Stop and roll back if the cursor does not advance within two normal poll intervals,
+   heartbeat/queue delivery regresses, state cannot be persisted, the service loops,
+   omission counters grow unexpectedly, content appears in telemetry, or mandatory source
+   health remains worse after the bounded recovery window. Preserve queue/state and logs;
+   do not clear the journal, reset cursors, delete runtime data, or widen access. Restoring
+   the prior artifact and performing the agent-only restart also require the approved
+   rollback authority.
+7. Perform read-only checks after 15 minutes and 24 hours. Report only sanitized aggregate
+   availability, queue, gap/recovery, omission, restart, and coverage results; keep all live
+   evidence under ignored or approved private storage.
+
 ## Incident safety
 
 The SIEM does not execute endpoint response commands. Reboots, service changes, firewall/authentication changes, package changes, and data deletion require a separate authorized host procedure. Keep all real evidence under ignored local or approved runtime paths.

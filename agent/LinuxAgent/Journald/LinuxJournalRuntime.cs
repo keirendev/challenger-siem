@@ -15,6 +15,7 @@ public sealed class LinuxJournalRuntime(
     TimeProvider timeProvider,
     LinuxAuditRouterRuntime? auditRouterRuntime = null) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
 {
+    private const string OversizedGapState = "oversized_record_omitted";
     private static readonly IReadOnlySet<string> AcknowledgedSourceIds = LinuxTelemetrySourceCatalog.All
         .Where(entry => entry.SourceKind is TelemetrySourceKinds.LinuxJournal or TelemetrySourceKinds.LinuxAudit)
         .Select(entry => entry.SourceId)
@@ -44,6 +45,8 @@ public sealed class LinuxJournalRuntime(
     private long reorderedCount;
     private long malformedCount;
     private long binaryOrInvalidTextCount;
+    private long oversizedRecordCount;
+    private long oversizedRecordBytes;
     private long collectedCount;
     private DateTimeOffset? firstCollectedAt;
     private DateTimeOffset? latestEvent;
@@ -67,6 +70,14 @@ public sealed class LinuxJournalRuntime(
     public async Task InitializeAsync(string sourceVersion, string sourceConfigHash, CancellationToken cancellationToken)
     {
         var loaded = await state.ReadJournalAsync(cancellationToken);
+        loaded = loaded with
+        {
+            OversizedRecordCount = Math.Max(0, loaded.OversizedRecordCount),
+            OversizedRecordBytes = Math.Max(0, loaded.OversizedRecordBytes),
+            LastOversizedRecord = loaded.LastOversizedRecord?.HasValidIdentity() == true
+                ? loaded.LastOversizedRecord
+                : null
+        };
         var configuredScope = LinuxJournalScopes.Configured(options.Journal);
         var priorScope = loaded.ConfiguredScope ?? LinuxJournalScopes.SystemOnly;
         scopeTransition = string.Equals(priorScope, configuredScope, StringComparison.Ordinal)
@@ -81,10 +92,15 @@ public sealed class LinuxJournalRuntime(
             checkpoint = loaded;
             version = sourceVersion;
             configHash = sourceConfigHash;
-            latestEvent = loaded.CollectedEventTime;
-            if (loaded.CollectedEventTime.HasValue)
+            latestEvent = string.Equals(
+                    loaded.LastOversizedRecord?.Cursor,
+                    loaded.CollectedCursor,
+                    StringComparison.Ordinal)
+                ? loaded.AcknowledgedEventTime
+                : loaded.CollectedEventTime;
+            if (latestEvent.HasValue)
             {
-                latestBySource[LinuxTelemetrySourceIds.JournalL1] = loaded.CollectedEventTime.Value;
+                latestBySource[LinuxTelemetrySourceIds.JournalL1] = latestEvent.Value;
             }
             sourceState = loaded.CollectedCursor is null ? "empty" : "restarted";
             lastSuccessfulReadAt = loaded.LastSuccessfulReadAt;
@@ -92,6 +108,8 @@ public sealed class LinuxJournalRuntime(
             gap = loaded.ActiveGap;
             gapState = string.IsNullOrWhiteSpace(loaded.GapState) ? "none" : loaded.GapState;
             cumulativeGapCount = Math.Max(0, loaded.CumulativeGapCount);
+            oversizedRecordCount = loaded.OversizedRecordCount;
+            oversizedRecordBytes = loaded.OversizedRecordBytes;
             foreach (var sourceId in loaded.ObservedSourceIds ?? Array.Empty<string>()) observedSources.Add(sourceId);
             foreach (var pair in loaded.ObservedFamilies ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal))
                 observedFamilies[pair.Key] = pair.Value.ToHashSet(StringComparer.Ordinal);
@@ -143,6 +161,93 @@ public sealed class LinuxJournalRuntime(
 
     public Task RecordCollectedAsync(NormalizedJournalRecord record, CancellationToken cancellationToken) =>
         RecordCollectedBatchAsync([record], cancellationToken);
+
+    public async Task RecordOversizedBatchAsync(
+        IReadOnlyList<OversizedJournalRecord> records,
+        CancellationToken cancellationToken)
+    {
+        if (records.Count == 0) return;
+        if (records.Any(record => !record.HasValidIdentity()))
+            throw new ArgumentException("Oversized journal metadata must contain a bounded cursor, boot ID, time, and size.", nameof(records));
+
+        bool clearObservedEvidence;
+        bool priorGap;
+        string priorGapState;
+        long priorGapCount;
+        long nextGapCount;
+        long nextOversizedCount;
+        long nextOversizedBytes;
+        var batchBytes = records.Aggregate(0L, (total, record) => SaturatingAdd(total, record.RecordBytes));
+        lock (sync)
+        {
+            clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+            priorGap = gap;
+            priorGapState = gapState;
+            priorGapCount = cumulativeGapCount;
+            nextGapCount = !gap || gapState != OversizedGapState
+                ? SaturatingAdd(cumulativeGapCount, 1)
+                : cumulativeGapCount;
+            nextOversizedCount = SaturatingAdd(oversizedRecordCount, records.Count);
+            nextOversizedBytes = SaturatingAdd(oversizedRecordBytes, batchBytes);
+        }
+
+        var configuredScope = LinuxJournalScopes.Configured(options.Journal);
+        await state.WriteOversizedJournalBatchAsync(
+            records: records,
+            activeGap: true,
+            gapState: OversizedGapState,
+            cumulativeGapCount: nextGapCount,
+            oversizedRecordCount: nextOversizedCount,
+            oversizedRecordBytes: nextOversizedBytes,
+            configuredScope: configuredScope,
+            clearObservedEvidence: clearObservedEvidence,
+            cancellationToken: cancellationToken);
+
+        lock (sync)
+        {
+            if (clearObservedEvidence) ClearObservedEvidence();
+            var last = records[^1];
+            oversizedRecordCount = nextOversizedCount;
+            oversizedRecordBytes = nextOversizedBytes;
+            checkpoint = checkpoint with
+            {
+                CollectedCursor = last.Cursor,
+                CollectedEventTime = last.EventTime,
+                ActiveGap = true,
+                GapState = OversizedGapState,
+                CumulativeGapCount = nextGapCount,
+                ConfiguredScope = configuredScope,
+                OversizedRecordCount = nextOversizedCount,
+                OversizedRecordBytes = nextOversizedBytes,
+                LastOversizedRecord = last,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : checkpoint.ObservedFamilies
+            };
+            clearObservedEvidenceOnScopeApply = false;
+            var continuityUnchanged = gap == priorGap
+                && string.Equals(gapState, priorGapState, StringComparison.Ordinal)
+                && cumulativeGapCount == priorGapCount;
+            if (continuityUnchanged)
+            {
+                gap = true;
+                gapState = OversizedGapState;
+                cumulativeGapCount = nextGapCount;
+                sourceState = "collecting_with_omissions";
+                status = SourceHealthStatuses.Stale;
+                errorCode = $"journal_{OversizedGapState}_gap";
+                transitionedAt = timeProvider.GetUtcNow();
+                transitionState = HealthTransitionStates.Degraded;
+            }
+            else if (!priorGap || priorGapState != OversizedGapState)
+            {
+                // Preserve a concurrently reported, potentially more severe continuity state
+                // while still accounting for this separately persisted omission incident.
+                cumulativeGapCount = SaturatingAdd(cumulativeGapCount, 1);
+            }
+        }
+    }
 
     public async Task RecordCollectedBatchAsync(
         IReadOnlyList<NormalizedJournalRecord> records,
@@ -317,6 +422,8 @@ public sealed class LinuxJournalRuntime(
 
     public void RecordReadResult(JournalReadResult result)
     {
+        var containsOversizedInput = result.Records.Any(record =>
+            record.Oversized is not null || record.UnrecoverableOversizedBytes.HasValue);
         lock (sync)
         {
             throttled = false;
@@ -354,7 +461,10 @@ public sealed class LinuxJournalRuntime(
                 lastSuccessfulReadAt = timeProvider.GetUtcNow();
                 if (scopeTransition is "pending_expansion" or "pending_contraction" or "reset")
                     scopeTransition = "recovered";
-                if (gap && checkpoint.CollectedCursor is not null && result.GapKind == JournalGapKind.None)
+                if (gap
+                    && checkpoint.CollectedCursor is not null
+                    && result.GapKind == JournalGapKind.None
+                    && !containsOversizedInput)
                 {
                     gap = false;
                     gapState = "none";
@@ -417,9 +527,13 @@ public sealed class LinuxJournalRuntime(
             lastSuccessfulReadAt = observedAt;
             configuredScope = LinuxJournalScopes.Configured(options.Journal);
             clearObservedEvidence = clearObservedEvidenceOnScopeApply;
+            var continuityStateChanged = checkpoint.ActiveGap != gap
+                || !string.Equals(checkpoint.GapState, gapState, StringComparison.Ordinal)
+                || checkpoint.CumulativeGapCount != cumulativeGapCount;
             if (lastPersistedSuccessfulReadAt.HasValue
                 && observedAt - lastPersistedSuccessfulReadAt.Value < TimeSpan.FromMinutes(1)
                 && string.Equals(checkpoint.ConfiguredScope, configuredScope, StringComparison.Ordinal)
+                && !continuityStateChanged
                 && !clearObservedEvidence) return;
             lastPersistedSuccessfulReadAt = observedAt;
             activeGap = gap;
@@ -440,6 +554,9 @@ public sealed class LinuxJournalRuntime(
             checkpoint = checkpoint with
             {
                 LastSuccessfulReadAt = observedAt,
+                ActiveGap = activeGap,
+                GapState = currentGapState,
+                CumulativeGapCount = gapCount,
                 ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : checkpoint.ObservedSourceIds,
                 ObservedFamilies = clearObservedEvidence
                     ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
@@ -583,6 +700,14 @@ public sealed class LinuxJournalRuntime(
             ["scope_transition"] = scopeTransition,
             ["collector_version"] = version
         };
+        if (!auditSource)
+        {
+            details["oversized_records"] = oversizedRecordCount.ToString(CultureInfo.InvariantCulture);
+            details["oversized_record_bytes"] = oversizedRecordBytes.ToString(CultureInfo.InvariantCulture);
+            details["oversized_content_handling"] = "omitted";
+            details["last_oversized_record_bytes"] = checkpoint.LastOversizedRecord?.RecordBytes.ToString(CultureInfo.InvariantCulture) ?? "not_observed";
+            details["last_oversized_event_time"] = checkpoint.LastOversizedRecord?.EventTime.ToString("O", CultureInfo.InvariantCulture) ?? "not_observed";
+        }
         if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement)
         {
             details["package_manager_inventory_state"] = packageManagementInventory.State;
@@ -1236,6 +1361,9 @@ public sealed class LinuxJournalRuntime(
         EventTime = time,
         RecordedAt = time
     };
+
+    private static long SaturatingAdd(long left, long right) =>
+        left <= 0 ? Math.Max(0, right) : right <= 0 ? left : left > long.MaxValue - right ? long.MaxValue : left + right;
 
     private static string ToGapState(JournalGapKind kind) => kind switch
     {

@@ -163,7 +163,7 @@ Each drill needs explicit approval before it changes service availability or hos
 | Journal rotation/vacuum | Prefer naturally occurring rotation. Do not force journal retention changes by default. | Required for any forced rotation/vacuum. | Rotation or cursor invalidation is explicit; recovery records a gap rather than silent loss. |
 | Permission loss/recovery | Prefer naturally observed denied state or synthetic tests. Do not change groups/ACLs by default. | Required for any deliberate permission change and exact rollback. | `permission_denied` appears without privilege escalation; restored access reports recovery without hidden mutation. |
 | Disk/queue pressure | Prefer bounded API outage and normal workload. Do not fill disks or run unbounded benchmarks. | Required for any workload generator or quota change. | Optional sources pause before mandatory sources; heartbeat/queue integrity remain; pressure state and recovery are explicit. |
-| Journal malformed/oversized data | Use hand-authored synthetic tests, not live log injection, unless separately approved. | Required for producer changes or log injection. | Malformed/binary/oversized records produce bounded health/gap metadata without raw payload publication. |
+| Journal malformed/oversized data | Use hand-authored synthetic tests, not live log injection, unless separately approved. | Required for producer changes or log injection. | Malformed/binary records produce bounded health/gap metadata; oversized content is omitted, a contiguous burst records one durable gap and cumulative omission counters, its validated cursor advances, and no raw payload is published. |
 
 ## L3 opt-in guardrails
 

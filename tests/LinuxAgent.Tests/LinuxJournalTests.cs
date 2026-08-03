@@ -85,6 +85,124 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public async Task OversizedReaderPreservesBoundedIdentityAfterDiscardingContent()
+    {
+        const int inputLimit = 128 * 1024;
+        const string cursor = "s=synthetic;i=oversized;b=fake";
+        const string bootId = "00000000000000000000000000000042";
+        const long timestamp = 1783944000123456;
+        var raw = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["MESSAGE"] = new string('x', inputLimit + 1024)
+                + " embedded untrusted text: \"__CURSOR\":\"s=forged\"",
+            ["_SYSTEMD_USER_UNIT"] = "synthetic-producer.service",
+            ["__CURSOR"] = cursor,
+            ["__REALTIME_TIMESTAMP"] = timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["_BOOT_ID"] = bootId
+        });
+        var encoded = Encoding.UTF8.GetBytes(raw + "\n");
+        await using var stream = new MemoryStream(encoded);
+
+        var (records, limitReached) = await LinuxJournalProcessSource.ReadBoundedRecordsAsync(
+            stream,
+            maxRecords: 10,
+            maxRecordBytes: inputLimit,
+            default);
+
+        var input = Assert.Single(records);
+        Assert.False(limitReached);
+        Assert.Null(input.RawJson);
+        Assert.Null(input.UnrecoverableOversizedBytes);
+        var omitted = Assert.IsType<OversizedJournalRecord>(input.Oversized);
+        Assert.Equal(cursor, omitted.Cursor);
+        Assert.Equal(bootId, omitted.BootId);
+        Assert.Equal(timestamp, omitted.RealtimeMicroseconds);
+        Assert.Equal(encoded.LongLength - 1, omitted.RecordBytes);
+        Assert.True(omitted.RecordBytes > inputLimit);
+    }
+
+    [Fact]
+    public async Task OversizedBurstCreatesOneDurableGapAndResumesAfterItsLastCursor()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var queue = CreateQueue(temporary.Queue);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        const string startingCursor = "s=synthetic;i=0;b=fake";
+        var oversized = Enumerable.Range(1, 500)
+            .Select(index => JournalInputRecord.OmitOversized(OversizedRecord(index)))
+            .ToArray();
+        var source = new RecordingSource(new JournalReadResult(JournalReadStatus.Success, oversized));
+
+        var cursor = await Service(options, source, runtime, queue).CollectOnceAsync(startingCursor, default);
+
+        Assert.Equal("s=synthetic;i=500;b=fake", cursor);
+        Assert.Equal([startingCursor], source.AfterCursors);
+        Assert.Equal(0, await queue.CountAsync(default));
+        var persisted = await state.ReadJournalAsync(default);
+        Assert.Equal(cursor, persisted.CollectedCursor);
+        Assert.True(persisted.ActiveGap);
+        Assert.Equal("oversized_record_omitted", persisted.GapState);
+        Assert.Equal(1, persisted.CumulativeGapCount);
+        Assert.Equal(500, persisted.OversizedRecordCount);
+        Assert.Equal(500L * (128 * 1024 + 1024), persisted.OversizedRecordBytes);
+        Assert.Equal("00000000000000000000000000000042", persisted.LastOversizedRecord?.BootId);
+        Assert.Equal(cursor, persisted.LastOversizedRecord?.Cursor);
+        Assert.Equal(1783944000000500L, persisted.LastOversizedRecord?.RealtimeMicroseconds);
+        var health = L1Health(runtime);
+        Assert.Equal(SourceHealthStatuses.Error, health.Status);
+        Assert.Equal("journal_oversized_record_omitted_gap", health.ErrorCode);
+        Assert.Equal("0", health.Details["malformed_records"]);
+        Assert.Equal("500", health.Details["oversized_records"]);
+        Assert.Equal("omitted", health.Details["oversized_content_handling"]);
+
+        var restarted = Runtime(options, new LinuxStateStore(temporary.State));
+        await restarted.InitializeAsync("test", "config", default);
+        var recoverySource = new RecordingSource(new JournalReadResult(
+            JournalReadStatus.Success,
+            [Record("s=synthetic;i=501;b=fake", 1783944001000000, "bounded recovery")]));
+        var recoveredCursor = await Service(options, recoverySource, restarted, queue)
+            .CollectOnceAsync(restarted.CollectedCursor, default);
+
+        Assert.Equal([cursor], recoverySource.AfterCursors);
+        Assert.Equal("s=synthetic;i=501;b=fake", recoveredCursor);
+        Assert.Equal(1, await queue.CountAsync(default));
+        var recoveredState = await new LinuxStateStore(temporary.State).ReadJournalAsync(default);
+        Assert.False(recoveredState.ActiveGap);
+        Assert.Equal("none", recoveredState.GapState);
+        Assert.Equal(1, recoveredState.CumulativeGapCount);
+        Assert.Equal(500, recoveredState.OversizedRecordCount);
+        Assert.False(L1Health(restarted).GapDetected);
+    }
+
+    [Fact]
+    public async Task AdjacentOversizedPollsRemainOneContinuityGap()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var source = new RecordingSource(
+            new JournalReadResult(JournalReadStatus.Success, [JournalInputRecord.OmitOversized(OversizedRecord(1))]),
+            new JournalReadResult(JournalReadStatus.Success, [JournalInputRecord.OmitOversized(OversizedRecord(2))]));
+        var service = Service(options, source, runtime, CreateQueue(temporary.Queue));
+
+        var cursor = await service.CollectOnceAsync("s=synthetic;i=0;b=fake", default);
+        cursor = await service.CollectOnceAsync(cursor, default);
+
+        Assert.Equal("s=synthetic;i=2;b=fake", cursor);
+        Assert.Equal(1, L1Health(runtime).GapCount);
+        Assert.Equal("2", L1Health(runtime).Details["oversized_records"]);
+        var persisted = await state.ReadJournalAsync(default);
+        Assert.Equal(1, persisted.CumulativeGapCount);
+        Assert.Equal(2, persisted.OversizedRecordCount);
+        Assert.True(persisted.ActiveGap);
+    }
+
+    [Fact]
     public void NormalizationIsBoundedRedactedClassifiedAndServerCompatible()
     {
         var records = FixtureRecords();
@@ -713,9 +831,35 @@ public sealed class LinuxJournalTests
         ["MESSAGE"] = message
     });
 
+    private static OversizedJournalRecord OversizedRecord(int index)
+    {
+        Assert.True(OversizedJournalRecord.TryCreate(
+            $"s=synthetic;i={index};b=fake",
+            "00000000000000000000000000000042",
+            1783944000000000L + index,
+            128 * 1024 + 1024,
+            out var record));
+        return record!;
+    }
+
     private sealed class FakeSource(JournalReadResult result) : ILinuxJournalSource
     {
         public Task<JournalReadResult> ReadAsync(string? afterCursor, int maxRecords, int maxRecordBytes, CancellationToken cancellationToken) => Task.FromResult(result);
+    }
+    private sealed class RecordingSource(params JournalReadResult[] results) : ILinuxJournalSource
+    {
+        private readonly Queue<JournalReadResult> pending = new(results);
+        public List<string?> AfterCursors { get; } = new();
+
+        public Task<JournalReadResult> ReadAsync(
+            string? afterCursor,
+            int maxRecords,
+            int maxRecordBytes,
+            CancellationToken cancellationToken)
+        {
+            AfterCursors.Add(afterCursor);
+            return Task.FromResult(pending.Dequeue());
+        }
     }
     private sealed class TemporaryPaths : IDisposable
     {

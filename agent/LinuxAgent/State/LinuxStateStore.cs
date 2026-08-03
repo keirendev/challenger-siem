@@ -84,6 +84,41 @@ public sealed class LinuxStateStore(string path)
         }, cancellationToken);
     }
 
+    public async Task WriteOversizedJournalBatchAsync(
+        IReadOnlyList<OversizedJournalRecord> records,
+        bool activeGap,
+        string gapState,
+        long cumulativeGapCount,
+        long oversizedRecordCount,
+        long oversizedRecordBytes,
+        string configuredScope,
+        bool clearObservedEvidence,
+        CancellationToken cancellationToken)
+    {
+        if (records.Count == 0) return;
+        await UpdateAsync(state =>
+        {
+            var last = records[^1];
+            var journal = (state.Journal ?? new()) with
+            {
+                CollectedCursor = last.Cursor,
+                CollectedEventTime = last.EventTime,
+                ActiveGap = activeGap,
+                GapState = gapState,
+                CumulativeGapCount = cumulativeGapCount,
+                ConfiguredScope = configuredScope,
+                OversizedRecordCount = oversizedRecordCount,
+                OversizedRecordBytes = oversizedRecordBytes,
+                LastOversizedRecord = last,
+                ObservedSourceIds = clearObservedEvidence ? Array.Empty<string>() : state.Journal?.ObservedSourceIds,
+                ObservedFamilies = clearObservedEvidence
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    : state.Journal?.ObservedFamilies
+            };
+            return state with { Journal = journal };
+        }, cancellationToken);
+    }
+
     public async Task WriteJournalReadObservationAsync(
         DateTimeOffset observedAt,
         bool activeGap,
