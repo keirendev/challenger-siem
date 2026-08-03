@@ -49,9 +49,9 @@ The preferred future architecture separates a low-privilege core from narrowly p
 
 | Component | Default boundary | Permitted responsibility |
 | --- | --- | --- |
-| Core agent | Dedicated locked service account, no login shell, no reusable password, restrictive umask | Normalize already-readable records, redact, queue, send, heartbeat |
+| Core agent | Dedicated locked service account, no login shell, no reusable password, restrictive umask; empty capabilities by default | Normalize already-readable records, redact, queue, send, heartbeat |
 | Source adapters | Same account where group/ACL read access suffices; otherwise narrowly isolated helper | Read only declared journal/files/status interfaces; return bounded records |
-| Optional privileged helper | Absent by default; fixed audited operations only after approval | Open an approved protected source or attach an approved advanced collector; no shell or arbitrary path/command API |
+| Optional process-visibility profile | Absent by default; non-root service with only `CAP_SYS_PTRACE`, fixed procfs readers, and direct ptrace/process-memory/performance syscalls denied | Satisfy Linux cross-user procfs executable/link access checks after separate plan/configuration/activation approval |
 | Installer/upgrader | Temporary administrative execution with reviewed plan | Verify package and pre-existing locked identity, create product directories/unit, set exact permissions; relinquish privileges after completion |
 
 Requirements for future implementation:
@@ -64,7 +64,7 @@ Requirements for future implementation:
 - Agent directories must be root-owned where needed and inaccessible to unrelated users. The service identity receives only the minimum read/write access: read approved sources/config, write its private queue/state/runtime logs, and no write access to source logs or security policy.
 - Queue databases, checkpoints, config, credentials, and diagnostic logs require restrictive ownership/modes and symlink-safe, atomic file handling. Secrets must use an OS-appropriate protected credential mechanism; plaintext command-line arguments and environment-value dumps are forbidden.
 - Package/update artifacts must be signed and verified before privileged installation. Downgrades and unexpected publisher/config changes must be explicit operator actions.
-- systemd hardening (or init-system equivalent) denies privilege escalation, empties capability sets, restricts namespaces/filesystems/devices/syscalls, isolates temporary paths, and bounds memory/tasks, subject to validation against required collectors. The .NET JIT requires executable-memory transitions, so `MemoryDenyWriteExecute` is intentionally not set; disposable Debian validation proved that directive crashes the otherwise healthy self-contained service. This residual runtime boundary does not grant a Linux capability or writable executable file path.
+- systemd hardening (or init-system equivalent) denies privilege escalation, empties capability sets by default, restricts namespaces/filesystems/devices/syscalls, isolates temporary paths, and bounds memory/tasks, subject to validation against required collectors. The optional process-visibility drop-in replaces the empty capability set with exactly `CAP_SYS_PTRACE` and denies direct ptrace/process-memory/kcmp/pidfd/performance-event syscalls. The .NET JIT requires executable-memory transitions, so `MemoryDenyWriteExecute` is intentionally not set; disposable Debian validation proved that directive crashes the otherwise healthy self-contained service.
 - Routine `System.Net.Http.HttpClient` information logs are suppressed inside the endpoint process while warnings/errors remain visible. Otherwise a journal-reading agent would recollect its own successful heartbeat/ingest request logs, produce more requests, and sustain a queue/event feedback loop.
 - Repeated transport and journal-cycle failures are represented continuously in queue/source-health state but emit at most one warning per minute per loop. Queue-allocation warnings are limited to once per five minutes. This preserves diagnostics without turning an outage or full queue into its own high-rate journal source.
 
@@ -87,7 +87,7 @@ suppression metadata. Enabled parsing requires either the legacy
 `systemd_journal_audit_v1` system-only interface or the separately reviewed
 `systemd_journal_audit_v2` shared-scope interface, an explicit existing-facility
 declaration, and an exact approval hash. V2 also requires fresh trusted health from a
-separate root one-shot unit; the main agent remains non-root with no capabilities.
+separate root one-shot unit; the main agent remains non-root with no audit capability and either the default empty capability set or the separately approved process-only `CAP_SYS_PTRACE` profile.
 
 The compound assembler retains only allowlisted normalized fields. Raw messages,
 arguments, proctitles, environments, TTY data, and unknown fields are discarded before
@@ -112,7 +112,7 @@ The agent observes high-level package/update, network listener, firewall, SSH, m
 
 ## Implemented L3 self-integrity snapshot controls
 
-The `linux-agent-self-integrity-snapshot` source is disabled by default and cannot be enabled by installation, enrollment, `TargetCoverageLevel`, or missing coverage. It runs only when `Agent:SelfIntegrity:Enabled=true` and `ApprovedPlanHash` exactly matches the non-mutating plan hash for the built-in allowlist and limits. The preflight plan reports platform support, exact allowlist entries, missing/denied/type/oversize findings, privacy/resource impact, sequencing/loss/pressure behavior, and rollback without changing files, permissions, groups, capabilities, packages, services, audit, firewall, authentication, kernel, MAC policy, or journal retention.
+The `linux-agent-self-integrity-snapshot` source is disabled by default and cannot be enabled by installation, enrollment, `TargetCoverageLevel`, or missing coverage. It runs only when `Agent:SelfIntegrity:Enabled=true` and `ApprovedPlanHash` exactly matches the non-mutating plan hash for the built-in allowlist and limits. The allowlist includes the optional process-visibility drop-in so its addition, change, deletion, mode, owner, and bounded digest are explicit telemetry. The preflight plan reports platform support, exact allowlist entries, missing/denied/type/oversize findings, privacy/resource impact, sequencing/loss/pressure behavior, and rollback without itself changing files, permissions, groups, capabilities, packages, services, audit, firewall, authentication, kernel, MAC policy, or journal retention.
 
 The allowlist is literal and agent-owned: the published Linux agent executable and systemd unit receive no-follow regular-file metadata plus bounded streaming SHA-256; the credential-bearing `agentsettings.json` receives metadata only; `/etc/challenger-siem-agent/` and `/var/lib/challenger-siem-agent/` receive directory owner/group/mode/type metadata only. There is no recursion, arbitrary path configuration, symlink following, hard-link acceptance for hashed files, device/FIFO/socket handling, secret-store access, package database hashing, browser/profile/history access, or file-content emission. Denied, missing, unsupported type, oversize, timeout, and pressure conditions become source health or bounded `agent_health` records, not permission to broaden access.
 
@@ -120,7 +120,7 @@ Self-integrity emits v2 `agent_health` events with deterministic sequence checkp
 
 ## Implemented L3 passive procfs controls
 
-The process/network/behaviour pack is also disabled by default and requires an exact approval hash over its built-in sources and limits. It reads only fixed procfs files and uses no shell, configurable path, native dependency, kernel program, audit rule, packet socket, unrelated process file-descriptor target, or host-policy mutation. Ordinary permission failures are reported; they are never corrected by adding root, capabilities, groups, ACLs, or a privileged helper.
+The process/network/behaviour pack is also disabled by default and requires an exact approval hash over its built-in sources and limits. It reads only fixed procfs files and uses no shell, configurable path, native dependency, kernel program, audit rule, packet socket, or unrelated process file-descriptor retention. Ordinary permission failures remain explicit. When the plan binds `CrossUserExecutableVisibility=true`, the separately approved lifecycle profile may grant exactly `CAP_SYS_PTRACE` to the non-root service; the agent does not grant it automatically or fall back to root.
 
 Process collection excludes `environ`, memory, maps, stacks, arbitrary syscall data, and unrestricted files. It separates kernel threads and zombies from eligible processes; reports eligible command-line and executable readability ratios; and marks deleted, memfd, temporary execution and a fixed dangerous effective-capability subset. Visibility below 80% with at least ten eligible processes degrades health, while PID reuse/disappearance races remain separate. Command lines are byte/character bounded and passed through shared common credential-pattern sanitation before any durable state or event write. Recognized URI user information, credential assignments/switches, authorization fragments, invalid text, and controls are redacted or omitted; remaining command text is still high-sensitivity telemetry and is never asserted to be secret-free.
 

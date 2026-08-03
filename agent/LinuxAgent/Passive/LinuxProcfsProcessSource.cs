@@ -52,6 +52,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         long visibilityGaps = 0;
         long denied = 0;
         long malformed = 0;
+        long coreMetadataReadFailures = 0;
+        long optionalEnrichmentOmissions = 0;
+        var failureClasses = new Dictionary<string, long>(StringComparer.Ordinal);
         var partial = false;
         var truncated = false;
         var enumeratedProcessCount = 0;
@@ -80,6 +83,11 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 partial = true;
                 visibilityGaps++;
                 if (mountInfo.ErrorCode == "permission_denied") denied++;
+                RecordFailureClass(
+                    failureClasses,
+                    visibilityState == "restricted"
+                        ? "proc_visibility_restricted"
+                        : ReadFailureClass("mountinfo", mountInfo));
             }
 
             var boot = await procfs.ReadTextAsync(
@@ -87,10 +95,11 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 128,
                 budget,
                 token);
-                if (!LinuxBootIdentity.TryHash(boot, out var bootIdentitySha256))
+            if (!LinuxBootIdentity.TryHash(boot, out var bootIdentitySha256))
             {
                 visibilityGaps++;
                 details["boot_identity"] = boot.Success ? "invalid" : boot.ErrorCode;
+                RecordFailureClass(failureClasses, boot.Success ? "boot_identity_invalid" : ReadFailureClass("boot_identity", boot));
                 var status = boot.ErrorCode switch
                 {
                     "permission_denied" => PassiveReadStatuses.PermissionDenied,
@@ -104,7 +113,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     expectedRaceSkips,
                     coverageGapReadSkips,
                     denied + (boot.ErrorCode == "permission_denied" ? 1 : 0),
-                    malformed + (boot.Success ? 1 : 0));
+                    malformed + (boot.Success ? 1 : 0),
+                    optionalEnrichmentOmissions,
+                    failureClasses);
                 SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
                 PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
                 return new(
@@ -142,6 +153,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 skipped++;
                 coverageGapReadSkips++;
                 visibilityGaps++;
+                RecordFailureClass(failureClasses, "process_limit_reached");
             }
             processIds.Sort();
             enumeratedProcessCount = processIds.Count;
@@ -156,6 +168,8 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     skipped += omitted;
                     coverageGapReadSkips += omitted;
                     visibilityGaps += omitted;
+                    coreMetadataReadFailures += omitted;
+                    RecordFailureClass(failureClasses, "read_budget_exhausted", omitted);
                     break;
                 }
 
@@ -163,6 +177,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 var directory = Path.Combine(procRoot, processId.ToString(CultureInfo.InvariantCulture));
                 var statResult = await procfs.ReadTextAsync(Path.Combine(directory, "stat"), 4096, budget, token);
                 if (!statResult.Success
+                    || statResult.Truncated
                     || !TryParseStat(statResult.Text!, out var stat)
                     || stat.ProcessId != processId)
                 {
@@ -176,8 +191,14 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                         partial = true;
                         coverageGapReadSkips++;
                         visibilityGaps++;
+                        coreMetadataReadFailures++;
                         if (statResult.ErrorCode == "permission_denied") denied++;
                         if (statResult.Success || statResult.ErrorCode == "invalid_utf8") malformed++;
+                        RecordFailureClass(
+                            failureClasses,
+                            statResult.Success && !statResult.Truncated
+                                ? "stat_invalid"
+                                : ReadFailureClass("stat", statResult));
                     }
                     continue;
                 }
@@ -220,22 +241,22 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 var noNewPrivileges = ParseBooleanNumber(status.GetValueOrDefault("NoNewPrivs"));
                 var seccomp = ParseInt(status.GetValueOrDefault("Seccomp"));
                 var tracerPid = ParseInt(status.GetValueOrDefault("TracerPid"));
-                var malformedMetadata = HasMalformedStatusMetadata(
+                var malformedStatusMetadata = HasMalformedStatusMetadata(
                     status,
                     userId,
                     groupId,
                     capEff,
                     noNewPrivileges,
                     seccomp,
-                    tracerPid)
-                    || (loginResult.Success
+                    tracerPid);
+                var malformedLoginUserId = loginResult.Success
                         && !string.IsNullOrWhiteSpace(loginResult.Text)
-                        && loginUserId is null)
-                    || statusResult.ErrorCode == "invalid_utf8"
+                        && loginUserId is null;
+                var invalidCoreText = statusResult.ErrorCode == "invalid_utf8"
                     || loginResult.ErrorCode == "invalid_utf8"
                     || cgroupResult.ErrorCode == "invalid_utf8";
                 var verification = await procfs.ReadTextAsync(Path.Combine(directory, "stat"), 4096, budget, token);
-                if (!verification.Success || !TryParseStat(verification.Text!, out var verified))
+                if (!verification.Success || verification.Truncated || !TryParseStat(verification.Text!, out var verified))
                 {
                     skipped++;
                     if (!verification.Success && verification.ErrorCode == "missing")
@@ -247,8 +268,14 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                         partial = true;
                         coverageGapReadSkips++;
                         visibilityGaps++;
+                        coreMetadataReadFailures++;
                         if (verification.ErrorCode == "permission_denied") denied++;
                         if (verification.Success || verification.ErrorCode == "invalid_utf8") malformed++;
+                        RecordFailureClass(
+                            failureClasses,
+                            verification.Success && !verification.Truncated
+                                ? "stat_verification_invalid"
+                                : ReadFailureClass("stat_verification", verification));
                     }
                     continue;
                 }
@@ -263,22 +290,45 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 var isKernelThread = (verified.Flags & 0x00200000UL) != 0;
                 var isZombie = string.Equals(verified.State, "Z", StringComparison.Ordinal);
                 var eligible = !isKernelThread && !isZombie;
+                var commandLineOmitted = !commandLineResult.Success
+                    || commandLineResult.Truncated
+                    || commandLineResult.ErrorCode != "none"
+                    || commandLine.Dropped;
+                var executableOmitted = executable.ErrorCode != "none"
+                    || string.IsNullOrWhiteSpace(executable.Value)
+                    || executableText.Dropped;
                 if (eligible)
                 {
                     eligibleProcessCount++;
-                    if (commandLineResult.Success && !commandLineResult.Truncated && commandLineResult.ErrorCode == "none")
+                    if (!commandLineOmitted)
                         readableCommandLineCount++;
-                    if (executable.ErrorCode == "none" && !string.IsNullOrWhiteSpace(executable.Value))
+                    else
+                    {
+                        optionalEnrichmentOmissions++;
+                        RecordFailureClass(failureClasses, OptionalFailureClass("command_line", commandLineResult, commandLine));
+                    }
+                    if (!executableOmitted)
                         readableExecutableCount++;
+                    else
+                    {
+                        optionalEnrichmentOmissions++;
+                        RecordFailureClass(failureClasses, OptionalFailureClass("executable", executable, executableText));
+                    }
                 }
                 var dangerousCapabilities = DecodeDangerousCapabilities(capEff);
-                malformedMetadata = malformedMetadata
+                var malformedMetadata = malformedStatusMetadata
+                    || malformedLoginUserId
+                    || invalidCoreText
                     || command.InvalidText
                     || command.Truncated
-                    || command.Dropped
-                    || executableText.InvalidText
-                    || commandLine.InvalidText
-                    || commandLine.Dropped;
+                    || command.Dropped;
+                if (malformedStatusMetadata) RecordFailureClass(failureClasses, "status_invalid");
+                if (malformedLoginUserId) RecordFailureClass(failureClasses, "loginuid_invalid");
+                if (statusResult.ErrorCode == "invalid_utf8") RecordFailureClass(failureClasses, "status_invalid_text");
+                if (loginResult.ErrorCode == "invalid_utf8") RecordFailureClass(failureClasses, "loginuid_invalid_text");
+                if (cgroupResult.ErrorCode == "invalid_utf8") RecordFailureClass(failureClasses, "cgroup_invalid_text");
+                if (command.InvalidText || command.Truncated || command.Dropped)
+                    RecordFailureClass(failureClasses, "stat_command_invalid");
                 var key = HashSignature(
                     bootIdentitySha256,
                     verified.ProcessId.ToString(CultureInfo.InvariantCulture),
@@ -296,29 +346,24 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                     tracerPid?.ToString(CultureInfo.InvariantCulture),
                     loginUserId,
                     cgroupHash);
-                var materialEnrichmentFailure = IsVisibilityFailure(statusResult)
+                var coreEnrichmentFailure = IsVisibilityFailure(statusResult)
                     || IsVisibilityFailure(loginResult)
                     || IsVisibilityFailure(cgroupResult)
-                    || IsVisibilityFailure(commandLineResult)
-                    || executable.ErrorCode is "permission_denied" or "io_error" or "field_truncated"
-                    || executableText.Truncated
-                    || executableText.Dropped
                     || malformedMetadata;
-                // Missing optional enrichment contributes to the aggregate visibility ratios.
-                // It is not by itself a per-process collection failure unless the underlying
-                // read was denied, malformed, truncated, or otherwise materially failed.
-                var enrichmentPartial = materialEnrichmentFailure;
-                if (materialEnrichmentFailure)
+                var enrichmentPartial = coreEnrichmentFailure || commandLineOmitted || executableOmitted;
+                if (coreEnrichmentFailure)
                 {
                     partial = true;
                     visibilityGaps++;
                     if (malformedMetadata) malformed++;
+                    coreMetadataReadFailures += CountVisibilityFailures(statusResult, loginResult, cgroupResult);
+                    RecordVisibilityFailureClass(failureClasses, "status", statusResult);
+                    RecordVisibilityFailureClass(failureClasses, "loginuid", loginResult);
+                    RecordVisibilityFailureClass(failureClasses, "cgroup", cgroupResult);
                     denied += CountPermissionDenials(
                         statusResult.ErrorCode,
                         loginResult.ErrorCode,
-                        cgroupResult.ErrorCode,
-                        commandLineResult.ErrorCode,
-                        executable.ErrorCode);
+                        cgroupResult.ErrorCode);
                 }
 
                 observations.Add(new(
@@ -377,7 +422,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied, malformed);
+            RecordFailureClass(failureClasses, "scan_deadline");
+            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1,
+                denied, malformed, optionalEnrichmentOmissions, failureClasses);
             SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
             PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
             return new(observations, PassiveReadStatuses.Partial, "process_scan_deadline", true, budget.BytesRead,
@@ -385,7 +432,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         }
         catch (UnauthorizedAccessException)
         {
-            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied + 1, malformed);
+            RecordFailureClass(failureClasses, "process_enumeration_permission_denied");
+            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1,
+                denied + 1, malformed, optionalEnrichmentOmissions, failureClasses);
             SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
             PublishOwnership(options, socketOwners, false, descriptorCapReached, true, descriptorLinksInspected);
             return new(observations, observations.Count == 0 ? PassiveReadStatuses.PermissionDenied : PassiveReadStatuses.Partial,
@@ -394,7 +443,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         }
         catch (IOException)
         {
-            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1, denied, malformed);
+            RecordFailureClass(failureClasses, "process_enumeration_io_error");
+            SetCounterDetails(details, visibilityState, skipped + 1, expectedRaceSkips, coverageGapReadSkips + 1,
+                denied, malformed, optionalEnrichmentOmissions, failureClasses);
             SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
             PublishOwnership(options, socketOwners, false, descriptorCapReached, descriptorPermissionDenied, descriptorLinksInspected);
             return new(observations, observations.Count == 0 ? PassiveReadStatuses.Error : PassiveReadStatuses.Partial,
@@ -410,6 +461,7 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         {
             partial = true;
             visibilityGaps++;
+            RecordFailureClass(failureClasses, "visibility_below_threshold");
         }
         SetVisibilityRatioDetails(details, eligibleProcessCount, readableCommandLineCount, readableExecutableCount);
         PublishOwnership(
@@ -443,10 +495,12 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
             _ when truncated => "process_scan_truncated",
             _ when denied > 0 => "process_metadata_permission_denied",
             _ when malformed > 0 => "process_metadata_malformed",
+            _ when coreMetadataReadFailures > 0 => "process_metadata_unreadable",
             _ when belowVisibilityThreshold => "process_visibility_below_threshold",
             _ => "process_enrichment_partial"
         };
-        SetCounterDetails(details, visibilityState, skipped, expectedRaceSkips, coverageGapReadSkips, denied, malformed);
+        SetCounterDetails(details, visibilityState, skipped, expectedRaceSkips, coverageGapReadSkips,
+            denied, malformed, optionalEnrichmentOmissions, failureClasses);
         return new(observations, statusName, code, truncated, budget.BytesRead, skipped, visibilityGaps, details,
             expectedRaceSkips, coverageGapReadSkips);
     }
@@ -548,7 +602,9 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         long expectedRaceSkips,
         long coverageGapReadSkips,
         long denied,
-        long malformed)
+        long malformed,
+        long optionalEnrichmentOmissions,
+        IReadOnlyDictionary<string, long> failureClasses)
     {
         details["process_visibility"] = visibilityState;
         details["polling_skips"] = skipped.ToString(CultureInfo.InvariantCulture);
@@ -556,6 +612,70 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
         details["coverage_gap_read_skips"] = coverageGapReadSkips.ToString(CultureInfo.InvariantCulture);
         details["permission_denied_reads"] = denied.ToString(CultureInfo.InvariantCulture);
         details["malformed_metadata_records"] = malformed.ToString(CultureInfo.InvariantCulture);
+        details["optional_enrichment_omissions"] = optionalEnrichmentOmissions.ToString(CultureInfo.InvariantCulture);
+        details["process_failure_classes"] = FormatFailureClasses(failureClasses);
+    }
+
+    private static void RecordFailureClass(IDictionary<string, long> classes, string value, long count = 1)
+    {
+        if (count <= 0) return;
+        var current = classes.TryGetValue(value, out var existing) ? existing : 0;
+        classes[value] = current > long.MaxValue - count
+            ? long.MaxValue
+            : current + count;
+    }
+
+    private static string FormatFailureClasses(IReadOnlyDictionary<string, long> classes)
+    {
+        if (classes.Count == 0) return "none";
+        var builder = new StringBuilder(256);
+        foreach (var item in classes.Where(item => item.Value > 0).OrderBy(item => item.Key, StringComparer.Ordinal))
+        {
+            var value = $"{item.Key}={item.Value.ToString(CultureInfo.InvariantCulture)}";
+            var required = value.Length + (builder.Length == 0 ? 0 : 1);
+            if (builder.Length + required > 256) break;
+            if (builder.Length > 0) builder.Append(',');
+            builder.Append(value);
+        }
+        return builder.Length == 0 ? "none" : builder.ToString();
+    }
+
+    private static string ReadFailureClass(string prefix, ProcfsTextResult result) =>
+        $"{prefix}_{(result.Truncated ? "truncated" : result.ErrorCode)}";
+
+    private static string OptionalFailureClass(
+        string prefix,
+        ProcfsTextResult result,
+        SanitizedTelemetryText sanitized)
+    {
+        if (result.Truncated) return $"{prefix}_truncated";
+        if (result.ErrorCode != "none") return $"{prefix}_{result.ErrorCode}";
+        if (sanitized.InvalidText) return $"{prefix}_invalid_text";
+        if (sanitized.Dropped) return $"{prefix}_sanitizer_drop";
+        return $"{prefix}_missing";
+    }
+
+    private static string OptionalFailureClass(
+        string prefix,
+        ProcfsLinkResult result,
+        SanitizedTelemetryText sanitized)
+    {
+        if (result.ErrorCode != "none") return $"{prefix}_{result.ErrorCode}";
+        if (sanitized.Truncated) return $"{prefix}_truncated";
+        if (sanitized.InvalidText) return $"{prefix}_invalid_text";
+        if (sanitized.Dropped) return $"{prefix}_sanitizer_drop";
+        return $"{prefix}_missing";
+    }
+
+    private static int CountVisibilityFailures(params ProcfsTextResult[] results) =>
+        results.Count(IsVisibilityFailure);
+
+    private static void RecordVisibilityFailureClass(
+        IDictionary<string, long> classes,
+        string prefix,
+        ProcfsTextResult result)
+    {
+        if (IsVisibilityFailure(result)) RecordFailureClass(classes, ReadFailureClass(prefix, result));
     }
 
     private static void SetVisibilityRatioDetails(

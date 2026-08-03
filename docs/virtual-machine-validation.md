@@ -40,7 +40,7 @@ Before each risky scenario, create a named checkpoint derived from `clean-baseli
 ## Validation sequence
 
 1. Publish a private agent bundle and create a synthetic private configuration.
-2. Run the lifecycle plan; confirm exact paths, identity, service, permissions, no capabilities, no policy mutation, and rollback.
+2. Run the lifecycle plan; confirm exact paths, identity, service, permissions, base empty capabilities, no policy mutation, and rollback. If the candidate explicitly selects cross-user executable visibility, separately run its process-visibility plan and validate the one-capability profile, syscall deny list, effective runtime capability, >=80% readability, privacy boundary, and drop-in removal/restart rollback.
 3. Install with L3/L4 disabled; validate service start, enrollment, heartbeat, inventory, L1 queue/checkpoint/acknowledgement, and source health.
 4. Reboot the guest; verify service recovery, queue durability, checkpoint continuity, and no boot/network/authentication regression.
 5. Exercise API/database outage and recovery without changing host networking; verify bounded retry, no deletion before acknowledgement, deduplication, and drain.
@@ -102,3 +102,11 @@ For teardown, first resolve and verify the exact synthetic domain, its state, di
 - Audit remained disabled and undeclared. The router reported valid attestation/private state, synthetic trusted audit transport was intercepted before L1, and no audit package, rule, service, privilege, group, ACL, journal, firewall, authentication, or kernel change occurred.
 - Two dependency-injection constructor ambiguities and a lifecycle candidate-selection error were found and fixed before protected-host activation. Later host recovery regressions for accepted recovery prefixes, stale completed acknowledgements, and per-source backed-off queue ordering were republished and exact-hash/startup checked in the same powered-off-on-exit guest.
 - The final exact candidate ran under the packaged `Restart=always` unit with audit disabled, then the guest shut down cleanly. Long-duration evidence remains a protected-host follow-up, not a VM-unit-test inference.
+
+## 2026-08-03 2.4.0 process-visibility aggregate result
+
+- The exact private 2.4.0 candidate was staged with L4 disabled and newly bound passive/self-integrity approvals. The separate process-visibility plan and fixed systemd drop-in were reviewed before an agent-only restart.
+- The running guest agent remained a dedicated non-root process with only effective `CAP_SYS_PTRACE`; `CAP_SYS_ADMIN` was absent, `NoNewPrivileges` and the existing service sandbox remained active, and a direct ptrace invocation was stopped by the fixed syscall filter.
+- Cross-user executable and command-line readability both exceeded the 80% source-health threshold. A deliberately invalid-text command line was omitted as bounded partial enrichment while the process source remained healthy, with zero core malformed records and aggregate-only diagnostic output.
+- The exact rollback removed only the product-owned drop-in and used an agent-only restart. The effective capability disappeared and the process source returned to an honest degraded state below the executable threshold; queue, credentials, and collector history were preserved.
+- The guest was shut down gracefully, reverted to its offline pre-test snapshot, and left powered off with autostart disabled. Synthetic registration was disabled without deleting retained validation evidence.

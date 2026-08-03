@@ -435,6 +435,12 @@ public sealed class LinuxPassiveTelemetryRuntime(
                     0,
                     progress.CumulativeReadSkipCount - classifiedReadSkips)
                 .ToString(CultureInfo.InvariantCulture);
+            runtimeDetails["latest_process_failure_classes"] =
+                progress.LastHealthDetails.GetValueOrDefault("process_failure_classes", "none");
+            runtimeDetails["latest_malformed_metadata_records"] =
+                progress.LastHealthDetails.GetValueOrDefault("malformed_metadata_records", "0");
+            runtimeDetails["latest_optional_enrichment_omissions"] =
+                progress.LastHealthDetails.GetValueOrDefault("optional_enrichment_omissions", "0");
         }
         // Runtime-owned health evidence is mandatory for interpreting the row. Add it first,
         // then retain as much collector detail as fits the shared portable-source limit.

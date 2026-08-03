@@ -60,6 +60,7 @@ dotnet publish agent/LinuxAgent/LinuxAgent.csproj \
 chmod 0755 "$binary"
 command install -m 0755 scripts/linux-agent.sh "$output_dir/linux-agent.sh"
 command install -m 0644 packaging/linux/challenger-siem-agent.service "$output_dir/challenger-siem-agent.service"
+command install -m 0644 packaging/linux/challenger-siem-agent-process-visibility.conf "$output_dir/challenger-siem-agent-process-visibility.conf"
 command install -m 0644 examples/synthetic-linux-agent-config.json "$output_dir/agentsettings.synthetic.example.json"
 
 entry_count=0
@@ -70,12 +71,12 @@ while IFS= read -r -d '' entry; do
     exit 1
   }
   case $(basename "$entry") in
-    Challenger.Siem.LinuxAgent|linux-agent.sh|challenger-siem-agent.service|agentsettings.synthetic.example.json) ;;
+    Challenger.Siem.LinuxAgent|linux-agent.sh|challenger-siem-agent.service|challenger-siem-agent-process-visibility.conf|agentsettings.synthetic.example.json) ;;
     *) echo 'Published Linux bundle contains an unexpected top-level file.' >&2; exit 1 ;;
   esac
 done < <(find "$output_dir" -mindepth 1 -maxdepth 1 -print0)
-[[ $entry_count -eq 4 ]] || {
-  echo 'Published Linux bundle does not contain the exact four-file payload allowlist.' >&2
+[[ $entry_count -eq 5 ]] || {
+  echo 'Published Linux bundle does not contain the exact five-file payload allowlist.' >&2
   exit 1
 }
 
@@ -90,5 +91,5 @@ echo "Published standalone $runtime Linux agent:"
 echo "  $binary"
 echo "Size: $size bytes"
 echo "SHA256: $(sha256sum "$binary" | awk '{print $1}')"
-echo 'Bundle contents include the lifecycle helper, systemd unit, and a placeholder-only synthetic configuration reference.'
+echo 'Bundle contents include the lifecycle helper, base systemd unit, optional process-visibility profile, and a placeholder-only synthetic configuration reference.'
 echo 'Keep this generated payload and every real agent configuration outside Git; run the bundled linux-agent.sh plan before deployment.'

@@ -51,7 +51,13 @@ domain.
 4. Generate and separately approve the changed passive, self-integrity, and L4 hashes.
    Set `CollectSocketOwnership=true` only as part of that reviewed passive plan. Leave
    `Agent:Audit:Enabled=false`, `FacilityDeclaration=undeclared`, and its approval empty.
-5. Restart only the Challenger SIEM agent. Verify fresh heartbeat, an empty or draining
+   If full cross-user executable visibility is approved, also set the plan-bound
+   `CrossUserExecutableVisibility=true`, run `process-visibility-plan`, stage only the
+   fixed profile through `process-visibility-enable`, and retain its exact removal
+   plus agent-only restart as rollback. Normal install/upgrade does not add it.
+5. Restart only the Challenger SIEM agent. When the optional profile is staged, run
+   `process-visibility-validate` and verify direct ptrace/process-memory/performance
+   syscalls remain denied. Verify fresh heartbeat, an empty or draining
    queue, source health, interface inventory, generation completeness, eligible-process
    visibility ratios, bounded socket attribution, disk diagnostics, liveness freshness,
    service restart counts, and absence of audit content in generic L1.

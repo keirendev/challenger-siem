@@ -31,7 +31,7 @@ Use a dedicated database backup policy. Monitor API health, database capacity, f
 
 5. Before stopping or removing an existing agent, verify the exact target backend exposes authenticated `/api/v2` registration and ingestion routes. A successful generic `/health` response is insufficient because a 1.x service can be healthy while every 2.x route is absent. Keep the current agent running until this compatibility gate passes.
 6. After reviewing affected product paths, service lifecycle, rollback, and current journal visibility, perform the separately approved install. The lifecycle helper writes only the declared product executable, configuration, private state, and systemd unit. Installation enables/starts the product service; an upgrade stages without restart.
-7. Run `./linux-agent.sh validate`, then review heartbeat, queue, source-health, and coverage through REST/MCP. Do not grant root, capabilities, groups, ACLs, audit rules, firewall logging, or broader journal access merely to clear a gap.
+7. Run `./linux-agent.sh validate`, then review heartbeat, queue, source-health, and coverage through REST/MCP. Do not grant root, capabilities, groups, ACLs, audit rules, firewall logging, or broader journal access merely to clear a gap. The sole supported exception is the explicit `CrossUserExecutableVisibility=true` workflow: review its separate plan, stage the fixed one-capability profile, VM-validate it, and use `process-visibility-validate` after the separately approved agent restart.
 
 ### Moving a 1.x installation to 2.x
 

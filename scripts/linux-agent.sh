@@ -19,8 +19,8 @@ while (($#)); do
 done
 
 case "$mode" in
-  plan|install|upgrade|validate|uninstall) ;;
-  *) echo "Usage: $0 plan|install|upgrade|validate|uninstall" >&2; exit 2 ;;
+  plan|install|upgrade|validate|uninstall|process-visibility-plan|process-visibility-enable|process-visibility-validate|process-visibility-disable) ;;
+  *) echo "Usage: $0 plan|install|upgrade|validate|uninstall|process-visibility-plan|process-visibility-enable|process-visibility-validate|process-visibility-disable" >&2; exit 2 ;;
 esac
 
 p(){ [[ $root == / ]] && printf '%s' "$1" || printf '%s%s' "${root%/}" "$1"; }
@@ -28,6 +28,8 @@ opt=$(p /opt/challenger-siem-agent)
 etc=$(p /etc/challenger-siem-agent)
 state=$(p /var/lib/challenger-siem-agent)
 unit=$(p /etc/systemd/system/challenger-siem-agent.service)
+process_visibility_drop_in_dir=$(p /etc/systemd/system/challenger-siem-agent.service.d)
+process_visibility_drop_in=$process_visibility_drop_in_dir/30-process-executable-visibility.conf
 
 validate_service_identity(){
   local require_locked_password=${1:-false}
@@ -98,6 +100,184 @@ require_safe_product_target(){
   fi
 }
 
+process_visibility_profile(){
+  local profile="$(dirname "$0")/../packaging/linux/challenger-siem-agent-process-visibility.conf"
+  if [[ ! -f $profile ]]; then
+    profile="$(dirname "$0")/challenger-siem-agent-process-visibility.conf"
+  fi
+  require_regular_bounded_file "$profile" $((256 * 1024)) 'Process-visibility capability profile'
+  printf '%s' "$profile"
+}
+
+process_visibility_config_path(){
+  if [[ -n $config ]]; then
+    printf '%s' "$config"
+  elif [[ -r $etc/agentsettings.json ]]; then
+    printf '%s' "$etc/agentsettings.json"
+  else
+    return 1
+  fi
+}
+
+process_visibility_requested(){
+  local cfg=$1
+  python3 - "$cfg" <<'PY'
+import json, sys
+
+with open(sys.argv[1], 'r', encoding='utf-8') as handle:
+    data = json.load(handle)
+
+def lookup(block, name, default):
+    if not isinstance(block, dict):
+        return default
+    for key, value in block.items():
+        if key.casefold() == name.casefold():
+            return value
+    return default
+
+agent = lookup(data, 'Agent', {})
+passive = lookup(agent, 'PassiveTelemetry', {})
+requested = lookup(passive, 'CrossUserExecutableVisibility', False)
+if not isinstance(requested, bool):
+    raise SystemExit('CrossUserExecutableVisibility must be a JSON boolean')
+print('true' if requested else 'false')
+PY
+}
+
+process_visibility_plan(){
+  preflight plan
+  command -v python3 >/dev/null 2>&1 || {
+    echo 'Process-visibility planning requires Python 3 for bounded configuration inspection.' >&2
+    return 1
+  }
+  local cfg='' profile='' requested=''
+  cfg=$(process_visibility_config_path) || {
+    echo 'Process-visibility planning requires --config or the installed protected configuration.' >&2
+    return 1
+  }
+  require_regular_bounded_file "$cfg" $((256 * 1024)) 'Process-visibility configuration'
+  [[ $root != / || $(stat -c %a "$cfg") == 600 ]] || {
+    echo 'Process-visibility configuration must be mode 0600 on the real target.' >&2
+    return 1
+  }
+  requested=$(process_visibility_requested "$cfg")
+  [[ $requested == true ]] || {
+    echo 'Process-visibility capability activation requires Agent:PassiveTelemetry:CrossUserExecutableVisibility=true.' >&2
+    return 1
+  }
+  profile=$(process_visibility_profile)
+  echo 'Challenger SIEM cross-user process executable visibility plan (read-only)'
+  echo "profile target: $process_visibility_drop_in"
+  echo 'steady-state identity: challenger-siem (non-root)'
+  echo 'capability change: add only CAP_SYS_PTRACE to the service bounding and ambient sets'
+  echo 'syscall restrictions: deny ptrace, process_vm_readv, process_vm_writev, kcmp, pidfd_getfd, and perf_event_open'
+  echo 'telemetry purpose: satisfy Linux procfs cross-user executable and bounded socket-owner link access checks for the fixed passive collector'
+  echo 'data boundary: no process memory, environment, maps, stacks, cwd/root, syscall arguments, or non-socket descriptor targets are retained'
+  echo 'host changes when enabled: install one fixed product-owned systemd drop-in and run daemon-reload; no service restart occurs in the enable step'
+  echo 'activation: separately restart only challenger-siem-agent.service, then require both effective-capability validation and >=800 permille command-line/executable readability'
+  echo 'rollback: stage process-visibility-disable, restart only the agent, and verify the capability is absent; the protected queue, credentials, and collector state are preserved'
+  echo 'residual risk: CAP_SYS_PTRACE is a broad kernel access capability; the fixed reader and syscall filter reduce but cannot eliminate impact if the agent process is compromised'
+  echo "profile source: $profile"
+}
+
+process_visibility_enable(){
+  preflight
+  local cfg='' profile='' requested=''
+  command -v python3 >/dev/null 2>&1 || {
+    echo 'Process-visibility activation requires Python 3 for bounded configuration inspection.' >&2
+    return 1
+  }
+  cfg=$(process_visibility_config_path) || {
+    echo 'Process-visibility activation requires --config or the installed protected configuration.' >&2
+    return 1
+  }
+  require_regular_bounded_file "$cfg" $((256 * 1024)) 'Process-visibility configuration'
+  [[ $root != / || $(stat -c %a "$cfg") == 600 ]] || {
+    echo 'Process-visibility configuration must be mode 0600 on the real target.' >&2
+    return 1
+  }
+  requested=$(process_visibility_requested "$cfg")
+  [[ $requested == true ]] || {
+    echo 'Refusing capability activation because CrossUserExecutableVisibility is not true.' >&2
+    return 1
+  }
+  profile=$(process_visibility_profile)
+  require_safe_product_target "$unit" file
+  [[ -f $unit ]] || { echo 'Installed Challenger SIEM agent unit is required before capability activation.' >&2; return 1; }
+  require_safe_product_target "$process_visibility_drop_in_dir" dir
+  require_safe_product_target "$process_visibility_drop_in" file
+  mkdir -p -m 0755 "$process_visibility_drop_in_dir"
+  command install -m 0644 "$profile" "$process_visibility_drop_in"
+  if [[ $root == / ]]; then
+    chown root:root "$process_visibility_drop_in"
+  fi
+  if ! $no_service && [[ $root == / ]]; then
+    systemctl daemon-reload
+  fi
+  echo 'process-visibility capability profile staged without restarting the service; restart only after separate activation approval'
+}
+
+process_visibility_validate(){
+  preflight plan
+  local profile='' configured='' ambient='' syscall_filter='' pid='' effective=''
+  command -v python3 >/dev/null 2>&1 || {
+    echo 'Process-visibility runtime validation requires Python 3.' >&2
+    return 1
+  }
+  profile=$(process_visibility_profile)
+  require_regular_bounded_file "$process_visibility_drop_in" $((256 * 1024)) 'Installed process-visibility profile'
+  cmp -s "$profile" "$process_visibility_drop_in" || {
+    echo 'Installed process-visibility profile differs from the packaged fixed profile.' >&2
+    return 1
+  }
+  if [[ $root != / || $no_service == true ]]; then
+    echo 'process-visibility profile validation passed for the alternate root; runtime capability validation skipped'
+    return 0
+  fi
+  configured=$(systemctl show challenger-siem-agent.service -p CapabilityBoundingSet --value)
+  ambient=$(systemctl show challenger-siem-agent.service -p AmbientCapabilities --value)
+  [[ $configured == cap_sys_ptrace && $ambient == cap_sys_ptrace ]] || {
+    echo 'Configured and ambient capability sets must contain only CAP_SYS_PTRACE.' >&2
+    return 1
+  }
+  syscall_filter=$(systemctl show challenger-siem-agent.service -p SystemCallFilter --value)
+  python3 - "$syscall_filter" <<'PY'
+import sys
+tokens = sys.argv[1].split()
+if not tokens or not tokens[0].startswith('~'):
+    raise SystemExit('process-visibility syscall filter is not an effective deny list')
+tokens[0] = tokens[0][1:]
+required = {'ptrace', 'process_vm_readv', 'process_vm_writev', 'kcmp', 'pidfd_getfd', 'perf_event_open'}
+if not required.issubset(tokens):
+    raise SystemExit('process-visibility syscall filter is missing a required direct-inspection denial')
+PY
+  pid=$(systemctl show challenger-siem-agent.service -p MainPID --value)
+  [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/status ]] || {
+    echo 'Running agent process is required for effective capability validation.' >&2
+    return 1
+  }
+  effective=$(awk '/^CapEff:/ {print $2; exit}' "/proc/$pid/status")
+  python3 - "$effective" <<'PY'
+import sys
+value = int(sys.argv[1], 16)
+if value != (1 << 19):
+    raise SystemExit('running agent effective capability set must contain only CAP_SYS_PTRACE')
+PY
+  echo 'process-visibility capability profile and effective runtime capability validated'
+}
+
+process_visibility_disable(){
+  preflight
+  require_safe_product_target "$process_visibility_drop_in_dir" dir
+  require_safe_product_target "$process_visibility_drop_in" file
+  rm -f -- "$process_visibility_drop_in"
+  rmdir -- "$process_visibility_drop_in_dir" 2>/dev/null || true
+  if ! $no_service && [[ $root == / ]]; then
+    systemctl daemon-reload
+  fi
+  echo 'process-visibility capability profile removed without restarting the service; restart only after separate rollback approval'
+}
+
 preflight(){
   local mutation=${1:-mutation}
   [[ $(uname -s) == Linux ]] || { echo 'Unsupported platform: Linux is required.' >&2; return 1; }
@@ -155,12 +335,13 @@ max_events = int(get('MaxEventsPerScan', 20))
 allowlist = [
     ('agent_binary', '/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent', 'HashedFile', 64 * 1024 * 1024, 'False'),
     ('systemd_unit', '/etc/systemd/system/challenger-siem-agent.service', 'HashedFile', 256 * 1024, 'False'),
+    ('process_visibility_profile', '/etc/systemd/system/challenger-siem-agent.service.d/30-process-executable-visibility.conf', 'HashedFile', 256 * 1024, 'False'),
     ('agent_config', '/etc/challenger-siem-agent/agentsettings.json', 'MetadataFile', 256 * 1024, 'True'),
     ('config_directory', '/etc/challenger-siem-agent/', 'Directory', 0, 'False'),
     ('state_directory', '/var/lib/challenger-siem-agent/', 'Directory', 0, 'False'),
 ]
 canonical = '\n'.join([
-    'linux-agent-self-integrity-snapshot-v2',
+    'linux-agent-self-integrity-snapshot-v3',
     f'interval={interval}',
     f'timeout={timeout}',
     f'queue_pause={queue_pause}',
@@ -251,6 +432,7 @@ values = {
     'journal_max_records_per_poll': integer(journal, 'MaxRecordsPerPoll', 500),
     'journal_max_input_record_bytes': integer(journal, 'MaxInputRecordBytes', 131072),
     'journal_scope': journal_scope,
+    'cross_user_executable_visibility': boolean(passive, 'CrossUserExecutableVisibility', False),
     'max_processes': integer(passive, 'MaxProcessesPerScan', 4096),
     'max_sockets': integer(passive, 'MaxSocketsPerScan', 8192),
     'collect_socket_ownership': boolean(passive, 'CollectSocketOwnership', False),
@@ -318,7 +500,7 @@ if maximum_passive_batch_bytes > passive_byte_limit:
     )
 
 canonical = '\n'.join([
-    'linux-passive-snapshot-v2',
+    'linux-passive-snapshot-v4',
     *(f'{name}={value}' for name, value in values.items()),
     'partial_baseline_miss_limit=12',
     f'cleanup_on_disable={cleanup}',
@@ -339,6 +521,12 @@ print(
     f"events_per_scan={values['max_events']}; process_read_bytes={values['process_read_bytes']}; "
     f"network_read_bytes={values['network_read_bytes']}; command_line_bytes={values['command_line_bytes']}; "
     f"raw_event_bytes={values['raw_event_bytes']}"
+)
+print(
+    'passive telemetry process visibility privilege: '
+    + ('separately staged non-root CAP_SYS_PTRACE profile required for fixed cross-user procfs executable/link reads; direct ptrace/process-memory/performance syscalls remain denied'
+       if values['cross_user_executable_visibility']
+       else 'existing unprivileged service identity only; cross-user executable visibility capability not requested')
 )
 print(f'passive telemetry cleanup/state: cleanup_on_disable={cleanup}; state={state_path}')
 print(
@@ -535,8 +723,8 @@ plan(){
   echo "configuration (0600): $etc/agentsettings.json"
   echo "private state/queue (0700): $state"
   echo "unit: $unit"
-  echo 'identity requirement: pre-existing challenger-siem account with matching primary group, locked password, and non-login shell; capabilities: none'
-  echo 'host policy changes: none (audit/firewall/authentication/kernel/security policy untouched)'
+  echo 'identity requirement: pre-existing challenger-siem account with matching primary group, locked password, and non-login shell; base service capabilities: none'
+  echo 'host policy changes: base install changes none; optional cross-user executable visibility requires its separate read-only plan and fixed CAP_SYS_PTRACE profile activation'
   echo 'linux L3 self-integrity snapshot: disabled by default; requires Agent:SelfIntegrity:Enabled=true and matching ApprovedPlanHash'
   echo 'self-integrity supported platform/filesystem: Linux x86_64/aarch64 with ordinary POSIX stat/open on local filesystems; no audit/eBPF/fanotify/inotify/IMA/packages/kernel objects'
   local cfg=''
@@ -548,10 +736,11 @@ plan(){
   fi
   echo "self-integrity allowlist: $opt/Challenger.Siem.LinuxAgent (regular metadata+sha256 <=64MiB) [$(probe "$opt/Challenger.Siem.LinuxAgent" file $((64*1024*1024)))]"
   echo "self-integrity allowlist: $unit (regular metadata+sha256 <=256KiB) [$(probe "$unit" file $((256*1024)))]"
+  echo "self-integrity allowlist: $process_visibility_drop_in (optional regular metadata+sha256 <=256KiB) [$(probe "$process_visibility_drop_in" file $((256*1024)))]"
   echo "self-integrity allowlist: $etc/agentsettings.json (metadata only; credential-bearing, no hash/content) [$(probe "$etc/agentsettings.json" file 0)]"
   echo "self-integrity allowlist: $etc/ (directory metadata only; no recursion) [$(probe "$etc" dir 0)]"
   echo "self-integrity allowlist: $state/ (directory metadata only; no recursion) [$(probe "$state" dir 0)]"
-  echo 'self-integrity privacy/resource impact: metadata plus two bounded streaming SHA-256 digests; no file contents, secret values, arbitrary paths, or recursive scans; minimum 5 minute cadence and 30 second deadline'
+  echo 'self-integrity privacy/resource impact: metadata plus three bounded streaming SHA-256 digests; no file contents, secret values, arbitrary paths, or recursive scans; minimum 5 minute cadence and 30 second deadline'
   echo 'self-integrity sequencing/loss/pressure: sequence checkpoints, queue-before-checkpoint, ack-before-delete; added/changed/deleted/unreadable/gap/drop/sample states; pause L3 before L1/L2 under queue pressure'
   echo 'self-integrity rollback: disable the source and remove only /var/lib/challenger-siem-agent/self-integrity-state.json; monitored files and host policy remain untouched'
   echo 'linux L3 passive procfs snapshots: disabled by default; requires Agent:PassiveTelemetry:Enabled=true and its separate matching ApprovedPlanHash'
@@ -563,6 +752,7 @@ plan(){
     echo 'passive telemetry approval config: default options (rerun with --config or installed config for approval)'
   fi
   echo 'passive telemetry fixed inputs: procfs mount-visibility evidence plus process identity/security metadata from /proc/<pid>; TCP/UDP tuples from /proc/net; aggregate CPU/memory/load/disk/network/PSI metrics from fixed procfs files'
+  echo 'passive telemetry elevated visibility: CrossUserExecutableVisibility=true binds a separately staged profile granting only CAP_SYS_PTRACE to the non-root agent while denying direct ptrace/process-memory/performance syscalls; the profile is not installed by normal install/upgrade'
   echo 'passive telemetry exclusions: process environment/memory/maps/non-socket fd targets/cwd/root/syscalls, file contents, Unix-socket paths, packet/DNS payloads, audit, eBPF, shell history, screenshots, and keystrokes'
   echo 'passive telemetry semantics: polling-honest observed/changed/disappeared snapshots and coalesced metrics; no exact exec/exit/bind/connect claim; socket ownership is bounded, plan-bound, and explicitly partial when stale, capped, denied, or ambiguous'
   echo 'passive telemetry sequencing/loss/pressure: durable sequence reservation before queue insertion, baseline/checkpoint commit after queue insertion, committed-row ack-before-delete, interrupted-row accepted replay with explicit non-reused recovery gaps, and passive pause before the journal threshold'
@@ -661,6 +851,8 @@ uninstall(){
     systemctl disable --now challenger-siem-agent.service || true
   fi
   rm -f "$unit"
+  rm -f -- "$process_visibility_drop_in"
+  rmdir -- "$process_visibility_drop_in_dir" 2>/dev/null || true
   rm -rf "$opt" "$etc" "$state"
   if ! $no_service && [[ $root == / ]]; then
     systemctl daemon-reload
@@ -673,4 +865,8 @@ case "$mode" in
   install|upgrade) install ;;
   validate) validate ;;
   uninstall) uninstall ;;
+  process-visibility-plan) process_visibility_plan ;;
+  process-visibility-enable) process_visibility_enable ;;
+  process-visibility-validate) process_visibility_validate ;;
+  process-visibility-disable) process_visibility_disable ;;
 esac

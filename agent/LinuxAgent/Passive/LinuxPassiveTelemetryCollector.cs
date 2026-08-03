@@ -17,7 +17,7 @@ public sealed class LinuxPassiveTelemetryCollector(
     ILinuxHostMetricsSource metricsSource,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-passive-snapshot-v2";
+    public const string CollectorVersion = "linux-passive-snapshot-v4";
     private readonly LinuxAgentOptions options = configured.Value;
 
     public string PlanHash => ComputePlanHash(options);
@@ -42,6 +42,7 @@ public sealed class LinuxPassiveTelemetryCollector(
             $"journal_max_records_per_poll={configured.Journal.MaxRecordsPerPoll}",
             $"journal_max_input_record_bytes={configured.Journal.MaxInputRecordBytes}",
             $"journal_scope={LinuxJournalScopes.Configured(configured.Journal)}",
+            $"cross_user_executable_visibility={options.CrossUserExecutableVisibility}",
             $"max_processes={options.MaxProcessesPerScan}",
             $"max_sockets={options.MaxSocketsPerScan}",
             $"collect_socket_ownership={options.CollectSocketOwnership}",
@@ -70,7 +71,9 @@ public sealed class LinuxPassiveTelemetryCollector(
                 : "unsupported_non_linux",
             settings.Enabled,
             IsEnabledAndApproved,
-            "Existing unprivileged agent identity only. Missing or denied procfs fields remain explicit partial or permission-denied health; no privilege expansion is attempted.",
+            settings.CrossUserExecutableVisibility
+                ? "Dedicated non-root agent identity with only CAP_SYS_PTRACE in the service capability set. The capability satisfies fixed procfs executable/link access; the supported unit profile blocks ptrace, process-memory, kcmp, pidfd_getfd, and perf_event_open syscalls."
+                : "Existing unprivileged agent identity only. Missing or denied procfs fields remain explicit partial or permission-denied health; no privilege expansion is attempted.",
             "None. The pack reads fixed procfs metadata and writes only its protected agent queue/state files.",
             settings.CollectSocketOwnership
                 ? "No environment values, non-socket fd targets, cwd/root links, memory, maps, stack, syscall arguments, shell history, file contents, packet/DNS payloads, Unix-socket paths, audit, or eBPF. Exact socket:[inode] fd targets are retained only in the in-memory attribution cache."
@@ -83,8 +86,8 @@ public sealed class LinuxPassiveTelemetryCollector(
                     settings.CollectSocketOwnership
                         ? ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe", "/proc/<numeric-pid>/fd/* (exact socket:[inode] targets only)"]
                         : ["/proc/self/mountinfo", "/proc/sys/kernel/random/boot_id", "/proc/<numeric-pid>/stat", "/proc/<numeric-pid>/status", "/proc/<numeric-pid>/loginuid", "/proc/<numeric-pid>/cgroup", "/proc/<numeric-pid>/cmdline", "/proc/<numeric-pid>/exe"],
-                    "Polling-honest baseline, observed, disappeared, and changed process snapshot differences; expected PID disappearance/identity races are counted separately from denied, malformed, truncated, or bounded coverage gaps; no exact exec/exit claim.",
-                    "High-sensitivity process metadata. Command lines are bounded, common credential forms are redacted, and malformed/truncated sensitive text fails closed before queueing; this is not a guarantee that arbitrary unlabeled secrets can be identified. Raw procfs records are not retained.",
+                    "Polling-honest baseline, observed, disappeared, and changed process snapshot differences; expected PID disappearance/identity races remain separate from core metadata gaps, while command-line/executable omissions use explicit aggregate readability thresholds; no exact exec/exit claim.",
+                    "High-sensitivity process metadata. Command lines are bounded, common credential forms are redacted, and malformed/truncated sensitive text is omitted before queueing; optional omissions remain explicit and degrade source health when aggregate eligible-process readability falls below 80%. Raw procfs records are not retained.",
                     $"{settings.MaxProcessesPerScan} processes, {settings.MaxProcessReadBytesPerScan} read bytes, {settings.MaxEventsPerScan} events, {settings.ScanTimeoutSeconds}s deadline."),
                 new(
                     LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff,

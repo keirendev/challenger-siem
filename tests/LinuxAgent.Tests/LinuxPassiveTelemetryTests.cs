@@ -137,6 +137,7 @@ public sealed class LinuxPassiveTelemetryTests
             options.PassiveTelemetry.MaxCommandLineBytes = 2048;
             options.PassiveTelemetry.MaxRawEventBytes = 8192;
             options.PassiveTelemetry.CleanupStateOnDisable = true;
+            options.PassiveTelemetry.CrossUserExecutableVisibility = true;
             options.Queue.MaxSizeMb = 640;
             options.Queue.WarningSizePercent = 75;
             options.Journal.MaxRecordsPerPoll = 321;
@@ -161,6 +162,7 @@ public sealed class LinuxPassiveTelemetryTests
                 ["MaxCommandLineBytes"] = options.PassiveTelemetry.MaxCommandLineBytes,
                 ["MaxRawEventBytes"] = options.PassiveTelemetry.MaxRawEventBytes,
                 ["CleanupStateOnDisable"] = options.PassiveTelemetry.CleanupStateOnDisable,
+                ["CrossUserExecutableVisibility"] = options.PassiveTelemetry.CrossUserExecutableVisibility,
                 ["StatePath"] = options.PassiveTelemetry.StatePath
             };
             await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new Dictionary<string, object?>
@@ -189,6 +191,7 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(0, result.ExitCode);
             Assert.Contains($"passive telemetry approval plan hash: {expected}", result.Output, StringComparison.Ordinal);
             Assert.Contains("journal scope: all_accessible_local", result.Output, StringComparison.Ordinal);
+            Assert.Contains("CAP_SYS_PTRACE profile required", result.Output, StringComparison.Ordinal);
             Assert.Contains("durable sequence reservation before queue insertion", result.Output, StringComparison.Ordinal);
             Assert.False(File.Exists(Path.Combine(root, "var/lib/challenger-siem-agent/passive-telemetry-state.json")));
 
@@ -271,7 +274,7 @@ public sealed class LinuxPassiveTelemetryTests
     }
 
     [Fact]
-    public async Task ProcessSourceExcludesSchedulerStateChurnAndFailsClosedOnInvalidSensitiveText()
+    public async Task ProcessSourceExcludesSchedulerStateChurnAndAggregatesInvalidOptionalText()
     {
         if (!OperatingSystem.IsLinux()) return;
         var root = Path.Combine(Path.GetTempPath(), $"challenger-passive-proc-identity-{Guid.NewGuid():N}");
@@ -301,11 +304,14 @@ public sealed class LinuxPassiveTelemetryTests
             await File.WriteAllBytesAsync(Path.Combine(process, "cmdline"), [0xff, 0xfe, 0x00]);
             var invalid = await source.ReadAsync(options.PassiveTelemetry, default);
             var observation = Assert.Single(invalid.Items);
-            Assert.Equal(PassiveReadStatuses.Partial, invalid.Status);
+            Assert.Equal(PassiveReadStatuses.Success, invalid.Status);
+            Assert.Equal(0, invalid.VisibilityGapCount);
             Assert.Null(observation.CommandLine);
             Assert.True(observation.CommandLineRedacted);
             Assert.True(observation.InvalidText);
             Assert.True(observation.EnrichmentPartial);
+            Assert.Equal("2", invalid.Details!["optional_enrichment_omissions"]);
+            Assert.Contains("command_line_invalid_utf8=1", invalid.Details["process_failure_classes"], StringComparison.Ordinal);
         }
         finally
         {
@@ -511,7 +517,8 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(1, read.ExpectedRaceSkipCount);
             Assert.Equal(0, read.CoverageGapReadSkipCount);
             Assert.Equal(0, read.VisibilityGapCount);
-            Assert.False(Assert.Single(read.Items).EnrichmentPartial);
+            Assert.True(Assert.Single(read.Items).EnrichmentPartial);
+            Assert.Equal("2", read.Details!["optional_enrichment_omissions"]);
 
             var sources = new SyntheticSources { Processes = read };
             var collector = Collector(options, sources);
@@ -568,11 +575,14 @@ public sealed class LinuxPassiveTelemetryTests
 
             Assert.Equal(PassiveReadStatuses.Partial, result.Status);
             Assert.Equal("process_visibility_below_threshold", result.ErrorCode);
+            Assert.Equal(1, result.VisibilityGapCount);
             Assert.Equal("10", result.Details!["eligible_processes"]);
             Assert.Equal("700", result.Details["command_line_readability_permille"]);
             Assert.Equal("700", result.Details["executable_readability_permille"]);
             Assert.Equal("partial", result.Details["command_line_visibility"]);
             Assert.Equal("partial", result.Details["executable_visibility"]);
+            Assert.Equal("6", result.Details["optional_enrichment_omissions"]);
+            Assert.Contains("visibility_below_threshold=1", result.Details["process_failure_classes"], StringComparison.Ordinal);
             Assert.Contains(result.Items, item => item.IsKernelThread);
             Assert.Contains(result.Items, item => item.IsZombie);
         }
@@ -715,6 +725,12 @@ public sealed class LinuxPassiveTelemetryTests
                 Signature = Sha256("synthetic-partial-signature"),
                 EnrichmentPartial = true
             };
+            var diagnosticDetails = new Dictionary<string, string>(BootDetails(), StringComparer.Ordinal)
+            {
+                ["malformed_metadata_records"] = "1",
+                ["optional_enrichment_omissions"] = "2",
+                ["process_failure_classes"] = "command_line_truncated=1,status_invalid=1"
+            };
             var sources = new SyntheticSources
             {
                 Processes = new(
@@ -725,13 +741,25 @@ public sealed class LinuxPassiveTelemetryTests
                     100,
                     2,
                     1,
-                    BootDetails(),
+                    diagnosticDetails,
                     ExpectedRaceSkipCount: 1,
                     CoverageGapReadSkipCount: 1)
             };
             var collector = Collector(options, sources);
             options.PassiveTelemetry.ApprovedPlanHash = collector.PlanHash;
             var store = new LinuxPassiveTelemetryStateStore(statePath, root);
+            await store.WriteAsync(
+                new LinuxPassiveTelemetryState
+                {
+                    Process = new LinuxPassiveProcessState
+                    {
+                        Progress = new PassiveSourceProgress
+                        {
+                            CumulativeReadSkipCount = 1_441
+                        }
+                    }
+                },
+                default);
             var runtime = new LinuxPassiveTelemetryRuntime(
                 Options.Create(options),
                 store,
@@ -751,10 +779,15 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(SourceHealthStatuses.Degraded, degraded.Status);
             Assert.True(degraded.GapDetected);
             Assert.Equal(SourceEvidenceStatuses.Observed, degraded.EventFamilyStatuses!["process_baseline"]);
-            Assert.Equal("2", degraded.Details["read_skips"]);
+            Assert.Equal("1443", degraded.Details["read_skips"]);
             Assert.Equal("1", degraded.Details["expected_race_skips"]);
             Assert.Equal("1", degraded.Details["coverage_gap_read_skips"]);
-            Assert.Equal("0", degraded.Details["unclassified_read_skips"]);
+            Assert.Equal("1441", degraded.Details["unclassified_read_skips"]);
+            Assert.Equal("1", degraded.Details["latest_malformed_metadata_records"]);
+            Assert.Equal("2", degraded.Details["latest_optional_enrichment_omissions"]);
+            Assert.Equal("command_line_truncated=1,status_invalid=1", degraded.Details["latest_process_failure_classes"]);
+            Assert.True(degraded.Details.Count <= LinuxPassiveTelemetryLimits.MaximumHealthDetailEntries);
+            Assert.DoesNotContain(degraded.Details.Values, value => value.Contains("synthetic-partial", StringComparison.Ordinal));
 
             var restarted = new LinuxPassiveTelemetryRuntime(
                 Options.Create(options),
@@ -790,6 +823,10 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(1, recovered.GapCount);
             Assert.Equal("1", recovered.Details["expected_race_skips"]);
             Assert.Equal("1", recovered.Details["coverage_gap_read_skips"]);
+            Assert.Equal("1441", recovered.Details["unclassified_read_skips"]);
+            Assert.Equal("none", recovered.Details["latest_process_failure_classes"]);
+            Assert.Equal("0", recovered.Details["latest_malformed_metadata_records"]);
+            Assert.Equal("0", recovered.Details["latest_optional_enrichment_omissions"]);
         }
         finally
         {

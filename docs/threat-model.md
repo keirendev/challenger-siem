@@ -29,7 +29,7 @@ Root or kernel control can suppress or forge host evidence. Challenger SIEM repo
 | Destructive retention | Managed-table allowlist, protected-table denylist, dry-run default, hard capacity bound, advisory lock, bounded batches, exact confirmation phrase for manual execution, audit record |
 | Silent collection loss | Queue-before-checkpoint, acknowledgement-before-delete, bounded retry/backoff, poison/gap counters, source freshness, explicit missing/degraded/denied/stale states |
 | Agent/server version skew | Coordinated major-version deployment, authenticated versioned-route preflight before endpoint replacement, durable queue preservation, and exact prior-state rollback; generic health alone is not treated as compatibility evidence |
-| Privilege or host-policy expansion | Non-root steady-state identity, empty capability set, fixed readers/paths, optional sources disabled by default and plan-hash gated, no audit/eBPF/firewall/authentication mutation |
+| Privilege or host-policy expansion | Non-root steady-state identity and empty capability set by default; optional process visibility requires an explicit plan-bound flag and a separate fixed drop-in granting only `CAP_SYS_PTRACE`, with direct ptrace/process-memory/performance syscalls denied, self-integrity monitoring, VM validation, and exact rollback; no audit/eBPF/firewall/authentication mutation |
 | Supply-chain or release leakage | Public-repository safety validation, synthetic fixtures only, generated/runtime paths ignored, bounded self-contained agent bundle |
 
 ## MCP-specific boundary
@@ -45,6 +45,6 @@ Root or kernel control can suppress or forge host evidence. Challenger SIEM repo
 - Audit, eBPF, broad file integrity, packet payloads, process memory/environment, application log files, and automatic response remain deliberately absent.
 - Long-duration private VM/current-host soaks are release evidence, not properties unit tests can establish.
 - A 2.x agent cannot deliver to a v1-only backend. Failed delivery remains durable but creates a coverage gap until the matching v2 service is available or the prior agent is restored.
-- The managed .NET agent JIT needs executable-memory transitions and is incompatible with systemd `MemoryDenyWriteExecute`; the unit retains non-root execution, `NoNewPrivileges`, empty capability sets, filesystem/device/kernel/control-group restrictions, and resource bounds, but this one mitigation is intentionally absent.
+- The managed .NET agent JIT needs executable-memory transitions and is incompatible with systemd `MemoryDenyWriteExecute`; the unit retains non-root execution, `NoNewPrivileges`, filesystem/device/kernel/control-group restrictions, and resource bounds. Capability sets remain empty unless the separately approved process-visibility profile grants only `CAP_SYS_PTRACE`; that profile materially increases compromise impact even with its direct process-inspection syscall deny list.
 
 The detailed endpoint privacy and least-privilege model remains in [Linux agent security](linux-agent-security.md). Operational stop gates are in [Linux local-host validation](linux-local-host-validation.md).

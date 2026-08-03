@@ -61,8 +61,9 @@ public sealed class LinuxSelfIntegrityTests
             var collector = Collector(options, root);
             var plan = await collector.PreflightAsync(default);
 
-            Assert.Equal(5, plan.Entries.Count);
+            Assert.Equal(6, plan.Entries.Count);
             Assert.Contains(plan.Entries, item => item.Path == "/etc/systemd/system/challenger-siem-agent.service" && item.State == "unreadable" && item.Reason == "symlink_rejected");
+            Assert.Contains(plan.Entries, item => item.PathId == "process_visibility_profile");
             Assert.Contains("no audit, eBPF, fanotify, inotify, IMA", plan.FilesystemSupport);
             Assert.DoesNotContain("/etc/passwd", string.Join('\n', plan.Entries.Select(item => item.Path)));
         }
@@ -106,7 +107,7 @@ public sealed class LinuxSelfIntegrityTests
             Assert.Equal(0, result.ExitCode);
             Assert.Contains($"self-integrity approval plan hash: {expectedHash}", result.Stdout, StringComparison.Ordinal);
             Assert.False(File.Exists(options.SelfIntegrity.StatePath));
-            Assert.Contains("host policy changes: none", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("base install changes none", result.Stdout, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, true); }
     }

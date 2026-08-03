@@ -27,6 +27,7 @@
     "PassiveTelemetry": {
       "Enabled": false,
       "ApprovedPlanHash": "",
+      "CrossUserExecutableVisibility": false,
       "StartupDelaySeconds": 30,
       "ProcessPollIntervalSeconds": 15,
       "NetworkPollIntervalSeconds": 15,

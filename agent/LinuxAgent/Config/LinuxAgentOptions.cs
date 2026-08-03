@@ -250,6 +250,7 @@ public sealed class PassiveTelemetryOptions
 {
     public bool Enabled { get; set; }
     public string ApprovedPlanHash { get; set; } = string.Empty;
+    public bool CrossUserExecutableVisibility { get; set; }
     public int StartupDelaySeconds { get; set; } = 30;
     public int ProcessPollIntervalSeconds { get; set; } = 15;
     public int NetworkPollIntervalSeconds { get; set; } = 15;

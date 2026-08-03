@@ -10,7 +10,7 @@ architecture characteristics.
 
 | Component | Identity and privilege | Reads | Emits or writes |
 | --- | --- | --- | --- |
-| Main agent | `challenger-siem`; no capabilities; existing hardened sandbox | its already readable journal scope and fixed procfs inputs | private queue/state and authenticated SIEM telemetry |
+| Main agent | `challenger-siem`; no audit capability; empty capability set by default, or the separately approved process-only `CAP_SYS_PTRACE` profile; existing hardened sandbox | its already readable journal scope and fixed procfs inputs | private queue/state and authenticated SIEM telemetry |
 | auditd/kernel producer | host root/kernel boundary | kernel audit records and reviewed policy | host audit log/journal according to host retention policy |
 | Audit health sampler | root one-shot; bounding set contains only `CAP_AUDIT_CONTROL`; hardened service | fixed `auditctl -s` status only | one schema-fixed numeric journal message per minute through explicit `systemd-cat -- /usr/bin/cat` stdout transport retained for one second so journald can attach trusted unit/executable metadata |
 

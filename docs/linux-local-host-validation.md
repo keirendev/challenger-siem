@@ -173,7 +173,7 @@ L3 validation is blocked unless all are true:
 
 - Separate operator approval names each L3 source, target/window, exact preflight plan, and rollback.
 - Each enabled L3 pack is paired with its exact matching `ApprovedPlanHash`; approval for self-integrity does not approve passive process/network collection or vice versa.
-- The plan confirms no audit/eBPF/fanotify/inotify/IMA/broad file-integrity collector, host-policy change, package install, group/capability/ACL grant, arbitrary path, recursive scan, unrelated file-descriptor traversal, packet capture, process environment/memory read, or secret-bearing telemetry source.
+- The plan confirms no audit/eBPF/fanotify/inotify/IMA/broad file-integrity collector, package install, group/ACL grant, arbitrary path, recursive scan, unrelated file-descriptor traversal, packet capture, process environment/memory read, or secret-bearing telemetry source. The default profile proposes no capability or host-policy change. If `CrossUserExecutableVisibility=true` is explicitly selected, its separate plan must name only the fixed `CAP_SYS_PTRACE` drop-in, direct-inspection syscall deny list, non-root identity, privacy bounds, VM gate, activation, and exact rollback; no other privilege follows from passive-L3 approval.
 - The self-integrity collector treats the credential-bearing configuration as metadata-only and never content-reads or hashes it. Plan helpers necessarily parse the protected configuration to derive approval hashes but emit no credential values; their output remains private.
 - A separate L3 soak and rollback gate is recorded. L3 success cannot be inferred from L1 or L2.
 
@@ -186,6 +186,7 @@ Run an L3 canary only after the requested pack passes its exact preflight and th
 Use at least 24 continuous hours for the first passive-procfs canary unless the operator defines a longer host-class gate. Privately verify:
 
 - all requested L3 source IDs report the expected enablement, matching plan hash, recent scan observation, family evidence, and bounded collected/acknowledged checkpoints;
+- any approved process-visibility profile exactly matches the packaged drop-in, leaves configured/ambient/effective capabilities limited to `CAP_SYS_PTRACE`, retains the direct-inspection syscall deny list, and produces both eligible-process readability ratios at or above 80%; its disposable-VM removal/restart rollback must remove the effective capability and return denied coverage to an honest degraded state;
 - baseline and reboot-baseline evidence is non-alertable, while post-baseline differences remain polling-honest and do not claim exact lifecycle timing or process-to-socket attribution;
 - partial, permission, timeout, event-cap deferral, queue pressure, state recovery, and interrupted reservation behavior is explicit and does not block heartbeat, journal collection, inventory, or unrelated queue rows;
 - CPU, RSS, write rate, queue growth/age, event volume, gap/drop/deferred counts, and server detection noise remain inside the approved resource and operational SLOs;
@@ -207,7 +208,7 @@ Entry gates:
 - `Journal.TargetCoverageLevel=L4` and `Journal.DeclaredRoles` contains one or more supported reviewed roles. Use `general_server` or `workstation` only after confirming no specialized pack applies; those declarations do not waive any fixed posture input. Empty/unknown roles fail configuration and block the run.
 - The exact disabled-state L4 preflight is stored privately. Its candidate baseline was reviewed, `ApprovedBaselineHash` was set first, the resulting `ApprovedPlanHash` was regenerated and reviewed, and both match before enablement.
 - The final disabled-state pass reports `activation_ready=true`, no `activation_blockers`, `candidate_baseline_complete=true`, `approval_hash_matches=true`, and `baseline_hash_matches=true`. Any bounded blocker code remains a stop gate rather than being overridden.
-- The plan proposes no audit/eBPF, package, service, firewall, authentication, kernel, MAC-policy, logging-policy, group, ACL, capability, arbitrary-path, application-file-reader, or other host mutation.
+- The L4 plan proposes no audit/eBPF, package, service, firewall, authentication, kernel, MAC-policy, logging-policy, group, ACL, capability, arbitrary-path, application-file-reader, or other host mutation. A separately approved passive-L3 process-visibility profile may already be active as a prerequisite, but L4 neither grants nor broadens it.
 - Agent configuration application and any required agent restart are separately approved. Enabling L4 is not approval for a role service or posture change.
 - A pre-install payload is not accepted as posture evidence because it cannot observe the fixed installed `/opt` executable and `/etc` configuration boundary; `upgrade` staging is not activation and does not replace the separately approved restart.
 

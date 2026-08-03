@@ -98,6 +98,24 @@ public sealed class LinuxProcfsProcessSourceTests
     }
 
     [Fact]
+    public async Task IoErrorInCoreMetadataRemainsACoverageGap()
+    {
+        var procfs = Procfs(250);
+        procfs.AddText(Path(250, "stat"), Stat(250, 1, 7500));
+        procfs.AddResult(Path(250, "status"), new(null, "io_error", false));
+        var source = new LinuxProcfsProcessSource(ProcRoot, procfs);
+
+        var read = await source.ReadAsync(new PassiveTelemetryOptions(), default);
+
+        Assert.True(Assert.Single(read.Items).EnrichmentPartial);
+        Assert.Equal(PassiveReadStatuses.Partial, read.Status);
+        Assert.Equal("process_metadata_unreadable", read.ErrorCode);
+        Assert.Equal(1, read.VisibilityGapCount);
+        Assert.Equal("0", read.Details!["malformed_metadata_records"]);
+        Assert.Contains("status_io_error=1", read.Details["process_failure_classes"], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MalformedStatAndStatusAreCoverageGapsRatherThanRaces()
     {
         var procfs = Procfs(300, 301);
@@ -116,6 +134,78 @@ public sealed class LinuxProcfsProcessSourceTests
         Assert.Equal(1, read.CoverageGapReadSkipCount);
         Assert.Equal(2, read.VisibilityGapCount);
         Assert.Equal("2", read.Details!["malformed_metadata_records"]);
+        Assert.Contains("stat_invalid=1", read.Details["process_failure_classes"], StringComparison.Ordinal);
+        Assert.Contains("status_invalid=1", read.Details["process_failure_classes"], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("invalid_utf8", false, "command_line_invalid_utf8")]
+    [InlineData("field_truncated", true, "command_line_truncated")]
+    public async Task OneOptionalCommandLineOmissionUsesAggregateVisibility(
+        string errorCode,
+        bool truncated,
+        string expectedFailureClass)
+    {
+        var processIds = Enumerable.Range(400, 10).ToArray();
+        var procfs = Procfs(processIds);
+        foreach (var processId in processIds)
+        {
+            procfs.AddText(Path(processId, "stat"), Stat(processId, 1, 9000 + processId));
+            procfs.AddLink(Path(processId, "exe"), new("/usr/bin/synthetic", "none"));
+            procfs.AddText(Path(processId, "cmdline"), "/usr/bin/synthetic\0--safe\0");
+        }
+        procfs.AddResult(
+            Path(processIds[0], "cmdline"),
+            truncated
+                ? new("/usr/bin/synthetic", errorCode, true)
+                : new(null, errorCode, false));
+        var source = new LinuxProcfsProcessSource(ProcRoot, procfs);
+
+        var read = await source.ReadAsync(new PassiveTelemetryOptions(), default);
+
+        Assert.Equal(PassiveReadStatuses.Success, read.Status);
+        Assert.Equal("none", read.ErrorCode);
+        Assert.Equal(0, read.VisibilityGapCount);
+        Assert.Equal("900", read.Details!["command_line_readability_permille"]);
+        Assert.Equal("1000", read.Details["executable_readability_permille"]);
+        Assert.Equal("0", read.Details["malformed_metadata_records"]);
+        Assert.Equal("1", read.Details["optional_enrichment_omissions"]);
+        Assert.Contains($"{expectedFailureClass}=1", read.Details["process_failure_classes"], StringComparison.Ordinal);
+        var omitted = Assert.Single(read.Items, item => item.ProcessId == processIds[0]);
+        Assert.True(omitted.EnrichmentPartial);
+        Assert.Null(omitted.CommandLine);
+        Assert.True(omitted.CommandLineRedacted);
+        Assert.Equal(truncated, omitted.CommandLineTruncated);
+        Assert.Equal(!truncated, omitted.InvalidText);
+    }
+
+    [Fact]
+    public async Task OneOptionalExecutableOmissionUsesAggregateVisibility()
+    {
+        var processIds = Enumerable.Range(500, 10).ToArray();
+        var procfs = Procfs(processIds);
+        foreach (var processId in processIds)
+        {
+            procfs.AddText(Path(processId, "stat"), Stat(processId, 1, 10000 + processId));
+            procfs.AddText(Path(processId, "cmdline"), "/usr/bin/synthetic\0--safe\0");
+            procfs.AddLink(Path(processId, "exe"), new("/usr/bin/synthetic", "none"));
+        }
+        procfs.AddLink(Path(processIds[0], "exe"), new(null, "field_truncated"));
+        var source = new LinuxProcfsProcessSource(ProcRoot, procfs);
+
+        var read = await source.ReadAsync(new PassiveTelemetryOptions(), default);
+
+        Assert.Equal(PassiveReadStatuses.Success, read.Status);
+        Assert.Equal("none", read.ErrorCode);
+        Assert.Equal(0, read.VisibilityGapCount);
+        Assert.Equal("1000", read.Details!["command_line_readability_permille"]);
+        Assert.Equal("900", read.Details["executable_readability_permille"]);
+        Assert.Equal("1", read.Details["optional_enrichment_omissions"]);
+        Assert.Contains("executable_field_truncated=1", read.Details["process_failure_classes"], StringComparison.Ordinal);
+        var omitted = Assert.Single(read.Items, item => item.ProcessId == processIds[0]);
+        Assert.True(omitted.EnrichmentPartial);
+        Assert.Null(omitted.Executable);
+        Assert.True(omitted.ExecutableTruncated);
     }
 
     private static FakeLinuxProcessProcfs Procfs(params int[] processIds)
@@ -168,6 +258,8 @@ public sealed class LinuxProcfsProcessSourceTests
 
         public ProcfsLinkResult ReadLink(string path) =>
             links.GetValueOrDefault(path, new ProcfsLinkResult(null, "missing"));
+
+        public void AddLink(string path, ProcfsLinkResult result) => links[path] = result;
 
         public void AddText(string path, string value) => AddResult(path, Text(value));
 
