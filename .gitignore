@@ -7,6 +7,9 @@ obj/
 TestResults/
 coverage/
 dist/
+node_modules/
+*.tsbuildinfo
+server/Siem.Api/wwwroot/ui/
 
 # Local configuration, secrets, and automation state
 *.Development.local.json

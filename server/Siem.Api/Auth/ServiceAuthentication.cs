@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
@@ -35,7 +36,8 @@ public sealed class ServiceBearerHandler(
     ILoggerFactory logger,
     UrlEncoder encoder,
     TokenService tokens,
-    SecurityAuditRepository audit)
+    SecurityAuditRepository audit,
+    IOptions<TrafficMapOptions> trafficMap)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -56,16 +58,19 @@ public sealed class ServiceBearerHandler(
 
         if (!tokens.IsServiceToken(token))
         {
-            await audit.RecordAsync(
-                ServiceAuthentication.ServiceId,
-                null,
-                "service.api_auth",
-                "failure",
-                null,
-                null,
-                Context,
-                null,
-                Context.RequestAborted);
+            if (!trafficMap.Value.ReadOnlyDatabase)
+            {
+                await audit.RecordAsync(
+                    ServiceAuthentication.ServiceId,
+                    null,
+                    "service.api_auth",
+                    "failure",
+                    null,
+                    null,
+                    Context,
+                    null,
+                    Context.RequestAborted);
+            }
             return AuthenticateResult.Fail("Invalid service credential.");
         }
 

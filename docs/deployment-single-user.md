@@ -1,6 +1,6 @@
 # Single-user Linux deployment
 
-This deployment shape is one operator, one Linux SIEM service, one dedicated PostgreSQL database, and one or more Linux endpoint agents. It has no browser application or user-account system. Review uses authenticated REST or read-only MCP.
+This deployment shape is one operator, one Linux SIEM service, one dedicated PostgreSQL database, and one or more Linux endpoint agents. Review uses authenticated REST, read-only MCP, and optionally the local read-only traffic interface. There is no user-account, cookie, OAuth, or browser-session system.
 
 ## 1. Prepare the service
 
@@ -9,6 +9,7 @@ This deployment shape is one operator, one Linux SIEM service, one dedicated Pos
 3. Set `ConnectionStrings__SiemDatabase`, apply `./scripts/apply-schema.sh`, and verify with `./scripts/validate-schema.sh`.
 4. Run `dotnet run --project server/Siem.Api` for local evaluation or publish the service through the normal .NET deployment workflow. Terminate trusted HTTPS in Kestrel or an approved reverse proxy before accepting non-loopback traffic.
 5. Verify `/health`, then make one small service-authenticated `/api/v2/platform/capabilities` request. Do not print the bearer or response records into public logs.
+6. If network geography is required, configure the operator-selected origin, public loopback URL, and private cache path, then follow [Network geography UI](network-geography-ui.md). Keep it disabled otherwise.
 
 Use a dedicated database backup policy. Monitor API health, database capacity, failed ingestion, security audit records, retention state, agent last-seen, queue pressure, source health, and coverage gaps.
 
@@ -48,6 +49,7 @@ After the switched endpoint proves fresh heartbeat, inventory, source health, ev
 - Self-integrity, passive procfs telemetry, and L4 remain disabled until their exact plans/hashes and private validation gates are approved.
 - Managed retention defaults to a 30-day target, 100 GiB hard ceiling, and dry-run manual invocation. Manual deletion additionally requires `confirm_impact: "CONFIRM RETENTION DELETE"`.
 - MCP is read-only. Use explicit REST only for reviewed mutations.
+- Traffic-map origin and geolocation remain unset/disabled until the operator chooses them. The free provider cap defaults to 900 lookups/day and only validated public destination IPs may leave the service.
 
 ## 4. First validation
 

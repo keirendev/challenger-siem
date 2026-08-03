@@ -27,7 +27,7 @@ Collected events, messages, inventory, alert context, case notes, graph content,
 
 ## Tools and limits
 
-All 16 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
+All 17 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
 
 | Tool | Purpose | Principal bound |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ All 16 tools are declared read-only, non-destructive, idempotent, closed-world, 
 | `siem_get_inventory` | Service-only bounded endpoint inventory | exact agent; at most 20 snapshots and 50 items each; items omitted by default; reports page count, received pages, total items, and derived completeness |
 | `siem_list_graphs` | Existing graph summaries | 1–100 rows; offset 0–10,000 |
 | `siem_get_graph` | One existing graph and collections | 1–100 records per nested collection; never applies proposals |
+| `siem_get_traffic_map_link` | Credential-free link to the configured local traffic UI with coverage warnings | Validated UTC range and bounded search/filter values; never queries geolocation or SIEM data |
 
 Identifiers and filters have independent length/control-character validation. Prompt arguments use a stricter ASCII identifier allowlist. Invalid cursors, UUIDs, ranges, or identifiers fail before repository work.
 
