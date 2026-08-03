@@ -9,9 +9,11 @@ This deployment shape is one operator, one Linux SIEM service, one dedicated Pos
 3. Set `ConnectionStrings__SiemDatabase`, apply `./scripts/apply-schema.sh`, and verify with `./scripts/validate-schema.sh`.
 4. Run `dotnet run --project server/Siem.Api` for local evaluation or publish the service through the normal .NET deployment workflow. Terminate trusted HTTPS in Kestrel or an approved reverse proxy before accepting non-loopback traffic.
 5. Verify `/health`, then make one small service-authenticated `/api/v2/platform/capabilities` request. Do not print the bearer or response records into public logs.
-6. If network geography is required, configure the operator-selected origin, public loopback URL, and private cache path, then follow [Network geography UI](network-geography-ui.md). Keep it disabled otherwise.
+6. If network geography is required, configure the operator-selected origin, public loopback URL, and private cache path, then follow [Network geography UI](network-geography-ui.md). The normal deployment serves the UI from this same writable backend with `TrafficMap__ReadOnlyDatabase=false`. Keep it disabled otherwise.
 
 Use a dedicated database backup policy. Monitor API health, database capacity, failed ingestion, security audit records, retention state, agent last-seen, queue pressure, source health, and coverage gaps.
+
+A separate `TrafficMap__ReadOnlyDatabase=true` process is an optional loopback viewer, not another backend. It must use the exact PostgreSQL database receiving current telemetry, while agents continue using the normal writable HTTPS service. Never point an agent or the deployment's MCP client at the viewer. Verify the UI's retained-evidence end time before relying on preset ranges; those ranges use telemetry `event_time`.
 
 ## 2. Prepare the Linux agent
 

@@ -13,6 +13,8 @@ Service-token routes cover event search/timeline/export/saved searches, storage 
 
 `GET /api/v2/network/geography` is the bounded read-only source for `/ui/traffic`. Optional filters are `from`, `to`, `q`, `hostname`, `agent_id`, `destination_ip`, `destination_port`, `protocol`, `process_image`, `country_code`, `asn`, and `limit`. UTC bounds must be ordered; results are naturally limited to retained evidence and `limit` is capped at 2,000. The `challenger-siem.network-geography.v2` response reports retained and active ranges, at most 200 timeline buckets, destination-IP aggregates, action-specific observation/change counts, bounded metadata sets, cached approximate location/ASN state, source coverage, pending/quota-limited geolocation counts, truncation flags, active filters, and explicit evidence limitations.
 
+Time bounds apply to event `event_time`, not ingestion time. The browser converts its presets and custom local-time inputs to explicit UTC `from`/`to` values; the API itself does not accept preset names. The retained range covers only qualifying network-snapshot rows, so it can differ from the database's overall event range.
+
 Only `linux-network-socket-snapshot-diff` rows with a remote IP participate. `socket_observed` and `socket_baseline` are connection observations; `socket_changed`, `socket_disappeared`, and `socket_baseline_disappeared` are lifecycle changes and are not counted as new connections. The endpoint may enqueue missing public IPs for later geolocation and return `pending` immediately; callers should treat geolocation and process ownership as incomplete evidence.
 
 `GET /api/v2/inventory` retains the existing `snapshots` member and adds optional exact

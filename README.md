@@ -13,6 +13,14 @@ An optional, disabled-by-default local interface at `/ui/traffic` maps retained 
 - `web/Siem.Ui`: optional React/TypeScript traffic-geography interface, built into the service's ignored static-output directory.
 - `server/Siem.Api/Database/001_linux_v2.sql`: fresh-install PostgreSQL schema.
 
+## Optional traffic map
+
+The local map turns retained `linux-network-socket-snapshot-diff` events into a searchable geographic view of remote IP peers. It provides all-retained, 1-hour, 24-hour, 7-day, 30-day, and custom time ranges; metadata filters; an observation timeline; destination summaries; a map and sortable table; destination details; and bounded drill-down to the newest matching events. Credential-free filter state can be shared as a deep link.
+
+This is socket-snapshot evidence, not packet capture or network-flow accounting. It does not measure packets or bytes, prove traffic direction, or guarantee observation of short-lived sockets. Geolocation is approximate and may identify a provider, CDN, VPN, proxy, or anycast location rather than a physical server.
+
+The interface can run in the normal backend process or as a dedicated loopback viewer with PostgreSQL transactions forced read-only. A dedicated viewer must use the exact database receiving the live agent's telemetry; it does not read the agent's local queue or collect from the host. The service bearer is held only in browser memory and is required again after reload. See the [traffic-map operator guide](docs/network-geography-ui.md) for configuration, data-source checks, privacy boundaries, and troubleshooting.
+
 ## Quick start
 
 Create an empty PostgreSQL database, keep credentials in an ignored local environment file, then run:
