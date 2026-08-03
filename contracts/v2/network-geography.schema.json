@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v2/network-geography.schema.json",
+  "title": "Challenger SIEM Network Geography Response v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_utc", "map", "summary", "destinations", "timeline", "coverage", "active_filters", "result_scope", "limitations"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "challenger-siem.network-geography.v2" },
+    "retained_from_utc": { "type": "string", "format": "date-time" },
+    "retained_to_utc": { "type": "string", "format": "date-time" },
+    "from_utc": { "type": "string", "format": "date-time" },
+    "to_utc": { "type": "string", "format": "date-time" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["label", "latitude", "longitude"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+        "longitude": { "type": "number", "minimum": -180, "maximum": 180 }
+      }
+    },
+    "map": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tile_url", "attribution"],
+      "properties": {
+        "tile_url": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "attribution": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["matched_lifecycle_events", "connection_observations", "unique_destinations", "returned_destinations", "geolocated_destinations", "pending_destinations", "unmapped_destinations", "quota_limited_destinations", "candidate_truncated", "result_truncated"],
+      "properties": {
+        "matched_lifecycle_events": { "type": "integer", "minimum": 0 },
+        "connection_observations": { "type": "integer", "minimum": 0 },
+        "unique_destinations": { "type": "integer", "minimum": 0 },
+        "returned_destinations": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "geolocated_destinations": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "pending_destinations": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "unmapped_destinations": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "quota_limited_destinations": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "candidate_truncated": { "type": "boolean" },
+        "result_truncated": { "type": "boolean" }
+      }
+    },
+    "destinations": {
+      "type": "array", "maxItems": 2000,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["destination_ip", "connection_observations", "baseline_observations", "new_observations", "change_events", "disappearance_events", "lifecycle_events", "first_seen_utc", "last_seen_utc", "protocols", "destination_ports", "hostnames", "agent_ids", "process_images", "geolocation_status"],
+        "properties": {
+          "destination_ip": { "type": "string", "minLength": 2, "maxLength": 64 },
+          "connection_observations": { "type": "integer", "minimum": 0 },
+          "baseline_observations": { "type": "integer", "minimum": 0 },
+          "new_observations": { "type": "integer", "minimum": 0 },
+          "change_events": { "type": "integer", "minimum": 0 },
+          "disappearance_events": { "type": "integer", "minimum": 0 },
+          "lifecycle_events": { "type": "integer", "minimum": 0 },
+          "first_seen_utc": { "type": "string", "format": "date-time" },
+          "last_seen_utc": { "type": "string", "format": "date-time" },
+          "protocols": { "$ref": "#/$defs/strings" },
+          "destination_ports": { "type": "array", "maxItems": 8, "items": { "type": "integer", "minimum": 1, "maximum": 65535 } },
+          "hostnames": { "$ref": "#/$defs/strings" },
+          "agent_ids": { "$ref": "#/$defs/strings" },
+          "process_images": { "$ref": "#/$defs/strings" },
+          "geolocation_status": { "type": "string", "enum": ["ready", "pending", "unmapped", "provider_error", "quota_limited", "disabled"] },
+          "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+          "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+          "city": { "type": "string", "maxLength": 160 },
+          "region": { "type": "string", "maxLength": 160 },
+          "country": { "type": "string", "maxLength": 160 },
+          "country_code": { "type": "string", "maxLength": 8 },
+          "continent": { "type": "string", "maxLength": 80 },
+          "asn": { "type": "integer", "minimum": 1 },
+          "organization": { "type": "string", "maxLength": 200 },
+          "isp": { "type": "string", "maxLength": 200 },
+          "geolocation_fetched_at_utc": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["start_utc", "end_utc", "connection_observations", "lifecycle_events"],
+        "properties": {
+          "start_utc": { "type": "string", "format": "date-time" },
+          "end_utc": { "type": "string", "format": "date-time" },
+          "connection_observations": { "type": "integer", "minimum": 0 },
+          "lifecycle_events": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_mode", "source_status_counts", "process_attribution_partial"],
+      "properties": {
+        "source_id": { "type": "string", "const": "linux-network-socket-snapshot-diff" },
+        "evidence_mode": { "type": "string", "const": "snapshot_diff" },
+        "source_status_counts": { "type": "object", "maxProperties": 16, "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "process_attribution_partial": { "type": "boolean" }
+      }
+    },
+    "active_filters": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "value", "protected"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "protected": { "type": "boolean" }
+        }
+      }
+    },
+    "result_scope": { "type": "string", "maxLength": 500 },
+    "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+  },
+  "$defs": {
+    "strings": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 260 } }
+  }
+}

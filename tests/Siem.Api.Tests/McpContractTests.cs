@@ -18,7 +18,7 @@ public sealed class McpContractTests
             .Where(attribute => attribute is not null)
             .ToArray();
 
-        Assert.Equal(16, tools.Length);
+        Assert.Equal(17, tools.Length);
         Assert.Equal(tools.Length, tools.Select(item => item!.Name).Distinct(StringComparer.Ordinal).Count());
         Assert.All(tools, item =>
         {

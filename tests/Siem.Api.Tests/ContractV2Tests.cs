@@ -47,6 +47,14 @@ public sealed class ContractV2Tests
     }
 
     [Fact]
+    public void NetworkGeographyFixtureValidatesAndDeserializes()
+    {
+        var json = File.ReadAllText(Path.Combine(FixturesRoot, "network-geography.synthetic.json"));
+        AssertSchemaValid("network-geography.schema.json", JsonNode.Parse(json)!);
+        Assert.NotNull(JsonSerializer.Deserialize<NetworkGeographyResponse>(json, JsonOptions));
+    }
+
+    [Fact]
     public void V2RegistrationSchemaRejectsAnyNonLinuxPlatform()
     {
         var instance = JsonNode.Parse(File.ReadAllText(Path.Combine(FixturesRoot, "linux-registration.synthetic.json")))!;

@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Challenger.Siem.Api.Auth;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V2;
 using ModelContextProtocol.Server;
+using Microsoft.Extensions.Options;
 
 namespace Challenger.Siem.Api.Mcp;
 
@@ -165,6 +167,29 @@ public sealed record SiemMcpDetectionReview(
     IReadOnlyDictionary<string, int> DispositionCounts,
     SiemMcpDetectionProposal TuningProposal);
 
+public sealed record SiemMcpTrafficMapLinkRequest
+{
+    [JsonPropertyName("range")] public string Range { get; init; } = "all";
+    [JsonPropertyName("from_utc")] public string? FromUtc { get; init; }
+    [JsonPropertyName("to_utc")] public string? ToUtc { get; init; }
+    [JsonPropertyName("q")] public string? Query { get; init; }
+    [JsonPropertyName("hostname")] public string? Hostname { get; init; }
+    [JsonPropertyName("agent_id")] public string? AgentId { get; init; }
+    [JsonPropertyName("destination_ip")] public string? DestinationIp { get; init; }
+    [JsonPropertyName("destination_port")] public int? DestinationPort { get; init; }
+    [JsonPropertyName("protocol")] public string? Protocol { get; init; }
+    [JsonPropertyName("process_image")] public string? ProcessImage { get; init; }
+    [JsonPropertyName("country_code")] public string? CountryCode { get; init; }
+    [JsonPropertyName("asn")] public long? Asn { get; init; }
+}
+
+public sealed record SiemMcpTrafficMapLink(
+    string Url,
+    string View,
+    bool RequiresServiceToken,
+    bool ReadOnly,
+    IReadOnlyList<string> Limitations);
+
 [McpServerToolType]
 public sealed class SiemMcpTools(
     SiemMcpAccess access,
@@ -177,8 +202,11 @@ public sealed class SiemMcpTools(
     SourceHealthRepository sourceHealth,
     TelemetryCoverageRepository coverage,
     AssetInventoryRepository inventory,
-    InvestigationGraphRepository graphs)
+    InvestigationGraphRepository graphs,
+    IOptions<TrafficMapOptions> configuredTrafficMap)
 {
+    private readonly TrafficMapOptions trafficMap = configuredTrafficMap.Value;
+
     [McpServerTool(Name = "siem_get_overview", Title = "Get SIEM environment overview", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Return bounded aggregate agent, event, alert, and source-health posture for the selected lookback. No raw events or credentials are returned.")]
     public Task<SiemMcpResult<SiemMcpOverviewData>> GetOverviewAsync(
@@ -200,6 +228,39 @@ public sealed class SiemMcpTools(
                     1,
                     "aggregate_only",
                     dataClassification: "service_metadata");
+            },
+            Audit,
+            cancellationToken);
+
+    [McpServerTool(Name = "siem_get_traffic_map_link", Title = "Get network geography visual link", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Return a credential-free deep link to the optional local network geography view. The tool never performs geolocation or returns event data.")]
+    public Task<SiemMcpResult<SiemMcpTrafficMapLink>> GetTrafficMapLinkAsync(
+        [Description("Bounded timeframe and metadata filters for the visual link.")] SiemMcpTrafficMapLinkRequest request,
+        CancellationToken cancellationToken = default) =>
+        access.ExecuteReadAsync(
+            "siem_get_traffic_map_link",
+            "visual_link",
+            null,
+            ct =>
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                if (!trafficMap.Enabled) throw new InvalidOperationException("The traffic map is disabled.");
+                var result = new SiemMcpTrafficMapLink(
+                    BuildTrafficMapLink(trafficMap.PublicBaseUrl, request),
+                    "network_geography",
+                    true,
+                    true,
+                    [
+                        "The page requires the configured service bearer, which is never included in the link.",
+                        "The visualization shows bounded socket observations, not packet flows, byte volumes, or proven direction.",
+                        "Review the page's source-health and attribution notices before interpreting missing peers or activity."
+                    ]);
+                return Task.FromResult(SiemMcpResults.Create(
+                    "traffic_map_link",
+                    result,
+                    1,
+                    "credential_free_filter_link",
+                    dataClassification: "service_metadata"));
             },
             Audit,
             cancellationToken);
@@ -741,6 +802,83 @@ public sealed class SiemMcpTools(
         .GroupBy(value => value, StringComparer.OrdinalIgnoreCase)
         .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+    internal static string BuildTrafficMapLink(string publicBaseUrl, SiemMcpTrafficMapLinkRequest request)
+    {
+        if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var baseUri))
+            throw new InvalidOperationException("TrafficMap:PublicBaseUrl is not configured.");
+        var range = SiemMcpValidation.Required(request.Range, 16, nameof(request.Range)).ToLowerInvariant();
+        if (range is not ("all" or "1h" or "24h" or "7d" or "30d" or "custom"))
+            throw new ArgumentException("range must be all, 1h, 24h, 7d, 30d, or custom.", nameof(request.Range));
+
+        var values = new List<KeyValuePair<string, string>> { new("range", range) };
+        if (range == "custom")
+        {
+            if (!DateTimeOffset.TryParse(request.FromUtc, out var from)
+                || !DateTimeOffset.TryParse(request.ToUtc, out var to)
+                || from > to
+                || to - from > TimeSpan.FromDays(366))
+                throw new ArgumentException("custom links require a valid from_utc/to_utc range of at most 366 days.", nameof(request));
+            values.Add(new("from", from.ToUniversalTime().ToString("O")));
+            values.Add(new("to", to.ToUniversalTime().ToString("O")));
+        }
+        else if (request.FromUtc is not null || request.ToUtc is not null)
+        {
+            throw new ArgumentException("from_utc and to_utc are accepted only with range=custom.", nameof(request));
+        }
+
+        void Add(string key, string? value, int maximum)
+        {
+            var bounded = SiemMcpValidation.Optional(value, maximum, key);
+            if (bounded is not null) values.Add(new(key, bounded));
+        }
+        void AddIdentifier(string key, string? value, int maximum)
+        {
+            var bounded = SiemMcpValidation.Optional(value, maximum, key);
+            if (bounded is null) return;
+            if (bounded.Any(character => !(char.IsLetterOrDigit(character) || character is '-' or '_' or '.' or ':' or '/')))
+                throw new ArgumentException($"{key} contains unsupported characters.", key);
+            values.Add(new(key, bounded));
+        }
+        Add("q", request.Query, 160);
+        AddIdentifier("hostname", request.Hostname, 128);
+        AddIdentifier("agent_id", request.AgentId, 128);
+        var destinationIp = SiemMcpValidation.Optional(request.DestinationIp, 64, nameof(request.DestinationIp));
+        if (destinationIp is not null)
+        {
+            if (!System.Net.IPAddress.TryParse(destinationIp, out _))
+                throw new ArgumentException("destination_ip must be a valid IPv4 or IPv6 address.", nameof(request.DestinationIp));
+            values.Add(new("destination_ip", destinationIp));
+        }
+        var protocol = SiemMcpValidation.Optional(request.Protocol, 16, nameof(request.Protocol))?.ToLowerInvariant();
+        if (protocol is not null)
+        {
+            if (protocol is not ("tcp" or "udp"))
+                throw new ArgumentException("protocol must be tcp or udp.", nameof(request.Protocol));
+            values.Add(new("protocol", protocol));
+        }
+        Add("process_image", request.ProcessImage, 260);
+        var countryCode = SiemMcpValidation.Optional(request.CountryCode, 2, nameof(request.CountryCode))?.ToUpperInvariant();
+        if (countryCode is not null)
+        {
+            if (countryCode.Length != 2 || countryCode.Any(character => character is < 'A' or > 'Z'))
+                throw new ArgumentException("country_code must contain two ASCII letters.", nameof(request.CountryCode));
+            values.Add(new("country_code", countryCode));
+        }
+        if (request.DestinationPort.HasValue)
+            values.Add(new("destination_port", SiemMcpValidation.Range(request.DestinationPort.Value, 1, 65535, nameof(request.DestinationPort)).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        if (request.Asn.HasValue)
+        {
+            if (request.Asn is < 1 or > uint.MaxValue) throw new ArgumentException("asn is outside the supported range.", nameof(request.Asn));
+            values.Add(new("asn", request.Asn.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        var builder = new UriBuilder(new Uri(baseUri, "/ui/traffic"))
+        {
+            Query = string.Join('&', values.Select(value => $"{Uri.EscapeDataString(value.Key)}={Uri.EscapeDataString(value.Value)}"))
+        };
+        return builder.Uri.AbsoluteUri;
+    }
 
     private static IReadOnlyList<SiemMcpDetectionRecommendation> BuildDetectionRecommendations(
         DetectionRuleManagementRecord rule,

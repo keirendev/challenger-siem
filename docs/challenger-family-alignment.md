@@ -8,7 +8,7 @@ Challenger SIEM is the family security event ingestion and review platform. It o
 
 - Linux-only SIEM ingestion and review APIs;
 - event storage and query behavior;
-- headless REST and MCP workflows;
+- headless REST and MCP workflows plus the optional local read-only traffic-geography interface;
 - detection, alert, investigation-graph, and source-health foundations;
 - SIEM contracts consumed by compatible clients such as Challenger XDR.
 

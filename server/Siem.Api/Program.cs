@@ -15,6 +15,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+var trafficMapReadOnlyDatabase = builder.Configuration.GetValue<bool>($"{TrafficMapOptions.SectionName}:ReadOnlyDatabase");
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -39,17 +40,29 @@ builder.Services.AddSingleton(sp =>
         throw new InvalidOperationException("ConnectionStrings:SiemDatabase is required.");
     }
 
+    if (trafficMapReadOnlyDatabase)
+    {
+        var readOnly = new NpgsqlConnectionStringBuilder(connectionString);
+        var existingOptions = readOnly.Options?.Trim();
+        readOnly.Options = string.IsNullOrEmpty(existingOptions)
+            ? "-c default_transaction_read_only=on"
+            : $"{existingOptions} -c default_transaction_read_only=on";
+        connectionString = readOnly.ConnectionString;
+    }
+
     return NpgsqlDataSource.Create(connectionString);
 });
 builder.Services.AddScoped<AgentRepository>();
 builder.Services.AddScoped<SecurityAuditRepository>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
+builder.Services.AddScoped<NetworkGeographyRepository>();
 builder.Services.AddScoped<RetentionRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<AgentLivenessMonitorRepository>();
 builder.Services.AddSingleton<AgentLivenessMonitorState>();
-builder.Services.AddHostedService<AgentLivenessMonitorHostedService>();
+if (!trafficMapReadOnlyDatabase)
+    builder.Services.AddHostedService<AgentLivenessMonitorHostedService>();
 builder.Services.AddScoped<SourceHealthRepository>();
 builder.Services.AddScoped<TelemetryCoverageRepository>();
 builder.Services.AddScoped<AssetInventoryRepository>();
@@ -63,14 +76,22 @@ builder.Services.AddSingleton<DetectionEngine>();
 builder.Services.AddScoped<IngestionErrorRepository>();
 builder.Services.AddScoped<InvestigationGraphRepository>();
 builder.Services.AddScoped<ReviewRepository>();
+builder.Services.AddSingleton<IpGeolocationService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<IpGeolocationService>());
+builder.Services.AddHttpClient("traffic-map-geolocation", client => client.DefaultRequestHeaders.Accept.ParseAdd("application/json"));
 builder.Services.AddScoped<SiemMcpAccess>();
 builder.Services.AddScoped<SiemMcpTools>();
 builder.Services.Configure<ReviewOptions>(builder.Configuration.GetSection(ReviewOptions.SectionName));
+builder.Services.AddOptions<TrafficMapOptions>()
+    .Bind(builder.Configuration.GetSection(TrafficMapOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<TrafficMapOptions>, TrafficMapOptionsValidator>();
 builder.Services.AddOptions<ManagedRetentionOptions>()
     .Bind(builder.Configuration.GetSection(ManagedRetentionOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<ManagedRetentionOptions>, ManagedRetentionOptionsValidator>();
-builder.Services.AddHostedService<ManagedRetentionHostedService>();
+if (!trafficMapReadOnlyDatabase)
+    builder.Services.AddHostedService<ManagedRetentionHostedService>();
 builder.Services
     .AddMcpServer()
     .WithHttpTransport(options =>
@@ -101,6 +122,8 @@ app.UseHttpsRedirection();
 app.Use(async (context, next) =>
 {
     context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
+    if (trafficMapReadOnlyDatabase)
+        context.Response.Headers.TryAdd("X-Challenger-Database-Mode", "read-only");
     if (!app.Environment.IsDevelopment() && !context.Request.IsHttps)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -110,6 +133,46 @@ app.Use(async (context, next) =>
 
     await next();
 });
+app.Use(async (context, next) =>
+{
+    if (trafficMapReadOnlyDatabase
+        && context.Request.Path.StartsWithSegments("/api/v2")
+        && !HttpMethods.IsGet(context.Request.Method)
+        && !HttpMethods.IsHead(context.Request.Method))
+    {
+        context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+        context.Response.Headers.Allow = "GET, HEAD";
+        await context.Response.WriteAsJsonAsync(new { error = "database_read_only" });
+        return;
+    }
+
+    await next();
+});
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/ui"))
+    {
+        var trafficMap = context.RequestServices.GetRequiredService<IOptions<TrafficMapOptions>>().Value;
+        if (!trafficMap.Enabled)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsJsonAsync(new { error = "traffic_map_disabled" });
+            return;
+        }
+        var expandedTileUrl = trafficMap.Map.TileUrl.Replace("{z}", "0", StringComparison.Ordinal)
+            .Replace("{x}", "0", StringComparison.Ordinal)
+            .Replace("{y}", "0", StringComparison.Ordinal);
+        var tileOrigin = Uri.TryCreate(expandedTileUrl, UriKind.Absolute, out var tileUri)
+            ? tileUri.GetLeftPart(UriPartial.Authority)
+            : "https://tile.openstreetmap.org";
+        context.Response.Headers.ContentSecurityPolicy = $"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {tileOrigin}; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+        context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        context.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
+    }
+    await next();
+});
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {
@@ -135,7 +198,7 @@ app.Use(async (context, next) =>
     var isServiceApi = path.StartsWith("/api/v2/", StringComparison.Ordinal)
         && !path.StartsWith("/api/v2/agents/", StringComparison.Ordinal)
         && !path.StartsWith("/api/v2/ingest/", StringComparison.Ordinal);
-    if (isServiceApi)
+    if (isServiceApi && !trafficMapReadOnlyDatabase)
     {
         var audit = context.RequestServices.GetRequiredService<SecurityAuditRepository>();
         var authenticated = context.User.Identity?.IsAuthenticated == true;
@@ -149,6 +212,28 @@ app.Use(async (context, next) =>
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.MapGet("/api/v2/network/geography", async Task<IResult> (
+    HttpContext context,
+    NetworkGeographyRepository geography,
+    TokenService tokens,
+    IOptions<TrafficMapOptions> trafficMap,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    if (!trafficMap.Value.Enabled) return Results.NotFound(new { error = "traffic_map_disabled" });
+
+    var query = NetworkGeographyQuery.FromQuery(context.Request.Query);
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors
+            .GroupBy(item => item.Field)
+            .ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Pragma = "no-cache";
+    return Results.Ok(await geography.GetAsync(query, cancellationToken));
+});
 
 app.MapPost("/api/v2/agents/register", async Task<IResult> (
     HttpContext context,
@@ -1183,6 +1268,8 @@ app.MapPut("/api/v2/admin/sources", async Task<IResult> (
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["source"] = new[] { ex.Message } });
     }
 });
+
+app.MapFallbackToFile("/ui/{*path:nonfile}", "ui/index.html");
 
 app.MapMcp("/mcp").RequireAuthorization("service");
 
