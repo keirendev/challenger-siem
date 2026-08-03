@@ -12,6 +12,8 @@
 
 Use service-authenticated REST or read-only MCP to review events, source health, coverage, alerts, cases, inventory, detections, and graphs. Preserve exact event IDs and time bounds. Treat missing or stale sources as visibility gaps. Use REST confirmation fields for mutations; MCP cannot mutate state.
 
+For visual network review, start `/ui/traffic` through the [traffic-map operator guide](network-geography-ui.md). Confirm the **Retained evidence** end time before using a recent preset, because ranges use telemetry `event_time`. A separate read-only viewer must use the writable backend's exact PostgreSQL database and must never replace the agent ingestion or audited MCP endpoint.
+
 ## Retention
 
 Review storage accounting and perform a dry run before executing managed retention. Manual execution requires the exact `CONFIRM RETENTION DELETE` confirmation and is security-audited. The allowlist is limited to events, heartbeat history, inventory snapshots, and ingestion errors. Current source state, alerts/evidence, cases, graphs, detection metadata, audit, and agents are protected.

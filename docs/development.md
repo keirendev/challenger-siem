@@ -24,4 +24,6 @@ npm run build
 
 The generated build is written to the ignored `server/Siem.Api/wwwroot/ui/` directory. See [Network geography UI](network-geography-ui.md) for private local configuration and the combined launcher.
 
+The launcher uses the `ConnectionStrings__SiemDatabase` currently loaded in the environment. For live local review, that must be the same database used by the active writable backend; no runtime discovery or agent-queue fallback occurs. Use `TrafficMap__ReadOnlyDatabase=true` only for a separate loopback viewer, never for the process receiving agent telemetry or serving audited MCP workflows.
+
 The schema requires an empty database. Tests and examples must use synthetic hostnames, users, addresses, IDs, and payloads. The only browser surface is the optional read-only traffic interface; do not add an embedded model client, user-account/session system, or non-Linux endpoint project.

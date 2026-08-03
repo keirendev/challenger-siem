@@ -8,7 +8,7 @@ Challenger SIEM 2.x is a Linux-only backend with an optional local, read-only ne
 - [REST API](api.md)
 - [Authentication](auth.md)
 - [MCP integration](mcp.md)
-- [Network geography UI](network-geography-ui.md)
+- [Network geography UI operator guide](network-geography-ui.md) — evidence limits, hosting modes, live-database selection, use, privacy, and troubleshooting
 - [Database schema](schema.md)
 - [Development](development.md)
 - [Linux agent](linux-agent.md) and [agent security](linux-agent-security.md)

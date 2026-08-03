@@ -7,7 +7,7 @@ Challenger SIEM exposes stateless Streamable HTTP MCP at `/mcp` for Codex and ot
 - Use HTTPS outside isolated loopback development.
 - Send `Authorization: Bearer <service-token>` using the externally managed value configured as `Auth__ServiceToken`.
 - Never put the bearer in a URL, tracked configuration, shell history, screenshots, or prompts. Load it from a secret manager or ignored environment file supported by the MCP client.
-- Missing/invalid credentials fail authentication. Every tool call records a secret-safe audit outcome with capability, target classification, row count, truncation, redaction label, and failure class; it never records the bearer or event payload.
+- Missing/invalid credentials fail authentication. On the normal writable backend, every tool call records a secret-safe audit outcome with capability, target classification, row count, truncation, redaction label, and failure class; it never records the bearer or event payload. The dedicated read-only traffic viewer is not an MCP replacement because MCP audit writes remain part of this contract.
 
 The service bearer is the single-user deployment's trusted service identity. REST can mutate reviewed SIEM state; MCP cannot. Use separate clients/credential handling and explicit `/api/v2` calls when a human has approved a mutation.
 
