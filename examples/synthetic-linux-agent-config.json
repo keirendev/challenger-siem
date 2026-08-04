@@ -45,6 +45,17 @@
       "CleanupStateOnDisable": false,
       "StatePath": "/var/lib/challenger-siem-agent/passive-telemetry-state.json"
     },
+    "KernelNetworkTelemetry": {
+      "Enabled": false,
+      "ApprovedPlanHash": "",
+      "ApprovedHelperSha256": "",
+      "ApprovedSignerPublicKeySha256": "",
+      "StartupDelaySeconds": 30,
+      "QueuePauseDepth": 20000,
+      "MaxCommandLineBytes": 4096,
+      "SocketPath": "/run/challenger-siem-ebpf/challenger-siem-ebpf.sock",
+      "StatePath": "/var/lib/challenger-siem-agent/kernel-network-state.json"
+    },
     "L4Telemetry": {
       "Enabled": false,
       "ApprovedPlanHash": "",

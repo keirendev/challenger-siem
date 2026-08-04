@@ -61,9 +61,11 @@ public sealed class LinuxSelfIntegrityTests
             var collector = Collector(options, root);
             var plan = await collector.PreflightAsync(default);
 
-            Assert.Equal(6, plan.Entries.Count);
+            Assert.Equal(LinuxSelfIntegrityCollector.Allowlist.Count, plan.Entries.Count);
             Assert.Contains(plan.Entries, item => item.Path == "/etc/systemd/system/challenger-siem-agent.service" && item.State == "unreadable" && item.Reason == "symlink_rejected");
             Assert.Contains(plan.Entries, item => item.PathId == "process_visibility_profile");
+            Assert.Contains(plan.Entries, item => item.PathId == "kernel_network_helper");
+            Assert.Contains(plan.Entries, item => item.PathId == "kernel_network_signing_key");
             Assert.Contains("no audit, eBPF, fanotify, inotify, IMA", plan.FilesystemSupport);
             Assert.DoesNotContain("/etc/passwd", string.Join('\n', plan.Entries.Select(item => item.Path)));
         }

@@ -188,6 +188,42 @@ public sealed record NetworkTelemetryConcept
 
     [JsonPropertyName("protocol")]
     public string? Protocol { get; init; }
+
+    [JsonPropertyName("local_ip")]
+    public string? LocalIp { get; init; }
+
+    [JsonPropertyName("local_port")]
+    public int? LocalPort { get; init; }
+
+    [JsonPropertyName("remote_ip")]
+    public string? RemoteIp { get; init; }
+
+    [JsonPropertyName("remote_port")]
+    public int? RemotePort { get; init; }
+
+    [JsonPropertyName("direction")]
+    public string? Direction { get; init; }
+
+    [JsonPropertyName("packet_count_delta")]
+    public long? PacketCountDelta { get; init; }
+
+    [JsonPropertyName("byte_count_delta")]
+    public long? ByteCountDelta { get; init; }
+
+    [JsonPropertyName("interval_started_at")]
+    public DateTimeOffset? IntervalStartedAt { get; init; }
+
+    [JsonPropertyName("interval_ended_at")]
+    public DateTimeOffset? IntervalEndedAt { get; init; }
+
+    [JsonPropertyName("tcp_flags")]
+    public IReadOnlyList<string> TcpFlags { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("evidence_mode")]
+    public string? EvidenceMode { get; init; }
+
+    [JsonPropertyName("attribution_confidence")]
+    public string? AttributionConfidence { get; init; }
 }
 
 public sealed record FileTelemetryConcept

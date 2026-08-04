@@ -1,21 +1,21 @@
 # ADR: optional Linux L3 telemetry selection
 
-Status: adopted narrow design; independently approval-gated self-integrity/passive procfs and the separate journal-audit router are implemented; live audit parsing remains disabled and separately gated
+Status: adopted narrow design; independently approval-gated self-integrity/passive procfs, the fixed kernel network helper, and the separate journal-audit router are implemented; live audit parsing remains disabled and separately gated
 Date: 2026-07-14
 Scope: Linux L3 audit, eBPF, file-integrity, and passive procfs telemetry decisions
 
 ## Decision summary
 
-Challenger SIEM does **not** add or enable Linux audit, eBPF, broad/live file-integrity collection, or any host-policy mutation. The supported Linux endpoint includes the existing passive L1 journal reader, opt-in L2 logical journal classification, bounded read-only inventory, the disabled-by-default explicit-opt-in L3 snapshot-based agent self-integrity source, and a separately approval-gated passive procfs L3 pack for polling-honest process/socket snapshots and coalesced host-behaviour samples. No audit rules, audit backlog settings, kernel parameters, capabilities, packages, modules, firewall/authentication/security policy, fanotify/inotify watches, IMA policy, or live file-integrity watches are installed or changed.
+Challenger SIEM does **not** add or enable Linux audit, broad/live file-integrity collection, or host-policy mutation. The supported endpoint includes the passive L1 journal reader, opt-in L2 classification, bounded inventory, approval-gated L3 self-integrity/procfs sources, and a separate disabled-by-default signed Linux x86_64 eBPF network-flow helper. The kernel source adds only its locked identity, fixed socket/unit/profile, and exact helper capabilities after explicit activation; it installs no package, audit rule, backlog setting, kernel parameter/module, firewall/authentication policy, fanotify/inotify watch, IMA policy, or live file-integrity watch.
 
-The selected file-integrity candidate remains only the **snapshot-based, allowlisted agent self-integrity design** described below. The [Read-only Linux Audit Framework collector boundary](linux-audit-framework-adr.md) now has a disabled-by-default implementation with a pre-L1 privacy router; live parsing still requires separate exact approval and compatibility/resource evidence and authorizes no host producer change. eBPF and broad/live file-integrity monitoring remain deferred or rejected as L3 defaults.
+The selected file-integrity candidate remains only the **snapshot-based, allowlisted agent self-integrity design** described below. The [Read-only Linux Audit Framework collector boundary](linux-audit-framework-adr.md) now has a disabled-by-default implementation with a pre-L1 privacy router; live parsing still requires separate exact approval and compatibility/resource evidence and authorizes no host producer change. eBPF remains rejected as an L3 default, but the separately signed and approval-gated no-payload Linux x86_64 network-flow source is available under its own lifecycle; broad/live file-integrity monitoring remains deferred.
 
-A later implementation added a distinct passive procfs snapshot pack, documented in [Linux passive process, network, and behaviour telemetry](linux-passive-telemetry.md). It does not revise the eBPF decision: procfs polling cannot provide kernel-hook ordering or complete short-lived process/connection coverage, so its events deliberately use non-alertable `baseline` followed by `observed`, `disappeared`, and `changed` semantics and expose partial/truncated health. The pack is disabled until its explicit plan hash is approved and pauses itself before consuming the queue headroom reserved for L1/L2. Its default profile needs no capability or host-policy change; cross-user executable visibility is a later, separately planned one-capability profile and does not authorize eBPF or kernel hooks.
+A later implementation added a distinct passive procfs snapshot pack, documented in [Linux passive process, network, and behaviour telemetry](linux-passive-telemetry.md). Procfs polling cannot provide kernel-hook ordering or complete short-lived process/connection coverage, so its events deliberately use non-alertable `baseline` followed by `observed`, `disappeared`, and `changed` semantics and expose partial/truncated health. The subsequent [fixed kernel network source](linux-kernel-network.md) supplements only TCP/UDP flow evidence under its own signed lifecycle; it does not authorize process-lifecycle, DNS, file, or general kernel hooks.
 
 | Option | Decision | Reason |
 | --- | --- | --- |
 | Existing journal-backed Linux Audit Framework integration | **Implemented; disabled and undeclared by default** | The exact boundary is the already-configured local systemd journal, reused through a pre-L1 privacy router with no rule/backlog/failure/service/permission mutation. Live parsing still needs separate exact approval and private compatibility/resource evidence. |
-| Narrow eBPF process/network visibility | **Defer** | Correctness potential is high for process/network metadata, but verifier/program/kernel/BTF/capability/package complexity and unmeasured overhead are above the current L3 gate. |
+| Narrow eBPF process/network visibility | **Implemented for fixed no-payload network flow only; other eBPF remains deferred** | Linux x86_64 cgroup-v2/BTF/libbpf compatibility, exact capabilities, signed fixed artifacts, bounded maps/IPC/loss accounting, independent pressure behavior, and detach rollback are enforced by a separate lifecycle. |
 | Bounded procfs process/socket/resource snapshots | **Adopt as explicit opt-in** | Provides useful polling evidence with ordinary read-only files, deterministic diff/health semantics, strict privacy/volume bounds, and no kernel program or policy mutation; it explicitly cannot claim complete lifecycle capture. |
 | Allowlisted file-integrity approaches | **Adopt narrow snapshot design only** | A small, explicit, no-watch agent self-integrity snapshot can extend existing inventory with bounded overhead and rollback. Broader path watches, fanotify permission workflows, IMA policy, and role config hashing remain deferred. |
 
@@ -110,7 +110,7 @@ Loading and attaching tracing programs is privileged. Least privilege would requ
 
 ### Loss, pressure, and rate behavior
 
-A future eBPF collector must maintain per-source counters:
+The fixed network eBPF collector maintains per-source counters for:
 
 - ring producer/consumer positions when available;
 - reservation-failure/drop counters emitted by the BPF program;
@@ -126,14 +126,14 @@ BPF toolchains increase supply-chain and maintenance burden: BPF object build, k
 
 ### Overhead
 
-No host measurement was performed. The ringbuf documentation supports efficient design, but it is not a project measurement. eBPF remains blocked until private tests cover idle, steady-state, burst, outage/drain, restart, detach/reattach, and high-connection workloads against the Linux SLOs.
+The original ADR performed no host measurement. The fixed network subset remains disabled by default and requires disposable-VM validation plus private idle, steady-state, burst, outage/drain, restart, detach/reattach, and high-connection canaries against the Linux SLOs before each protected-host rollout.
 
 ### Decision
 
-**Defer.** Conditions to reconsider:
+**Superseded for the fixed network-flow subset; defer every other eBPF source.** The implemented subset is constrained by:
 
 1. Fixed metadata-only hook plan with exact kernel hooks and no payload/content capture.
-2. CO-RE build pipeline with signed BPF object, libbpf dependency review, no endpoint compiler, and BTF/kernel fallback matrix.
+2. A signed embedded BPF object using fixed stable cgroup context fields, reviewed libbpf/libelf/zlib dependencies, no endpoint compiler, and fail-closed BTF/kernel compatibility checks.
 3. Helper protocol with minimal capabilities, no arbitrary program loading, bounded verifier logs, and deterministic detach/unpin rollback.
 4. Loss/drop counters tested under ring-full and userspace-reader outage.
 5. Private resource and compatibility evidence passes all SLOs.

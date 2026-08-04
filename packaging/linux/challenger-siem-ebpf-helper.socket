@@ -1,0 +1,15 @@
+[Unit]
+Description=Challenger SIEM eBPF helper IPC socket
+PartOf=challenger-siem-ebpf-helper.service
+
+[Socket]
+ListenSequentialPacket=/run/challenger-siem-ebpf/challenger-siem-ebpf.sock
+SocketUser=challenger-siem-ebpf
+SocketGroup=challenger-siem
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+Service=challenger-siem-ebpf-helper.service
+
+[Install]
+WantedBy=sockets.target

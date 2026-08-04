@@ -127,6 +127,12 @@ public sealed record NetworkGeographyDestination
     [JsonPropertyName("lifecycle_events")]
     public long LifecycleEvents { get; init; }
 
+    [JsonPropertyName("packet_count_delta")]
+    public long PacketCountDelta { get; init; }
+
+    [JsonPropertyName("byte_count_delta")]
+    public long ByteCountDelta { get; init; }
+
     [JsonPropertyName("first_seen_utc")]
     public DateTimeOffset FirstSeenUtc { get; init; }
 
@@ -147,6 +153,12 @@ public sealed record NetworkGeographyDestination
 
     [JsonPropertyName("process_images")]
     public IReadOnlyList<string> ProcessImages { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("evidence_modes")]
+    public IReadOnlyList<string> EvidenceModes { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("directions")]
+    public IReadOnlyList<string> Directions { get; init; } = Array.Empty<string>();
 
     [JsonPropertyName("geolocation_status")]
     public string GeolocationStatus { get; init; } = "pending";
@@ -207,6 +219,12 @@ public sealed record NetworkGeographyCoverage
 
     [JsonPropertyName("evidence_mode")]
     public string EvidenceMode { get; init; } = "snapshot_diff";
+
+    [JsonPropertyName("source_ids")]
+    public IReadOnlyList<string> SourceIds { get; init; } = [LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff, LinuxTelemetrySourceIds.NetworkFlowSummary];
+
+    [JsonPropertyName("evidence_modes")]
+    public IReadOnlyList<string> EvidenceModes { get; init; } = ["snapshot_diff", "kernel_flow"];
 
     [JsonPropertyName("source_status_counts")]
     public IReadOnlyDictionary<string, long> SourceStatusCounts { get; init; } = new Dictionary<string, long>(StringComparer.Ordinal);

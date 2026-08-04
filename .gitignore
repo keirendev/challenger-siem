@@ -10,6 +10,7 @@ dist/
 node_modules/
 *.tsbuildinfo
 server/Siem.Api/wwwroot/ui/
+agent/KernelNetwork/Native/build/
 
 # Local configuration, secrets, and automation state
 *.Development.local.json

@@ -17,6 +17,7 @@ public static class LinuxTelemetrySourceIds
     public const string AgentSelfIntegrity = "linux-agent-self-integrity-snapshot";
     public const string ProcessSnapshotDiff = "linux-process-snapshot-diff";
     public const string NetworkSocketSnapshotDiff = "linux-network-socket-snapshot-diff";
+    public const string NetworkFlowSummary = "linux-network-flow-summary";
     public const string HostBehaviourMetrics = "linux-host-behaviour-metrics";
     public const string PolicyPostureDrift = "linux-policy-posture-drift";
     public const string AgentPerformanceSlo = "linux-agent-performance-slo";
@@ -39,6 +40,7 @@ public static class LinuxTelemetrySourceCatalog
     public const string L2PackId = "linux-l2-security";
     public const string L3SelfIntegrityPackId = "linux-l3-self-integrity-snapshot";
     public const string L3PassivePackId = "linux-l3-passive-snapshot";
+    public const string L3KernelNetworkPackId = "linux-l3-kernel-network";
     public const string L4PosturePackId = "linux-l4-policy-posture";
     public const string L4RolePackId = "linux-l4-role-journal";
 
@@ -254,6 +256,29 @@ public static class LinuxTelemetrySourceCatalog
             "coalesced_sample,counter_reset,permission_partial,pressure_restart")
     ];
 
+    public static readonly SourceManifestEntry KernelNetworkFlow = new()
+    {
+        SourceId = LinuxTelemetrySourceIds.NetworkFlowSummary,
+        Platform = TelemetryPlatforms.Linux,
+        SourceKind = TelemetrySourceKinds.InventoryDiff,
+        SourceNamespace = "linux.ebpf.network",
+        Applicability = SourceApplicabilityStatuses.Unknown,
+        ApplicabilityReason = "explicit_kernel_network_opt_in_required",
+        CheckpointKind = SourceCheckpointKinds.Sequence,
+        DisplayName = "Linux kernel network flow summaries",
+        CoverageLevel = CoverageLevel.L3,
+        Required = false,
+        Requirement = SourceRequirementKinds.Optional,
+        EnabledByDefault = false,
+        SourcePack = L3KernelNetworkPackId,
+        ParserId = "linux-network-flow-summary-v1",
+        Prerequisites = ["explicit_kernel_network_opt_in", "approval_hash_matches", "signed_fixed_helper", "cgroup_v2", "kernel_btf", "cap_bpf", "cap_perfmon", "cap_net_admin"],
+        EventFamilies = ["network_flow_started", "network_flow_sample", "network_flow_closed"],
+        ValidationScenarios = ["signed_plan", "ipv4_ipv6", "tcp_udp", "process_attribution", "counter_pressure", "helper_restart", "queue_pressure", "detach_no_pins", "payload_exclusion"],
+        Privacy = "network_headers_and_aggregate_counters_no_payload",
+        InstallerManaged = false
+    };
+
     public static readonly IReadOnlyList<SourceManifestEntry> L4 =
     [
         L4SnapshotEntry(
@@ -287,6 +312,7 @@ public static class LinuxTelemetrySourceCatalog
         .Append(AuditFramework)
         .Append(SelfIntegritySnapshot)
         .Concat(L3Passive)
+        .Append(KernelNetworkFlow)
         .Concat(L4)
         .OrderBy(entry => entry.CoverageLevel)
         .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)

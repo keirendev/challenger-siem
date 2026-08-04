@@ -16,7 +16,7 @@ namespace Challenger.Siem.LinuxAgent.Tests;
 public sealed class LinuxEnrollmentTests
 {
     [Fact]
-    public async Task EnrollmentPersistsConfiguredSelfIntegrityBlock()
+    public async Task EnrollmentPersistsEveryApprovalGatedTelemetryBlock()
     {
         if (!OperatingSystem.IsLinux()) return;
 
@@ -34,6 +34,13 @@ public sealed class LinuxEnrollmentTests
             {
                 IncludeAccessibleUserJournals = true,
                 TargetCoverageLevel = CoverageLevel.L3
+            },
+            Audit = new AuditOptions
+            {
+                Enabled = false,
+                FacilityDeclaration = "present_disabled",
+                ApprovedPlanHash = $"sha256:{new string('e', 64)}",
+                StatePath = Path.Combine(root, "audit-state.json")
             },
             SelfIntegrity = new SelfIntegrityOptions
             {
@@ -66,6 +73,18 @@ public sealed class LinuxEnrollmentTests
                 MaxRawEventBytes = 8192,
                 CleanupStateOnDisable = true,
                 StatePath = Path.Combine(root, "passive-state.json")
+            },
+            KernelNetworkTelemetry = new KernelNetworkTelemetryOptions
+            {
+                Enabled = true,
+                ApprovedPlanHash = $"sha256:{new string('f', 64)}",
+                ApprovedHelperSha256 = $"sha256:{new string('1', 64)}",
+                ApprovedSignerPublicKeySha256 = $"sha256:{new string('2', 64)}",
+                StartupDelaySeconds = 11,
+                QueuePauseDepth = 4322,
+                MaxCommandLineBytes = 2048,
+                SocketPath = "/run/challenger-siem-ebpf/challenger-siem-ebpf.sock",
+                StatePath = Path.Combine(root, "kernel-network-state.json")
             },
             L4Telemetry = new L4TelemetryOptions
             {
@@ -123,6 +142,21 @@ public sealed class LinuxEnrollmentTests
             Assert.Equal(2345, passive.GetProperty("MaxSocketsPerScan").GetInt32());
             Assert.True(passive.GetProperty("CleanupStateOnDisable").GetBoolean());
             Assert.Equal(options.PassiveTelemetry.StatePath, passive.GetProperty("StatePath").GetString());
+            var audit = document.RootElement.GetProperty("Agent").GetProperty("Audit");
+            Assert.False(audit.GetProperty("Enabled").GetBoolean());
+            Assert.Equal("present_disabled", audit.GetProperty("FacilityDeclaration").GetString());
+            Assert.Equal(options.Audit.ApprovedPlanHash, audit.GetProperty("ApprovedPlanHash").GetString());
+            Assert.Equal(options.Audit.StatePath, audit.GetProperty("StatePath").GetString());
+            var kernelNetwork = document.RootElement.GetProperty("Agent").GetProperty("KernelNetworkTelemetry");
+            Assert.True(kernelNetwork.GetProperty("Enabled").GetBoolean());
+            Assert.Equal(options.KernelNetworkTelemetry.ApprovedPlanHash, kernelNetwork.GetProperty("ApprovedPlanHash").GetString());
+            Assert.Equal(options.KernelNetworkTelemetry.ApprovedHelperSha256, kernelNetwork.GetProperty("ApprovedHelperSha256").GetString());
+            Assert.Equal(options.KernelNetworkTelemetry.ApprovedSignerPublicKeySha256, kernelNetwork.GetProperty("ApprovedSignerPublicKeySha256").GetString());
+            Assert.Equal(11, kernelNetwork.GetProperty("StartupDelaySeconds").GetInt32());
+            Assert.Equal(4322, kernelNetwork.GetProperty("QueuePauseDepth").GetInt32());
+            Assert.Equal(2048, kernelNetwork.GetProperty("MaxCommandLineBytes").GetInt32());
+            Assert.Equal(options.KernelNetworkTelemetry.SocketPath, kernelNetwork.GetProperty("SocketPath").GetString());
+            Assert.Equal(options.KernelNetworkTelemetry.StatePath, kernelNetwork.GetProperty("StatePath").GetString());
             var l4 = document.RootElement.GetProperty("Agent").GetProperty("L4Telemetry");
             Assert.False(l4.GetProperty("Enabled").GetBoolean());
             Assert.Equal(options.L4Telemetry.ApprovedPlanHash, l4.GetProperty("ApprovedPlanHash").GetString());

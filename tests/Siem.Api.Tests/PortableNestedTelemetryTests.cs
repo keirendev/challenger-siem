@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Challenger.Siem.Api.Database;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Review;
 using Challenger.Siem.Contracts.V2;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Xunit;
 
@@ -10,6 +12,60 @@ namespace Challenger.Siem.Api.Tests;
 [Collection(PostgresIntegrationCollection.Name)]
 public sealed class PortableNestedTelemetryTests(IntegrationTestDatabase database)
 {
+    [PostgresFact]
+    public async Task ReadOnlyRuleReviewDoesNotAttemptCatalogWrites()
+    {
+        var connectionString = database.RequireConnectionString();
+        await using (var writable = NpgsqlDataSource.Create(connectionString))
+        {
+            await new AlertRepository(writable).EnsureBuiltInRulesAsync(CancellationToken.None);
+        }
+
+        var readOnlyConnection = new NpgsqlConnectionStringBuilder(connectionString)
+        {
+            Options = "-c default_transaction_read_only=on"
+        };
+        await using var readOnly = NpgsqlDataSource.Create(readOnlyConnection.ConnectionString);
+        var repository = new AlertRepository(
+            readOnly,
+            Options.Create(new TrafficMapOptions { ReadOnlyDatabase = true }));
+
+        Assert.NotEmpty(await repository.GetRulesAsync(CancellationToken.None));
+    }
+
+    [PostgresFact]
+    public async Task TelemetryCoverageReportsTheEffectiveRetentionOverride()
+    {
+        var connectionString = database.RequireConnectionString();
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await using var replace = dataSource.CreateCommand("""
+            insert into server_config_settings(setting_key, setting_value, version)
+            values('retention.target_days', '7', 1)
+            on conflict(setting_key) do update set setting_value=excluded.setting_value, version=excluded.version;
+            """);
+        await replace.ExecuteNonQueryAsync();
+
+        try
+        {
+            var configured = Options.Create(new ManagedRetentionOptions { TargetRetentionDays = 30 });
+            var coverage = await new TelemetryCoverageRepository(
+                    dataSource,
+                    new SourceHealthRepository(dataSource),
+                    new AlertRepository(dataSource),
+                    retentionOptions: configured,
+                    admin: new AdminRepository(dataSource))
+                .AssessAsync($"synthetic-retention-{Guid.NewGuid():N}", CoverageLevel.L1, 3, CancellationToken.None);
+
+            Assert.Equal(7, coverage.RetentionScheduler?.TargetRetentionDays);
+        }
+        finally
+        {
+            await using var cleanup = dataSource.CreateCommand(
+                "delete from server_config_settings where setting_key='retention.target_days';");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
     [PostgresFact]
     public async Task NestedProcessNetworkAndFileTelemetryIsDenormalizedAndSearchableWithoutBackfill()
     {

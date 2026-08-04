@@ -14,7 +14,7 @@
   },
   "summary": {
     "matched_lifecycle_events": 2,
-    "connection_observations": 1,
+    "connection_observations": 2,
     "unique_destinations": 1,
     "returned_destinations": 1,
     "geolocated_destinations": 1,
@@ -26,12 +26,14 @@
   },
   "destinations": [{
     "destination_ip": "203.0.113.20",
-    "connection_observations": 1,
+    "connection_observations": 2,
     "baseline_observations": 0,
     "new_observations": 1,
     "change_events": 0,
     "disappearance_events": 1,
     "lifecycle_events": 2,
+    "packet_count_delta": 1,
+    "byte_count_delta": 28,
     "first_seen_utc": "2026-08-03T11:00:00Z",
     "last_seen_utc": "2026-08-03T11:15:00Z",
     "protocols": ["tcp"],
@@ -39,6 +41,8 @@
     "hostnames": ["synthetic-host"],
     "agent_ids": ["synthetic-agent"],
     "process_images": ["/usr/bin/synthetic-client"],
+    "evidence_modes": ["kernel_flow"],
+    "directions": ["outbound"],
     "geolocation_status": "ready",
     "latitude": 1,
     "longitude": 1,
@@ -52,12 +56,14 @@
   "timeline": [{
     "start_utc": "2026-08-03T11:00:00Z",
     "end_utc": "2026-08-03T12:00:00Z",
-    "connection_observations": 1,
+    "connection_observations": 2,
     "lifecycle_events": 2
   }],
   "coverage": {
     "source_id": "linux-network-socket-snapshot-diff",
     "evidence_mode": "snapshot_diff",
+    "source_ids": ["linux-network-socket-snapshot-diff", "linux-network-flow-summary"],
+    "evidence_modes": ["snapshot_diff", "kernel_flow"],
     "source_status_counts": { "healthy": 1 },
     "process_attribution_partial": false
   },

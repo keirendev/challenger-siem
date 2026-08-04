@@ -183,11 +183,11 @@ public sealed class NetworkGeographyRepository(
                 ProcessAttributionPartial = totals.ProcessAttributionPartial
             },
             ActiveFilters = query.ActiveFilters(),
-            ResultScope = $"Remote peer socket observations over {(query.From.HasValue || query.To.HasValue ? "the selected UTC range" : "all retained event time")}; top {query.Limit} destinations; service-authenticated.",
+            ResultScope = $"Remote peer snapshot and kernel-flow observations over {(query.From.HasValue || query.To.HasValue ? "the selected UTC range" : "all retained event time")}; top {query.Limit} destinations; service-authenticated.",
             Limitations =
             [
-                "Snapshot polling can miss short-lived sockets and does not capture packets or byte volumes.",
-                "The remote endpoint is a peer address; the telemetry does not prove inbound or outbound direction.",
+                "Snapshot polling can miss short-lived sockets and does not capture packets, byte volumes, or direction; kernel-flow records are identified separately.",
+                "Kernel packet and byte totals are cgroup SKB observations, not wire-accurate counters; offload and segmentation affect them.",
                 "IP geolocation is approximate and can describe a provider, CDN, VPN, or anycast registration rather than a physical server.",
                 "Process attribution is optional and may be unavailable or partial."
             ]
@@ -197,8 +197,9 @@ public sealed class NetworkGeographyRepository(
     private static async Task<(DateTimeOffset? From, DateTimeOffset? To)> LoadRetainedRangeAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "select min(event_time), max(event_time) from events where source_id = @source_id and destination_ip is not null;";
-        command.Parameters.AddWithValue("source_id", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        command.CommandText = "select min(event_time), max(event_time) from events where source_id in (@snapshot_source,@kernel_source) and destination_ip is not null;";
+        command.Parameters.AddWithValue("snapshot_source", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        command.Parameters.AddWithValue("kernel_source", LinuxTelemetrySourceIds.NetworkFlowSummary);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0)) return (null, null);
         return (ReadTime(reader, 0), ReadTime(reader, 1));
@@ -214,7 +215,7 @@ public sealed class NetworkGeographyRepository(
         var where = BuildWhere(command, query, geoFilterIps);
         command.CommandText = $"""
             select count(*)::bigint,
-                count(*) filter (where event_code in ('socket_observed','socket_baseline'))::bigint,
+                count(*) filter (where event_code in ('socket_observed','socket_baseline','network_flow_started','network_flow_sample','network_flow_closed'))::bigint,
                 count(distinct destination_ip)::bigint,
                 coalesce(bool_or(process_image is null),false)
             from events where {where};
@@ -237,20 +238,30 @@ public sealed class NetworkGeographyRepository(
             with filtered as materialized (
                 select destination_ip,event_code,event_time,hostname,agent_id,process_image,
                     coalesce(normalized_json->>'protocol', normalized_json->'network'->>'protocol') as protocol,
-                    coalesce(normalized_json->>'destination_port', normalized_json->'network'->>'destination_port') as destination_port
+                    coalesce(normalized_json->'network'->>'remote_port',normalized_json->>'destination_port', normalized_json->'network'->>'destination_port') as destination_port,
+                    coalesce(normalized_json->'network'->>'evidence_mode',raw_json->>'evidence_mode','snapshot_diff') as evidence_mode,
+                    coalesce(normalized_json->'network'->>'direction',raw_json->>'direction','unknown') as direction,
+                    case when coalesce(normalized_json->'network'->>'packet_count_delta','') ~ '^[0-9]+$'
+                        and length(normalized_json->'network'->>'packet_count_delta') <= 19
+                        then least((normalized_json->'network'->>'packet_count_delta')::numeric,9223372036854775807)::bigint else 0 end as packet_count_delta,
+                    case when coalesce(normalized_json->'network'->>'byte_count_delta','') ~ '^[0-9]+$'
+                        and length(normalized_json->'network'->>'byte_count_delta') <= 19
+                        then least((normalized_json->'network'->>'byte_count_delta')::numeric,9223372036854775807)::bigint else 0 end as byte_count_delta
                 from events where {where}
             ), aggregated as (
                 select destination_ip,
                     count(*)::bigint as lifecycle_events,
-                    count(*) filter (where event_code in ('socket_observed','socket_baseline'))::bigint as connection_observations,
+                    count(*) filter (where event_code in ('socket_observed','socket_baseline','network_flow_started','network_flow_sample','network_flow_closed'))::bigint as connection_observations,
                     count(*) filter (where event_code = 'socket_baseline')::bigint as baseline_observations,
-                    count(*) filter (where event_code = 'socket_observed')::bigint as new_observations,
-                    count(*) filter (where event_code = 'socket_changed')::bigint as change_events,
-                    count(*) filter (where event_code in ('socket_disappeared','socket_baseline_disappeared'))::bigint as disappearance_events,
+                    count(*) filter (where event_code in ('socket_observed','network_flow_started'))::bigint as new_observations,
+                    count(*) filter (where event_code in ('socket_changed','network_flow_sample'))::bigint as change_events,
+                    count(*) filter (where event_code in ('socket_disappeared','socket_baseline_disappeared','network_flow_closed'))::bigint as disappearance_events,
+                    sum(packet_count_delta)::bigint as packet_count_delta,
+                    sum(byte_count_delta)::bigint as byte_count_delta,
                     min(event_time) as first_seen, max(event_time) as last_seen
                 from filtered
                 group by destination_ip
-                order by (count(*) filter (where event_code in ('socket_observed','socket_baseline'))) desc, max(event_time) desc, destination_ip asc
+                order by (count(*) filter (where event_code in ('socket_observed','socket_baseline','network_flow_started','network_flow_sample','network_flow_closed'))) desc, max(event_time) desc, destination_ip asc
                 limit @candidate_limit
             ), metadata_values as (
                 select distinct f.destination_ip,'protocol'::text as kind,f.protocol as value from filtered f join aggregated a using(destination_ip) where f.protocol is not null
@@ -262,13 +273,19 @@ public sealed class NetworkGeographyRepository(
                 select distinct f.destination_ip,'agent_id',f.agent_id from filtered f join aggregated a using(destination_ip) where f.agent_id is not null
                 union all
                 select distinct f.destination_ip,'process_image',f.process_image from filtered f join aggregated a using(destination_ip) where f.process_image is not null
+                union all
+                select distinct f.destination_ip,'evidence_mode',f.evidence_mode from filtered f join aggregated a using(destination_ip) where f.evidence_mode is not null
+                union all
+                select distinct f.destination_ip,'direction',f.direction from filtered f join aggregated a using(destination_ip) where f.direction is not null
             ), metadata as (
                 select destination_ip,
                     coalesce(array_agg(value order by value) filter (where kind='protocol'),array[]::text[]) as protocols,
                     coalesce(array_agg(value order by value) filter (where kind='destination_port'),array[]::text[]) as destination_ports,
                     coalesce(array_agg(value order by value) filter (where kind='hostname'),array[]::text[]) as hostnames,
                     coalesce(array_agg(value order by value) filter (where kind='agent_id'),array[]::text[]) as agent_ids,
-                    coalesce(array_agg(value order by value) filter (where kind='process_image'),array[]::text[]) as process_images
+                    coalesce(array_agg(value order by value) filter (where kind='process_image'),array[]::text[]) as process_images,
+                    coalesce(array_agg(value order by value) filter (where kind='evidence_mode'),array[]::text[]) as evidence_modes,
+                    coalesce(array_agg(value order by value) filter (where kind='direction'),array[]::text[]) as directions
                 from (
                     select destination_ip,kind,value,row_number() over(partition by destination_ip,kind order by value) as ordinal
                     from metadata_values
@@ -281,7 +298,9 @@ public sealed class NetworkGeographyRepository(
                 coalesce(metadata.destination_ports,array[]::text[]) as destination_ports,
                 coalesce(metadata.hostnames,array[]::text[]) as hostnames,
                 coalesce(metadata.agent_ids,array[]::text[]) as agent_ids,
-                coalesce(metadata.process_images,array[]::text[]) as process_images
+                coalesce(metadata.process_images,array[]::text[]) as process_images,
+                coalesce(metadata.evidence_modes,array[]::text[]) as evidence_modes,
+                coalesce(metadata.directions,array[]::text[]) as directions
             from aggregated
             left join metadata using(destination_ip)
             order by connection_observations desc nulls last, last_seen desc, destination_ip asc;
@@ -298,16 +317,20 @@ public sealed class NetworkGeographyRepository(
                 LifecycleEvents = reader.GetInt64(reader.GetOrdinal("lifecycle_events")),
                 BaselineObservations = baselines,
                 NewObservations = observed,
-                ConnectionObservations = baselines + observed,
+                ConnectionObservations = reader.GetInt64(reader.GetOrdinal("connection_observations")),
                 ChangeEvents = reader.GetInt64(reader.GetOrdinal("change_events")),
                 DisappearanceEvents = reader.GetInt64(reader.GetOrdinal("disappearance_events")),
+                PacketCountDelta = reader.GetInt64(reader.GetOrdinal("packet_count_delta")),
+                ByteCountDelta = reader.GetInt64(reader.GetOrdinal("byte_count_delta")),
                 FirstSeenUtc = ReadTime(reader, reader.GetOrdinal("first_seen")),
                 LastSeenUtc = ReadTime(reader, reader.GetOrdinal("last_seen")),
                 Protocols = ReadStrings(reader, "protocols"),
                 DestinationPorts = ReadStrings(reader, "destination_ports").Select(value => int.TryParse(value, out var port) ? port : 0).Where(port => port > 0).Take(MetadataLimit).ToArray(),
                 Hostnames = ReadStrings(reader, "hostnames"),
                 AgentIds = ReadStrings(reader, "agent_ids"),
-                ProcessImages = ReadStrings(reader, "process_images")
+                ProcessImages = ReadStrings(reader, "process_images"),
+                EvidenceModes = ReadStrings(reader, "evidence_modes"),
+                Directions = ReadStrings(reader, "directions")
             });
         }
         return results;
@@ -330,7 +353,7 @@ public sealed class NetworkGeographyRepository(
         command.Parameters.AddWithValue("bucket_seconds", bucketSeconds);
         command.CommandText = $"""
             select to_timestamp(floor(extract(epoch from event_time) / @bucket_seconds) * @bucket_seconds) as bucket_start,
-                count(*) filter (where event_code in ('socket_observed','socket_baseline'))::bigint as connection_observations,
+                count(*) filter (where event_code in ('socket_observed','socket_baseline','network_flow_started','network_flow_sample','network_flow_closed'))::bigint as connection_observations,
                 count(*)::bigint as lifecycle_events
             from events where {where}
             group by bucket_start order by bucket_start asc limit 200;
@@ -357,8 +380,9 @@ public sealed class NetworkGeographyRepository(
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        var where = new List<string> { "health.source_id=@source_id" };
-        command.Parameters.AddWithValue("source_id", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        var where = new List<string> { "health.source_id in (@snapshot_source,@kernel_source)" };
+        command.Parameters.AddWithValue("snapshot_source", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        command.Parameters.AddWithValue("kernel_source", LinuxTelemetrySourceIds.NetworkFlowSummary);
         if (query.AgentId is not null)
         {
             where.Add("health.agent_id=@health_agent_id");
@@ -378,8 +402,9 @@ public sealed class NetworkGeographyRepository(
 
     private static string BuildWhere(NpgsqlCommand command, NetworkGeographyQuery query, IReadOnlyList<string> geoFilterIps)
     {
-        var where = new List<string> { "source_id = @source_id", "destination_ip is not null" };
-        command.Parameters.AddWithValue("source_id", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        var where = new List<string> { "source_id in (@snapshot_source,@kernel_source)", "destination_ip is not null" };
+        command.Parameters.AddWithValue("snapshot_source", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        command.Parameters.AddWithValue("kernel_source", LinuxTelemetrySourceIds.NetworkFlowSummary);
         void Exact(string column, string parameter, string? value)
         {
             if (value is null) return;
@@ -393,7 +418,7 @@ public sealed class NetworkGeographyRepository(
         if (query.To.HasValue) { where.Add("event_time <= @to"); command.Parameters.AddWithValue("to", query.To.Value.ToUniversalTime()); }
         if (query.DestinationPort.HasValue)
         {
-            where.Add("coalesce(normalized_json->>'destination_port', normalized_json->'network'->>'destination_port') = @destination_port");
+            where.Add("coalesce(normalized_json->'network'->>'remote_port',normalized_json->>'destination_port', normalized_json->'network'->>'destination_port') = @destination_port");
             command.Parameters.AddWithValue("destination_port", query.DestinationPort.Value.ToString(CultureInfo.InvariantCulture));
         }
         if (query.Protocol is not null)

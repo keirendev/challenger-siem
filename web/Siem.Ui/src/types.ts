@@ -23,6 +23,8 @@ export interface Destination {
   change_events: number
   disappearance_events: number
   lifecycle_events: number
+  packet_count_delta: number
+  byte_count_delta: number
   first_seen_utc: string
   last_seen_utc: string
   protocols: string[]
@@ -30,6 +32,8 @@ export interface Destination {
   hostnames: string[]
   agent_ids: string[]
   process_images: string[]
+  evidence_modes: string[]
+  directions: string[]
   geolocation_status: string
   latitude?: number
   longitude?: number
@@ -70,6 +74,8 @@ export interface GeographyResponse {
   coverage: {
     source_id: string
     evidence_mode: string
+    source_ids: string[]
+    evidence_modes: string[]
     source_status_counts: Record<string, number>
     process_attribution_partial: boolean
   }

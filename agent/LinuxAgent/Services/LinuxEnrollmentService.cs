@@ -58,8 +58,10 @@ public sealed class LinuxEnrollmentService(
                 options.DrainBatchSize,
                 options.Inventory,
                 options.Journal,
+                options.Audit,
                 options.SelfIntegrity,
                 options.PassiveTelemetry,
+                options.KernelNetworkTelemetry,
                 options.L4Telemetry,
                 options.Queue,
                 options.State

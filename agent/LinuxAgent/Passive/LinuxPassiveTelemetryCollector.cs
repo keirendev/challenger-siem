@@ -17,7 +17,7 @@ public sealed class LinuxPassiveTelemetryCollector(
     ILinuxHostMetricsSource metricsSource,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-passive-snapshot-v4";
+    public const string CollectorVersion = "linux-passive-snapshot-v5";
     private readonly LinuxAgentOptions options = configured.Value;
 
     public string PlanHash => ComputePlanHash(options);
@@ -502,7 +502,7 @@ public sealed class LinuxPassiveTelemetryCollector(
         var attributionStatus = current?.AttributionStatus ?? "unavailable";
         var raw = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["schema"] = "linux-network-snapshot-v1",
+            ["schema"] = "linux-network-snapshot-v2",
             ["evidence_mode"] = "snapshot_diff",
             ["action"] = action,
             ["socket_key"] = key,
@@ -520,8 +520,18 @@ public sealed class LinuxPassiveTelemetryCollector(
             ["owner_process_id"] = primaryOwner?.ProcessId,
             ["owner_executable"] = primaryOwner?.Executable,
             ["owner_command"] = primaryOwner?.Command,
+            ["owner_command_line"] = primaryOwner?.CommandLine,
             ["owner_user_id"] = primaryOwner?.UserId,
-            ["owner_confidence"] = primaryOwner?.Confidence
+            ["owner_confidence"] = primaryOwner?.Confidence,
+            ["owners"] = owners.Take(LinuxSocketOwnershipCache.MaxOwnersPerSocket).Select(owner => new SortedDictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["process_id"] = owner.ProcessId,
+                ["executable"] = owner.Executable,
+                ["command"] = owner.Command,
+                ["command_line"] = owner.CommandLine,
+                ["user_id"] = owner.UserId,
+                ["confidence"] = owner.Confidence
+            }).ToArray()
         };
         return BuildEnvelope(
             agentId,
@@ -544,6 +554,7 @@ public sealed class LinuxPassiveTelemetryCollector(
                 Protocol = protocol,
                 ProcessId = primaryOwner?.ProcessId.ToString(CultureInfo.InvariantCulture),
                 ProcessImage = primaryOwner?.Executable,
+                ProcessCommandLine = primaryOwner?.CommandLine,
                 User = userId is null ? null : new UserTelemetryConcept { Id = userId },
                 Network = new NetworkTelemetryConcept
                 {
@@ -551,7 +562,14 @@ public sealed class LinuxPassiveTelemetryCollector(
                     SourcePort = localPort,
                     DestinationIp = remoteAddress,
                     DestinationPort = remotePort,
-                    Protocol = protocol
+                    Protocol = protocol,
+                    LocalIp = localAddress,
+                    LocalPort = localPort,
+                    RemoteIp = remoteAddress,
+                    RemotePort = remotePort,
+                    Direction = "unknown",
+                    EvidenceMode = "snapshot_diff",
+                    AttributionConfidence = primaryOwner?.Confidence ?? attributionStatus
                 },
                 Labels = new Dictionary<string, string>(StringComparer.Ordinal)
                 {

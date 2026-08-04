@@ -1,6 +1,6 @@
 # Linux host coverage specification
 
-Status: agent/service foundation, paged host/security inventory, passive L1/L2, approval-gated L3/L4, and the disabled-by-default journal-audit router are implemented; long-duration private soaks, live audit parsing, eBPF, and broad file collectors remain separately gated
+Status: agent/service foundation, paged host/security inventory, passive L1/L2, approval-gated L3/L4, the disabled-by-default journal-audit router, and a separately signed/approval-gated no-payload Linux x86_64 eBPF network-flow source are implemented; long-duration private soaks, live audit parsing, and broad file collectors remain separately gated
 Specification version: 0.1
 Primary audience: SIEM engineers, Linux agent engineers, detection engineers, operators
 
@@ -53,7 +53,7 @@ The implemented `linux-journal-l1` source directly invokes the fixed systemd `jo
 These sources require an explicit operator decision and cannot be prerequisites for L1 or a default install:
 
 - the implemented procfs process/socket/host-behaviour pack, which is approval-hash gated and documents polling gaps explicitly;
-- eBPF-based process, network, DNS, file, or kernel-security telemetry, with pinned resource limits and kernel compatibility checks;
+- the implemented signed no-payload Linux x86_64 eBPF network-flow source, with fixed resource limits, compatibility checks, exact capabilities, and rollback; any process, DNS, file, or other kernel-security eBPF source remains deferred;
 - targeted file-integrity monitoring beyond the implemented agent-owned snapshot source;
 - producer/configuration changes that enable additional Linux Security Module logging (normalization of already-journaled AppArmor/SELinux evidence is implemented);
 - producer/configuration changes that enable firewall logging (normalization of already-journaled UFW/nftables/firewalld evidence is implemented as optional L2);
@@ -61,7 +61,7 @@ These sources require an explicit operator decision and cannot be prerequisites 
 - container runtime and orchestration audit sources;
 - targeted application audit plugins or structured logs.
 
-Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors, except that loss of the audit privacy router must stop the shared reader before trusted audit can reach L1. Enabled-by-configuration advanced sources are limited to explicit-opt-in self-integrity, passive procfs, L4 posture/SLO, structured journal roles, and the separately approved journal-audit parser; eBPF, broad/live FIM, and role-application file readers remain absent.
+Optional collectors must degrade independently. Failure or overload in one must not stop heartbeats, queue delivery, or other collectors, except that loss of the audit privacy router must stop the shared reader before trusted audit can reach L1. Enabled-by-configuration advanced sources are limited to explicit-opt-in self-integrity, passive procfs, the separately signed kernel network source, L4 posture/SLO, structured journal roles, and the separately approved journal-audit parser; broad/live FIM, other eBPF sources, and role-application file readers remain absent.
 
 ### Unsupported or not applicable
 

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v2/network-activity.schema.json",
+  "title": "Challenger SIEM Network Activity Response v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_utc", "activities", "page", "active_filters", "result_scope", "geolocation_mode", "limitations"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "challenger-siem.network-activity.v2" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "activities": {
+      "type": "array", "maxItems": 500,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["agent_id", "event_id", "event_citation", "event_time_utc", "hostname", "source_id", "evidence_mode", "direction", "attribution_confidence", "tcp_flags", "geolocation_status"],
+        "properties": {
+          "agent_id": { "$ref": "#/$defs/id128" },
+          "event_id": { "type": "string", "format": "uuid" },
+          "event_citation": { "type": "string", "minLength": 8, "maxLength": 300 },
+          "event_time_utc": { "type": "string", "format": "date-time" },
+          "hostname": { "$ref": "#/$defs/id128" },
+          "source_id": { "type": "string", "enum": ["linux-network-socket-snapshot-diff", "linux-network-flow-summary"] },
+          "event_code": { "type": "string", "maxLength": 128 },
+          "evidence_mode": { "type": "string", "enum": ["snapshot_diff", "kernel_flow", "unknown"] },
+          "direction": { "type": "string", "enum": ["inbound", "outbound", "unknown"] },
+          "local_ip": { "$ref": "#/$defs/ip" },
+          "local_port": { "$ref": "#/$defs/port" },
+          "remote_ip": { "$ref": "#/$defs/ip" },
+          "remote_port": { "$ref": "#/$defs/port" },
+          "protocol": { "type": "string", "enum": ["tcp", "udp"] },
+          "process_id": { "type": "integer", "minimum": 1 },
+          "process_image": { "type": "string", "maxLength": 4096 },
+          "process_command_line": { "type": "string", "maxLength": 4096 },
+          "user_id": { "type": "string", "maxLength": 128 },
+          "attribution_confidence": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "first_seen_utc": { "type": "string", "format": "date-time" },
+          "last_seen_utc": { "type": "string", "format": "date-time" },
+          "packet_count_delta": { "type": "integer", "minimum": 0 },
+          "byte_count_delta": { "type": "integer", "minimum": 0 },
+          "tcp_flags": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 16 } },
+          "geolocation_status": { "type": "string", "enum": ["ready", "pending", "unmapped", "provider_error", "quota_limited", "disabled"] },
+          "country": { "type": "string", "maxLength": 160 },
+          "country_code": { "type": "string", "maxLength": 8 },
+          "city": { "type": "string", "maxLength": 160 },
+          "region": { "type": "string", "maxLength": 160 },
+          "continent": { "type": "string", "maxLength": 80 },
+          "asn": { "type": "integer", "minimum": 1 },
+          "organization": { "type": "string", "maxLength": 200 },
+          "geolocation_fetched_at_utc": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "page": {
+      "type": "object", "additionalProperties": false,
+      "required": ["limit", "returned", "has_next", "sort"],
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "returned": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "next_cursor": { "type": "string", "maxLength": 512 },
+        "has_next": { "type": "boolean" },
+        "sort": { "type": "string", "const": "event_time_desc" }
+      }
+    },
+    "active_filters": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "value", "protected"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "protected": { "type": "boolean" }
+        }
+      }
+    },
+    "result_scope": { "type": "string", "maxLength": 500 },
+    "geolocation_mode": { "type": "string", "enum": ["cache_only_no_writes", "on_demand_cache", "cache_only"] },
+    "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+  },
+  "$defs": {
+    "id128": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "ip": { "type": "string", "minLength": 2, "maxLength": 64 },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+  }
+}

@@ -1,12 +1,12 @@
 # Linux agent security and privacy design
 
-Status: bounded read-only L1-L2, approval-gated L3/L4, and a disabled-by-default journal-audit privacy router are implemented; live audit parsing, eBPF, broad file collectors, and long-duration private soaks remain separately gated
+Status: bounded read-only L1-L2, approval-gated L3/L4, a disabled-by-default journal-audit privacy router, and a separately signed/approval-gated no-payload Linux x86_64 eBPF network-flow helper are implemented; live audit parsing, broad file collectors, and long-duration private soaks remain separately gated
 Specification version: 0.1
 Primary audience: security reviewers, Linux agent engineers, packagers, operators
 
 ## Purpose and governing principles
 
-This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). Bounded paged inventory, the passive journal reader, opt-in L2 normalization, approval-gated L3/L4, and the [journal-backed Linux audit router](linux-audit-framework-adr.md) are implemented. Audit parsing remains disabled and undeclared by default; eBPF, broad/live file collectors, and application-log readers remain deferred. The [passive telemetry contract](linux-passive-telemetry.md) defines polling limits and [Linux L4 full-target coverage](linux-l4-coverage.md) defines the strict approval/validation boundary. Deployment, live audit enablement, and host producer changes require an explicit operator-approved plan and the staged rollback gates in the audit rollout guide.
+This document defines the threat model, least-privilege boundary, privacy controls, and change-approval model for the Linux agent described in [linux-host-coverage-spec.md](linux-host-coverage-spec.md). Bounded paged inventory, the passive journal reader, opt-in L2 normalization, approval-gated L3/L4, the [journal-backed Linux audit router](linux-audit-framework-adr.md), and the [Linux kernel network source](linux-kernel-network.md) are implemented. Audit parsing remains disabled and undeclared by default; broad/live file collectors and application-log readers remain deferred. The passive and kernel-network contracts define their distinct polling/kernel boundaries, and [Linux L4 full-target coverage](linux-l4-coverage.md) defines the strict posture/SLO validation boundary. Deployment, privileged source activation, live audit enablement, and host producer changes require explicit operator-approved plans and staged rollback gates.
 
 
 Principles:
@@ -128,6 +128,14 @@ Network collection parses fixed TCP/UDP tables only and excludes packet/applicat
 
 Polling evidence must not be presented as exact exec/exit/connect/close telemetry. Initial observations are baselines; subsequent `observed`, `disappeared`, and `changed` events carry deterministic sequence identity. Partial/truncated/deadline scans cannot create disappearance claims. Queue pressure, event caps, malformed state, and permission gaps remain explicit in source health, and this L3 pack pauses itself at a lower queue threshold so L1/L2 journal collection can continue.
 
+## Implemented L3 kernel network controls
+
+`linux-network-flow-summary` is disabled by default and requires an exact candidate-agent plan hash plus a detached Ed25519-signed bundle manifest. The trusted public key is operator supplied; the private key remains outside the repository and endpoint. The signed manifest binds the plan, signer fingerprint, exact helper/agent/unit/profile hashes, fixed helper/collector versions, three-capability list, and no-payload privacy boundary. Changed configuration or artifacts fail closed.
+
+The main agent receives no additional privilege. A separate locked `challenger-siem-ebpf` account runs the one embedded-object helper with exactly `CAP_BPF`, `CAP_PERFMON`, and `CAP_NET_ADMIN`; it has neither `CAP_SYS_ADMIN` nor `CAP_NET_RAW`. A closed catalog of multi-attach cgroup-v2 socket/bind/connect/sendmsg/recvmsg, sock-ops, accepted/closed socket-state raw tracepoint, and ingress/egress programs observes bounded IPv4/IPv6 TCP/UDP headers and aggregate counters at the host root. Every program is observational and traffic-permissive. There is no arbitrary object path, packet/raw socket, bpffs pin, application payload, DNS/TLS parser, process environment/memory reader, file-content reader, or policy-changing program.
+
+The helper and agent authenticate local `SOCK_SEQPACKET` peers and enforce a 16-KiB closed-world frame schema, fixed hello constants, epochs, sequences, and bounded capacity. The agent performs only immediate bounded sanitizer-protected procfs executable/command-line enrichment; PID reuse/exit and remote-tuple fallback remain explicit confidence limitations. Queue insertion precedes collected state; accepted/duplicate acknowledgement precedes deletion/acknowledged state. Map exhaustion, parser omissions, ring/IPC loss, helper sequence gaps/restarts, queue pressure, and staleness remain source-health evidence. Full activation, validation, counter limitations, and detach rollback are in [Linux kernel network flow telemetry](linux-kernel-network.md).
+
 Private pack state is bounded and mode `0600`. Events are queued before collected sequence advances, and acknowledged sequence advances only for accepted/duplicate server acknowledgement. Disable/cleanup may remove only the pack-owned state when explicitly requested; it cannot delete the shared queue, journal state, agent credentials, server telemetry, or host data sources.
 
 ## Implemented L4 posture, SLO, and role controls
@@ -174,7 +182,7 @@ Any optional change requires all of the following:
 4. **Post-change verification:** verify effective policy, source availability, host/service health, agent SLOs, and that no unrelated state changed. Emit only secret-safe change metadata.
 5. **Rollback:** provide and test bounded rollback before rollout. Rollback restores the recorded prior state rather than a generic default and verifies the result.
 
-Changes to authentication, firewall, kernel, or mandatory access-control policy warrant separate high-risk approval and can never be bundled into routine agent upgrade. A future central control plane may propose plans but must not bypass host/operator policy. L3/L4/audit plan approval authorizes only the exact observation boundary and is never approval to change host posture or an audit producer. Live audit parsing, eBPF, and broader file-integrity ideas remain separately reviewed and approval-gated.
+Changes to authentication, firewall, kernel, or mandatory access-control policy warrant separate high-risk approval and can never be bundled into routine agent upgrade. A future central control plane may propose plans but must not bypass host/operator policy. L3/L4/audit/kernel-network plan approval authorizes only the exact observation boundary and is never approval to change host posture or an audit producer. Live audit parsing and broader file-integrity ideas remain separately reviewed and approval-gated.
 
 ## Input, transport, and storage controls
 

@@ -1,0 +1,46 @@
+[Unit]
+Description=Challenger SIEM fixed eBPF network-flow helper
+Documentation=https://github.com/keirans/challenger-siem
+Requires=challenger-siem-ebpf-helper.socket
+After=challenger-siem-ebpf-helper.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=challenger-siem-ebpf
+Group=challenger-siem-ebpf
+ExecStart=/opt/challenger-siem-agent/Challenger.Siem.EbpfHelper --cgroup /sys/fs/cgroup
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=no
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @debug @keyring @module @mount @obsolete @raw-io @reboot @swap
+ReadOnlyPaths=/sys/fs/cgroup /sys/kernel/btf/vmlinux
+TasksMax=32
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

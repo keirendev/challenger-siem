@@ -27,7 +27,7 @@ Collected events, messages, inventory, alert context, case notes, graph content,
 
 ## Tools and limits
 
-All 17 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
+All 18 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
 
 | Tool | Purpose | Principal bound |
 | --- | --- | --- |
@@ -48,8 +48,11 @@ All 17 tools are declared read-only, non-destructive, idempotent, closed-world, 
 | `siem_list_graphs` | Existing graph summaries | 1–100 rows; offset 0–10,000 |
 | `siem_get_graph` | One existing graph and collections | 1–100 records per nested collection; never applies proposals |
 | `siem_get_traffic_map_link` | Credential-free link to the configured local traffic UI with coverage warnings | Validated UTC range and bounded search/filter values; never queries geolocation or SIEM data |
+| `siem_search_network_activity` | Correlate retained remote IP/port activity with process, direction, counters, evidence mode, and cached country/ASN, with event citations | 168-hour/100-row maximum and cursor; geolocation is strictly cache-only and cannot initialize/write the cache, enqueue a lookup, update quota, or contact a provider |
 
 Identifiers and filters have independent length/control-character validation. Prompt arguments use a stricter ASCII identifier allowlist. Invalid cursors, UUIDs, ranges, or identifiers fail before repository work.
+
+For a country-to-host-to-process investigation, use the `investigate_network_country` prompt or follow the same closed workflow: call `siem_search_network_activity` with the cached two-letter country code, preserve each returned event citation, review only selected records with `siem_get_event`, and then check `siem_get_source_health` plus `siem_get_coverage` for every affected agent. Report kernel-flow and snapshot evidence separately, including attribution confidence, unknown or pending geography, and active coverage gaps. MCP never initializes or writes the geography cache and never contacts the provider.
 
 ## Resources and prompts
 

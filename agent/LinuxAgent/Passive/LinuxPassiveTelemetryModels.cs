@@ -73,7 +73,8 @@ public sealed record LinuxSocketOwner(
     string? Executable,
     string Command,
     string? UserId,
-    string Confidence);
+    string Confidence,
+    string? CommandLine = null);
 
 public sealed record LinuxProcessBaseline
 {
