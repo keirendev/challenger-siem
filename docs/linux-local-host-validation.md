@@ -197,7 +197,7 @@ Stop immediately on any privacy, unauthorized mutation, host-impact, silent-loss
 
 ## L4 private VM canary
 
-Purpose: validate the highest implemented Linux level without turning implementation availability into a rollout claim. A bounded functional exact-2.0.2 L4 campaign passed for one declared web role; the long-duration gate defined below has not yet been run.
+Purpose: validate the highest implemented Linux level without turning implementation availability into a rollout claim. A bounded functional exact-2.0.2 L4 VM campaign passed for one declared web role. On 2026-08-04, the exact 2.8.1 single-host development deployment passed its initial agent-only kernel-flow stabilization window plus one additional complete healthy L4 rolling window; its 24-hour read-only soak remains in progress.
 
 Use at least 24 continuous hours after the mandatory rolling-SLO window reaches steady state, in addition to the prerequisite L1 24-hour, L1+L2 seven-day, and requested L3 validation evidence. A materially different build, distribution/kernel/init combination, configuration, posture baseline, or role set requires a new applicable decision.
 
@@ -208,7 +208,7 @@ Entry gates:
 - `Journal.TargetCoverageLevel=L4` and `Journal.DeclaredRoles` contains one or more supported reviewed roles. Use `general_server` or `workstation` only after confirming no specialized pack applies; those declarations do not waive any fixed posture input. Empty/unknown roles fail configuration and block the run.
 - The exact disabled-state L4 preflight is stored privately. Its candidate baseline was reviewed, `ApprovedBaselineHash` was set first, the resulting `ApprovedPlanHash` was regenerated and reviewed, and both match before enablement.
 - The final disabled-state pass reports `activation_ready=true`, no `activation_blockers`, `candidate_baseline_complete=true`, `approval_hash_matches=true`, and `baseline_hash_matches=true`. Any bounded blocker code remains a stop gate rather than being overridden.
-- The L4 plan proposes no audit/eBPF, package, service, firewall, authentication, kernel, MAC-policy, logging-policy, group, ACL, capability, arbitrary-path, application-file-reader, or other host mutation. A separately approved passive-L3 process-visibility profile may already be active as a prerequisite, but L4 neither grants nor broadens it.
+- The L4 plan proposes no new audit/eBPF activation, package, service, firewall, authentication, kernel, MAC-policy, logging-policy, group, ACL, capability, arbitrary-path, application-file-reader, or other host mutation. Separately approved passive-L3 process visibility or L3 kernel-network collection may already be active, but L4 neither grants nor broadens either source.
 - Agent configuration application and any required agent restart are separately approved. Enabling L4 is not approval for a role service or posture change.
 - A pre-install payload is not accepted as posture evidence because it cannot observe the fixed installed `/opt` executable and `/etc` configuration boundary; `upgrade` staging is not activation and does not replace the separately approved restart.
 

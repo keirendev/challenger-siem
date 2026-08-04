@@ -91,6 +91,7 @@ builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => service
 builder.Services.AddSingleton<LinuxKernelNetworkStateStore>(services =>
     new LinuxKernelNetworkStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.KernelNetworkTelemetry.StatePath));
 builder.Services.AddSingleton<LinuxKernelNetworkRuntime>();
+builder.Services.AddSingleton<ILinuxKernelProcessEnricher, LinuxKernelProcessEnricher>();
 builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxKernelNetworkRuntime>());
 builder.Services.AddSingleton<LinuxL4TelemetryStateStore>(services =>
     new LinuxL4TelemetryStateStore(

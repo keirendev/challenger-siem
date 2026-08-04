@@ -97,8 +97,11 @@ public sealed class LinuxL4TelemetryRuntime(
             IReadOnlyList<AssetInventorySnapshot>? snapshots;
             lock (sync) snapshots = pendingInventory;
             if (snapshots is null) return;
+            var baselineApprovalChanged = current.Policy.BaselineEstablished
+                && !string.Equals(current.Policy.ApprovedBaselineHash,
+                    options.L4Telemetry.ApprovedBaselineHash, StringComparison.Ordinal);
             if (now < notBefore
-                || current.Policy.Progress.LastObservedAt.HasValue
+                || !baselineApprovalChanged && current.Policy.Progress.LastObservedAt.HasValue
                     && now - current.Policy.Progress.LastObservedAt.Value < TimeSpan.FromSeconds(options.L4Telemetry.PostureIntervalSeconds)) return;
             var pressure = await PressureReasonAsync(cancellationToken);
             if (pressure is not null)

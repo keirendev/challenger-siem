@@ -27,8 +27,7 @@ public sealed class SqliteQueuePressureTests
             var connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = path,
-                Mode = SqliteOpenMode.ReadWriteCreate,
-                Cache = SqliteCacheMode.Shared
+                Mode = SqliteOpenMode.ReadWriteCreate
             }.ToString();
             await using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync();
@@ -60,6 +59,104 @@ public sealed class SqliteQueuePressureTests
             await using var durability = connection.CreateCommand();
             durability.CommandText = "pragma synchronous;";
             Assert.Equal(2L, (long)(await durability.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task QueueUpgradeDropsOnlyUnusedIndexesAndPreservesRowsAttemptsPoisonAndOldestIdAge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-upgrade-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "queue.sqlite");
+            var options = new AgentQueueOptions { Path = path, MaxBackoffSeconds = 300 };
+            var legacy = new SqliteEventQueue(options, new CountingLogger());
+            await legacy.InitializeAsync(default);
+            await legacy.EnqueueBatchAsync([Event(1, 64), Event(2, 64), Event(3, 64)], default);
+            var initial = await legacy.DequeueBatchAsync(10, default);
+            Assert.Equal(3, initial.Count);
+            await legacy.MarkAttemptAsync([initial[0].QueueId], default);
+            await legacy.MarkPoisonAsync([initial[1].QueueId], "synthetic poison", default);
+
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadWriteCreate
+            }.ToString();
+            await using (var connection = new SqliteConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var prepare = connection.CreateCommand();
+                prepare.CommandText = """
+                    create index idx_queued_events_enqueued_at on queued_events(enqueued_at);
+                    create index idx_queued_events_attempt on queued_events(last_attempt_at, send_attempts);
+                    update queued_events
+                    set enqueued_at = case id
+                        when $first_id then $first_time
+                        else $later_id_older_time
+                    end;
+                    """;
+                prepare.Parameters.AddWithValue("$first_id", initial[0].QueueId);
+                prepare.Parameters.AddWithValue("$first_time", DateTimeOffset.UtcNow.AddSeconds(-100).ToString("O"));
+                prepare.Parameters.AddWithValue("$later_id_older_time", DateTimeOffset.UtcNow.AddSeconds(-200).ToString("O"));
+                await prepare.ExecuteNonQueryAsync();
+            }
+
+            var upgraded = new SqliteEventQueue(options, new CountingLogger());
+            await upgraded.InitializeAsync(default);
+
+            Assert.Equal(2, await upgraded.CountAsync(default));
+            var metrics = await upgraded.GetMetricsAsync(null, default);
+            Assert.Equal(1, metrics.PoisonDepth);
+            Assert.InRange(metrics.OldestQueuedAgeSeconds!.Value, 90, 130);
+            var ready = Assert.Single(await upgraded.DequeueBatchAsync(10, default));
+            Assert.Equal(initial[2].Envelope.EventId, ready.Envelope.EventId);
+
+            await using var verify = new SqliteConnection(connectionString);
+            await verify.OpenAsync();
+            await using (var indexes = verify.CreateCommand())
+            {
+                indexes.CommandText = """
+                    select count(*) from sqlite_master
+                    where type = 'index'
+                      and name in ('idx_queued_events_enqueued_at', 'idx_queued_events_attempt');
+                    """;
+                Assert.Equal(0L, (long)(await indexes.ExecuteScalarAsync())!);
+            }
+            await using (var rows = verify.CreateCommand())
+            {
+                rows.CommandText = """
+                    select
+                        (select send_attempts from queued_events where id = $first_id),
+                        (select count(*) from poison_events where original_queue_id = $poison_id);
+                    """;
+                rows.Parameters.AddWithValue("$first_id", initial[0].QueueId);
+                rows.Parameters.AddWithValue("$poison_id", initial[1].QueueId);
+                await using var reader = await rows.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(1L, reader.GetInt64(0));
+                Assert.Equal(1L, reader.GetInt64(1));
+            }
+            await using (var rollback = verify.CreateCommand())
+            {
+                rollback.CommandText = """
+                    create index idx_queued_events_enqueued_at on queued_events(enqueued_at);
+                    create index idx_queued_events_attempt on queued_events(last_attempt_at, send_attempts);
+                    """;
+                await rollback.ExecuteNonQueryAsync();
+            }
+            await using (var durability = verify.CreateCommand())
+            {
+                durability.CommandText = "pragma synchronous;";
+                Assert.Equal(2L, (long)(await durability.ExecuteScalarAsync())!);
+            }
+            Assert.Equal(2, await upgraded.CountAsync(default));
+            Assert.Equal(1, (await upgraded.GetMetricsAsync(null, default)).PoisonDepth);
         }
         finally
         {

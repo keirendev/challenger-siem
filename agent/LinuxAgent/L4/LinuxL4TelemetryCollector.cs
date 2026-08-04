@@ -184,16 +184,18 @@ public sealed class LinuxL4TelemetryCollector(
         {
             return PolicyGap(previous, agentId, hostname, "approved_baseline_mismatch", now);
         }
-        if (previous.Policy.BaselineEstablished
-            && !string.Equals(previous.Policy.ApprovedBaselineHash, options.L4Telemetry.ApprovedBaselineHash, StringComparison.Ordinal))
-        {
-            return PolicyGap(previous, agentId, hostname, "approved_baseline_changed", now);
-        }
+        var baselineApprovalChanged = previous.Policy.BaselineEstablished
+            && !string.Equals(previous.Policy.ApprovedBaselineHash, options.L4Telemetry.ApprovedBaselineHash, StringComparison.Ordinal);
         if (previous.Policy.BaselineEstablished
             && (!previous.Policy.BaselineSignatures.Keys.Order(StringComparer.Ordinal).SequenceEqual(PolicySnapshotTypes, StringComparer.Ordinal)
-                || !string.Equals(ComputeAggregateHash(previous.Policy.BaselineSignatures), options.L4Telemetry.ApprovedBaselineHash, StringComparison.Ordinal)))
+                || !string.Equals(ComputeAggregateHash(previous.Policy.BaselineSignatures), previous.Policy.ApprovedBaselineHash, StringComparison.Ordinal)))
         {
             return PolicyGap(previous, agentId, hostname, "baseline_state_integrity_mismatch", now);
+        }
+        if (baselineApprovalChanged
+            && !string.Equals(candidate.Hash, options.L4Telemetry.ApprovedBaselineHash, StringComparison.Ordinal))
+        {
+            return PolicyGap(previous, agentId, hostname, "approved_baseline_mismatch", now);
         }
 
         var events = new List<EventEnvelope>();
@@ -211,12 +213,12 @@ public sealed class LinuxL4TelemetryCollector(
                 hostname,
                 $"recovered_from_{previous.Policy.Progress.ErrorCode}"));
         }
-        var baseline = previous.Policy.BaselineEstablished
+        var baseline = previous.Policy.BaselineEstablished && !baselineApprovalChanged
             ? previous.Policy.BaselineSignatures
             : candidate.Signatures;
         var currentBefore = previous.Policy.CurrentSignatures;
 
-        if (!previous.Policy.BaselineEstablished)
+        if (!previous.Policy.BaselineEstablished || baselineApprovalChanged)
         {
             events.Add(BuildEvent(
                 LinuxTelemetrySourceIds.PolicyPostureDrift, EventSources.InventoryDiff,
@@ -224,7 +226,7 @@ public sealed class LinuxL4TelemetryCollector(
                 new SortedDictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["schema"] = CollectorVersion,
-                    ["state"] = "baseline",
+                    ["state"] = baselineApprovalChanged ? "baseline_reapproved" : "baseline",
                     ["baseline_hash"] = candidate.Hash,
                     ["snapshot_count"] = candidate.Signatures.Count,
                     ["content_collected"] = false
@@ -296,7 +298,8 @@ public sealed class LinuxL4TelemetryCollector(
             0,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["baseline_state"] = previous.Policy.BaselineEstablished ? "verified" : "established",
+                ["baseline_state"] = baselineApprovalChanged ? "reapproved"
+                    : previous.Policy.BaselineEstablished ? "verified" : "established",
                 ["snapshot_count"] = candidate.Signatures.Count.ToString(CultureInfo.InvariantCulture),
                 ["drifted_snapshot_count"] = driftedCount.ToString(CultureInfo.InvariantCulture)
             });

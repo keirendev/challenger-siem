@@ -13,6 +13,16 @@ dotnet test Challenger.Siem.sln
 ./scripts/validate-repository-safety.sh
 ```
 
+Kernel-network or lifecycle changes also require the native and isolated lifecycle gates:
+
+```bash
+make -C agent/KernelNetwork/Native test
+./tests/kernel-network-lifecycle/run.sh
+bash -n scripts/*.sh tests/*/run.sh packaging/linux/challenger-siem-audit-health
+```
+
+Use `./scripts/current-version.sh` to verify the release identity from `VERSION`. Generated native, UI, publish, bundle, and validation outputs remain ignored and must not be committed.
+
 Frontend validation is explicit so ordinary backend builds do not require Node.js:
 
 ```bash

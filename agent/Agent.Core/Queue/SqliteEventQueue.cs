@@ -285,7 +285,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
             DateTimeOffset? oldestQueuedAt = null;
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = "select min(enqueued_at) from queued_events;";
+                command.CommandText = "select enqueued_at from queued_events order by id limit 1;";
                 var result = await command.ExecuteScalarAsync(cancellationToken);
                 if (result is string value)
                 {
@@ -360,8 +360,8 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
                 unique (agent_id, event_id)
             );
 
-            create index if not exists idx_queued_events_enqueued_at on queued_events(enqueued_at);
-            create index if not exists idx_queued_events_attempt on queued_events(last_attempt_at, send_attempts);
+            drop index if exists idx_queued_events_enqueued_at;
+            drop index if exists idx_queued_events_attempt;
 
             create table if not exists poison_events (
                 id integer primary key autoincrement,
@@ -426,8 +426,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         var builder = new SqliteConnectionStringBuilder
         {
             DataSource = options.Path,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Mode = SqliteOpenMode.ReadWriteCreate
         };
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
