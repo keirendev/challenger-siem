@@ -77,7 +77,7 @@ public sealed class NetworkGeographyTests
         Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(broadListener, options));
 
         var rebindingHost = TrafficMapContext("/api/v2/network/geography");
-        rebindingHost.Request.Host = new HostString("example.invalid", 5081);
+        rebindingHost.Request.Host = new HostString("example.invalid", 55444);
         Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(rebindingHost, options));
 
         var forwarded = TrafficMapContext("/api/v2/network/geography");
@@ -119,7 +119,7 @@ public sealed class NetworkGeographyTests
     public void McpTrafficMapLinkContainsOnlyBoundedFilters()
     {
         var link = SiemMcpTools.BuildTrafficMapLink(
-            "http://127.0.0.1:5081",
+            "http://127.0.0.1:55444",
             new SiemMcpTrafficMapLinkRequest
             {
                 Range = "7d",
@@ -128,21 +128,21 @@ public sealed class NetworkGeographyTests
                 DestinationPort = 443
             });
 
-        Assert.StartsWith("http://127.0.0.1:5081/ui/traffic?", link, StringComparison.Ordinal);
+        Assert.StartsWith("http://127.0.0.1:55444/ui/traffic?", link, StringComparison.Ordinal);
         Assert.Contains("range=7d", link, StringComparison.Ordinal);
         Assert.Contains("destination_port=443", link, StringComparison.Ordinal);
         Assert.DoesNotContain("token", link, StringComparison.OrdinalIgnoreCase);
         Assert.Throws<ArgumentException>(() => SiemMcpTools.BuildTrafficMapLink(
-            "http://127.0.0.1:5081",
+            "http://127.0.0.1:55444",
             new SiemMcpTrafficMapLinkRequest { Range = "custom", FromUtc = "invalid", ToUtc = "invalid" }));
         Assert.Throws<ArgumentException>(() => SiemMcpTools.BuildTrafficMapLink(
-            "http://127.0.0.1:5081",
+            "http://127.0.0.1:55444",
             new SiemMcpTrafficMapLinkRequest { Range = "all", DestinationIp = "not-an-ip" }));
         Assert.Throws<ArgumentException>(() => SiemMcpTools.BuildTrafficMapLink(
-            "http://127.0.0.1:5081",
+            "http://127.0.0.1:55444",
             new SiemMcpTrafficMapLinkRequest { Range = "all", Protocol = "icmp" }));
         Assert.Throws<ArgumentException>(() => SiemMcpTools.BuildTrafficMapLink(
-            "http://127.0.0.1:5081",
+            "http://127.0.0.1:55444",
             new SiemMcpTrafficMapLinkRequest { Range = "all", AgentId = "agent id with spaces" }));
     }
 
@@ -497,7 +497,7 @@ public sealed class NetworkGeographyTests
     private static TrafficMapOptions CreateOptions(string cachePath, string? apiKey = null) => new()
     {
         Enabled = true,
-        PublicBaseUrl = "http://127.0.0.1:5081",
+        PublicBaseUrl = "http://127.0.0.1:55444",
         Origin = new() { Label = "Synthetic origin", Latitude = 0, Longitude = 0 },
         Geolocation = new()
         {
@@ -518,7 +518,7 @@ public sealed class NetworkGeographyTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = path;
-        context.Request.Host = new HostString("127.0.0.1", 5081);
+        context.Request.Host = new HostString("127.0.0.1", 55444);
         context.Connection.RemoteIpAddress = IPAddress.Loopback;
         context.Connection.LocalIpAddress = IPAddress.Loopback;
         return context;

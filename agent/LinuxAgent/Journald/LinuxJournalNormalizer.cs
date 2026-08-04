@@ -100,8 +100,13 @@ public sealed partial class LinuxJournalNormalizer
                     "_CMDLINE" => MaxCommandLineChars,
                     _ => MaxFieldChars
                 };
-                var text = Sanitize(value.GetString() ?? string.Empty, maxChars, out var wasTruncated, out var invalidText);
-                if (!TryRedactSecrets(text, out var replaced))
+                var text = Sanitize(
+                    value.GetString() ?? string.Empty,
+                    maxChars,
+                    out var wasTruncated,
+                    out var invalidText,
+                    out var controlTextReplaced);
+                if (!TryRedactSecrets(text, maxChars, out var replaced))
                 {
                     errorCode = "journal_pattern_timeout";
                     return false;
@@ -115,6 +120,10 @@ public sealed partial class LinuxJournalNormalizer
                 if (wasTruncated)
                 {
                     truncated.Add($"raw.{field}");
+                }
+                if (controlTextReplaced)
+                {
+                    redacted.Add($"raw.{field}");
                 }
                 if (invalidText)
                 {
@@ -1191,24 +1200,34 @@ public sealed partial class LinuxJournalNormalizer
         return true;
     }
 
-    private static bool TryRedactSecrets(string value, out string redacted)
+    private static bool TryRedactSecrets(string value, int maxChars, out string redacted)
     {
-        var result = TelemetryTextSanitizer.SanitizeAndRedact(value, Math.Max(1, value.Length));
+        var result = TelemetryTextSanitizer.SanitizeAndRedact(value, maxChars);
         redacted = result.Value;
         return !result.Dropped;
     }
 
-    private static string Sanitize(string value, int maxChars, out bool truncated, out bool invalidText)
+    private static string Sanitize(string value, int maxChars, out bool truncated, out bool invalidText) =>
+        Sanitize(value, maxChars, out truncated, out invalidText, out _);
+
+    private static string Sanitize(
+        string value,
+        int maxChars,
+        out bool truncated,
+        out bool invalidText,
+        out bool controlTextReplaced)
     {
         var builder = new StringBuilder(Math.Min(value.Length, maxChars));
         invalidText = false;
+        controlTextReplaced = false;
         foreach (var rune in value.EnumerateRunes())
         {
             if (builder.Length + rune.Utf16SequenceLength > maxChars) break;
-            if (Rune.IsControl(rune) && rune.Value is not 9 and not 10 and not 13)
+            if (Rune.IsControl(rune))
             {
                 builder.Append('\uFFFD');
-                invalidText = true;
+                controlTextReplaced = true;
+                if (rune.Value is not 9 and not 10 and not 13) invalidText = true;
             }
             else
             {

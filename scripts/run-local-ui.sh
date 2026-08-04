@@ -30,6 +30,17 @@ if [[ ${TrafficMap__Enabled,,} != true ]]; then
   exit 1
 fi
 
+traffic_map_port=${SIEM_TRAFFIC_MAP_PORT:-55444}
+if [[ ! $traffic_map_port =~ ^[0-9]+$ ]] || ((traffic_map_port < 49152 || traffic_map_port > 65535)); then
+  printf 'SIEM_TRAFFIC_MAP_PORT must be a high local port from 49152 through 65535.\n' >&2
+  exit 1
+fi
+expected_public_base_url="http://127.0.0.1:$traffic_map_port"
+if [[ $TrafficMap__PublicBaseUrl != "$expected_public_base_url" ]]; then
+  printf 'TrafficMap__PublicBaseUrl must exactly match %s for this loopback launcher.\n' "$expected_public_base_url" >&2
+  exit 1
+fi
+
 if [[ ${TrafficMap__ReadOnlyDatabase:-false} == true ]]; then
   "$repository/scripts/validate-traffic-map-database.sh"
 else
@@ -37,4 +48,4 @@ else
 fi
 "$repository/scripts/build-ui.sh"
 export ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Development}"
-exec dotnet run --project "$repository/server/Siem.Api" --no-launch-profile --urls http://127.0.0.1:5081
+exec dotnet run --project "$repository/server/Siem.Api" --no-launch-profile --urls "$expected_public_base_url"

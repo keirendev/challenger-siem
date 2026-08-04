@@ -10,10 +10,10 @@ export default defineConfig({
     sourcemap: false,
   },
   server: {
-    port: 5173,
+    port: 55446,
     strictPort: true,
     proxy: {
-      '/api': 'http://127.0.0.1:5081',
+      '/api': 'http://127.0.0.1:55443',
     },
   },
   test: {

@@ -57,7 +57,7 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
         var options = Options.Create(new TrafficMapOptions
         {
             Enabled = true,
-            PublicBaseUrl = "http://127.0.0.1:5081",
+            PublicBaseUrl = "http://127.0.0.1:55444",
             Origin = new() { Label = "Synthetic origin", Latitude = 0, Longitude = 0 },
             Geolocation = new() { Enabled = false }
         });

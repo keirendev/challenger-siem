@@ -27,7 +27,7 @@ Required values are:
 ```text
 TrafficMap__Enabled=true
 TrafficMap__ReadOnlyDatabase=false
-TrafficMap__PublicBaseUrl=http://127.0.0.1:5081
+TrafficMap__PublicBaseUrl=http://127.0.0.1:55444
 TrafficMap__Origin__Label="<operator-selected label>"
 TrafficMap__Origin__Latitude=<decimal latitude>
 TrafficMap__Origin__Longitude=<decimal longitude>
@@ -83,7 +83,7 @@ set +a
 ./scripts/run-local-ui.sh
 ```
 
-Open `http://127.0.0.1:5081/ui/traffic`; the map loads directly and neither asks for nor sends a service bearer. In normal mode the launcher validates the fresh Linux v2 schema. In read-only-database mode it instead verifies only the event/source-health fields required by the map, without modifying the retained store. It then performs a clean pinned frontend install/build, writes generated output to the ignored `server/Siem.Api/wwwroot/ui/` directory, and starts the service on loopback port 5081. It never attempts an implicit migration. Ordinary `dotnet build` remains frontend-independent. Use `./scripts/build-ui.sh` when only a production UI build is needed.
+Open `http://127.0.0.1:55444/ui/traffic`; the map loads directly and neither asks for nor sends a service bearer. In normal mode the launcher validates the fresh Linux v2 schema. In read-only-database mode it instead verifies only the event/source-health fields required by the map, without modifying the retained store. It then performs a clean pinned frontend install/build, writes generated output to the ignored `server/Siem.Api/wwwroot/ui/` directory, and starts the service on the dedicated high loopback port 55444. The normal local API uses 55443, disposable smoke validation uses 55445, and the Vite development server uses 55446 so these SIEM-owned listeners do not reuse common development ports. It never attempts an implicit migration. Ordinary `dotnet build` remains frontend-independent. Use `./scripts/build-ui.sh` when only a production UI build is needed.
 
 The exception is deliberately narrower than “anything on this machine.” Only exact `GET`/`HEAD` requests for `/api/v2/network/geography` and `/api/v2/network/geography/events` receive the implied read-only identity, and only when the client socket, listening socket, and HTTP `Host` are loopback. `Forwarded`, `X-Forwarded-*`, or `X-Real-IP` headers, a non-loopback/rebinding host, another method, or any present/invalid `Authorization` header disables the fallback. The `/ui` static path applies the same direct-loopback check. Every other `/api/v2` route and `/mcp` continues to require the service bearer.
 
