@@ -251,6 +251,56 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public void MultilineAndShortSecretMessagesAreSanitizedWithoutDroppingTheRecord()
+    {
+        var normalizer = new LinuxJournalNormalizer();
+        var options = TestOptions("unused", "unused");
+        var input = Record(
+            "s=synthetic;i=multiline;b=fake",
+            1783944000000002,
+            "first line\nsecond line\tpassword=x\r");
+
+        Assert.True(normalizer.TryNormalize(input, options, DateTimeOffset.UtcNow, out var record, out var errorCode));
+        Assert.Equal(string.Empty, errorCode);
+        Assert.NotNull(record);
+        Assert.False(record!.BinaryOrInvalidText);
+        Assert.Equal("first line\uFFFDsecond line\uFFFDpassword=<redacted>", record.Envelope.Message);
+        Assert.True(record.Envelope.DataHandling!.RedactionApplied);
+        Assert.Contains("raw.MESSAGE", record.Envelope.DataHandling.RedactedFields);
+        Assert.DoesNotContain("password=x", record.Envelope.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MultilineBurstAdvancesDurablyWithoutMalformedGapAmplification()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        var queue = CreateQueue(temporary.Queue);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var records = Enumerable.Range(1, 69)
+            .Select(index => Record(
+                $"s=synthetic;i={index};b=fake",
+                1783944000000000L + index,
+                $"synthetic line {index}\npassword=x"))
+            .ToArray();
+
+        var cursor = await Service(options, new FakeSource(new(JournalReadStatus.Success, records)), runtime, queue)
+            .CollectOnceAsync("s=synthetic;i=0;b=fake", default);
+
+        Assert.Equal("s=synthetic;i=69;b=fake", cursor);
+        Assert.Equal(69, await queue.CountAsync(default));
+        Assert.Equal(cursor, (await state.ReadJournalAsync(default)).CollectedCursor);
+        var health = L1Health(runtime);
+        Assert.Equal(SourceHealthStatuses.Healthy, health.Status);
+        Assert.False(health.GapDetected);
+        Assert.Equal(0, health.GapCount);
+        Assert.Equal("0", health.Details["malformed_records"]);
+        Assert.Equal("0", health.Details["binary_or_invalid_text_records"]);
+    }
+
+    [Fact]
     public async Task OutOfRangeTimestampIsMalformedAndDoesNotStallLaterValidRecords()
     {
         using var temporary = new TemporaryPaths();

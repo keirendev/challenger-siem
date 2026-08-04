@@ -14,7 +14,7 @@ fi
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
 : "${Auth__ServiceToken:?Auth__ServiceToken is required}"
 
-BASE_URL="${SIEM_SMOKE_BASE_URL:-http://127.0.0.1:5080}"
+BASE_URL="${SIEM_SMOKE_BASE_URL:-http://127.0.0.1:55445}"
 mkdir -p .local
 ASPNETCORE_URLS="$BASE_URL" ASPNETCORE_ENVIRONMENT=Development dotnet run --project server/Siem.Api --no-build --no-launch-profile >.local/smoke-api.log 2>&1 &
 api_pid=$!

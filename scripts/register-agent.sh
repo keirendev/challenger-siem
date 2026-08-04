@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 [[ -z "${Auth__EnrollmentToken:-}" && -f .local/dev.env ]] && source .local/dev.env
 : "${Auth__EnrollmentToken:?Auth__EnrollmentToken is required}"
 
-BASE_URL="${1:-${SIEM_REGISTER_BASE_URL:-http://127.0.0.1:5000}}"
+BASE_URL="${1:-${SIEM_REGISTER_BASE_URL:-http://127.0.0.1:55443}}"
 AGENT_ID="${2:-${SIEM_REGISTER_AGENT_ID:-linux-demo-001}}"
 HOSTNAME_VALUE="${3:-${SIEM_REGISTER_HOSTNAME:-linux-demo}}"
 HOST_ID="${SIEM_REGISTER_HOST_ID:-synthetic-linux-host-id}"
