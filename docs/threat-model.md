@@ -7,7 +7,7 @@ Challenger SIEM is a Linux-only service whose primary boundary is headless REST/
 - enrollment, per-agent, and service credentials;
 - endpoint configuration, executable, queue, checkpoints, and source-health state;
 - normalized events, bounded raw payloads, inventory, alerts, evidence, cases, graphs, audit records, and retention metadata;
-- the optional normalized geolocation cache, operator-selected origin, and in-memory browser service bearer;
+- the optional normalized geolocation cache, operator-selected origin, and direct-loopback dashboard boundary;
 - host availability and existing boot, network, authentication, firewall, audit, kernel, mandatory-access-control, package, and service policy;
 - contract integrity across `/api/v2`, `contracts/v2`, and `Challenger.Siem.Contracts.V2`.
 
@@ -27,10 +27,10 @@ Root or kernel control can suppress or forge host evidence. Challenger SIEM repo
 | Secret-bearing collected content | Agent-side sanitation and data-handling metadata plus an independent final MCP secret-shape filter; MCP event search omits raw payloads |
 | Prompt injection through evidence | MCP result metadata marks telemetry untrusted/read-only; prompts require fact/inference separation; collected content cannot select tools, expand scope, authorize mutations, or change instructions |
 | Unauthorized mutation | MCP tools are read-only, idempotent, non-destructive, and closed-world; REST mutations require service authentication, validation, auditing, optimistic versioning, and explicit confirmation for high-impact actions |
-| Browser credential persistence or leakage | Existing service bearer held only in React memory; same-origin authorization headers; no cookies/storage/query credentials; self-hosted bundles; restrictive CSP, framing/device denial, and cross-origin referrer path suppression |
+| Unauthorized dashboard access or loopback-origin confusion | No browser credential; only exact bounded geography `GET`/`HEAD` routes receive an implied read-only principal, and only when client socket, listener socket, and `Host` are loopback with no forwarding headers or `Authorization`; other REST and all MCP remain service-authenticated; self-hosted bundles, restrictive CSP, framing/device denial, and cross-origin referrer path suppression |
 | Viewer pointed at the wrong telemetry store | PostgreSQL is the explicit sole event source; operator guide requires matching the writable backend connection and checking retained-evidence freshness; presets are documented as `event_time` ranges; the dedicated viewer is not presented as an ingest/MCP replacement |
-| Read-only viewer mutation | PostgreSQL sessions force `default_transaction_read_only`; non-GET `/api/v2` requests are rejected; liveness and retention writers do not start; agents remain pointed at the normal writable backend; geolocation writes only its separate private cache |
-| Geolocation disclosure or provider abuse | Feature disabled by default; public-address allowlist; private/reserved/documentation ranges rejected; only destination IP sent; HTTPS endpoint; bounded queue/body/timeout/retry; UTC-day quota; normalized private cache; no raw provider response or secret-bearing log |
+| Read-only viewer mutation | PostgreSQL sessions force `default_transaction_read_only`; non-GET `/api/v2` requests are rejected; the implied principal reaches only bounded aggregate geography and a 25-row event projection that omits raw/normalized payloads; liveness and retention writers do not start; agents remain pointed at the normal writable backend; geolocation writes only its separate private cache |
+| Geolocation database tampering, disclosure, or provider abuse | Feature disabled by default; local mode requires absolute operator-managed MMDB paths, rejects direct symlinks and oversized files, performs no provider request, versions cache records by database build, and stores only normalized results. Remote mode retains the public-address allowlist, HTTPS endpoint, bounded queue/body/timeout/retry and UTC-day quota; no raw provider response or secret-bearing log is retained. |
 | Tile-service disclosure or overload | Visible-viewport browser requests only; configurable HTTPS URL; no prefetching; ordinary cache behavior; no SIEM bearer or telemetry body; visible attribution |
 | Destructive retention | Managed-table allowlist, protected-table denylist, dry-run default, hard capacity bound, advisory lock, bounded batches, exact confirmation phrase for manual execution, audit record |
 | Silent collection loss | Queue-before-checkpoint, acknowledgement-before-delete, bounded retry/backoff, poison/gap counters, source freshness, explicit missing/degraded/denied/stale states |
@@ -46,8 +46,9 @@ Root or kernel control can suppress or forge host evidence. Challenger SIEM repo
 
 - Best-effort pattern filtering cannot prove arbitrary text contains no secret; protect MCP credentials and restrict network access even when filtering is enabled.
 - A valid service bearer has the single-user deployment's full review/administration authority on REST. Use it only with trusted clients and never place it in URLs or tracked files.
+- Any process or browser already running as the local user may request the loopback dashboard's bounded geography projection. The loopback exception is a single-user convenience boundary, not user isolation; do not expose, proxy, or bind the dashboard to another interface.
 - Snapshot polling can miss short-lived processes/sockets and cannot prove exact lifecycle timing or process-to-socket attribution.
-- Public destination IPs disclosed to a geolocation provider and browser tile requests create external metadata dependencies. Approximate results may be stale, wrong, provider/CDN/VPN/anycast-oriented, unavailable, or quota-limited; keep the feature disabled when that disclosure is unacceptable.
+- Remote mode discloses public destination IPs to a geolocation provider, while local mode avoids that disclosure but depends on the provenance, freshness, and integrity of separately obtained databases. Browser tile requests remain an external dependency. Approximate results may be stale, wrong, provider/CDN/VPN/anycast-oriented, unavailable, or incomplete.
 - Journal visibility depends on existing host permissions and producer logging. Missing evidence must not be interpreted as safety.
 - Live audit parsing, eBPF sources other than the fixed no-payload kernel network flow helper, broad file integrity, packet payloads, process memory/environment, application log files, and automatic response remain deliberately absent.
 - Long-duration private VM/current-host soaks are release evidence, not properties unit tests can establish.

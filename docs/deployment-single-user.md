@@ -51,7 +51,7 @@ After the switched endpoint proves fresh heartbeat, inventory, source health, ev
 - Self-integrity, passive procfs telemetry, and L4 remain disabled until their exact plans/hashes and private validation gates are approved.
 - Managed retention defaults to a 30-day target, 100 GiB hard ceiling, and dry-run manual invocation. Manual deletion additionally requires `confirm_impact: "CONFIRM RETENTION DELETE"`.
 - MCP is read-only. Use explicit REST only for reviewed mutations.
-- Traffic-map origin and geolocation remain unset/disabled until the operator chooses them. The free provider cap defaults to 900 lookups/day and only validated public destination IPs may leave the service.
+- Traffic-map origin and geolocation remain unset/disabled until the operator chooses them. Recommended local MMDB mode keeps destination-IP lookups in process; its country and optional city/ASN databases must be obtained and stored outside the checkout. Remote mode retains a 900-lookups/day default cap and only validated public destination IPs may leave the service.
 
 ## 4. First validation
 

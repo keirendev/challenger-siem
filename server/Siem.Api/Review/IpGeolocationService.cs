@@ -34,6 +34,7 @@ public sealed class IpGeolocationService : BackgroundService
     private readonly IHttpClientFactory httpClientFactory;
     private readonly TimeProvider timeProvider;
     private readonly ILogger<IpGeolocationService> logger;
+    private readonly ILocalIpGeolocationSource? localSource;
     private readonly Channel<string> queue;
     private readonly ConcurrentDictionary<string, byte> queued = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim initialization = new(1, 1);
@@ -45,11 +46,30 @@ public sealed class IpGeolocationService : BackgroundService
         IHttpClientFactory httpClientFactory,
         TimeProvider timeProvider,
         ILogger<IpGeolocationService> logger)
+        : this(options, environment, httpClientFactory, timeProvider, logger, null)
+    {
+    }
+
+    internal IpGeolocationService(
+        IOptions<TrafficMapOptions> options,
+        IHostEnvironment environment,
+        IHttpClientFactory httpClientFactory,
+        TimeProvider timeProvider,
+        ILogger<IpGeolocationService> logger,
+        ILocalIpGeolocationSource? localSource)
     {
         this.options = options.Value;
         this.httpClientFactory = httpClientFactory;
         this.timeProvider = timeProvider;
         this.logger = logger;
+        this.localSource = this.options.Enabled
+            && this.options.Geolocation.Enabled
+            && this.options.Geolocation.UsesLocalDatabase
+            ? localSource ?? new DbIpMmdbGeolocationSource(
+                this.options.Geolocation.CountryDatabasePath,
+                this.options.Geolocation.CityDatabasePath,
+                this.options.Geolocation.AsnDatabasePath)
+            : null;
         cachePath = string.IsNullOrWhiteSpace(this.options.Geolocation.CachePath)
             ? string.Empty
             : Path.GetFullPath(this.options.Geolocation.CachePath, environment.ContentRootPath);
@@ -61,6 +81,8 @@ public sealed class IpGeolocationService : BackgroundService
             SingleWriter = false
         });
     }
+
+    public bool UsesLocalDatabase => localSource is not null;
 
     public async Task<IReadOnlyDictionary<string, IpGeolocationRecord>> GetCachedAsync(
         IEnumerable<string> addresses,
@@ -75,6 +97,27 @@ public sealed class IpGeolocationService : BackgroundService
         await EnsureInitializedAsync(cancellationToken);
         var now = timeProvider.GetUtcNow();
         var results = await LoadCachedAsync(distinct, now, readOnly: false, cancellationToken);
+
+        if (localSource is not null)
+        {
+            var resolved = new List<IpGeolocationRecord>();
+            foreach (var ip in distinct)
+            {
+                if (results.ContainsKey(ip)) continue;
+                var record = IpAddressScopeClassifier.IsPubliclyRoutable(ip)
+                    ? localSource.Lookup(
+                        ip,
+                        now,
+                        TimeSpan.FromDays(options.Geolocation.SuccessTtlDays),
+                        TimeSpan.FromHours(options.Geolocation.NegativeTtlHours))
+                    : Unmapped(ip, now);
+                results[ip] = record;
+                resolved.Add(record);
+            }
+
+            await StoreManyAsync(resolved, cancellationToken);
+            return results;
+        }
 
         foreach (var ip in distinct)
         {
@@ -159,6 +202,11 @@ public sealed class IpGeolocationService : BackgroundService
         await using var command = connection.CreateCommand();
         var predicates = new List<string> { "status = 'ready'", "expires_at_utc > @now" };
         command.Parameters.AddWithValue("@now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
+        if (localSource is not null)
+        {
+            predicates.Add("provider = @provider");
+            command.Parameters.AddWithValue("@provider", localSource.ProviderId);
+        }
         if (!string.IsNullOrWhiteSpace(query))
         {
             predicates.Add("(ip like @query escape '\\' or coalesce(city,'') like @query escape '\\' or coalesce(region,'') like @query escape '\\' or coalesce(country,'') like @query escape '\\' or coalesce(country_code,'') like @query escape '\\' or coalesce(organization,'') like @query escape '\\' or coalesce(isp,'') like @query escape '\\' or cast(asn as text) like @query escape '\\')");
@@ -207,7 +255,9 @@ public sealed class IpGeolocationService : BackgroundService
             while (await reader.ReadAsync(cancellationToken))
             {
                 var record = ReadRecord(reader);
-                if (record.ExpiresAtUtc > now) results[record.Ip] = record;
+                if (record.ExpiresAtUtc > now
+                    && (localSource is null || record.Provider == localSource.ProviderId || record.Provider == "local_scope"))
+                    results[record.Ip] = record;
             }
         }
         return results;
@@ -217,6 +267,7 @@ public sealed class IpGeolocationService : BackgroundService
     {
         if (!options.Enabled || !options.Geolocation.Enabled) return;
         await EnsureInitializedAsync(stoppingToken);
+        if (localSource is not null) return;
         await foreach (var ip in queue.Reader.ReadAllAsync(stoppingToken))
         {
             try
@@ -354,7 +405,7 @@ public sealed class IpGeolocationService : BackgroundService
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(options.Geolocation.RequestTimeoutSeconds));
         using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Challenger-SIEM", "2.6"));
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Challenger-SIEM", "2.8"));
         if (!string.IsNullOrWhiteSpace(options.Geolocation.ApiKey))
             request.Headers.TryAddWithoutValidation(options.Geolocation.ApiKeyHeader, options.Geolocation.ApiKey);
         var client = httpClientFactory.CreateClient("traffic-map-geolocation");
@@ -448,10 +499,16 @@ public sealed class IpGeolocationService : BackgroundService
     private static IpGeolocationRecord Unmapped(string ip, DateTimeOffset now) =>
         new(ip, "unmapped", null, null, null, null, null, null, null, null, null, null, "local_scope", now, now.AddYears(1));
 
-    private async Task StoreAsync(IpGeolocationRecord record, CancellationToken cancellationToken)
+    private Task StoreAsync(IpGeolocationRecord record, CancellationToken cancellationToken) =>
+        StoreManyAsync([record], cancellationToken);
+
+    private async Task StoreManyAsync(IReadOnlyCollection<IpGeolocationRecord> records, CancellationToken cancellationToken)
     {
+        if (records.Count == 0) return;
         await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             insert into ip_geolocation_cache(ip,status,latitude,longitude,city,region,country,country_code,continent,asn,organization,isp,provider,fetched_at_utc,expires_at_utc)
             values(@ip,@status,@latitude,@longitude,@city,@region,@country,@country_code,@continent,@asn,@organization,@isp,@provider,@fetched,@expires)
@@ -460,22 +517,49 @@ public sealed class IpGeolocationService : BackgroundService
                 continent=excluded.continent,asn=excluded.asn,organization=excluded.organization,isp=excluded.isp,
                 provider=excluded.provider,fetched_at_utc=excluded.fetched_at_utc,expires_at_utc=excluded.expires_at_utc;
             """;
-        command.Parameters.AddWithValue("@ip", record.Ip);
-        command.Parameters.AddWithValue("@status", record.Status);
-        command.Parameters.AddWithValue("@latitude", DbValue(record.Latitude));
-        command.Parameters.AddWithValue("@longitude", DbValue(record.Longitude));
-        command.Parameters.AddWithValue("@city", DbValue(record.City));
-        command.Parameters.AddWithValue("@region", DbValue(record.Region));
-        command.Parameters.AddWithValue("@country", DbValue(record.Country));
-        command.Parameters.AddWithValue("@country_code", DbValue(record.CountryCode));
-        command.Parameters.AddWithValue("@continent", DbValue(record.Continent));
-        command.Parameters.AddWithValue("@asn", DbValue(record.Asn));
-        command.Parameters.AddWithValue("@organization", DbValue(record.Organization));
-        command.Parameters.AddWithValue("@isp", DbValue(record.Isp));
-        command.Parameters.AddWithValue("@provider", record.Provider);
-        command.Parameters.AddWithValue("@fetched", record.FetchedAtUtc.ToString("O", CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("@expires", record.ExpiresAtUtc.ToString("O", CultureInfo.InvariantCulture));
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var ipParameter = command.Parameters.Add("@ip", SqliteType.Text);
+        var statusParameter = command.Parameters.Add("@status", SqliteType.Text);
+        var latitudeParameter = command.Parameters.Add("@latitude", SqliteType.Real);
+        var longitudeParameter = command.Parameters.Add("@longitude", SqliteType.Real);
+        var cityParameter = command.Parameters.Add("@city", SqliteType.Text);
+        var regionParameter = command.Parameters.Add("@region", SqliteType.Text);
+        var countryParameter = command.Parameters.Add("@country", SqliteType.Text);
+        var countryCodeParameter = command.Parameters.Add("@country_code", SqliteType.Text);
+        var continentParameter = command.Parameters.Add("@continent", SqliteType.Text);
+        var asnParameter = command.Parameters.Add("@asn", SqliteType.Integer);
+        var organizationParameter = command.Parameters.Add("@organization", SqliteType.Text);
+        var ispParameter = command.Parameters.Add("@isp", SqliteType.Text);
+        var providerParameter = command.Parameters.Add("@provider", SqliteType.Text);
+        var fetchedParameter = command.Parameters.Add("@fetched", SqliteType.Text);
+        var expiresParameter = command.Parameters.Add("@expires", SqliteType.Text);
+
+        foreach (var record in records)
+        {
+            ipParameter.Value = record.Ip;
+            statusParameter.Value = record.Status;
+            latitudeParameter.Value = DbValue(record.Latitude);
+            longitudeParameter.Value = DbValue(record.Longitude);
+            cityParameter.Value = DbValue(record.City);
+            regionParameter.Value = DbValue(record.Region);
+            countryParameter.Value = DbValue(record.Country);
+            countryCodeParameter.Value = DbValue(record.CountryCode);
+            continentParameter.Value = DbValue(record.Continent);
+            asnParameter.Value = DbValue(record.Asn);
+            organizationParameter.Value = DbValue(record.Organization);
+            ispParameter.Value = DbValue(record.Isp);
+            providerParameter.Value = record.Provider;
+            fetchedParameter.Value = record.FetchedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+            expiresParameter.Value = record.ExpiresAtUtc.ToString("O", CultureInfo.InvariantCulture);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public override void Dispose()
+    {
+        localSource?.Dispose();
+        base.Dispose();
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

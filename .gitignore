@@ -111,6 +111,8 @@ traces/
 *.tar
 *.tgz
 *.tar.gz
+*.mmdb
+*.mmdb.gz
 
 # Linux agent generated configuration and runtime state
 linux-agentsettings*.json

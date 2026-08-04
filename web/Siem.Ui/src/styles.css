@@ -24,21 +24,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .eyebrow { margin: 0 0 .45rem; color: var(--mint); font-size: .68rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .muted { color: var(--muted); }
 
-.unlock-shell { min-height: 100vh; display: grid; place-items: center; padding: 2rem; background: radial-gradient(circle at 72% 18%, rgba(94,216,210,.14), transparent 30%), radial-gradient(circle at 22% 86%, rgba(200,255,71,.08), transparent 25%), linear-gradient(135deg, #071011, #091617); }
-.unlock-card { width: min(720px, 100%); padding: clamp(2rem, 6vw, 4.75rem); border: 1px solid var(--line); background: rgba(9, 22, 23, .9); box-shadow: 0 40px 100px rgba(0,0,0,.45); position: relative; overflow: hidden; }
-.unlock-card::after { content: ""; position: absolute; width: 220px; height: 220px; right: -100px; top: -110px; border: 1px solid rgba(200,255,71,.3); border-radius: 50%; box-shadow: 0 0 0 34px rgba(94,216,210,.04), 0 0 0 70px rgba(94,216,210,.025); }
-.unlock-card h1 { max-width: 570px; margin: .75rem 0 1rem; font-size: clamp(2.4rem, 7vw, 5.2rem); line-height: .96; letter-spacing: -.055em; }
-.unlock-copy { max-width: 570px; color: #b5c5c2; font-size: 1.08rem; line-height: 1.65; }
-.unlock-card form { margin-top: 2rem; }
-.unlock-card label { display: block; margin-bottom: .55rem; color: #bed0cc; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-.token-row { display: flex; gap: .75rem; }
-.token-row input { flex: 1; min-width: 0; padding: .95rem 1rem; border: 1px solid #27403f; background: #071011; color: var(--ink); }
-.token-row button, .search button { border: 0; background: var(--acid); color: #102000; font-weight: 800; padding: .9rem 1.25rem; }
-.token-row button:disabled { opacity: .45; cursor: not-allowed; }
-.error-message { color: #ffaaa5; }
-.evidence-note { display: grid; grid-template-columns: 130px 1fr; gap: 1rem; margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: .8rem; line-height: 1.5; color: var(--muted); }
-.evidence-note strong { color: var(--ink); }
-
 .brand-mark { width: 46px; height: 34px; display: flex; align-items: flex-end; gap: 4px; margin-bottom: 1.5rem; }
 .brand-mark span { display: block; flex: 1; background: var(--acid); }
 .brand-mark span:nth-child(1) { height: 45%; }
@@ -54,8 +39,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .brand span { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .09em; }
 .search { display: flex; border: 1px solid #28403f; background: #0a1516; }
 .search input { flex: 1; min-width: 0; border: 0; padding: .8rem 1rem; color: var(--ink); background: transparent; }
-.search button { padding: .7rem 1rem; }
-.ghost-button, .filter-toggle { justify-self: end; border: 1px solid #2a4140; background: transparent; color: #bed0cc; padding: .65rem .9rem; }
+.search button { border: 0; background: var(--acid); color: #102000; font-weight: 800; padding: .7rem 1rem; }
+.loopback-badge { justify-self: end; border: 1px solid #38534e; background: rgba(94,216,210,.08); color: var(--mint); padding: .55rem .75rem; font-size: .64rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.filter-toggle { justify-self: end; border: 1px solid #2a4140; background: transparent; color: #bed0cc; padding: .65rem .9rem; }
 
 .control-strip { min-height: 55px; display: flex; align-items: center; gap: 1rem; padding: .65rem 1.5rem; border-bottom: 1px solid var(--line); background: #0a1516; }
 .range-buttons { display: flex; gap: .35rem; flex-wrap: wrap; }
@@ -171,8 +157,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .timeline-wrap, .table-heading, .destination-table th, .destination-table td { padding-inline: 1rem; }
   .evidence-footer { grid-template-columns: 1fr; }
   .footer-warnings { text-align: left; }
-  .token-row { flex-direction: column; }
-  .evidence-note { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -12,6 +12,10 @@
     "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     "attribution": "Synthetic map attribution"
   },
+  "geolocation_attribution": {
+    "text": "Synthetic geolocation attribution",
+    "url": "https://example.invalid/geolocation"
+  },
   "summary": {
     "matched_lifecycle_events": 2,
     "connection_observations": 2,

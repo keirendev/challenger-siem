@@ -1,0 +1,20 @@
+{
+  "schema_version": "challenger-siem.network-geography-evidence.v2",
+  "generated_at_utc": "2026-08-04T00:00:00Z",
+  "events": [{
+    "event_id": "00000000-0000-4000-8000-000000000601",
+    "agent_id": "synthetic-agent",
+    "event_citation": "event:synthetic-agent/00000000-0000-4000-8000-000000000601",
+    "hostname": "synthetic-host",
+    "source_id": "linux-network-flow-summary",
+    "event_code": "network_flow_sample",
+    "event_time": "2026-08-03T23:59:00Z",
+    "severity": "information",
+    "message": "Synthetic network observation.",
+    "evidence_mode": "kernel_flow",
+    "direction": "outbound",
+    "process_image": "/usr/bin/synthetic-client"
+  }],
+  "result_scope": "Synthetic bounded loopback dashboard evidence.",
+  "limitations": ["Synthetic fixture limitation."]
+}

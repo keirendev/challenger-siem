@@ -160,6 +160,13 @@ app.Use(async (context, next) =>
             await context.Response.WriteAsJsonAsync(new { error = "traffic_map_disabled" });
             return;
         }
+        if (!LoopbackTrafficMapAccess.CanServeUi(context, trafficMap))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.WriteAsJsonAsync(new { error = "traffic_map_direct_loopback_required" });
+            return;
+        }
         var expandedTileUrl = trafficMap.Map.TileUrl.Replace("{z}", "0", StringComparison.Ordinal)
             .Replace("{x}", "0", StringComparison.Ordinal)
             .Replace("{y}", "0", StringComparison.Ordinal);
@@ -202,11 +209,18 @@ app.Use(async (context, next) =>
     if (isServiceApi && !trafficMapReadOnlyDatabase)
     {
         var audit = context.RequestServices.GetRequiredService<SecurityAuditRepository>();
+        var trafficMap = context.RequestServices.GetRequiredService<IOptions<TrafficMapOptions>>().Value;
         var authenticated = context.User.Identity?.IsAuthenticated == true;
-        var allowed = authenticated && context.RequestServices.GetRequiredService<TokenService>().HasServiceAccess(context);
-        await audit.RecordAsync(ServiceAuthentication.ServiceId, ServiceAuthentication.PrincipalName,
+        var tokenAccess = context.RequestServices.GetRequiredService<TokenService>().HasServiceAccess(context);
+        var loopbackAccess = LoopbackTrafficMapAccess.CanImplyAuthentication(context, trafficMap);
+        var allowed = authenticated && (tokenAccess || loopbackAccess);
+        await audit.RecordAsync(ServiceAuthentication.ServiceId, context.User.Identity?.Name ?? ServiceAuthentication.PrincipalName,
             "service.api_access", allowed ? "success" : "denied", "route", path, context,
-            new Dictionary<string,object?> { ["method"] = context.Request.Method }, context.RequestAborted);
+            new Dictionary<string,object?>
+            {
+                ["method"] = context.Request.Method,
+                ["authentication_mode"] = loopbackAccess ? "direct_loopback" : "service_bearer"
+            }, context.RequestAborted);
     }
     await next();
 });
@@ -221,7 +235,9 @@ app.MapGet("/api/v2/network/geography", async Task<IResult> (
     IOptions<TrafficMapOptions> trafficMap,
     CancellationToken cancellationToken) =>
 {
-    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    if (!tokens.HasServiceAccess(context)
+        && !LoopbackTrafficMapAccess.CanImplyAuthentication(context, trafficMap.Value))
+        return ServiceAccessFailure(context);
     if (!trafficMap.Value.Enabled) return Results.NotFound(new { error = "traffic_map_disabled" });
 
     var query = NetworkGeographyQuery.FromQuery(context.Request.Query);
@@ -234,6 +250,30 @@ app.MapGet("/api/v2/network/geography", async Task<IResult> (
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers.Pragma = "no-cache";
     return Results.Ok(await geography.GetAsync(query, cancellationToken));
+});
+
+app.MapGet("/api/v2/network/geography/events", async Task<IResult> (
+    HttpContext context,
+    NetworkGeographyRepository geography,
+    TokenService tokens,
+    IOptions<TrafficMapOptions> trafficMap,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasServiceAccess(context)
+        && !LoopbackTrafficMapAccess.CanImplyAuthentication(context, trafficMap.Value))
+        return ServiceAccessFailure(context);
+    if (!trafficMap.Value.Enabled) return Results.NotFound(new { error = "traffic_map_disabled" });
+
+    var query = NetworkGeographyEvidenceQuery.FromQuery(context.Request.Query);
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors
+            .GroupBy(item => item.Field)
+            .ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Pragma = "no-cache";
+    return Results.Ok(await geography.GetEvidenceAsync(query, cancellationToken));
 });
 
 app.MapGet("/api/v2/network/activity", async Task<IResult> (

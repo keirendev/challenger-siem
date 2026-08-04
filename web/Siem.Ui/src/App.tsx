@@ -13,43 +13,6 @@ function formatTime(value?: string) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
 }
 
-function Unlock({ onUnlock }: { onUnlock: (token: string) => Promise<void> }) {
-  const [token, setToken] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await onUnlock(token.trim())
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not unlock the interface.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return <main className="unlock-shell">
-    <section className="unlock-card" aria-labelledby="unlock-title">
-      <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-      <p className="eyebrow">Challenger SIEM · local visual aid</p>
-      <h1 id="unlock-title">See the shape of your network evidence.</h1>
-      <p className="unlock-copy">Unlock the read-only map with the existing service bearer. It is held in memory for this tab only and disappears on reload.</p>
-      <form onSubmit={submit}>
-        <label htmlFor="service-token">Service bearer</label>
-        <div className="token-row">
-          <input id="service-token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} placeholder="Paste service bearer" required />
-          <button type="submit" disabled={busy || !token.trim()}>{busy ? 'Checking…' : 'Open map'}</button>
-        </div>
-        {error && <p role="alert" className="error-message">{error}</p>}
-      </form>
-      <div className="evidence-note"><strong>Evidence boundary</strong><span>Kernel summaries contain bounded headers and aggregate counters only; snapshot evidence can miss short-lived peers and does not prove direction or volume.</span></div>
-    </section>
-  </main>
-}
-
 function Timeline({ data, onSelect }: { data: GeographyResponse['timeline']; onSelect: (from: string, to: string) => void }) {
   const maximum = Math.max(1, ...data.map(item => item.connection_observations))
   return <div className="timeline" aria-label="Connection observations over time">
@@ -128,19 +91,17 @@ function DetailPanel({ destination, events, loadingEvents, onClose }: { destinat
 }
 
 function App() {
-  const [token, setToken] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>(() => filtersFromUrl(window.location.search))
   const [draftSearch, setDraftSearch] = useState(filters.q)
   const [response, setResponse] = useState<GeographyResponse | null>(null)
   const [selected, setSelected] = useState<Destination>()
   const [events, setEvents] = useState<EventEnvelope[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [error, setError] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState<'observations' | 'recent' | 'location'>('observations')
   const request = useRef<AbortController | undefined>(undefined)
-  const skipLoadedQuery = useRef<string | undefined>(undefined)
 
   const query = useMemo(() => apiSearch(filters), [filters])
   const sorted = useMemo(() => response ? [...response.destinations].sort((left, right) => {
@@ -149,38 +110,26 @@ function App() {
     return right.connection_observations - left.connection_observations
   }) : [], [response, sort])
 
-  async function load(activeToken: string, signal?: AbortSignal) {
-    const result = await fetch(`/api/v2/network/geography?${query}`, { headers: { Authorization: `Bearer ${activeToken}` }, cache: 'no-store', redirect: 'error', signal })
-    if (result.status === 401 || result.status === 403) throw new Error('The service bearer was not accepted.')
+  async function load(signal?: AbortSignal) {
+    const result = await fetch(`/api/v2/network/geography?${query}`, { cache: 'no-store', redirect: 'error', signal })
+    if (result.status === 401 || result.status === 403) throw new Error('The traffic map requires a direct localhost or loopback connection.')
     if (result.status === 404) throw new Error('The traffic map is not enabled in local server configuration.')
     if (!result.ok) throw new Error(`The map request failed (${result.status}).`)
     return result.json() as Promise<GeographyResponse>
   }
 
-  async function unlock(value: string) {
-    const data = await load(value)
-    skipLoadedQuery.current = query
-    setToken(value)
-    setResponse(data)
-  }
-
   useEffect(() => {
-    if (!token) return
-    if (skipLoadedQuery.current === query) {
-      skipLoadedQuery.current = undefined
-      return
-    }
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
     setLoading(true)
     setError('')
-    load(token, controller.signal)
+    load(controller.signal)
       .then(data => setResponse(data))
       .catch(reason => { if (reason.name !== 'AbortError') setError(reason.message) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [token, query])
+  }, [query])
 
   useEffect(() => {
     const url = `${window.location.pathname}?${filtersToSearch(filters)}`
@@ -195,16 +144,16 @@ function App() {
   }, [response, selected])
 
   useEffect(() => {
-    if (!token || !response?.summary.pending_destinations) return
+    if (!response?.summary.pending_destinations) return
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      load(token, controller.signal).then(setResponse).catch(() => undefined)
+      load(controller.signal).then(setResponse).catch(() => undefined)
     }, 5000)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [token, response])
+  }, [response])
 
   useEffect(() => {
-    if (!selected || !token) { setEvents([]); return }
+    if (!selected) { setEvents([]); return }
     const controller = new AbortController()
     const values = new URLSearchParams({ destination_ip: selected.destination_ip, limit: '25' })
     const geography = new URLSearchParams(query)
@@ -212,13 +161,13 @@ function App() {
     if (geography.get('to')) values.set('to', geography.get('to')!)
     setLoadingEvents(true)
     setEvents([])
-    fetch(`/api/v2/events?${values}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', redirect: 'error', signal: controller.signal })
+    fetch(`/api/v2/network/geography/events?${values}`, { cache: 'no-store', redirect: 'error', signal: controller.signal })
       .then(result => result.ok ? result.json() : Promise.reject(new Error('Event drill-down failed.')))
       .then(data => setEvents(data.events || []))
       .catch(reason => { if (reason.name !== 'AbortError') setEvents([]) })
       .finally(() => { if (!controller.signal.aborted) setLoadingEvents(false) })
     return () => controller.abort()
-  }, [selected, token, query])
+  }, [selected, query])
 
   function selectRange(range: RangePreset) {
     setFilters(current => ({ ...current, range, ...(range === 'custom' ? {} : { from: '', to: '' }) }))
@@ -237,8 +186,6 @@ function App() {
     setFilters(current => ({ ...current, range: 'custom', from: local(from), to: local(to) }))
   }
 
-  if (!token) return <Unlock onUnlock={unlock} />
-
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-mark small" aria-hidden="true"><span /><span /><span /></div><div><strong>Challenger SIEM</strong><span>Network geography</span></div></div>
@@ -247,7 +194,7 @@ function App() {
         <input id="global-search" type="search" value={draftSearch} onChange={event => setDraftSearch(event.target.value)} placeholder="Search IP, country, ASN, port, host or process" />
         <button type="submit">Search</button>
       </form>
-      <button className="ghost-button" type="button" onClick={() => setToken(null)}>Lock</button>
+      <span className="loopback-badge">Loopback read-only</span>
     </header>
 
     <section className="control-strip" aria-label="Time and metadata filters">
@@ -267,6 +214,7 @@ function App() {
       <label>Protocol<select value={filters.protocol} onChange={event => setFilters(current => ({ ...current, protocol: event.target.value }))}><option value="">Any</option><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
     </section>}
 
+    {loading && !response && <div className="banner" role="status">Loading retained network evidence…</div>}
     {error && <div className="banner error-banner" role="alert">{error}</div>}
     {response && <>
       <section className="summary-strip">
@@ -310,6 +258,7 @@ function App() {
       <footer className="evidence-footer">
         <div><strong>{response.coverage.evidence_modes.join(' + ').replaceAll('_', ' ')} evidence</strong><span>{Object.entries(response.coverage.source_status_counts).map(([key, value]) => `${value} ${key}`).join(' · ') || 'source health unavailable'}</span></div>
         <p>{response.limitations.join(' ')}</p>
+        {response.geolocation_attribution && <p><a href={response.geolocation_attribution.url} target="_blank" rel="noreferrer">{response.geolocation_attribution.text}</a></p>}
         <div className="footer-warnings" role="status">
           {(response.summary.candidate_truncated || response.summary.result_truncated) && <strong>Result bounds were reached; rows are a bounded view.</strong>}
           {response.coverage.process_attribution_partial && <strong>Process attribution is partial for this result.</strong>}

@@ -152,6 +152,7 @@ for path in \
   'nested/export/process-list.json' \
   'nested/export/events.csv' \
   'nested/browser-profile/cookies.sqlite' \
+  'nested/data/dbip-city-lite.mmdb' \
   'nested/artifacts/endpoint-capture.zip' \
   'nested/artifacts/endpoint-capture.tar.gz' \
   'nested/build/agent.dll' \

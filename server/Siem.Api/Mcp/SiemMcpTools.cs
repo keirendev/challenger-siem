@@ -328,10 +328,10 @@ public sealed class SiemMcpTools(
                 var result = new SiemMcpTrafficMapLink(
                     BuildTrafficMapLink(trafficMap.PublicBaseUrl, request),
                     "network_geography",
-                    true,
+                    false,
                     true,
                     [
-                        "The page requires the configured service bearer, which is never included in the link.",
+                        "The page and its bounded data routes work without a bearer only over a direct loopback connection; forwarded or non-loopback requests are denied.",
                         "The visualization shows bounded socket observations, not packet flows, byte volumes, or proven direction.",
                         "Review the page's source-health and attribution notices before interpreting missing peers or activity."
                     ]);

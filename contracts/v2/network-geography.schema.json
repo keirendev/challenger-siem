@@ -29,6 +29,14 @@
         "attribution": { "type": "string", "minLength": 1, "maxLength": 300 }
       }
     },
+    "geolocation_attribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["text", "url"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url": { "type": "string", "format": "uri", "maxLength": 500 }
+      }
+    },
     "summary": {
       "type": "object", "additionalProperties": false,
       "required": ["matched_lifecycle_events", "connection_observations", "unique_destinations", "returned_destinations", "geolocated_destinations", "pending_destinations", "unmapped_destinations", "quota_limited_destinations", "candidate_truncated", "result_truncated"],

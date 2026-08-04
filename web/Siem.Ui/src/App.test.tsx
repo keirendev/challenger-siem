@@ -15,6 +15,7 @@ const response = {
   generated_at_utc: '2026-08-03T12:00:00Z',
   origin: { label: 'Synthetic origin', latitude: 0, longitude: 0 },
   map: { tile_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: 'Map' },
+  geolocation_attribution: { text: 'IP geolocation by DB-IP', url: 'https://db-ip.com' },
   summary: { matched_lifecycle_events: 1, connection_observations: 1, unique_destinations: 1, returned_destinations: 1, geolocated_destinations: 1, pending_destinations: 0, unmapped_destinations: 0, quota_limited_destinations: 0, candidate_truncated: false, result_truncated: false },
   destinations: [{ destination_ip: '203.0.113.10', connection_observations: 1, baseline_observations: 0, new_observations: 1, change_events: 0, disappearance_events: 0, lifecycle_events: 1, packet_count_delta: 1, byte_count_delta: 40, first_seen_utc: '2026-08-03T11:00:00Z', last_seen_utc: '2026-08-03T11:00:00Z', protocols: ['tcp'], destination_ports: [443], hostnames: ['synthetic-host'], agent_ids: ['synthetic-agent'], process_images: [], evidence_modes: ['kernel_flow'], directions: ['outbound'], geolocation_status: 'ready', latitude: 1, longitude: 1, city: 'Example City', country: 'Example Country' }],
   timeline: [],
@@ -22,7 +23,7 @@ const response = {
   active_filters: [], result_scope: 'synthetic', limitations: ['Synthetic limitation.'],
 }
 
-describe('App authentication boundary', () => {
+describe('App loopback boundary', () => {
   beforeEach(() => {
     window.history.replaceState(null, '', '/ui/traffic')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => response }))
@@ -30,28 +31,24 @@ describe('App authentication boundary', () => {
 
   afterEach(() => cleanup())
 
-  async function unlock() {
+  async function loadApp() {
     render(<App />)
-    fireEvent.change(screen.getByLabelText(/service bearer/i), { target: { value: 'synthetic-service-value' } })
-    fireEvent.click(screen.getByRole('button', { name: /open map/i }))
     await waitFor(() => expect(screen.getByText('Network geography')).toBeInTheDocument())
   }
 
-  it('keeps the token in memory and unlocks through an authenticated request', async () => {
-    render(<App />)
-    expect(screen.getByRole('heading', { name: /see the shape/i })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText(/service bearer/i), { target: { value: 'synthetic-service-value' } })
-    fireEvent.click(screen.getByRole('button', { name: /open map/i }))
-    await waitFor(() => expect(screen.getByText('Network geography')).toBeInTheDocument())
+  it('loads directly without collecting or sending a service bearer', async () => {
+    await loadApp()
     const call = vi.mocked(fetch).mock.calls[0]
-    expect((call[1]?.headers as Record<string, string>).Authorization).toBe('Bearer synthetic-service-value')
-    expect(window.location.search).not.toContain('synthetic-service-value')
+    expect(call[1]?.headers).toBeUndefined()
+    expect(screen.queryByLabelText(/service bearer/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /lock/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/loopback read-only/i)).toBeInTheDocument()
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
   })
 
   it('cancels stale filter requests and keeps deep links credential-free', async () => {
-    await unlock()
+    await loadApp()
     fireEvent.change(screen.getByRole('searchbox', { name: /search network metadata/i }), { target: { value: '443' } })
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThanOrEqual(2))
@@ -62,16 +59,16 @@ describe('App authentication boundary', () => {
     expect(staleSignal.aborted).toBe(true)
     expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toContain('q=53')
     expect(window.location.search).toContain('q=53')
-    expect(window.location.search).not.toContain('synthetic-service-value')
+    expect(window.location.search).not.toContain('token')
   })
 
   it('exposes an accessible destination table and drills into matching events', async () => {
-    await unlock()
+    await loadApp()
     const table = screen.getByRole('table', { name: /remote peer destinations/i })
     expect(within(table).getByRole('columnheader', { name: /peer/i })).toBeInTheDocument()
     fireEvent.click(within(table).getByRole('button', { name: /203\.0\.113\.10/i }))
     expect(await screen.findByRole('complementary', { name: /destination 203\.0\.113\.10/i })).toBeInTheDocument()
-    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(call => String(call[0]).includes('/api/v2/events?') && String(call[0]).includes('destination_ip=203.0.113.10'))).toBe(true))
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(call => String(call[0]).includes('/api/v2/network/geography/events?') && String(call[0]).includes('destination_ip=203.0.113.10'))).toBe(true))
   })
 
   it('shows provider, truncation, and process-attribution degradation notices', async () => {
@@ -80,10 +77,11 @@ describe('App authentication boundary', () => {
       summary: { ...response.summary, unmapped_destinations: 1, quota_limited_destinations: 1, result_truncated: true },
     }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => degraded }))
-    await unlock()
+    await loadApp()
     expect(screen.getByText(/process attribution is partial/i)).toBeInTheDocument()
     expect(screen.getByText(/locations are unresolved/i)).toBeInTheDocument()
     expect(screen.getByText(/provider quota-limited/i)).toBeInTheDocument()
     expect(screen.getByText(/result bounds were reached/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /ip geolocation by db-ip/i })).toHaveAttribute('href', 'https://db-ip.com')
   })
 })
