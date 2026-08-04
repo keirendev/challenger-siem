@@ -8,6 +8,7 @@ agent_binary=${2:-}
 signing_key=${3:-}
 public_key=${4:-}
 plan_hash=${5:-}
+fixed_helper=${CHALLENGER_SIEM_FIXED_HELPER_BINARY:-}
 if [[ -z $output || -z $agent_binary || -z $signing_key || -z $public_key || -z $plan_hash ]]; then
   echo 'Usage: build-kernel-network-bundle.sh OUTPUT AGENT_BINARY ED25519_PRIVATE_KEY ED25519_PUBLIC_KEY PLAN_HASH' >&2
   exit 2
@@ -17,6 +18,9 @@ fi
 for path in "$agent_binary" "$signing_key" "$public_key"; do
   [[ -f $path && ! -L $path ]] || { echo 'Every bundle input must be a regular non-symlink file.' >&2; exit 1; }
 done
+if [[ -n $fixed_helper ]]; then
+  [[ -f $fixed_helper && ! -L $fixed_helper ]] || { echo 'The fixed helper override must be a regular non-symlink file.' >&2; exit 1; }
+fi
 output_abs=$(realpath -m -- "$output")
 if [[ $output_abs == "$root_dir"/* ]]; then
   case "$output_abs" in "$root_dir/dist/"*|"$root_dir/.local/"*) ;; *) echo 'Repository-local bundle output must be under ignored dist/ or .local/.' >&2; exit 1 ;; esac
@@ -27,9 +31,12 @@ fi
 mkdir -p -m 0700 "$output"
 build_dir=$(mktemp -d)
 trap 'rm -rf -- "$build_dir"' EXIT
-make -C "$root_dir/agent/KernelNetwork/Native" BUILD_DIR="$build_dir"
+if [[ -z $fixed_helper ]]; then
+  make -C "$root_dir/agent/KernelNetwork/Native" BUILD_DIR="$build_dir"
+  fixed_helper=$build_dir/challenger-siem-ebpf-helper
+fi
 command install -m 0755 "$agent_binary" "$output/Challenger.Siem.LinuxAgent"
-command install -m 0755 "$build_dir/challenger-siem-ebpf-helper" "$output/Challenger.Siem.EbpfHelper"
+command install -m 0755 "$fixed_helper" "$output/Challenger.Siem.EbpfHelper"
 command install -m 0644 "$root_dir/packaging/linux/challenger-siem-agent.service" "$output/challenger-siem-agent.service"
 command install -m 0644 "$root_dir/packaging/linux/challenger-siem-agent-kernel-network.conf" "$output/challenger-siem-agent-kernel-network.conf"
 command install -m 0644 "$root_dir/packaging/linux/challenger-siem-ebpf-helper.service" "$output/challenger-siem-ebpf-helper.service"
@@ -53,7 +60,7 @@ manifest = {
     'plan_hash': sys.argv[2],
     'signer_public_key_sha256': sys.argv[3],
     'helper_version': 'challenger-siem-ebpf-helper-v1',
-    'collector_version': 'linux-network-flow-summary-v1',
+    'collector_version': 'linux-network-flow-summary-v2',
     'privacy_boundary': 'tcp_udp_ipv4_ipv6_headers_and_aggregate_counters_only_no_payload',
     'required_capabilities': ['CAP_BPF', 'CAP_PERFMON', 'CAP_NET_ADMIN'],
     'files': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},

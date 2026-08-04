@@ -376,6 +376,81 @@ public sealed class LinuxL4TelemetryTests
     }
 
     [Fact]
+    public void ExactReapprovedBaselineRotatesWithoutResettingProgressOrHistory()
+    {
+        var options = BaseOptions();
+        var collector = Collector(options, new SyntheticSloSource());
+        var originalSnapshots = CompleteSnapshots();
+        options.L4Telemetry.ApprovedBaselineHash = collector.Preflight(originalSnapshots).CandidateBaselineHash;
+        var original = collector.CollectPolicy(new(), originalSnapshots, options.AgentId, "SYNTHETIC-LINUX-01").NewState;
+        var originalNextSequence = original.Policy.Progress.NextSequence;
+
+        var approvedSnapshots = ChangeSnapshot(originalSnapshots, "linux_firewall", "reviewed-change");
+        options.L4Telemetry.ApprovedBaselineHash = collector.Preflight(approvedSnapshots).CandidateBaselineHash;
+        var rotated = collector.CollectPolicy(original, approvedSnapshots, options.AgentId, "SYNTHETIC-LINUX-01");
+
+        Assert.Equal(SourceHealthStatuses.Healthy, rotated.HealthStatus);
+        Assert.Equal("none", rotated.ErrorCode);
+        Assert.Equal("reapproved", rotated.Details["baseline_state"]);
+        Assert.True(rotated.NewState.Policy.Progress.NextSequence > originalNextSequence);
+        Assert.Equal(original.Policy.Progress.GapCount, rotated.NewState.Policy.Progress.GapCount);
+        Assert.Equal(original.Policy.Progress.AcknowledgedSequence, rotated.NewState.Policy.Progress.AcknowledgedSequence);
+        Assert.Equal(options.L4Telemetry.ApprovedBaselineHash, rotated.NewState.Policy.ApprovedBaselineHash);
+        var baselineEvent = Assert.Single(rotated.Events, item => item.EventCode == "policy_baseline");
+        Assert.Equal("baseline_reapproved", baselineEvent.Raw.GetProperty("state").GetString());
+        Assert.Single(rotated.Events, item => item.EventCode == "policy_sample");
+
+        var unapprovedSnapshots = ChangeSnapshot(approvedSnapshots, "linux_ssh", "unreviewed-change");
+        var rejected = collector.CollectPolicy(original, unapprovedSnapshots, options.AgentId, "SYNTHETIC-LINUX-01");
+        Assert.Equal(SourceHealthStatuses.Degraded, rejected.HealthStatus);
+        Assert.Equal("approved_baseline_mismatch", rejected.ErrorCode);
+        Assert.Equal(original.Policy.BaselineSignatures, rejected.NewState.Policy.BaselineSignatures);
+    }
+
+    [Fact]
+    public async Task ExactReapprovedBaselineBypassesOnlyTheExistingPostureCadence()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "challenger-l4-reapproval-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var statePath = Path.Combine(root, "state.json");
+            var originalSnapshots = CompleteSnapshots();
+            var originalOptions = BaseOptions();
+            originalOptions.L4Telemetry.StartupDelaySeconds = 0;
+            var originalCollector = Collector(originalOptions, new SyntheticSloSource());
+            originalOptions.L4Telemetry.ApprovedBaselineHash = originalCollector.Preflight(originalSnapshots).CandidateBaselineHash;
+            originalOptions.L4Telemetry.ApprovedPlanHash = LinuxL4TelemetryCollector.ComputePlanHash(originalOptions);
+            var store = new LinuxL4TelemetryStateStore(statePath, root);
+            var originalRuntime = new LinuxL4TelemetryRuntime(Options.Create(originalOptions), store, originalCollector,
+                new MemoryQueue(HealthyQueue()), new TestTimeProvider(Start));
+            await originalRuntime.ObserveInventoryAsync(originalSnapshots, default);
+            var originalNextSequence = originalRuntime.CurrentState.Policy.Progress.NextSequence;
+
+            var approvedSnapshots = ChangeSnapshot(originalSnapshots, "linux_firewall", "reviewed-change");
+            var approvedOptions = BaseOptions();
+            approvedOptions.L4Telemetry.StartupDelaySeconds = 0;
+            var approvedCollector = Collector(approvedOptions, new SyntheticSloSource());
+            approvedOptions.L4Telemetry.ApprovedBaselineHash = approvedCollector.Preflight(approvedSnapshots).CandidateBaselineHash;
+            approvedOptions.L4Telemetry.ApprovedPlanHash = LinuxL4TelemetryCollector.ComputePlanHash(approvedOptions);
+            var approvedQueue = new MemoryQueue(HealthyQueue());
+            var approvedRuntime = new LinuxL4TelemetryRuntime(Options.Create(approvedOptions), store, approvedCollector,
+                approvedQueue, new TestTimeProvider(Start));
+
+            await approvedRuntime.ObserveInventoryAsync(approvedSnapshots, default);
+
+            Assert.Contains(approvedQueue.Events, item => item.EventCode == "policy_baseline"
+                && item.Raw.GetProperty("state").GetString() == "baseline_reapproved");
+            Assert.True(approvedRuntime.CurrentState.Policy.Progress.NextSequence > originalNextSequence);
+            Assert.Equal(approvedOptions.L4Telemetry.ApprovedBaselineHash,
+                approvedRuntime.CurrentState.Policy.ApprovedBaselineHash);
+            Assert.False(approvedRuntime.CurrentState.Policy.Progress.ActiveGap);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task SloWarmupPassBreachQueueFailureAndCounterResetAreExplicit()
     {
         var options = BaseOptions();

@@ -105,6 +105,10 @@ if approved_signer != 'sha256:' + manifest['signer_public_key_sha256']:
     raise SystemExit('configuration does not approve the signed signer fingerprint')
 if plan.get('helper_sha256') != approved_helper or plan.get('signer_public_key_sha256') != approved_signer:
     raise SystemExit('candidate plan does not bind the approved helper and signer hashes')
+if manifest.get('helper_version') != plan.get('helper_version'):
+    raise SystemExit('signed manifest and candidate agent helper versions do not match')
+if manifest.get('collector_version') != plan.get('collector_version'):
+    raise SystemExit('signed manifest and candidate agent collector versions do not match')
 if plan.get('approval_hash_matches') is not True:
     raise SystemExit('candidate agent rejected the configured kernel network plan approval')
 PY

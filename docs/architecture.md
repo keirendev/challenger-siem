@@ -12,7 +12,7 @@ Version 2 requires a fresh database. The schema installer refuses databases with
 
 ## Trust and reliability flow
 
-The endpoint treats Linux sources as untrusted bounded input, writes an event to the private SQLite queue before advancing its collected checkpoint, and deletes it only after an accepted/duplicate acknowledgement is durable. The server authenticates the claimed agent, validates canonical v2 identity/source/data-handling metadata, writes PostgreSQL transactionally, and evaluates detections from the canonical stored row. Deterministic IDs make retries idempotent.
+The endpoint treats Linux sources as untrusted bounded input, writes an event to the private SQLite queue before advancing its collected checkpoint, and deletes it only after an accepted/duplicate acknowledgement is durable. The queue uses pooled private SQLite connections, WAL, and `synchronous=FULL` without shared-cache mode. Optional kernel-flow processing receives a complete bounded helper drain before cached enrichment, reserves a non-reusable sequence range, and finalizes committed prefixes in ordered 100-event/1-MiB chunks. The server authenticates the claimed agent, validates canonical v2 identity/source/data-handling metadata, writes PostgreSQL transactionally, and evaluates detections from the canonical stored row. Deterministic IDs make retries idempotent.
 
 Review repositories apply query, row, time, nested-collection, and retention bounds. MCP adds a final secret-shape filter, omits raw payloads from event search, labels telemetry untrusted, and records read-only tool audit metadata. Collected content never enters authorization or tool-selection logic. See [Threat model](threat-model.md).
 

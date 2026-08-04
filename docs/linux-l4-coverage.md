@@ -1,10 +1,10 @@
 # Linux L4 full-target coverage
 
-Status: bounded functional Linux VM validation passed for one declared role; the required long-duration private soak and full performance matrix remain pending
+Status: bounded functional Linux VM validation passed for one declared role, and the exact 2.8.1 single-host initial canary passed on 2026-08-04; the active 24-hour read-only soak and broader performance matrix remain pending
 
 Linux L4 is Challenger SIEM's highest defined Linux coverage level. It extends the healthy L1/L2 journal baseline and approval-gated L3 process, network, and host-behaviour sources with two mandatory assurance sources and each applicable role-specific journal pack. The journal remains system-only by default; the optional all-accessible-local scope is a separately reviewed, plan-bound input that grants no new access. L4 is deliberately strict: it is a reviewed high-value-host target, not a default installation mode or a promise that every possible Linux telemetry source is collected.
 
-The L4 pack remains passive and read-only. It does not install or configure Linux Audit Framework rules, load eBPF programs, enable application logging, change firewall or authentication policy, alter kernel or mandatory-access-control settings, or grant itself privileges to make a source appear healthy. Its separately approved passive-L3 prerequisite may explicitly select the fixed one-capability cross-user executable-visibility profile; that profile is independently planned, VM-validated, activated, monitored, and rolled back rather than being implied by L4. Missing prerequisites remain visible coverage gaps.
+The L4 pack remains passive and read-only. It does not install or configure Linux Audit Framework rules, independently load or authorize eBPF programs, enable application logging, change firewall or authentication policy, alter kernel or mandatory-access-control settings, or grant itself privileges to make a source appear healthy. Its separately approved passive-L3 prerequisite may explicitly select the fixed one-capability cross-user executable-visibility profile, and a separately approved L3 kernel-network source may already be active; neither is implied or broadened by L4. Missing prerequisites remain visible coverage gaps.
 
 On CachyOS and Arch-family hosts, fixed unprivileged fallbacks can observe the bounded UFW enabled/logging state from `/etc/ufw/ufw.conf`, AppArmor enablement from `/sys/module/apparmor/parameters/enabled`, Secure Boot from the fixed UEFI `SecureBoot` variable, and the global OpenSSH posture from `/etc/ssh/sshd_config` plus the fixed `99-archlinux.conf` drop-in. Only approved aggregate states are retained. These fallbacks do not read firewall rules, arbitrary SSH fragments, EFI variables other than Secure Boot, or application/file payloads; they do not replace genuine package-manager journal evidence or authorize a host-policy change.
 
@@ -88,7 +88,7 @@ The two mandatory L4 collectors are disabled by default under `Agent:L4Telemetry
 5. Copy only the reviewed candidate hash into `ApprovedBaselineHash`, keep `Enabled=false` and `ApprovedPlanHash` unset, then rerun the same installed preflight. The plan hash changes because it binds the approved baseline hash.
 6. Review that second, baseline-bound plan, copy its exact hash into `ApprovedPlanHash`, and set `Enabled=true` in the protected staged configuration. `upgrade` may stage that configuration/binary/unit without starting or restarting the service. Obtain separate explicit restart approval before activating it; staging alone is not L4 enablement.
 7. On startup, the collector must match both approvals before it emits healthy evidence. A missing, corrupt, changed, denied, partial, or mismatched baseline cannot be silently adopted.
-8. Subsequent complete observations compare with the approved baseline. Drift remains visible until posture returns to the approved state or an operator intentionally reviews and approves a new baseline through this two-pass workflow.
+8. Subsequent complete observations compare with the approved baseline. Drift remains visible until posture returns to the approved state or an operator intentionally reviews and approves a new baseline through this two-pass workflow. When the exact approved baseline changes, the preserved collector state is not deleted or reset: the next complete matching inventory is consumed immediately after startup even inside the normal posture cadence, emits explicit `baseline_reapproved` evidence, advances the existing sequence, and preserves gap and acknowledgement history. A partial observation, stored-baseline integrity failure, or current posture that does not exactly match the new approval fails closed instead of rotating the baseline.
 9. Changing roles, plan-bound limits, fixed inputs, collector version, queue-priority relationships, or approved posture invalidates the applicable hash and requires review again.
 
 The L4 preflight changes no policy, L4 state, queue, configuration, or collected telemetry. Because the published agent is a .NET single-file executable, its runtime may populate only `/var/lib/challenger-siem-agent/.dotnet-bundle` under the already installed private state directory. Treat that bounded product-owned cache write as part of the preflight and do not describe the operation as literally zero-write.
@@ -160,21 +160,21 @@ A zero value is used only when measured. Unsupported or unavailable counters rem
 
 ## Deployment and validation state
 
-The implementation and synthetic test surface can be deployment-ready without claiming that L4 has passed on a real host. At the time of this document, the operator-provided Linux VM canary has not been run. Therefore:
+The bounded exact-2.0.2 VM campaign passed functional L1-L4 behavior for one declared role. On 2026-08-04, the exact 2.8.1 single-host development deployment passed its initial agent-only kernel-flow stabilization window, restored strict L4 after warm-up, and remained healthy for one additional complete rolling window with normal queue, acknowledgement, and loss state. The 24-hour read-only soak is still in progress, and neither short result establishes broader production or host-class readiness. Therefore:
 
 - do not describe L4 as a default or production-ready rollout;
 - do not infer L4 success from unit tests, one healthy heartbeat, or a short idle window;
 - retain all VM plans, baseline observations, telemetry, API responses, resource samples, screenshots, logs, and benchmark output only under ignored local or approved runtime paths; and
 - publish only synthetic fixtures and aggregate pass/fail/blocked conclusions.
 
-Follow [Linux local-host rollout validation](linux-local-host-validation.md#l4-private-vm-canary) after the VM is available. L1's 24-hour and L1+L2's seven-day gates still apply; L3 and L4 require their own reviewed approval, workload, recovery, privacy, performance, and rollback evidence. Any secret/excluded-data collection, unauthorized mutation, host impact, silent loss, persistent gap, uncontrolled growth, false-healthy state, or SLO breach is an immediate stop/rollback condition.
+Follow [Linux local-host rollout validation](linux-local-host-validation.md#l4-private-vm-canary) for every materially different build, host class, role set, or approval boundary. L1's 24-hour and L1+L2's seven-day gates still apply where required by the rollout decision; L3 and L4 require their own reviewed approval, workload, recovery, privacy, performance, and rollback evidence. Any secret/excluded-data collection, unauthorized mutation, host impact, silent loss, persistent gap, uncontrolled growth, false-healthy state, or SLO breach is an immediate stop/rollback condition.
 
 ## Explicit non-goals
 
 L4 does not authorize or implement:
 
 - audit rule installation or audit daemon reconfiguration;
-- eBPF programs, kernel modules, packet capture, or payload collection;
+- independent eBPF activation or authorization, kernel modules, packet capture, or payload collection;
 - enabling role-application logging or changing its retention;
 - broad or recursive file-content/integrity scanning;
 - process environment, memory, secret-store, browser/session, shell-input, or credential collection;

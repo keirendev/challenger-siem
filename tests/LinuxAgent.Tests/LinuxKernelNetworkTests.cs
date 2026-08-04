@@ -1,6 +1,10 @@
+using System.Net.Sockets;
+using System.Text;
+using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.KernelNetwork;
 using Challenger.Siem.Contracts.V2;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -29,6 +33,8 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("detach", first.Rollback, StringComparison.Ordinal);
         Assert.Contains("100 events", first.Bounds, StringComparison.Ordinal);
         Assert.Contains("1048576 bytes", first.Bounds, StringComparison.Ordinal);
+        Assert.Equal("linux-network-flow-summary-v2", first.CollectorVersion);
+        Assert.Equal("challenger-siem-ebpf-helper-v1", first.HelperVersion);
 
         options.KernelNetworkTelemetry.ApprovedPlanHash = first.PlanHash;
         Assert.True(LinuxKernelNetworkPlanBuilder.Build(options).ApprovalHashMatches);
@@ -195,15 +201,16 @@ public sealed class LinuxKernelNetworkTests
             var epoch = new string('c', 32);
             await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = epoch, Sequence = 1 }, default);
             var callbackObservedOldCheckpoint = false;
-            await runtime.CollectAsync(
-                Flow(epoch, 1, "network_flow_started"),
-                DateTimeOffset.UtcNow,
-                async (sequence, gap) =>
+            await runtime.CollectDrainAsync(
+                [new(Flow(epoch, 1, "network_flow_started"), DateTimeOffset.UtcNow)],
+                Health(epoch, 2),
+                async (assignments, finalizeChunk) =>
                 {
                     var beforeCheckpoint = await store.ReadAsync(default);
                     callbackObservedOldCheckpoint = beforeCheckpoint.CollectedSequence == 0;
-                    Assert.Equal(1, sequence);
-                    Assert.False(gap);
+                    Assert.Equal(1, assignments[0].AgentSequence);
+                    Assert.False(assignments[0].HelperGap);
+                    await finalizeChunk(1, Diagnostics(1));
                 },
                 default);
             Assert.True(callbackObservedOldCheckpoint);
@@ -213,12 +220,15 @@ public sealed class LinuxKernelNetworkTests
             Assert.Equal(2, restarted.Snapshot().NextSequence);
             Assert.Equal(1, restarted.Snapshot().EventFamilyCounts["network_flow_started"]);
 
-            await Assert.ThrowsAsync<IOException>(() => restarted.CollectAsync(
-                Flow(epoch, 2, "network_flow_sample"),
-                DateTimeOffset.UtcNow,
+            await Assert.ThrowsAsync<IOException>(() => restarted.CollectDrainAsync(
+                [new(Flow(epoch, 3, "network_flow_sample"), DateTimeOffset.UtcNow)],
+                Health(epoch, 4),
                 (_, _) => throw new IOException("synthetic queue failure"),
                 default));
             Assert.Equal(1, (await store.ReadAsync(default)).CollectedSequence);
+            Assert.Equal(3, restarted.Snapshot().NextSequence);
+            Assert.Equal(2, restarted.Snapshot().AbandonedThroughSequence);
+            Assert.True(restarted.Snapshot().ActiveLoss);
 
             await restarted.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = new string('d', 32), Sequence = 1 }, default);
             Assert.Equal(1, restarted.Snapshot().HelperRestartCount);
@@ -246,16 +256,18 @@ public sealed class LinuxKernelNetworkTests
             var observedCheckpoint = -1L;
             IReadOnlyList<LinuxKernelNetworkSequenceAssignment>? observedAssignments = null;
 
-            var result = await runtime.CollectBatchAsync(
+            var result = await runtime.CollectDrainAsync(
                 [
                     new(Flow(epoch, 1, "network_flow_started"), DateTimeOffset.UtcNow),
                     new(Flow(epoch, 2, "network_flow_sample"), DateTimeOffset.UtcNow),
                     new(Flow(epoch, 3, "network_flow_closed"), DateTimeOffset.UtcNow)
                 ],
-                async assignments =>
+                Health(epoch, 4),
+                async (assignments, finalizeChunk) =>
                 {
                     observedAssignments = assignments;
                     observedCheckpoint = (await store.ReadAsync(default)).CollectedSequence;
+                    await finalizeChunk(3, Diagnostics(3));
                 },
                 default);
 
@@ -264,7 +276,7 @@ public sealed class LinuxKernelNetworkTests
             Assert.Equal([1L, 2L, 3L], assignments.Select(item => item.AgentSequence));
             Assert.All(assignments, item => Assert.False(item.HelperGap));
             Assert.Equal(3, result.State.CollectedSequence);
-            Assert.Equal((ulong)3, result.State.LastHelperSequence);
+            Assert.Equal((ulong)4, result.State.LastHelperSequence);
             Assert.Equal(3, (await store.ReadAsync(default)).CollectedSequence);
             Assert.Equal(1, result.State.EventFamilyCounts["network_flow_started"]);
             Assert.Equal(1, result.State.EventFamilyCounts["network_flow_sample"]);
@@ -277,7 +289,7 @@ public sealed class LinuxKernelNetworkTests
     }
 
     [Fact]
-    public async Task FailedDrainBatchLeavesTheDurableCheckpointForDeterministicRetry()
+    public async Task FailedDrainBatchAbandonsItsReservationOnceAndNeverReusesASequence()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -291,17 +303,73 @@ public sealed class LinuxKernelNetworkTests
             var epoch = new string('8', 32);
             await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = epoch, Sequence = 1 }, default);
 
-            await Assert.ThrowsAsync<IOException>(() => runtime.CollectBatchAsync(
+            await Assert.ThrowsAsync<IOException>(() => runtime.CollectDrainAsync(
                 [
                     new(Flow(epoch, 1, "network_flow_started"), DateTimeOffset.UtcNow),
                     new(Flow(epoch, 2, "network_flow_sample"), DateTimeOffset.UtcNow)
                 ],
-                _ => throw new IOException("synthetic durable queue failure"),
+                Health(epoch, 3),
+                (_, _) => throw new IOException("synthetic durable queue failure"),
                 default));
 
             Assert.Equal(0, runtime.Snapshot().CollectedSequence);
             Assert.Equal(0, (await store.ReadAsync(default)).CollectedSequence);
-            Assert.Equal(1, runtime.Snapshot().NextSequence);
+            Assert.Equal(3, runtime.Snapshot().NextSequence);
+            Assert.Equal(2, runtime.Snapshot().AbandonedThroughSequence);
+            Assert.Equal(1, runtime.Snapshot().GapCount);
+            Assert.True(runtime.Snapshot().ActiveLoss);
+
+            var restarted = new LinuxKernelNetworkRuntime(Options.Create(options), store, TimeProvider.System);
+            await restarted.InitializeAsync(default);
+            Assert.Equal(1, restarted.Snapshot().GapCount);
+            var retry = await restarted.CollectDrainAsync(
+                [new(Flow(epoch, 4, "network_flow_sample"), DateTimeOffset.UtcNow)],
+                Health(epoch, 5),
+                async (assignments, finalizeChunk) =>
+                {
+                    Assert.Equal(3, assignments[0].AgentSequence);
+                    await finalizeChunk(1, Diagnostics(1));
+                },
+                default);
+            Assert.Equal(3, retry.State.CollectedSequence);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestartAbandonsAPersistedReservationExactlyOnce()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json"));
+            await store.WriteAsync(new LinuxKernelNetworkState
+            {
+                NextSequence = 13,
+                CollectedSequence = 7,
+                PendingReservationStart = 8,
+                PendingReservationEnd = 12,
+                PendingReservationHelperEpoch = new string('5', 32),
+                PendingReservationHelperSequence = 19
+            }, default);
+            var options = CreateOptions();
+            var first = new LinuxKernelNetworkRuntime(Options.Create(options), store, TimeProvider.System);
+            await first.InitializeAsync(default);
+
+            Assert.Equal(12, first.Snapshot().AbandonedThroughSequence);
+            Assert.Equal(1, first.Snapshot().GapCount);
+            Assert.True(first.Snapshot().ActiveLoss);
+            Assert.Null(first.Snapshot().PendingReservationStart);
+            Assert.Equal((ulong)19, first.Snapshot().LastHelperSequence);
+
+            var second = new LinuxKernelNetworkRuntime(Options.Create(options), store, TimeProvider.System);
+            await second.InitializeAsync(default);
+            Assert.Equal(1, second.Snapshot().GapCount);
+            Assert.Equal(13, second.Snapshot().NextSequence);
         }
         finally
         {
@@ -361,6 +429,86 @@ public sealed class LinuxKernelNetworkTests
         }
         finally
         {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FiveHundredFrameDrainCompletesBeforeSlowEnrichmentAndPersistsInOrderWithCaching()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var socketPath = Path.Combine("/tmp", $"csi-{Guid.NewGuid():N}.sock");
+        try
+        {
+            var options = CreateOptions();
+            options.AgentId = "synthetic-kernel-agent";
+            options.KernelNetworkTelemetry.Enabled = true;
+            options.KernelNetworkTelemetry.ApprovedPlanHash = LinuxKernelNetworkPlanBuilder.Build(options).PlanHash;
+            var store = new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json"));
+            var runtime = new LinuxKernelNetworkRuntime(
+                Options.Create(options),
+                store,
+                new FixedTimeProvider(DateTimeOffset.Parse("2026-08-04T02:00:00Z")));
+            var queue = new RecordingQueue(store);
+            var enricher = new DelayedProcessEnricher(TimeSpan.FromMilliseconds(250));
+            var service = new LinuxKernelNetworkService(
+                Options.Create(options),
+                queue,
+                runtime,
+                enricher,
+                new FixedTimeProvider(DateTimeOffset.Parse("2026-08-04T02:00:00Z")),
+                NullLogger<LinuxKernelNetworkService>.Instance);
+
+            using var listener = new Socket(AddressFamily.Unix, SocketType.Seqpacket, ProtocolType.Unspecified);
+            listener.Bind(new UnixDomainSocketEndPoint(socketPath));
+            listener.Listen(1);
+            using var sender = new Socket(AddressFamily.Unix, SocketType.Seqpacket, ProtocolType.Unspecified)
+            {
+                SendTimeout = 1_000
+            };
+            var accept = listener.AcceptAsync();
+            await sender.ConnectAsync(new UnixDomainSocketEndPoint(socketPath));
+            using var receiver = await accept;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var receive = service.ReceiveDrainAsync(receiver, timeout.Token);
+            var send = Task.Run(async () =>
+            {
+                for (ulong sequence = 1; sequence <= 500; sequence++)
+                    await sender.SendAsync(Encoding.UTF8.GetBytes(FlowJson("network_flow_sample", sequence: sequence)), SocketFlags.None, timeout.Token);
+                await sender.SendAsync(Encoding.UTF8.GetBytes(HealthJson(501)), SocketFlags.None, timeout.Token);
+            }, timeout.Token);
+
+            var drain = await receive;
+            await send.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Equal(500, drain.Flows.Count);
+            Assert.Equal((ulong)501, drain.Health.Sequence);
+            Assert.Equal(0, enricher.Calls);
+
+            await service.PersistDrainAsync(drain, timeout.Token);
+
+            Assert.Equal(1, enricher.Calls);
+            Assert.Equal([100, 100, 100, 100, 100], queue.BatchCounts);
+            Assert.Equal([0L, 100L, 200L, 300L, 400L], queue.CollectedBeforeBatch);
+            Assert.Equal(
+                Enumerable.Range(1, 500).Select(value => (ulong)value),
+                queue.Events.Select(item => item.Raw.GetProperty("helper_sequence").GetUInt64()));
+            var state = runtime.Snapshot();
+            Assert.Equal(500, state.CollectedSequence);
+            Assert.Equal((ulong)501, state.LastHelperSequence);
+            Assert.Equal(500, state.LastDrainRecordCount);
+            Assert.Equal(500, state.HighWaterDrainRecordCount);
+            Assert.Equal(1, state.LastDrainUniqueEnrichmentIdentities);
+            Assert.Equal(499, state.LastDrainEnrichmentCacheHits);
+            Assert.True(state.LastDrainSerializedBytes > 0);
+            Assert.True(state.LastDrainPersistDurationMilliseconds >= 250);
+            Assert.Equal("500", runtime.Health().Details!["last_drain_record_count"]);
+        }
+        finally
+        {
+            if (File.Exists(socketPath)) File.Delete(socketPath);
             Directory.Delete(directory, recursive: true);
         }
     }
@@ -433,8 +581,22 @@ public sealed class LinuxKernelNetworkTests
         EventCode = eventCode
     };
 
-    private static string FlowJson(string eventCode, ulong packetCount = 1) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v1","epoch":"ffffffffffffffffffffffffffffffff","sequence":1,"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
+    private static LinuxKernelNetworkFrame Health(string epoch, ulong sequence) => new()
+    {
+        Epoch = epoch,
+        Sequence = sequence,
+        Type = "health"
+    };
+
+    private static LinuxKernelNetworkDrainDiagnostics Diagnostics(int count) =>
+        new(count, count * 1024L, count, 0, 1, 2);
+
+    private static string FlowJson(string eventCode, ulong packetCount = 1, ulong sequence = 1) => $$"""
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v1","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
+        """;
+
+    private static string HealthJson(ulong sequence) => $$"""
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v1","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"health","payload_capture":false,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
         """;
 
     private static string FindRepositoryRoot()
@@ -451,5 +613,44 @@ public sealed class LinuxKernelNetworkTests
     private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => value;
+    }
+
+    private sealed class DelayedProcessEnricher(TimeSpan delay) : ILinuxKernelProcessEnricher
+    {
+        public int Calls { get; private set; }
+
+        public async Task<LinuxKernelProcessMetadata> EnrichAsync(
+            LinuxKernelNetworkFrame frame,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            await Task.Delay(delay, cancellationToken);
+            return new("/usr/bin/synthetic-probe", null, "1000", false, false, "kernel_current_task_procfs_enriched");
+        }
+    }
+
+    private sealed class RecordingQueue(LinuxKernelNetworkStateStore store) : IEventQueue
+    {
+        public List<EventEnvelope> Events { get; } = [];
+        public List<int> BatchCounts { get; } = [];
+        public List<long> CollectedBeforeBatch { get; } = [];
+
+        public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) =>
+            EnqueueBatchAsync([envelope], cancellationToken);
+        public async Task EnqueueBatchAsync(IReadOnlyCollection<EventEnvelope> envelopes, CancellationToken cancellationToken)
+        {
+            CollectedBeforeBatch.Add((await store.ReadAsync(cancellationToken)).CollectedSequence);
+            BatchCounts.Add(envelopes.Count);
+            Events.AddRange(envelopes);
+        }
+        public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int maxEvents, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<QueuedEvent>>([]);
+        public Task MarkAttemptAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task DeleteAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<int> CountAsync(CancellationToken cancellationToken) => Task.FromResult(Events.Count);
+        public Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken) =>
+            Task.FromResult(new QueueSloMetrics());
     }
 }

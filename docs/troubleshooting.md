@@ -26,6 +26,16 @@ Check endpoint network/TLS trust, ignored agent configuration permissions, queue
 
 Inspect applicability, prerequisite evidence, observed time, continuity gaps, queue pressure, and recent events. `missing`, `stale`, `permission_denied`, `unsupported`, and `degraded` are visibility statements, not proof of safety.
 
+## Kernel flow reconnects or strict L4 falls to L3
+
+On 2.8.1 or later, inspect the bounded kernel-source drain diagnostics together: last/high-water drain count and bytes, unique enrichment identities/cache hits, receive/persist duration, helper connection and IPC failures, active/cumulative sequence gaps, acknowledgement lag, queue depth/age, poison/drop totals, and parser/ring/map/IPC loss. A cumulative recovered gap is historical evidence and must not be reset merely to make health look clean. Active helper loss requires three consecutive clean health frames to clear, and an active agent-sequence gap remains until its replacement work is durably acknowledged.
+
+The 2.8.1 collector receives the full helper drain through its health delimiter before procfs enrichment. If receive time approaches the helper send-stall boundary, persist time grows, acknowledgement lag does not return to zero, or the queue grows across several drains, stop the rollout or use the reviewed agent-only rollback. Preserve the queue, WAL/SHM, credentials, checkpoints, source state, and unchanged helper; do not delete state, vacuum the queue, or restart the helper as a diagnostic shortcut.
+
+## L4 stays in warm-up after an approved baseline replacement
+
+An exact approved baseline change triggers an immediate complete posture observation and emits `baseline_reapproved` while preserving sequence, gap, and acknowledgement history. It does not bypass the independent performance-SLO warm-up: strict L4 returns only after a complete healthy rolling window and every applicable lower-tier/role source is healthy. If the reapproval event is absent, inspect plan/baseline hash matching and posture completeness; do not delete the L4 state file or reset historical counters to force adoption.
+
 ## Linux I/O pressure stays severe
 
 Treat `/proc/pressure/io` as scheduler stall evidence, not as device-utilization or process-attribution evidence. Reconfirm the trend from bounded `linux-host-behaviour-metrics` samples, then compare a short current PSI window with `/proc/diskstats`, `vmstat`, per-process `/proc/<pid>/io`, and the `io.pressure` files for the agent, API, PostgreSQL, user-session, machine, and other material cgroups. Use `io.stat` where the controller exposes it. Attribute virtual-machine activity with read-only libvirt domain and block statistics. Do not infer that the largest writer caused the pressure merely from byte volume.

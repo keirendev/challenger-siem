@@ -16,6 +16,7 @@ public sealed class LinuxKernelNetworkService(
     IOptions<LinuxAgentOptions> configured,
     IEventQueue queue,
     LinuxKernelNetworkRuntime runtime,
+    ILinuxKernelProcessEnricher processEnricher,
     TimeProvider timeProvider,
     ILogger<LinuxKernelNetworkService> logger) : BackgroundService
 {
@@ -100,11 +101,9 @@ public sealed class LinuxKernelNetworkService(
     private async Task ReceiveFlowsAsync(Socket socket, CancellationToken cancellationToken)
     {
         var queuePaused = false;
-        var pending = new List<PendingFlow>(LinuxKernelNetworkConstants.MaximumRecordsPerDrain);
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (pending.Count == 0
-                && await queue.CountAsync(cancellationToken) >= options.KernelNetworkTelemetry.QueuePauseDepth - LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+            if (await queue.CountAsync(cancellationToken) >= options.KernelNetworkTelemetry.QueuePauseDepth - LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
             {
                 if (!queuePaused)
                 {
@@ -119,48 +118,101 @@ public sealed class LinuxKernelNetworkService(
                 await runtime.ObserveQueuePressureAsync(false, cancellationToken);
                 queuePaused = false;
             }
+            var drain = await ReceiveDrainAsync(socket, cancellationToken);
+            await PersistDrainAsync(drain, cancellationToken);
+        }
+    }
+
+    internal async Task<LinuxKernelNetworkDrain> ReceiveDrainAsync(Socket socket, CancellationToken cancellationToken)
+    {
+        var startedAt = timeProvider.GetTimestamp();
+        var flows = new List<LinuxKernelNetworkReceivedFlow>(LinuxKernelNetworkConstants.MaximumRecordsPerDrain);
+        while (!cancellationToken.IsCancellationRequested)
+        {
             var frame = await ReceiveFrameAsync(socket, cancellationToken);
             if (frame.Type == "health")
             {
                 ValidateHealth(frame);
-                if (pending.Count > 0)
-                {
-                    var collected = pending.Select(item => new LinuxKernelNetworkPendingFrame(item.Frame, item.LastSeen)).ToArray();
-                    await runtime.CollectBatchAsync(
-                        collected,
-                        async assignments =>
-                        {
-                            var envelopes = assignments.Select((assignment, index) =>
-                            {
-                                var item = pending[index];
-                                return BuildEvent(
-                                    item.Frame,
-                                    item.Process,
-                                    item.FirstSeen,
-                                    item.LastSeen,
-                                    assignment.AgentSequence,
-                                    assignment.HelperGap);
-                            }).ToArray();
-                            foreach (var batch in EventQueueBatcher.Partition(envelopes))
-                                await queue.EnqueueBatchAsync(batch, cancellationToken);
-                        },
-                        cancellationToken);
-                    pending.Clear();
-                }
-                await runtime.ObserveHealthAsync(frame, cancellationToken);
-                continue;
+                return new(flows, frame, ElapsedMilliseconds(startedAt));
             }
             ValidateFlow(frame);
-            if (pending.Count >= LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+            if (flows.Count >= LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
                 throw new InvalidDataException("helper_flow_batch_rejected");
             var firstSeen = FromUnixNanoseconds(frame.FirstSeenUnixNanoseconds);
             var lastSeen = FromUnixNanoseconds(frame.LastSeenUnixNanoseconds);
             var now = timeProvider.GetUtcNow();
             if (firstSeen > lastSeen || lastSeen > now.AddMinutes(5) || firstSeen < now.AddDays(-8))
                 throw new InvalidDataException("Helper timestamps are outside the bounded acceptance window.");
-            var process = await EnrichProcessAsync(frame, cancellationToken);
-            pending.Add(new(frame, firstSeen, lastSeen, process));
+            flows.Add(new(frame, firstSeen, lastSeen));
         }
+        throw new OperationCanceledException(cancellationToken);
+    }
+
+    internal async Task PersistDrainAsync(LinuxKernelNetworkDrain drain, CancellationToken cancellationToken)
+    {
+        var persistStartedAt = timeProvider.GetTimestamp();
+        if (drain.Flows.Count == 0)
+        {
+            await runtime.ObserveHealthAsync(
+                drain.Health,
+                new(0, 0, 0, 0, drain.ReceiveDurationMilliseconds, ElapsedMilliseconds(persistStartedAt)),
+                cancellationToken);
+            return;
+        }
+
+        var processCache = new Dictionary<ProcessIdentity, LinuxKernelProcessMetadata>();
+        var processes = new LinuxKernelProcessMetadata[drain.Flows.Count];
+        for (var index = 0; index < drain.Flows.Count; index++)
+        {
+            var frame = drain.Flows[index].Frame;
+            var identity = new ProcessIdentity(frame.ProcessId, frame.UserId, frame.ProcessName!, frame.AttributionSource!);
+            if (!processCache.TryGetValue(identity, out var process))
+            {
+                process = await processEnricher.EnrichAsync(frame, cancellationToken);
+                processCache.Add(identity, process);
+            }
+            processes[index] = process;
+        }
+
+        var collected = drain.Flows
+            .Select(item => new LinuxKernelNetworkPendingFrame(item.Frame, item.LastSeen))
+            .ToArray();
+        await runtime.CollectDrainAsync(
+            collected,
+            drain.Health,
+            async (assignments, finalizeChunk) =>
+            {
+                var envelopes = assignments.Select((assignment, index) =>
+                {
+                    var item = drain.Flows[index];
+                    return BuildEvent(
+                        item.Frame,
+                        processes[index],
+                        item.FirstSeen,
+                        item.LastSeen,
+                        assignment.AgentSequence,
+                        assignment.HelperGap);
+                }).ToArray();
+                var serializedBytes = envelopes.Sum(envelope =>
+                    (long)Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(envelope, JsonDefaults.Options)));
+                var completed = 0;
+                foreach (var batch in EventQueueBatcher.Partition(envelopes))
+                {
+                    await queue.EnqueueBatchAsync(batch, cancellationToken);
+                    completed += batch.Count;
+                    var diagnostics = completed == envelopes.Length
+                        ? new LinuxKernelNetworkDrainDiagnostics(
+                            envelopes.Length,
+                            serializedBytes,
+                            processCache.Count,
+                            envelopes.Length - processCache.Count,
+                            drain.ReceiveDurationMilliseconds,
+                            ElapsedMilliseconds(persistStartedAt))
+                        : null;
+                    await finalizeChunk(completed, diagnostics);
+                }
+            },
+            cancellationToken);
     }
 
     private static async Task<LinuxKernelNetworkFrame> ReceiveFrameAsync(Socket socket, CancellationToken cancellationToken)
@@ -321,54 +373,6 @@ public sealed class LinuxKernelNetworkService(
             if (fields.Length >= 7 && fields[0] == account && uint.TryParse(fields[2], out var uid) && uid > 0) return uid;
         }
         throw new UnauthorizedAccessException("The expected helper account is unavailable.");
-    }
-
-    private async Task<LinuxKernelProcessMetadata> EnrichProcessAsync(LinuxKernelNetworkFrame frame, CancellationToken cancellationToken)
-    {
-        if (frame.ProcessId == 0 || frame.ProcessId > int.MaxValue)
-            return new(null, null, frame.UserId == uint.MaxValue ? null : frame.UserId.ToString(), false, false, "unattributed");
-        var root = $"/proc/{frame.ProcessId}";
-        string? executable = null;
-        string? commandLine = null;
-        string? userId = frame.UserId == uint.MaxValue ? null : frame.UserId.ToString();
-        var truncated = false;
-        try
-        {
-            executable = File.ResolveLinkTarget(Path.Combine(root, "exe"), returnFinalTarget: false)?.FullName;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FileNotFoundException) { }
-        try
-        {
-            var maximum = options.KernelNetworkTelemetry.MaxCommandLineBytes;
-            await using var stream = new FileStream(Path.Combine(root, "cmdline"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
-            var bytes = new byte[maximum + 1];
-            var read = await stream.ReadAsync(bytes, cancellationToken);
-            truncated = read > maximum;
-            if (!truncated && read > 0)
-            {
-                commandLine = new UTF8Encoding(false, true).GetString(bytes, 0, read).Replace('\0', ' ').Trim();
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException or FileNotFoundException) { }
-        if (userId is null)
-        {
-            try
-            {
-                await using var stream = new FileStream(Path.Combine(root, "status"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
-                var bytes = new byte[16 * 1024 + 1];
-                var read = await stream.ReadAsync(bytes, cancellationToken);
-                if (read <= 16 * 1024)
-                {
-                    var status = new UTF8Encoding(false, true).GetString(bytes, 0, read);
-                    var uidLine = status.Split('\n').FirstOrDefault(line => line.StartsWith("Uid:\t", StringComparison.Ordinal));
-                    var effective = uidLine?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Skip(2).FirstOrDefault();
-                    if (uint.TryParse(effective, out var parsed)) userId = parsed.ToString();
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException or FileNotFoundException) { }
-        }
-
-        return SanitizeProcessMetadata(frame, executable, commandLine, userId, truncated, 4096, options.KernelNetworkTelemetry.MaxCommandLineBytes);
     }
 
     internal static LinuxKernelProcessMetadata SanitizeProcessMetadata(
@@ -565,10 +569,12 @@ public sealed class LinuxKernelNetworkService(
 
     private static long Clamp(ulong value) => value > long.MaxValue ? long.MaxValue : (long)value;
     private static string? NullIfEmpty(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
+    private long ElapsedMilliseconds(long startedAt) =>
+        Math.Max(0, (long)Math.Ceiling(timeProvider.GetElapsedTime(startedAt).TotalMilliseconds));
 
-    private sealed record PendingFlow(
-        LinuxKernelNetworkFrame Frame,
-        DateTimeOffset FirstSeen,
-        DateTimeOffset LastSeen,
-        LinuxKernelProcessMetadata Process);
+    private sealed record ProcessIdentity(
+        uint ProcessId,
+        uint UserId,
+        string KernelCommand,
+        string AttributionBasis);
 }

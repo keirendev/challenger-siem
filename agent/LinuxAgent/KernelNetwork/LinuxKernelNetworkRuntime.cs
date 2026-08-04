@@ -45,6 +45,11 @@ public sealed class LinuxKernelNetworkRuntime(
         {
             if (initialized) return;
             state = await store.ReadAsync(cancellationToken);
+            if (state.PendingReservationStart.HasValue || state.PendingReservationEnd.HasValue)
+            {
+                state = AbandonReservation(state);
+                await store.WriteAsync(state, cancellationToken);
+            }
             initialized = true;
         }
         finally { gate.Release(); }
@@ -81,99 +86,110 @@ public sealed class LinuxKernelNetworkRuntime(
         }, cancellationToken);
     }
 
-    public async Task<(LinuxKernelNetworkState State, long AgentSequence, bool HelperGap)> CollectAsync(
-        LinuxKernelNetworkFrame frame,
-        DateTimeOffset eventTime,
-        Func<long, bool, Task> enqueueBeforeCheckpoint,
-        CancellationToken cancellationToken)
-    {
-        var result = await CollectBatchAsync(
-            [new LinuxKernelNetworkPendingFrame(frame, eventTime)],
-            assignments => enqueueBeforeCheckpoint(assignments[0].AgentSequence, assignments[0].HelperGap),
-            cancellationToken);
-        var assignment = result.Assignments[0];
-        return (result.State, assignment.AgentSequence, assignment.HelperGap);
-    }
-
-    public async Task<(LinuxKernelNetworkState State, IReadOnlyList<LinuxKernelNetworkSequenceAssignment> Assignments)> CollectBatchAsync(
+    public async Task<(LinuxKernelNetworkState State, IReadOnlyList<LinuxKernelNetworkSequenceAssignment> Assignments)> CollectDrainAsync(
         IReadOnlyList<LinuxKernelNetworkPendingFrame> frames,
-        Func<IReadOnlyList<LinuxKernelNetworkSequenceAssignment>, Task> enqueueBeforeCheckpoint,
+        LinuxKernelNetworkFrame health,
+        Func<
+            IReadOnlyList<LinuxKernelNetworkSequenceAssignment>,
+            Func<int, LinuxKernelNetworkDrainDiagnostics?, Task>,
+            Task> enqueueBeforeCheckpoint,
         CancellationToken cancellationToken)
     {
         if (frames.Count is <= 0 or > LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
             throw new ArgumentOutOfRangeException(nameof(frames));
         await InitializeAsync(cancellationToken);
-        LinuxKernelNetworkState updated = new();
         var assignments = new List<LinuxKernelNetworkSequenceAssignment>(frames.Count);
         await gate.WaitAsync(cancellationToken);
         try
         {
-            updated = state;
+            if (state.PendingReservationStart.HasValue || state.PendingReservationEnd.HasValue)
+            {
+                state = AbandonReservation(state);
+                await store.WriteAsync(state, cancellationToken);
+            }
+
+            var projected = state;
             foreach (var pending in frames)
             {
                 var frame = pending.Frame;
-                var epochChanged = !string.Equals(updated.LastHelperEpoch, frame.Epoch, StringComparison.Ordinal);
-                var expected = epochChanged ? frame.Sequence : updated.LastHelperSequence + 1;
+                var epochChanged = !string.Equals(projected.LastHelperEpoch, frame.Epoch, StringComparison.Ordinal);
+                var expected = epochChanged ? frame.Sequence : projected.LastHelperSequence + 1;
                 var helperGap = !epochChanged && frame.Sequence != expected;
-                var counterIncrease = CountersIncreased(updated, frame);
-                var agentSequence = updated.NextSequence;
+                var agentSequence = checked(state.NextSequence + assignments.Count);
                 assignments.Add(new(agentSequence, helperGap));
-                updated = updated with
+                projected = projected with
                 {
-                    NextSequence = checked(agentSequence + 1),
-                    CollectedSequence = agentSequence,
                     LastHelperEpoch = frame.Epoch,
-                    LastHelperSequence = frame.Sequence,
-                    ObservedAt = timeProvider.GetUtcNow(),
-                    LastEventAt = pending.EventTime,
-                    GapCount = helperGap ? SaturatingIncrement(updated.GapCount) : updated.GapCount,
-                    ParseFailures = frame.ParseFailures,
-                    UnsupportedHeaders = frame.UnsupportedHeaders,
-                    FlowMapFull = frame.FlowMapFull,
-                    OwnerMisses = frame.OwnerMisses,
-                    RingLosses = frame.RingLosses,
-                    IpcSendFailures = frame.IpcSendFailures,
-                    ActiveLoss = updated.ActiveLoss || helperGap || counterIncrease,
-                    CleanHealthFrames = helperGap || counterIncrease ? 0 : updated.CleanHealthFrames,
-                    EventFamilyCounts = IncrementFamily(updated.EventFamilyCounts, frame.EventCode!),
-                    LastError = helperGap ? "helper_sequence_gap" : counterIncrease ? "kernel_network_loss_observed" : updated.LastError
+                    LastHelperSequence = frame.Sequence
                 };
             }
-            await enqueueBeforeCheckpoint(assignments);
-            await store.WriteAsync(updated, cancellationToken);
-            state = updated;
+
+            var reservationEnd = assignments[^1].AgentSequence;
+            state = state with
+            {
+                NextSequence = checked(reservationEnd + 1),
+                PendingReservationStart = assignments[0].AgentSequence,
+                PendingReservationEnd = reservationEnd,
+                PendingReservationHelperEpoch = health.Epoch,
+                PendingReservationHelperSequence = health.Sequence
+            };
+            await store.WriteAsync(state, cancellationToken);
+
+            var finalizedCount = 0;
+            async Task FinalizeChunkAsync(int completedCount, LinuxKernelNetworkDrainDiagnostics? diagnostics)
+            {
+                if (completedCount <= finalizedCount || completedCount > frames.Count)
+                    throw new InvalidOperationException("Kernel network drain chunks must finalize monotonically within the reservation.");
+                if (completedCount == frames.Count != (diagnostics is not null))
+                    throw new InvalidOperationException("Kernel network drain diagnostics are required only on the final chunk.");
+
+                var updated = state;
+                for (var index = finalizedCount; index < completedCount; index++)
+                    updated = ApplyFlow(updated, frames[index], assignments[index]);
+                if (completedCount == frames.Count)
+                    updated = ApplyHealth(updated, health, diagnostics!) with
+                    {
+                        PendingReservationStart = null,
+                        PendingReservationEnd = null,
+                        PendingReservationHelperEpoch = null,
+                        PendingReservationHelperSequence = null
+                    };
+                else
+                    updated = updated with { PendingReservationStart = assignments[completedCount].AgentSequence };
+
+                await store.WriteAsync(updated, cancellationToken);
+                state = updated;
+                finalizedCount = completedCount;
+            }
+
+            await enqueueBeforeCheckpoint(assignments, FinalizeChunkAsync);
+            if (finalizedCount != frames.Count)
+                throw new InvalidOperationException("Kernel network drain returned before its reserved sequence range was finalized.");
+        }
+        catch
+        {
+            if (state.PendingReservationStart.HasValue || state.PendingReservationEnd.HasValue)
+            {
+                state = AbandonReservation(state);
+                try { await store.WriteAsync(state, CancellationToken.None); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            throw;
         }
         finally { gate.Release(); }
-        return (updated, assignments);
+        return (state, assignments);
     }
 
     public async Task<LinuxKernelNetworkState> ObserveHealthAsync(LinuxKernelNetworkFrame frame, CancellationToken cancellationToken)
+        => await ObserveHealthAsync(frame, diagnostics: null, cancellationToken);
+
+    public async Task<LinuxKernelNetworkState> ObserveHealthAsync(
+        LinuxKernelNetworkFrame frame,
+        LinuxKernelNetworkDrainDiagnostics? diagnostics,
+        CancellationToken cancellationToken)
     {
         await InitializeAsync(cancellationToken);
-        return await UpdateAsync(current =>
-        {
-            var epochChanged = !string.Equals(current.LastHelperEpoch, frame.Epoch, StringComparison.Ordinal);
-            var helperGap = !epochChanged && frame.Sequence != current.LastHelperSequence + 1;
-            var counterIncrease = CountersIncreased(current, frame);
-            var cleanFrames = helperGap || counterIncrease ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
-            var activeLoss = helperGap || counterIncrease || current.ActiveLoss && cleanFrames < 3;
-            return current with
-            {
-                LastHelperEpoch = frame.Epoch,
-                LastHelperSequence = frame.Sequence,
-                ObservedAt = timeProvider.GetUtcNow(),
-                GapCount = helperGap ? SaturatingIncrement(current.GapCount) : current.GapCount,
-                ParseFailures = frame.ParseFailures,
-                UnsupportedHeaders = frame.UnsupportedHeaders,
-                FlowMapFull = frame.FlowMapFull,
-                OwnerMisses = frame.OwnerMisses,
-                RingLosses = frame.RingLosses,
-                IpcSendFailures = frame.IpcSendFailures,
-                ActiveLoss = activeLoss,
-                CleanHealthFrames = cleanFrames,
-                LastError = helperGap ? "helper_sequence_gap" : counterIncrease ? "kernel_network_loss_observed" : activeLoss ? current.LastError : "none"
-            };
-        }, cancellationToken);
+        return await UpdateAsync(current => ApplyHealth(current, frame, diagnostics), cancellationToken);
     }
 
     public async Task ObserveConnectionFailureAsync(string error, CancellationToken cancellationToken)
@@ -283,7 +299,15 @@ public sealed class LinuxKernelNetworkRuntime(
                 ["last_connection_error"] = current.LastConnectionError,
                 ["queue_pressure_count"] = current.QueuePressureCount.ToString(CultureInfo.InvariantCulture),
                 ["acknowledgement_gap"] = Math.Max(0, current.CollectedSequence - current.AcknowledgedSequence).ToString(CultureInfo.InvariantCulture),
-                ["queue_pause_depth"] = options.KernelNetworkTelemetry.QueuePauseDepth.ToString(CultureInfo.InvariantCulture)
+                ["queue_pause_depth"] = options.KernelNetworkTelemetry.QueuePauseDepth.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_record_count"] = current.LastDrainRecordCount.ToString(CultureInfo.InvariantCulture),
+                ["high_water_drain_record_count"] = current.HighWaterDrainRecordCount.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_serialized_bytes"] = current.LastDrainSerializedBytes.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_unique_enrichment_identities"] = current.LastDrainUniqueEnrichmentIdentities.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_enrichment_cache_hits"] = current.LastDrainEnrichmentCacheHits.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_receive_duration_ms"] = current.LastDrainReceiveDurationMilliseconds.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_persist_duration_ms"] = current.LastDrainPersistDurationMilliseconds.ToString(CultureInfo.InvariantCulture),
+                ["abandoned_through_sequence"] = current.AbandonedThroughSequence.ToString(CultureInfo.InvariantCulture)
             }
         };
     }
@@ -297,7 +321,7 @@ public sealed class LinuxKernelNetworkRuntime(
         await InitializeAsync(cancellationToken);
         await UpdateAsync(current => highest <= current.AcknowledgedSequence ? current : current with
         {
-            AcknowledgedSequence = Math.Min(highest, current.CollectedSequence),
+            AcknowledgedSequence = Math.Min(highest, Math.Max(current.CollectedSequence, current.AbandonedThroughSequence)),
             AcknowledgedAt = timeProvider.GetUtcNow()
         }, cancellationToken);
     }
@@ -331,6 +355,97 @@ public sealed class LinuxKernelNetworkRuntime(
             return updated;
         }
         finally { gate.Release(); }
+    }
+
+    private LinuxKernelNetworkState ApplyFlow(
+        LinuxKernelNetworkState current,
+        LinuxKernelNetworkPendingFrame pending,
+        LinuxKernelNetworkSequenceAssignment assignment)
+    {
+        var frame = pending.Frame;
+        var counterIncrease = CountersIncreased(current, frame);
+        return current with
+        {
+            CollectedSequence = assignment.AgentSequence,
+            LastHelperEpoch = frame.Epoch,
+            LastHelperSequence = frame.Sequence,
+            ObservedAt = timeProvider.GetUtcNow(),
+            LastEventAt = pending.EventTime,
+            GapCount = assignment.HelperGap ? SaturatingIncrement(current.GapCount) : current.GapCount,
+            ParseFailures = frame.ParseFailures,
+            UnsupportedHeaders = frame.UnsupportedHeaders,
+            FlowMapFull = frame.FlowMapFull,
+            OwnerMisses = frame.OwnerMisses,
+            RingLosses = frame.RingLosses,
+            IpcSendFailures = frame.IpcSendFailures,
+            ActiveLoss = current.ActiveLoss || assignment.HelperGap || counterIncrease,
+            CleanHealthFrames = assignment.HelperGap || counterIncrease ? 0 : current.CleanHealthFrames,
+            EventFamilyCounts = IncrementFamily(current.EventFamilyCounts, frame.EventCode!),
+            LastError = assignment.HelperGap ? "helper_sequence_gap"
+                : counterIncrease ? "kernel_network_loss_observed"
+                : current.LastError
+        };
+    }
+
+    private LinuxKernelNetworkState ApplyHealth(
+        LinuxKernelNetworkState current,
+        LinuxKernelNetworkFrame frame,
+        LinuxKernelNetworkDrainDiagnostics? diagnostics)
+    {
+        var epochChanged = !string.Equals(current.LastHelperEpoch, frame.Epoch, StringComparison.Ordinal);
+        var helperGap = !epochChanged && frame.Sequence != current.LastHelperSequence + 1;
+        var counterIncrease = CountersIncreased(current, frame);
+        var cleanFrames = helperGap || counterIncrease ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
+        var activeLoss = helperGap || counterIncrease || current.ActiveLoss && cleanFrames < 3;
+        return current with
+        {
+            LastHelperEpoch = frame.Epoch,
+            LastHelperSequence = frame.Sequence,
+            ObservedAt = timeProvider.GetUtcNow(),
+            GapCount = helperGap ? SaturatingIncrement(current.GapCount) : current.GapCount,
+            ParseFailures = frame.ParseFailures,
+            UnsupportedHeaders = frame.UnsupportedHeaders,
+            FlowMapFull = frame.FlowMapFull,
+            OwnerMisses = frame.OwnerMisses,
+            RingLosses = frame.RingLosses,
+            IpcSendFailures = frame.IpcSendFailures,
+            LastDrainRecordCount = diagnostics?.RecordCount ?? current.LastDrainRecordCount,
+            HighWaterDrainRecordCount = diagnostics is null
+                ? current.HighWaterDrainRecordCount
+                : Math.Max(current.HighWaterDrainRecordCount, diagnostics.RecordCount),
+            LastDrainSerializedBytes = diagnostics?.SerializedBytes ?? current.LastDrainSerializedBytes,
+            LastDrainUniqueEnrichmentIdentities = diagnostics?.UniqueEnrichmentIdentities ?? current.LastDrainUniqueEnrichmentIdentities,
+            LastDrainEnrichmentCacheHits = diagnostics?.EnrichmentCacheHits ?? current.LastDrainEnrichmentCacheHits,
+            LastDrainReceiveDurationMilliseconds = diagnostics?.ReceiveDurationMilliseconds ?? current.LastDrainReceiveDurationMilliseconds,
+            LastDrainPersistDurationMilliseconds = diagnostics?.PersistDurationMilliseconds ?? current.LastDrainPersistDurationMilliseconds,
+            ActiveLoss = activeLoss,
+            CleanHealthFrames = cleanFrames,
+            LastError = helperGap ? "helper_sequence_gap"
+                : counterIncrease ? "kernel_network_loss_observed"
+                : activeLoss ? current.LastError
+                : "none"
+        };
+    }
+
+    private LinuxKernelNetworkState AbandonReservation(LinuxKernelNetworkState current)
+    {
+        var inferredEnd = current.NextSequence > 1 ? current.NextSequence - 1 : 0;
+        var reservationEnd = Math.Max(current.PendingReservationEnd ?? 0, inferredEnd);
+        return current with
+        {
+            PendingReservationStart = null,
+            PendingReservationEnd = null,
+            PendingReservationHelperEpoch = null,
+            PendingReservationHelperSequence = null,
+            AbandonedThroughSequence = Math.Max(current.AbandonedThroughSequence, reservationEnd),
+            LastHelperEpoch = current.PendingReservationHelperEpoch ?? current.LastHelperEpoch,
+            LastHelperSequence = current.PendingReservationHelperSequence ?? current.LastHelperSequence,
+            ObservedAt = timeProvider.GetUtcNow(),
+            GapCount = SaturatingIncrement(current.GapCount),
+            ActiveLoss = true,
+            CleanHealthFrames = 0,
+            LastError = "kernel_network_sequence_reservation_abandoned"
+        };
     }
 
     private static string BoundError(string value) => string.IsNullOrWhiteSpace(value) ? "unknown" : value.Trim().Length <= 96 ? value.Trim() : value.Trim()[..96];
