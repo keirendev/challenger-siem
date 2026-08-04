@@ -88,6 +88,22 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
         Assert.NotNull(result.FromUtc);
         Assert.True(result.Timeline.Count <= 200);
 
+        var evidence = await geography.GetEvidenceAsync(new NetworkGeographyEvidenceQuery
+        {
+            DestinationIp = "8.8.8.8",
+            From = start.AddMinutes(20),
+            Limit = 25
+        }, CancellationToken.None);
+        Assert.Equal(3, evidence.Events.Count);
+        Assert.All(evidence.Events, item =>
+        {
+            Assert.Equal(LinuxTelemetrySourceIds.NetworkFlowSummary, item.SourceId);
+            Assert.Equal("kernel_flow", item.EvidenceMode);
+            Assert.Equal("outbound", item.Direction);
+            Assert.StartsWith($"event:{agentId}/", item.EventCitation, StringComparison.Ordinal);
+        });
+        Assert.Contains(evidence.Limitations, item => item.Contains("omits raw", StringComparison.Ordinal));
+
         var filtered = await geography.GetAsync(new NetworkGeographyQuery
         {
             AgentId = agentId,

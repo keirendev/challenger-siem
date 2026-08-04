@@ -29,8 +29,14 @@ public sealed class TrafficMapTileOptions
 
 public sealed class TrafficMapGeolocationOptions
 {
+    public const string RemoteProvider = "ipwhois";
+    public const string LocalDatabaseProvider = "dbip_mmdb";
+
     public bool Enabled { get; set; } = true;
-    public string Provider { get; set; } = "ipwhois";
+    public string Provider { get; set; } = RemoteProvider;
+    public string CountryDatabasePath { get; set; } = string.Empty;
+    public string CityDatabasePath { get; set; } = string.Empty;
+    public string AsnDatabasePath { get; set; } = string.Empty;
     public string EndpointTemplate { get; set; } = "https://ipwho.is/{ip}";
     public string? ApiKey { get; set; }
     public string ApiKeyHeader { get; set; } = "X-Api-Key";
@@ -41,6 +47,8 @@ public sealed class TrafficMapGeolocationOptions
     public int NegativeTtlHours { get; set; } = 6;
     public int MaximumQueuedLookups { get; set; } = 2048;
     public int MaximumProviderResponseBytes { get; set; } = 65536;
+
+    public bool UsesLocalDatabase => string.Equals(Provider, LocalDatabaseProvider, StringComparison.Ordinal);
 }
 
 public sealed class TrafficMapOptionsValidator(IHostEnvironment environment) : IValidateOptions<TrafficMapOptions>
@@ -54,14 +62,15 @@ public sealed class TrafficMapOptionsValidator(IHostEnvironment environment) : I
 
         var failures = new List<string>();
         if (!Uri.TryCreate(options.PublicBaseUrl, UriKind.Absolute, out var publicBase)
-            || !(publicBase.Scheme == Uri.UriSchemeHttps
-                 || publicBase.Scheme == Uri.UriSchemeHttp && IsLoopbackHost(publicBase.Host))
+            || !(string.Equals(publicBase.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
+                 || string.Equals(publicBase.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal))
+            || !IsLoopbackHost(publicBase.Host)
             || !string.IsNullOrEmpty(publicBase.UserInfo)
             || !string.IsNullOrEmpty(publicBase.Query)
             || !string.IsNullOrEmpty(publicBase.Fragment)
             || publicBase.AbsolutePath != "/")
         {
-            failures.Add("TrafficMap:PublicBaseUrl must be a credential-free root HTTPS URL or loopback HTTP URL.");
+            failures.Add("TrafficMap:PublicBaseUrl must be a credential-free root loopback HTTP or HTTPS URL.");
         }
 
         if (string.IsNullOrWhiteSpace(options.Origin.Label) || options.Origin.Label.Length > 120
@@ -90,18 +99,25 @@ public sealed class TrafficMapOptionsValidator(IHostEnvironment environment) : I
 
         if (options.Geolocation.Enabled)
         {
-            if (!string.Equals(options.Geolocation.Provider, "ipwhois", StringComparison.Ordinal))
+            if (options.Geolocation.UsesLocalDatabase)
             {
-                failures.Add("TrafficMap:Geolocation:Provider currently supports only ipwhois-compatible responses.");
+                ValidateDatabasePath(options.Geolocation.CountryDatabasePath, required: true, "CountryDatabasePath", failures);
+                ValidateDatabasePath(options.Geolocation.CityDatabasePath, required: false, "CityDatabasePath", failures);
+                ValidateDatabasePath(options.Geolocation.AsnDatabasePath, required: false, "AsnDatabasePath", failures);
             }
-            if (!Uri.TryCreate(options.Geolocation.EndpointTemplate.Replace("{ip}", "192.0.2.1", StringComparison.Ordinal), UriKind.Absolute, out var endpoint)
-                || endpoint.Scheme != Uri.UriSchemeHttps
-                || !string.IsNullOrEmpty(endpoint.UserInfo)
-                || !options.Geolocation.EndpointTemplate.Contains("{ip}", StringComparison.Ordinal))
+            else if (!string.Equals(options.Geolocation.Provider, TrafficMapGeolocationOptions.RemoteProvider, StringComparison.Ordinal))
+            {
+                failures.Add("TrafficMap:Geolocation:Provider must be ipwhois or dbip_mmdb.");
+            }
+            else if (!Uri.TryCreate(options.Geolocation.EndpointTemplate.Replace("{ip}", "192.0.2.1", StringComparison.Ordinal), UriKind.Absolute, out var endpoint)
+                     || endpoint.Scheme != Uri.UriSchemeHttps
+                     || !string.IsNullOrEmpty(endpoint.UserInfo)
+                     || !options.Geolocation.EndpointTemplate.Contains("{ip}", StringComparison.Ordinal))
             {
                 failures.Add("TrafficMap:Geolocation:EndpointTemplate must be an HTTPS URL containing {ip}.");
             }
-            if (!string.IsNullOrWhiteSpace(options.Geolocation.ApiKey)
+            if (!options.Geolocation.UsesLocalDatabase
+                && !string.IsNullOrWhiteSpace(options.Geolocation.ApiKey)
                 && !IsHttpToken(options.Geolocation.ApiKeyHeader))
             {
                 failures.Add("TrafficMap:Geolocation:ApiKeyHeader must be a valid HTTP header name when an API key is configured.");
@@ -130,6 +146,29 @@ public sealed class TrafficMapOptionsValidator(IHostEnvironment environment) : I
         }
 
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static void ValidateDatabasePath(string value, bool required, string name, List<string> failures)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            if (required) failures.Add($"TrafficMap:Geolocation:{name} is required for dbip_mmdb.");
+            return;
+        }
+
+        try
+        {
+            if (!Path.IsPathFullyQualified(value)
+                || !value.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(value))
+            {
+                failures.Add($"TrafficMap:Geolocation:{name} must be an existing absolute .mmdb file; keep it outside the project checkout as documented.");
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+        {
+            failures.Add($"TrafficMap:Geolocation:{name} must be a valid existing absolute .mmdb file; keep it outside the project checkout as documented.");
+        }
     }
 
     private static bool IsLoopbackHost(string host) =>

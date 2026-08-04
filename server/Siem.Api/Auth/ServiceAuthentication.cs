@@ -53,6 +53,11 @@ public sealed class ServiceBearerHandler(
         var token = tokens.GetBearerToken(Context);
         if (token is null)
         {
+            if (LoopbackTrafficMapAccess.CanImplyAuthentication(Context, trafficMap.Value))
+            {
+                return AuthenticateResult.Success(
+                    new AuthenticationTicket(LoopbackTrafficMapAccess.Principal(), Scheme.Name));
+            }
             return AuthenticateResult.NoResult();
         }
 

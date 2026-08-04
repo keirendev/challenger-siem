@@ -128,6 +128,70 @@ public sealed record NetworkGeographyQuery
     }
 }
 
+public sealed record NetworkGeographyEvidenceQuery
+{
+    public const int MaxLimit = 25;
+    private static readonly HashSet<string> AllowedKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "destination_ip", "from", "to", "limit"
+    };
+
+    public string? DestinationIp { get; init; }
+    public DateTimeOffset? From { get; init; }
+    public DateTimeOffset? To { get; init; }
+    public int Limit { get; init; } = MaxLimit;
+    public IReadOnlyList<NetworkGeographyValidationError> ValidationErrors { get; init; } = Array.Empty<NetworkGeographyValidationError>();
+
+    public static NetworkGeographyEvidenceQuery FromQuery(IQueryCollection values)
+    {
+        var errors = new List<NetworkGeographyValidationError>();
+        foreach (var key in values.Keys.Where(key => !AllowedKeys.Contains(key)))
+            errors.Add(new(key, "Only destination_ip, from, to, and limit are supported for dashboard evidence."));
+
+        var destinationIp = Single(values, "destination_ip", errors)?.Trim();
+        if (string.IsNullOrWhiteSpace(destinationIp) || !System.Net.IPAddress.TryParse(destinationIp, out _))
+            errors.Add(new("destination_ip", "destination_ip is required and must be a valid IPv4 or IPv6 address."));
+        var from = Date(values, "from", errors);
+        var to = Date(values, "to", errors);
+        if (from.HasValue && to.HasValue && from > to) errors.Add(new("time", "from must be earlier than or equal to to."));
+        var limitText = Single(values, "limit", errors);
+        var limit = MaxLimit;
+        if (!string.IsNullOrWhiteSpace(limitText)
+            && (!int.TryParse(limitText, NumberStyles.None, CultureInfo.InvariantCulture, out limit) || limit is < 1 or > MaxLimit))
+        {
+            errors.Add(new("limit", $"limit must be between 1 and {MaxLimit}."));
+            limit = MaxLimit;
+        }
+
+        return new()
+        {
+            DestinationIp = destinationIp,
+            From = from,
+            To = to,
+            Limit = limit,
+            ValidationErrors = errors
+        };
+    }
+
+    private static string? Single(IQueryCollection values, string key, List<NetworkGeographyValidationError> errors)
+    {
+        var candidates = values[key];
+        if (candidates.Count <= 1) return candidates.FirstOrDefault();
+        errors.Add(new(key, $"{key} must be supplied at most once."));
+        return null;
+    }
+
+    private static DateTimeOffset? Date(IQueryCollection values, string key, List<NetworkGeographyValidationError> errors)
+    {
+        var text = Single(values, key, errors);
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            return parsed.ToUniversalTime();
+        errors.Add(new(key, $"{key} must be an RFC 3339 or UTC datetime value."));
+        return null;
+    }
+}
+
 public sealed class NetworkGeographyRepository(
     NpgsqlDataSource dataSource,
     IpGeolocationService geolocation,
@@ -137,12 +201,91 @@ public sealed class NetworkGeographyRepository(
     private const int MetadataLimit = 8;
     private readonly TrafficMapOptions options = options.Value;
 
+    public async Task<NetworkGeographyEvidenceResponse> GetEvidenceAsync(
+        NetworkGeographyEvidenceQuery query,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        var where = new List<string>
+        {
+            "source_id in (@snapshot_source,@kernel_source)",
+            "destination_ip = @destination_ip"
+        };
+        command.Parameters.AddWithValue("snapshot_source", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
+        command.Parameters.AddWithValue("kernel_source", LinuxTelemetrySourceIds.NetworkFlowSummary);
+        command.Parameters.AddWithValue("destination_ip", query.DestinationIp!);
+        if (query.From.HasValue)
+        {
+            where.Add("event_time >= @from");
+            command.Parameters.AddWithValue("from", query.From.Value.ToUniversalTime());
+        }
+        if (query.To.HasValue)
+        {
+            where.Add("event_time <= @to");
+            command.Parameters.AddWithValue("to", query.To.Value.ToUniversalTime());
+        }
+        command.Parameters.AddWithValue("limit", Math.Clamp(query.Limit, 1, NetworkGeographyEvidenceQuery.MaxLimit));
+        command.CommandText = $$"""
+            select event_id,agent_id,hostname,source_id,event_code,event_time,severity,message,process_image,
+                coalesce(normalized_json #>> '{network,evidence_mode}',raw_json->>'evidence_mode','snapshot_diff') as evidence_mode,
+                coalesce(normalized_json #>> '{network,direction}',raw_json->>'direction','unknown') as direction
+            from events
+            where {{string.Join(" and ", where)}}
+            order by event_time desc,id desc
+            limit @limit;
+            """;
+        var events = new List<NetworkGeographyEvidenceEvent>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var agentId = reader.GetString(reader.GetOrdinal("agent_id"));
+            var eventId = reader.GetGuid(reader.GetOrdinal("event_id"));
+            events.Add(new()
+            {
+                EventId = eventId,
+                AgentId = agentId,
+                EventCitation = $"event:{agentId}/{eventId}",
+                Hostname = reader.GetString(reader.GetOrdinal("hostname")),
+                SourceId = reader.GetString(reader.GetOrdinal("source_id")),
+                EventCode = ReadNullableString(reader, "event_code"),
+                EventTimeUtc = ReadTime(reader, reader.GetOrdinal("event_time")),
+                Severity = reader.GetString(reader.GetOrdinal("severity")),
+                Message = reader.GetString(reader.GetOrdinal("message")),
+                ProcessImage = ReadNullableString(reader, "process_image"),
+                EvidenceMode = reader.GetString(reader.GetOrdinal("evidence_mode")),
+                Direction = reader.GetString(reader.GetOrdinal("direction"))
+            });
+        }
+
+        return new()
+        {
+            GeneratedAtUtc = timeProvider.GetUtcNow(),
+            Events = events,
+            ResultScope = $"Newest {query.Limit} retained network observations for one exact destination over the selected UTC range; direct-loopback dashboard or service-authenticated access.",
+            Limitations =
+            [
+                "The response intentionally omits raw and normalized event payloads.",
+                "Snapshot observations can miss short-lived sockets; kernel-flow counters are not wire-accurate."
+            ]
+        };
+    }
+
     public async Task<NetworkGeographyResponse> GetAsync(NetworkGeographyQuery query, CancellationToken cancellationToken)
     {
-        var geoMatches = await geolocation.SearchCachedIpsAsync(query.Query, query.CountryCode, query.Asn, NetworkGeographyQuery.MaxCandidates + 1, cancellationToken);
-        var geoFilterTruncated = geoMatches.Count > NetworkGeographyQuery.MaxCandidates;
-        var geoFilterIps = geoMatches.Take(NetworkGeographyQuery.MaxCandidates).ToArray();
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var prewarmTruncated = false;
+        if (geolocation.UsesLocalDatabase
+            && (query.Query is not null || query.CountryCode is not null || query.Asn.HasValue))
+        {
+            var prewarmIps = await LoadGeolocationCandidatesAsync(connection, query, cancellationToken);
+            prewarmTruncated = prewarmIps.Count > NetworkGeographyQuery.MaxCandidates;
+            await geolocation.GetCachedAsync(prewarmIps.Take(NetworkGeographyQuery.MaxCandidates), cancellationToken);
+        }
+
+        var geoMatches = await geolocation.SearchCachedIpsAsync(query.Query, query.CountryCode, query.Asn, NetworkGeographyQuery.MaxCandidates + 1, cancellationToken);
+        var geoFilterTruncated = prewarmTruncated || geoMatches.Count > NetworkGeographyQuery.MaxCandidates;
+        var geoFilterIps = geoMatches.Take(NetworkGeographyQuery.MaxCandidates).ToArray();
         var retained = await LoadRetainedRangeAsync(connection, cancellationToken);
         var totals = await LoadTotalsAsync(connection, query, geoFilterIps, cancellationToken);
         var candidates = await LoadDestinationsAsync(connection, query, geoFilterIps, cancellationToken);
@@ -162,6 +305,13 @@ public sealed class NetworkGeographyRepository(
             GeneratedAtUtc = timeProvider.GetUtcNow(),
             Origin = new() { Label = options.Origin.Label, Latitude = options.Origin.Latitude!.Value, Longitude = options.Origin.Longitude!.Value },
             Map = new() { TileUrl = options.Map.TileUrl, Attribution = options.Map.Attribution },
+            GeolocationAttribution = geolocation.UsesLocalDatabase
+                ? new()
+                {
+                    Text = TrafficMapLocalDatabaseMetadata.AttributionText,
+                    Url = TrafficMapLocalDatabaseMetadata.AttributionUrl
+                }
+                : null,
             Summary = new()
             {
                 MatchedLifecycleEvents = totals.LifecycleEvents,
@@ -183,7 +333,7 @@ public sealed class NetworkGeographyRepository(
                 ProcessAttributionPartial = totals.ProcessAttributionPartial
             },
             ActiveFilters = query.ActiveFilters(),
-            ResultScope = $"Remote peer snapshot and kernel-flow observations over {(query.From.HasValue || query.To.HasValue ? "the selected UTC range" : "all retained event time")}; top {query.Limit} destinations; service-authenticated.",
+            ResultScope = $"Remote peer snapshot and kernel-flow observations over {(query.From.HasValue || query.To.HasValue ? "the selected UTC range" : "all retained event time")}; top {query.Limit} destinations; direct-loopback dashboard or service-authenticated.",
             Limitations =
             [
                 "Snapshot polling can miss short-lived sockets and does not capture packets, byte volumes, or direction; kernel-flow records are identified separately.",
@@ -192,6 +342,21 @@ public sealed class NetworkGeographyRepository(
                 "Process attribution is optional and may be unavailable or partial."
             ]
         };
+    }
+
+    private static async Task<IReadOnlyList<string>> LoadGeolocationCandidatesAsync(
+        NpgsqlConnection connection,
+        NetworkGeographyQuery query,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        var where = BuildWhere(command, query, Array.Empty<string>(), includeGeolocationFilters: false);
+        command.Parameters.AddWithValue("prewarm_limit", NetworkGeographyQuery.MaxCandidates + 1);
+        command.CommandText = $"select distinct destination_ip from events where {where} order by destination_ip limit @prewarm_limit;";
+        var results = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) results.Add(reader.GetString(0));
+        return results;
     }
 
     private static async Task<(DateTimeOffset? From, DateTimeOffset? To)> LoadRetainedRangeAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
@@ -400,7 +565,11 @@ public sealed class NetworkGeographyRepository(
         return results;
     }
 
-    private static string BuildWhere(NpgsqlCommand command, NetworkGeographyQuery query, IReadOnlyList<string> geoFilterIps)
+    private static string BuildWhere(
+        NpgsqlCommand command,
+        NetworkGeographyQuery query,
+        IReadOnlyList<string> geoFilterIps,
+        bool includeGeolocationFilters = true)
     {
         var where = new List<string> { "source_id in (@snapshot_source,@kernel_source)", "destination_ip is not null" };
         command.Parameters.AddWithValue("snapshot_source", LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff);
@@ -431,12 +600,12 @@ public sealed class NetworkGeographyRepository(
             where.Add("process_image ilike @process_image escape '\\'");
             command.Parameters.AddWithValue("process_image", $"%{EscapeLike(query.ProcessImage)}%");
         }
-        if (query.CountryCode is not null || query.Asn.HasValue)
+        if (includeGeolocationFilters && (query.CountryCode is not null || query.Asn.HasValue))
         {
             where.Add("destination_ip = any(@geo_filter_ips)");
             command.Parameters.AddWithValue("geo_filter_ips", geoFilterIps.ToArray());
         }
-        if (query.Query is not null)
+        if (includeGeolocationFilters && query.Query is not null)
         {
             where.Add("(destination_ip ilike @query escape '\\' or hostname ilike @query escape '\\' or agent_id ilike @query escape '\\' or coalesce(process_image,'') ilike @query escape '\\' or coalesce(normalized_json->>'protocol', normalized_json->'network'->>'protocol','') ilike @query escape '\\' or coalesce(normalized_json->>'destination_port', normalized_json->'network'->>'destination_port','') ilike @query escape '\\' or destination_ip = any(@geo_query_ips))");
             command.Parameters.AddWithValue("query", $"%{EscapeLike(query.Query)}%");
@@ -466,6 +635,8 @@ public sealed class NetworkGeographyRepository(
 
     private static string[] ReadStrings(NpgsqlDataReader reader, string name) =>
         reader.IsDBNull(reader.GetOrdinal(name)) ? Array.Empty<string>() : reader.GetFieldValue<string[]>(reader.GetOrdinal(name)).Where(value => !string.IsNullOrWhiteSpace(value)).OrderBy(value => value, StringComparer.Ordinal).Take(MetadataLimit).ToArray();
+    private static string? ReadNullableString(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
     private static DateTimeOffset ReadTime(NpgsqlDataReader reader, int ordinal) => reader.GetFieldValue<DateTimeOffset>(ordinal).ToUniversalTime();
     private static string EscapeLike(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
     private sealed record GeographyTotals(long LifecycleEvents, long ConnectionObservations, long UniqueDestinations, bool ProcessAttributionPartial);

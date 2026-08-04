@@ -166,6 +166,13 @@ public sealed class NetworkActivityRepository(
         CancellationToken cancellationToken)
     {
         var geoFilterRequested = query.CountryCode is not null || query.Asn.HasValue;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        if (geoFilterRequested && allowGeolocationLookup && geolocation.UsesLocalDatabase)
+        {
+            var prewarmIps = await LoadGeolocationCandidatesAsync(connection, query, cancellationToken);
+            await geolocation.GetCachedAsync(prewarmIps, cancellationToken);
+        }
+
         IReadOnlyList<string> geoFilterIps = Array.Empty<string>();
         if (geoFilterRequested)
         {
@@ -174,7 +181,6 @@ public sealed class NetworkActivityRepository(
                 : await geolocation.SearchCachedIpsReadOnlyAsync(null, query.CountryCode, query.Asn, NetworkActivityQuery.MaxGeoCandidates, cancellationToken);
         }
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         var where = new List<string> { "source_id in (@snapshot_source,@kernel_source)" };
         command.Parameters.AddWithValue("snapshot_source", SnapshotSource);
@@ -216,15 +222,42 @@ public sealed class NetworkActivityRepository(
                 NextCursor = hasNext && last is not null ? EventSearchCursor.Encode(last.Activity.EventTimeUtc, last.RowId) : null
             },
             ActiveFilters = query.ActiveFilters(),
-            GeolocationMode = allowGeolocationLookup ? "on_demand_cache" : "cache_only_no_writes",
+            GeolocationMode = allowGeolocationLookup
+                ? geolocation.UsesLocalDatabase ? "local_database" : "on_demand_cache"
+                : "cache_only_no_writes",
             Limitations =
             [
                 "Kernel flow packet counts are cgroup SKB observations and byte counts are SKB lengths; offload and segmentation mean they are not wire-accurate counters.",
                 "Snapshot-diff evidence can miss short-lived sockets and does not prove packet direction or volume.",
                 "Process attribution is point-in-time evidence and may be partial or ambiguous; use attribution_confidence and source health.",
-                "IP geolocation is approximate cached provider metadata and is not proof of physical location or actor identity."
+                "Country and ASN filters are bounded to at most 10,000 candidate remote addresses; narrow other filters when that bound could be reached.",
+                "IP geolocation is approximate cached reference data and is not proof of physical location or actor identity."
             ]
         };
+    }
+
+    private static async Task<IReadOnlyList<string>> LoadGeolocationCandidatesAsync(
+        NpgsqlConnection connection,
+        NetworkActivityQuery query,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        var where = new List<string> { "source_id in (@snapshot_source,@kernel_source)" };
+        command.Parameters.AddWithValue("snapshot_source", SnapshotSource);
+        command.Parameters.AddWithValue("kernel_source", KernelSource);
+        Add(where, command, query, geoFilterRequested: false, Array.Empty<string>());
+        command.Parameters.AddWithValue("prewarm_limit", NetworkActivityQuery.MaxGeoCandidates);
+        command.CommandText = $@"
+            select distinct coalesce(normalized_json #>> '{{network,remote_ip}}',destination_ip) as remote_ip
+            from events
+            where {string.Join(" and ", where)}
+              and coalesce(normalized_json #>> '{{network,remote_ip}}',destination_ip) is not null
+            order by remote_ip
+            limit @prewarm_limit;";
+        var results = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) results.Add(reader.GetString(0));
+        return results;
     }
 
     private static void Add(

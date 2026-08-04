@@ -57,6 +57,7 @@ export interface GeographyResponse {
   generated_at_utc: string
   origin?: { label: string; latitude: number; longitude: number }
   map: { tile_url: string; attribution: string }
+  geolocation_attribution?: { text: string; url: string }
   summary: {
     matched_lifecycle_events: number
     connection_observations: number

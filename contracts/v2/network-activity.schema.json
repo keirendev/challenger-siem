@@ -74,7 +74,7 @@
       }
     },
     "result_scope": { "type": "string", "maxLength": 500 },
-    "geolocation_mode": { "type": "string", "enum": ["cache_only_no_writes", "on_demand_cache", "cache_only"] },
+    "geolocation_mode": { "type": "string", "enum": ["cache_only_no_writes", "on_demand_cache", "local_database", "cache_only"] },
     "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
   },
   "$defs": {

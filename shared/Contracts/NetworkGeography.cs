@@ -28,6 +28,10 @@ public sealed record NetworkGeographyResponse
     [JsonPropertyName("map")]
     public NetworkGeographyMapConfiguration Map { get; init; } = new();
 
+    [JsonPropertyName("geolocation_attribution")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NetworkGeographyAttribution? GeolocationAttribution { get; init; }
+
     [JsonPropertyName("summary")]
     public NetworkGeographySummary Summary { get; init; } = new();
 
@@ -69,6 +73,15 @@ public sealed record NetworkGeographyMapConfiguration
 
     [JsonPropertyName("attribution")]
     public string Attribution { get; init; } = string.Empty;
+}
+
+public sealed record NetworkGeographyAttribution
+{
+    [JsonPropertyName("text")]
+    public string Text { get; init; } = string.Empty;
+
+    [JsonPropertyName("url")]
+    public string Url { get; init; } = string.Empty;
 }
 
 public sealed record NetworkGeographySummary
@@ -231,4 +244,63 @@ public sealed record NetworkGeographyCoverage
 
     [JsonPropertyName("process_attribution_partial")]
     public bool ProcessAttributionPartial { get; init; }
+}
+
+public sealed record NetworkGeographyEvidenceResponse
+{
+    [JsonPropertyName("schema_version")]
+    public string SchemaVersion { get; init; } = "challenger-siem.network-geography-evidence.v2";
+
+    [JsonPropertyName("generated_at_utc")]
+    public DateTimeOffset GeneratedAtUtc { get; init; }
+
+    [JsonPropertyName("events")]
+    public IReadOnlyList<NetworkGeographyEvidenceEvent> Events { get; init; } = Array.Empty<NetworkGeographyEvidenceEvent>();
+
+    [JsonPropertyName("result_scope")]
+    public string ResultScope { get; init; } = string.Empty;
+
+    [JsonPropertyName("limitations")]
+    public IReadOnlyList<string> Limitations { get; init; } = Array.Empty<string>();
+}
+
+public sealed record NetworkGeographyEvidenceEvent
+{
+    [JsonPropertyName("event_id")]
+    public Guid EventId { get; init; }
+
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = string.Empty;
+
+    [JsonPropertyName("event_citation")]
+    public string EventCitation { get; init; } = string.Empty;
+
+    [JsonPropertyName("hostname")]
+    public string Hostname { get; init; } = string.Empty;
+
+    [JsonPropertyName("source_id")]
+    public string SourceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("event_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EventCode { get; init; }
+
+    [JsonPropertyName("event_time")]
+    public DateTimeOffset EventTimeUtc { get; init; }
+
+    [JsonPropertyName("severity")]
+    public string Severity { get; init; } = string.Empty;
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = string.Empty;
+
+    [JsonPropertyName("evidence_mode")]
+    public string EvidenceMode { get; init; } = string.Empty;
+
+    [JsonPropertyName("direction")]
+    public string Direction { get; init; } = string.Empty;
+
+    [JsonPropertyName("process_image")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProcessImage { get; init; }
 }

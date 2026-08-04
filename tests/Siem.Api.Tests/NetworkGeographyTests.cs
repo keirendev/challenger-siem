@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Challenger.Siem.Api.Auth;
 using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Database;
 using Challenger.Siem.Api.Mcp;
@@ -57,6 +58,64 @@ public sealed class NetworkGeographyTests
     }
 
     [Fact]
+    public void TrafficMapImpliedAuthenticationRequiresAnExactDirectLoopbackRead()
+    {
+        var options = CreateOptions(Path.Combine(Path.GetTempPath(), "synthetic-map.sqlite3"));
+        var direct = TrafficMapContext("/api/v2/network/geography");
+        Assert.True(LoopbackTrafficMapAccess.CanImplyAuthentication(direct, options));
+        Assert.True(LoopbackTrafficMapAccess.CanServeUi(TrafficMapContext("/ui/traffic"), options));
+
+        var generalEvents = TrafficMapContext("/api/v2/events");
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(generalEvents, options));
+
+        var remote = TrafficMapContext("/api/v2/network/geography");
+        remote.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.10");
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(remote, options));
+
+        var broadListener = TrafficMapContext("/api/v2/network/geography");
+        broadListener.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.20");
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(broadListener, options));
+
+        var rebindingHost = TrafficMapContext("/api/v2/network/geography");
+        rebindingHost.Request.Host = new HostString("example.invalid", 5081);
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(rebindingHost, options));
+
+        var forwarded = TrafficMapContext("/api/v2/network/geography");
+        forwarded.Request.Headers["X-Forwarded-Port"] = "443";
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(forwarded, options));
+
+        var bearerPresent = TrafficMapContext("/api/v2/network/geography");
+        bearerPresent.Request.Headers.Authorization = "Bearer synthetic-invalid-value";
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(bearerPresent, options));
+
+        var post = TrafficMapContext("/api/v2/network/geography");
+        post.Request.Method = HttpMethods.Post;
+        Assert.False(LoopbackTrafficMapAccess.CanImplyAuthentication(post, options));
+    }
+
+    [Fact]
+    public void DashboardEvidenceQueryIsExactAndRejectsExpandedSearchFields()
+    {
+        var valid = NetworkGeographyEvidenceQuery.FromQuery(new QueryCollection(new Dictionary<string, StringValues>
+        {
+            ["destination_ip"] = "8.8.8.8",
+            ["from"] = "2026-08-01T00:00:00Z",
+            ["limit"] = "25"
+        }));
+        Assert.Empty(valid.ValidationErrors);
+        Assert.Equal("8.8.8.8", valid.DestinationIp);
+
+        var expanded = NetworkGeographyEvidenceQuery.FromQuery(new QueryCollection(new Dictionary<string, StringValues>
+        {
+            ["destination_ip"] = "8.8.8.8",
+            ["keyword"] = "unsupported",
+            ["limit"] = "26"
+        }));
+        Assert.Contains(expanded.ValidationErrors, item => item.Field == "keyword");
+        Assert.Contains(expanded.ValidationErrors, item => item.Field == "limit");
+    }
+
+    [Fact]
     public void McpTrafficMapLinkContainsOnlyBoundedFilters()
     {
         var link = SiemMcpTools.BuildTrafficMapLink(
@@ -101,8 +160,134 @@ public sealed class NetworkGeographyTests
         credentialUrl.PublicBaseUrl = "https://user:password@example.invalid/";
         Assert.True(validator.Validate(null, credentialUrl).Failed);
 
+        var remoteUrl = CreateOptions(Path.Combine(Path.GetTempPath(), "synthetic-map.sqlite3"));
+        remoteUrl.PublicBaseUrl = "https://example.invalid/";
+        Assert.True(validator.Validate(null, remoteUrl).Failed);
+
         var valid = validator.Validate(null, CreateOptions(Path.Combine(Path.GetTempPath(), "synthetic-map.sqlite3")));
         Assert.True(valid.Succeeded);
+    }
+
+    [Fact]
+    public void LocalDatabaseConfigurationRequiresAnExternalCountryDatabaseAndAllowsOptionalGranularity()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-siem-geo-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var countryPath = Path.Combine(root, "country.mmdb");
+        var cityPath = Path.Combine(root, "city.mmdb");
+        var asnPath = Path.Combine(root, "asn.mmdb");
+        File.Create(countryPath).Dispose();
+        File.Create(cityPath).Dispose();
+        File.Create(asnPath).Dispose();
+        try
+        {
+            var validator = new TrafficMapOptionsValidator(new TestHostEnvironment(Path.GetTempPath()));
+            var options = CreateOptions(Path.Combine(root, "cache.sqlite3"));
+            options.Geolocation.Provider = TrafficMapGeolocationOptions.LocalDatabaseProvider;
+            options.Geolocation.CountryDatabasePath = countryPath;
+            options.Geolocation.CityDatabasePath = cityPath;
+            options.Geolocation.AsnDatabasePath = asnPath;
+
+            Assert.True(validator.Validate(null, options).Succeeded);
+
+            options.Geolocation.CountryDatabasePath = "country.mmdb";
+            var invalid = validator.Validate(null, options);
+            Assert.True(invalid.Failed);
+            Assert.Contains(invalid.Failures!, item => item.Contains("CountryDatabasePath", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LocalMmdbMapperGuaranteesCountryAndAddsCityRegionCoordinatesAndAsnWhenPresent()
+    {
+        var now = DateTimeOffset.Parse("2026-08-04T00:00:00Z");
+        var country = new Dictionary<string, object>
+        {
+            ["country"] = new Dictionary<string, object>
+            {
+                ["iso_code"] = "EX",
+                ["names"] = new Dictionary<string, object> { ["en"] = "Example Country" }
+            },
+            ["continent"] = new Dictionary<string, object>
+            {
+                ["code"] = "OC",
+                ["names"] = new Dictionary<string, object> { ["en"] = "Example Continent" }
+            }
+        };
+        var city = new Dictionary<string, object>
+        {
+            ["country"] = country["country"],
+            ["city"] = new Dictionary<string, object>
+            {
+                ["names"] = new Dictionary<string, object> { ["en"] = "Example City" }
+            },
+            ["subdivisions"] = new object[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["names"] = new Dictionary<string, object> { ["en"] = "Example Region" }
+                }
+            },
+            ["location"] = new Dictionary<string, object> { ["latitude"] = -37.81d, ["longitude"] = 144.96d }
+        };
+        var asn = new Dictionary<string, object>
+        {
+            ["autonomous_system_number"] = 64500L,
+            ["autonomous_system_organization"] = "Example Network"
+        };
+
+        var countryOnly = DbIpMmdbRecordMapper.Map(
+            "8.8.8.8", country, null, null, "synthetic-country", now, TimeSpan.FromDays(30), TimeSpan.FromHours(6));
+        Assert.Equal("ready", countryOnly.Status);
+        Assert.Equal("EX", countryOnly.CountryCode);
+        Assert.Equal("Example Country", countryOnly.Country);
+        Assert.Null(countryOnly.Latitude);
+
+        var granular = DbIpMmdbRecordMapper.Map(
+            "8.8.4.4", country, city, asn, "synthetic-granular", now, TimeSpan.FromDays(30), TimeSpan.FromHours(6));
+        Assert.Equal("Example City", granular.City);
+        Assert.Equal("Example Region", granular.Region);
+        Assert.Equal(-37.81d, granular.Latitude);
+        Assert.Equal(144.96d, granular.Longitude);
+        Assert.Equal(64500L, granular.Asn);
+        Assert.Equal("Example Network", granular.Organization);
+    }
+
+    [Fact]
+    public async Task LocalDatabaseResolvesSynchronouslyAndRefreshesWhenTheDatabaseVersionChanges()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-siem-geo-local-{Guid.NewGuid():N}");
+        var cachePath = Path.Combine(root, "cache.sqlite3");
+        var options = CreateOptions(cachePath);
+        options.Geolocation.Provider = TrafficMapGeolocationOptions.LocalDatabaseProvider;
+        var firstSource = new StubLocalSource("dbip_mmdb:synthetic-v1", "EX");
+        var secondSource = new StubLocalSource("dbip_mmdb:synthetic-v2", "AU");
+        using var http = new StubHttpClientFactory(new SequenceHandler((_, _) =>
+            throw new InvalidOperationException("Local database mode must not call HTTP.")));
+        var first = CreateService(options, root, http, TimeProvider.System, firstSource);
+        var second = CreateService(options, root, http, TimeProvider.System, secondSource);
+        try
+        {
+            var initial = await first.GetCachedAsync(["8.8.8.8"], CancellationToken.None);
+            Assert.Equal("EX", Assert.Single(initial).Value.CountryCode);
+            Assert.Equal(1, firstSource.LookupCount);
+
+            var refreshed = await second.GetCachedAsync(["8.8.8.8"], CancellationToken.None);
+            Assert.Equal("AU", Assert.Single(refreshed).Value.CountryCode);
+            Assert.Equal(1, secondSource.LookupCount);
+            Assert.Equal(0, http.Handler.CallCount);
+        }
+        finally
+        {
+            first.Dispose();
+            second.Dispose();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -118,6 +303,25 @@ public sealed class NetworkGeographyTests
 
         Assert.Empty(records);
         Assert.Empty(matches);
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, http.Handler.CallCount);
+    }
+
+    [Fact]
+    public async Task DisabledTrafficMapDoesNotOpenConfiguredLocalDatabasePaths()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-siem-geo-disabled-{Guid.NewGuid():N}");
+        var options = CreateOptions(Path.Combine(root, "cache.sqlite3"));
+        options.Enabled = false;
+        options.Geolocation.Provider = TrafficMapGeolocationOptions.LocalDatabaseProvider;
+        options.Geolocation.CountryDatabasePath = Path.Combine(root, "missing.mmdb");
+        using var http = new StubHttpClientFactory(new SequenceHandler((_, _) =>
+            throw new InvalidOperationException("A disabled traffic map must not call HTTP.")));
+        using var service = CreateService(options, root, http, TimeProvider.System);
+
+        var records = await service.GetCachedAsync(["8.8.8.8"], CancellationToken.None);
+
+        Assert.Empty(records);
         Assert.False(Directory.Exists(root));
         Assert.Equal(0, http.Handler.CallCount);
     }
@@ -309,6 +513,17 @@ public sealed class NetworkGeographyTests
         }
     };
 
+    private static DefaultHttpContext TrafficMapContext(string path)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = path;
+        context.Request.Host = new HostString("127.0.0.1", 5081);
+        context.Connection.RemoteIpAddress = IPAddress.Loopback;
+        context.Connection.LocalIpAddress = IPAddress.Loopback;
+        return context;
+    }
+
     private static IpGeolocationService CreateService(TrafficMapOptions options, string contentRoot, IHttpClientFactory http, TimeProvider clock) =>
         CreateService(options, contentRoot, http, clock, NullLogger<IpGeolocationService>.Instance);
 
@@ -319,6 +534,14 @@ public sealed class NetworkGeographyTests
         TimeProvider clock,
         ILogger<IpGeolocationService> logger) =>
         new(Options.Create(options), new TestHostEnvironment(contentRoot), http, clock, logger);
+
+    private static IpGeolocationService CreateService(
+        TrafficMapOptions options,
+        string contentRoot,
+        IHttpClientFactory http,
+        TimeProvider clock,
+        ILocalIpGeolocationSource localSource) =>
+        new(Options.Create(options), new TestHostEnvironment(contentRoot), http, clock, NullLogger<IpGeolocationService>.Instance, localSource);
 
     private static async Task AssertProviderFailureAsync(
         CountingHandler handler,
@@ -412,6 +635,22 @@ public sealed class NetworkGeographyTests
 
         public HttpClient CreateClient(string name) => client;
         public void Dispose() => client.Dispose();
+    }
+
+    private sealed class StubLocalSource(string providerId, string countryCode) : ILocalIpGeolocationSource
+    {
+        public string ProviderId { get; } = providerId;
+        public int LookupCount { get; private set; }
+
+        public IpGeolocationRecord Lookup(string ip, DateTimeOffset now, TimeSpan successTtl, TimeSpan negativeTtl)
+        {
+            LookupCount++;
+            return new(
+                ip, "ready", null, null, null, null, "Synthetic Country", countryCode, null,
+                null, null, null, ProviderId, now, now.Add(successTtl));
+        }
+
+        public void Dispose() { }
     }
 
     private sealed class TestHostEnvironment(string contentRoot) : IHostEnvironment
