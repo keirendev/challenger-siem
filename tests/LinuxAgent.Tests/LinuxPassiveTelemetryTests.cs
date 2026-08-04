@@ -898,6 +898,66 @@ public sealed class LinuxPassiveTelemetryTests
     }
 
     [Fact]
+    public async Task NetworkSnapshotV5RetainsOneNormalizedOwnerAndAtMostFourReviewOwners()
+    {
+        var options = CreateAgentOptions(enabled: true);
+        var owners = Enumerable.Range(1, 5)
+            .Select(index => new LinuxSocketOwner(
+                index,
+                $"/usr/bin/synthetic-{index}",
+                $"synthetic-{index}",
+                $"100{index}",
+                "exact_inode_current_scan",
+                $"synthetic-{index} --bounded"))
+            .ToArray();
+        var socket = Socket("ambiguous-socket", "established", "192.0.2.10", 50000, "198.51.100.20", 443) with
+        {
+            Owners = owners,
+            AttributionStatus = "ambiguous_shared_socket"
+        };
+        var sources = new SyntheticSources { Sockets = Successful(socket) };
+        var collector = Collector(options, sources);
+        options.PassiveTelemetry.ApprovedPlanHash = collector.PlanHash;
+
+        var result = await collector.CollectNetworkAsync(new(), "synthetic-agent", "synthetic-host", default);
+        var envelope = Assert.Single(result.Events);
+
+        Assert.Equal("linux-network-snapshot-v2", envelope.Raw.GetProperty("schema").GetString());
+        Assert.Null(envelope.Normalized!.ProcessCommandLine);
+        var retainedOwners = envelope.Raw.GetProperty("owners").EnumerateArray().ToArray();
+        Assert.Equal(LinuxSocketOwnershipCache.MaxOwnersPerSocket, retainedOwners.Length);
+        Assert.Equal("synthetic-1 --bounded", retainedOwners[0].GetProperty("command_line").GetString());
+    }
+
+    [Fact]
+    public async Task NetworkSnapshotV5NormalizesTheCommandLineForOneExactOwner()
+    {
+        var options = CreateAgentOptions(enabled: true);
+        var owner = new LinuxSocketOwner(
+            41,
+            "/usr/bin/synthetic-owner",
+            "synthetic-owner",
+            "1001",
+            "exact_inode_current_scan",
+            "synthetic-owner --bounded");
+        var socket = Socket("unique-owner-socket", "established", "192.0.2.10", 50000, "198.51.100.20", 443) with
+        {
+            Owners = [owner],
+            AttributionStatus = "exact_inode_current_scan"
+        };
+        var sources = new SyntheticSources { Sockets = Successful(socket) };
+        var collector = Collector(options, sources);
+        options.PassiveTelemetry.ApprovedPlanHash = collector.PlanHash;
+
+        var result = await collector.CollectNetworkAsync(new(), "synthetic-agent", "synthetic-host", default);
+        var envelope = Assert.Single(result.Events);
+
+        Assert.Equal("synthetic-owner --bounded", envelope.Normalized!.ProcessCommandLine);
+        var retainedOwner = Assert.Single(envelope.Raw.GetProperty("owners").EnumerateArray());
+        Assert.Equal("synthetic-owner --bounded", retainedOwner.GetProperty("command_line").GetString());
+    }
+
+    [Fact]
     public async Task BootEpochResetIsNonAlertableCrossSourceAndPreservesSequences()
     {
         if (!OperatingSystem.IsLinux()) return;

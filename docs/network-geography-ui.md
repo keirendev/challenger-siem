@@ -1,10 +1,10 @@
 # Network geography UI
 
-`/ui/traffic` is an optional local, read-only view of remote peers in retained Linux socket-snapshot telemetry. It is disabled until the operator supplies an approximate origin, a public loopback URL, and a private SQLite cache path. It does not add accounts, cookies, browser sessions, or a second credential system.
+`/ui/traffic` is an optional local, read-only view of remote peers in retained Linux socket-snapshot and kernel-flow telemetry. It is disabled until the operator supplies an approximate origin, a public loopback URL, and a private SQLite cache path. It does not add accounts, cookies, browser sessions, or a second credential system.
 
 ## Evidence boundary
 
-The view shows socket observations, not packet captures or flow records. It does not measure packets or bytes, prove traffic direction, or guarantee that short-lived sockets were observed. A remote address may belong to a provider, CDN, VPN, proxy, or anycast deployment. Process ownership is best-effort and can be absent or partial.
+Snapshot rows can miss short-lived sockets and do not measure packets, bytes, or direction. Separately labeled `kernel_flow` rows contain aggregate cgroup SKB packet/length counters and direction, never payload; offload/segmentation mean those counters are not wire truth. A remote address may belong to a provider, CDN, VPN, proxy, or anycast deployment. Process ownership remains point-in-time, best-effort evidence and can be absent, racy, or partial. Use `GET /api/v2/network/activity` or `siem_search_network_activity` for cited per-event correlation.
 
 Approximate geolocation is enrichment, not endpoint evidence. Only syntactically valid publicly routable destination IPs may be sent to the configured provider. Private, loopback, link-local, multicast, reserved, benchmark, and documentation ranges are rejected locally. Provider raw responses are never stored; the cache contains only normalized location/ASN fields, status, provider name, and timestamps.
 
@@ -86,7 +86,7 @@ Credential-free query parameters preserve the selected filters. Custom date inpu
 ## Empty or stale results
 
 - Start with **All retained** and clear metadata filters. The 1-hour/24-hour/7-day/30-day presets are relative to the browser's current time and match event time, so recently ingested records with older event timestamps do not enter those windows.
-- Check the **Retained evidence** end time. If it is older than the expected agent activity, verify that the viewer uses the writable backend's exact database and that the normal agent/backend path has fresh heartbeat, queue delivery, source health, and `linux-network-socket-snapshot-diff` events.
+- Check the **Retained evidence** end time. If it is older than the expected agent activity, verify that the viewer uses the writable backend's exact database and that the normal agent/backend path has fresh heartbeat, queue delivery, source health, and qualifying `linux-network-socket-snapshot-diff` or `linux-network-flow-summary` events.
 - Confirm passive socket telemetry is enabled and healthy for the intended agent. The map deliberately excludes other event sources and rows without a remote IP.
 - A peer can remain in the table while unmapped when geolocation is disabled, pending, locally excluded, provider-failed, or quota-limited. Review the status notices before changing filters.
 - A blank basemap with destination rows usually indicates tile reachability or CSP/configuration problems; it is distinct from missing telemetry.

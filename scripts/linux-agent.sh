@@ -336,12 +336,17 @@ allowlist = [
     ('agent_binary', '/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent', 'HashedFile', 64 * 1024 * 1024, 'False'),
     ('systemd_unit', '/etc/systemd/system/challenger-siem-agent.service', 'HashedFile', 256 * 1024, 'False'),
     ('process_visibility_profile', '/etc/systemd/system/challenger-siem-agent.service.d/30-process-executable-visibility.conf', 'HashedFile', 256 * 1024, 'False'),
+    ('kernel_network_profile', '/etc/systemd/system/challenger-siem-agent.service.d/40-kernel-network.conf', 'HashedFile', 256 * 1024, 'False'),
+    ('kernel_network_helper', '/opt/challenger-siem-agent/Challenger.Siem.EbpfHelper', 'HashedFile', 16 * 1024 * 1024, 'False'),
+    ('kernel_network_helper_unit', '/etc/systemd/system/challenger-siem-ebpf-helper.service', 'HashedFile', 256 * 1024, 'False'),
+    ('kernel_network_socket_unit', '/etc/systemd/system/challenger-siem-ebpf-helper.socket', 'HashedFile', 256 * 1024, 'False'),
+    ('kernel_network_signing_key', '/etc/challenger-siem-agent/kernel-network-signing-key.pem', 'HashedFile', 64 * 1024, 'False'),
     ('agent_config', '/etc/challenger-siem-agent/agentsettings.json', 'MetadataFile', 256 * 1024, 'True'),
     ('config_directory', '/etc/challenger-siem-agent/', 'Directory', 0, 'False'),
     ('state_directory', '/var/lib/challenger-siem-agent/', 'Directory', 0, 'False'),
 ]
 canonical = '\n'.join([
-    'linux-agent-self-integrity-snapshot-v3',
+    'linux-agent-self-integrity-snapshot-v4',
     f'interval={interval}',
     f'timeout={timeout}',
     f'queue_pause={queue_pause}',
@@ -500,7 +505,7 @@ if maximum_passive_batch_bytes > passive_byte_limit:
     )
 
 canonical = '\n'.join([
-    'linux-passive-snapshot-v4',
+    'linux-passive-snapshot-v5',
     *(f'{name}={value}' for name, value in values.items()),
     'partial_baseline_miss_limit=12',
     f'cleanup_on_disable={cleanup}',
@@ -615,6 +620,14 @@ audit_lifecycle_plan(){
 
 l4_telemetry_plan(){
   local cfg=$1 binary=''
+  if [[ -n $payload
+        && -x $payload/Challenger.Siem.LinuxAgent
+        && -x $opt/Challenger.Siem.LinuxAgent
+        && ! $payload/Challenger.Siem.LinuxAgent -ef $opt/Challenger.Siem.LinuxAgent ]] \
+      && ! cmp -s "$payload/Challenger.Siem.LinuxAgent" "$opt/Challenger.Siem.LinuxAgent"; then
+    echo 'L4 telemetry preflight: published candidate differs from the fixed installed integrity target; stage the upgrade without restart, then rerun the installed plan and obtain exact posture-baseline approval before activation'
+    return 0
+  fi
   if [[ $root != / ]]; then
     echo 'L4 telemetry preflight: skipped for an alternate --root because posture must be observed on the real target host as the service identity'
     return 0
@@ -737,10 +750,15 @@ plan(){
   echo "self-integrity allowlist: $opt/Challenger.Siem.LinuxAgent (regular metadata+sha256 <=64MiB) [$(probe "$opt/Challenger.Siem.LinuxAgent" file $((64*1024*1024)))]"
   echo "self-integrity allowlist: $unit (regular metadata+sha256 <=256KiB) [$(probe "$unit" file $((256*1024)))]"
   echo "self-integrity allowlist: $process_visibility_drop_in (optional regular metadata+sha256 <=256KiB) [$(probe "$process_visibility_drop_in" file $((256*1024)))]"
+  echo "self-integrity allowlist: $(p /etc/systemd/system/challenger-siem-agent.service.d/40-kernel-network.conf) (optional regular metadata+sha256 <=256KiB) [$(probe "$(p /etc/systemd/system/challenger-siem-agent.service.d/40-kernel-network.conf)" file $((256*1024)))]"
+  echo "self-integrity allowlist: $opt/Challenger.Siem.EbpfHelper (optional regular metadata+sha256 <=16MiB) [$(probe "$opt/Challenger.Siem.EbpfHelper" file $((16*1024*1024)))]"
+  echo "self-integrity allowlist: $(p /etc/systemd/system/challenger-siem-ebpf-helper.service) (optional regular metadata+sha256 <=256KiB) [$(probe "$(p /etc/systemd/system/challenger-siem-ebpf-helper.service)" file $((256*1024)))]"
+  echo "self-integrity allowlist: $(p /etc/systemd/system/challenger-siem-ebpf-helper.socket) (optional regular metadata+sha256 <=256KiB) [$(probe "$(p /etc/systemd/system/challenger-siem-ebpf-helper.socket)" file $((256*1024)))]"
+  echo "self-integrity allowlist: $etc/kernel-network-signing-key.pem (optional trusted public key metadata+sha256 <=64KiB) [$(probe "$etc/kernel-network-signing-key.pem" file $((64*1024)))]"
   echo "self-integrity allowlist: $etc/agentsettings.json (metadata only; credential-bearing, no hash/content) [$(probe "$etc/agentsettings.json" file 0)]"
   echo "self-integrity allowlist: $etc/ (directory metadata only; no recursion) [$(probe "$etc" dir 0)]"
   echo "self-integrity allowlist: $state/ (directory metadata only; no recursion) [$(probe "$state" dir 0)]"
-  echo 'self-integrity privacy/resource impact: metadata plus three bounded streaming SHA-256 digests; no file contents, secret values, arbitrary paths, or recursive scans; minimum 5 minute cadence and 30 second deadline'
+  echo 'self-integrity privacy/resource impact: metadata plus up to eight bounded streaming SHA-256 digests for fixed product artifacts; configuration content is never hashed/read; no secret values, arbitrary paths, or recursive scans; minimum 5 minute cadence and 30 second deadline'
   echo 'self-integrity sequencing/loss/pressure: sequence checkpoints, queue-before-checkpoint, ack-before-delete; added/changed/deleted/unreadable/gap/drop/sample states; pause L3 before L1/L2 under queue pressure'
   echo 'self-integrity rollback: disable the source and remove only /var/lib/challenger-siem-agent/self-integrity-state.json; monitored files and host policy remain untouched'
   echo 'linux L3 passive procfs snapshots: disabled by default; requires Agent:PassiveTelemetry:Enabled=true and its separate matching ApprovedPlanHash'
@@ -830,8 +848,12 @@ install(){
   fi
   command install -m 0644 "$unit_template" "$unit"
   if [[ $root == / ]]; then
-    chown -R root:root "$opt"
-    chown -R challenger-siem:challenger-siem "$etc" "$state"
+    # Keep ownership changes limited to artifacts owned by this lifecycle.
+    # Optional helpers may place root-owned trust material beside the agent
+    # configuration, and an agent-only upgrade must preserve that boundary.
+    chown root:root "$opt" "$opt/Challenger.Siem.LinuxAgent"
+    chown challenger-siem:challenger-siem "$etc" "$etc/agentsettings.json"
+    chown -R challenger-siem:challenger-siem "$state"
   fi
   if ! $no_service && [[ $root == / ]]; then
     systemctl daemon-reload

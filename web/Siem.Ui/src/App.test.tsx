@@ -16,9 +16,9 @@ const response = {
   origin: { label: 'Synthetic origin', latitude: 0, longitude: 0 },
   map: { tile_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: 'Map' },
   summary: { matched_lifecycle_events: 1, connection_observations: 1, unique_destinations: 1, returned_destinations: 1, geolocated_destinations: 1, pending_destinations: 0, unmapped_destinations: 0, quota_limited_destinations: 0, candidate_truncated: false, result_truncated: false },
-  destinations: [{ destination_ip: '203.0.113.10', connection_observations: 1, baseline_observations: 0, new_observations: 1, change_events: 0, disappearance_events: 0, lifecycle_events: 1, first_seen_utc: '2026-08-03T11:00:00Z', last_seen_utc: '2026-08-03T11:00:00Z', protocols: ['tcp'], destination_ports: [443], hostnames: ['synthetic-host'], agent_ids: ['synthetic-agent'], process_images: [], geolocation_status: 'ready', latitude: 1, longitude: 1, city: 'Example City', country: 'Example Country' }],
+  destinations: [{ destination_ip: '203.0.113.10', connection_observations: 1, baseline_observations: 0, new_observations: 1, change_events: 0, disappearance_events: 0, lifecycle_events: 1, packet_count_delta: 1, byte_count_delta: 40, first_seen_utc: '2026-08-03T11:00:00Z', last_seen_utc: '2026-08-03T11:00:00Z', protocols: ['tcp'], destination_ports: [443], hostnames: ['synthetic-host'], agent_ids: ['synthetic-agent'], process_images: [], evidence_modes: ['kernel_flow'], directions: ['outbound'], geolocation_status: 'ready', latitude: 1, longitude: 1, city: 'Example City', country: 'Example Country' }],
   timeline: [],
-  coverage: { source_id: 'linux-network-socket-snapshot-diff', evidence_mode: 'snapshot_diff', source_status_counts: { healthy: 1 }, process_attribution_partial: true },
+  coverage: { source_id: 'linux-network-socket-snapshot-diff', evidence_mode: 'snapshot_diff', source_ids: ['linux-network-socket-snapshot-diff', 'linux-network-flow-summary'], evidence_modes: ['snapshot_diff', 'kernel_flow'], source_status_counts: { healthy: 1 }, process_attribution_partial: true },
   active_filters: [], result_scope: 'synthetic', limitations: ['Synthetic limitation.'],
 }
 

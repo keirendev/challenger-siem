@@ -14,6 +14,8 @@ Use service-authenticated REST or read-only MCP to review events, source health,
 
 For visual network review, start `/ui/traffic` through the [traffic-map operator guide](network-geography-ui.md). Confirm the **Retained evidence** end time before using a recent preset, because ranges use telemetry `event_time`. A separate read-only viewer must use the writable backend's exact PostgreSQL database and must never replace the agent ingestion or audited MCP endpoint.
 
+For a question such as “which process contacted an IP in China?”, call `siem_search_network_activity` with `country_code=CN` and `attributed_only=true`, or the equivalent authenticated REST filters. A result is answerable only when retained evidence contains both a matching cached geography record and process attribution; report pending geography, snapshot blind spots, kernel loss counters, and attribution confidence rather than inferring missing facts. Kernel-source rollout and rollback use the [signed helper runbook](linux-kernel-network.md).
+
 ## Retention
 
 Review storage accounting and perform a dry run before executing managed retention. Manual execution requires the exact `CONFIRM RETENTION DELETE` confirmation and is security-audited. The allowlist is limited to events, heartbeat history, inventory snapshots, and ingestion errors. Current source state, alerts/evidence, cases, graphs, detection metadata, audit, and agents are protected.

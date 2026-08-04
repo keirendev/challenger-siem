@@ -636,6 +636,57 @@
             "null"
           ],
           "maxLength": 64
+        },
+        "local_ip": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "local_port": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "remote_ip": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "remote_port": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "direction": {
+          "type": ["string", "null"],
+          "enum": ["inbound", "outbound", "unknown", null]
+        },
+        "packet_count_delta": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "byte_count_delta": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "interval_started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "interval_ended_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "tcp_flags": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "maxLength": 16 }
+        },
+        "evidence_mode": {
+          "type": ["string", "null"],
+          "enum": ["kernel_flow", "snapshot_diff", null]
+        },
+        "attribution_confidence": {
+          "type": ["string", "null"],
+          "maxLength": 64
         }
       }
     },

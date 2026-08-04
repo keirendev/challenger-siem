@@ -5,6 +5,7 @@ using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.KernelNetwork;
 using Challenger.Siem.LinuxAgent.L4;
 using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
@@ -37,6 +38,7 @@ builder.Services.AddOptions<LinuxAgentOptions>().Bind(builder.Configuration.GetS
     .Validate(options => options.HasValidQueueBounds(), "Queue bounds are outside the supported range")
     .Validate(options => options.HasValidSelfIntegrityBounds(), "Self-integrity bounds are outside the supported range")
     .Validate(options => options.HasValidPassiveTelemetryBounds(), "Passive telemetry bounds are outside the supported range")
+    .Validate(options => options.HasValidKernelNetworkTelemetryBounds(), "Kernel network telemetry bounds are outside the supported range")
     .Validate(options => options.HasValidL4TelemetryBounds(), "L4 telemetry bounds are outside the supported range")
     .ValidateOnStart();
 
@@ -86,6 +88,10 @@ builder.Services.AddSingleton<ILinuxHostMetricsSource, LinuxHostMetricsSource>()
 builder.Services.AddSingleton<LinuxPassiveTelemetryCollector>();
 builder.Services.AddSingleton<LinuxPassiveTelemetryRuntime>();
 builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxPassiveTelemetryRuntime>());
+builder.Services.AddSingleton<LinuxKernelNetworkStateStore>(services =>
+    new LinuxKernelNetworkStateStore(services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.KernelNetworkTelemetry.StatePath));
+builder.Services.AddSingleton<LinuxKernelNetworkRuntime>();
+builder.Services.AddSingleton<ILinuxAcknowledgementObserver>(services => services.GetRequiredService<LinuxKernelNetworkRuntime>());
 builder.Services.AddSingleton<LinuxL4TelemetryStateStore>(services =>
     new LinuxL4TelemetryStateStore(
         services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value.L4Telemetry.StatePath,
@@ -111,6 +117,7 @@ builder.Services.AddHostedService<LinuxJournalService>();
 builder.Services.AddHostedService<LinuxInventoryService>();
 builder.Services.AddHostedService<LinuxSelfIntegrityService>();
 builder.Services.AddHostedService<LinuxPassiveTelemetryService>();
+builder.Services.AddHostedService<LinuxKernelNetworkService>();
 builder.Services.AddHostedService<LinuxL4TelemetryService>();
 builder.Services.AddSystemd();
 
@@ -153,6 +160,12 @@ if (args.Contains("--l4-telemetry-plan", StringComparer.Ordinal))
     var snapshots = await inventory.CollectAsync(options.AgentId, Environment.MachineName, CancellationToken.None);
     var collector = app.Services.GetRequiredService<LinuxL4TelemetryCollector>();
     Console.WriteLine(JsonSerializer.Serialize(collector.Preflight(snapshots), JsonDefaults.Options));
+    return 0;
+}
+if (args.Contains("--kernel-network-plan", StringComparer.Ordinal))
+{
+    var options = app.Services.GetRequiredService<IOptions<LinuxAgentOptions>>().Value;
+    Console.WriteLine(JsonSerializer.Serialize(LinuxKernelNetworkPlanBuilder.Build(options), JsonDefaults.Options));
     return 0;
 }
 

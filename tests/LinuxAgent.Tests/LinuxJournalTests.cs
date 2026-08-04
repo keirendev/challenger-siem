@@ -756,7 +756,7 @@ public sealed class LinuxJournalTests
     {
         using var temporary = new TemporaryPaths();
         var options = TestOptions(temporary.Queue, temporary.State);
-        var queue = CreateQueue(temporary.Queue, 0);
+        var queue = new AttemptRecordingQueue(CreateQueue(temporary.Queue, 0));
         var state = new LinuxStateStore(temporary.State);
         var runtime = Runtime(options, state);
         await runtime.InitializeAsync("test", "config", default);
@@ -767,12 +767,48 @@ public sealed class LinuxJournalTests
         var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options), runtime);
         await Assert.ThrowsAsync<HttpRequestException>(() => drainer.DrainAsync(default));
         Assert.Equal(1, await queue.CountAsync(default));
+        Assert.Single(queue.MarkedBatches);
+        Assert.Single(queue.MarkedBatches[0]);
         Assert.Null((await state.ReadJournalAsync(default)).AcknowledgedCursor);
 
         handler.Fail = false;
         await drainer.DrainAsync(default);
         Assert.Equal(0, await queue.CountAsync(default));
+        Assert.Single(queue.MarkedBatches);
         Assert.Equal("s=synthetic;i=1;b=fake", (await state.ReadJournalAsync(default)).AcknowledgedCursor);
+    }
+
+    [Fact]
+    public async Task FullDeliveryBatchUsesBoundedBacklogPacingUntilQueueIsCaughtUp()
+    {
+        using var temporary = new TemporaryPaths();
+        var options = TestOptions(temporary.Queue, temporary.State);
+        options.DrainBatchSize = 2;
+        var queue = CreateQueue(temporary.Queue, 0);
+        var state = new LinuxStateStore(temporary.State);
+        var runtime = Runtime(options, state);
+        await runtime.InitializeAsync("test", "config", default);
+        var records = new[]
+        {
+            Record("s=synthetic;i=1;b=fake", 1783944000000000, "first"),
+            Record("s=synthetic;i=2;b=fake", 1783944001000000, "second"),
+            Record("s=synthetic;i=3;b=fake", 1783944002000000, "third")
+        };
+        await Service(options, new FakeSource(new(JournalReadStatus.Success, records)), runtime, queue)
+            .CollectOnceAsync(null, default);
+
+        var handler = new SwitchingHandler { Fail = false };
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://siem.synthetic") };
+        var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options), runtime);
+
+        Assert.True(await drainer.DrainAsync(default));
+        Assert.Equal(TimeSpan.FromMilliseconds(250), LinuxAgentWorker.DrainDelay(likelyBacklog: true));
+        Assert.Equal(1, await queue.CountAsync(default));
+
+        Assert.False(await drainer.DrainAsync(default));
+        Assert.Equal(TimeSpan.FromSeconds(5), LinuxAgentWorker.DrainDelay(likelyBacklog: false));
+        Assert.Equal(0, await queue.CountAsync(default));
+        Assert.Equal("s=synthetic;i=3;b=fake", (await state.ReadJournalAsync(default)).AcknowledgedCursor);
     }
 
     [Fact]
@@ -885,6 +921,23 @@ public sealed class LinuxJournalTests
         public Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<int> CountAsync(CancellationToken cancellationToken) => Task.FromResult(count);
         public Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken) => Task.FromResult(new QueueSloMetrics { QueueDepth = count });
+    }
+    private sealed class AttemptRecordingQueue(IEventQueue inner) : IEventQueue
+    {
+        public List<long[]> MarkedBatches { get; } = [];
+        public Task InitializeAsync(CancellationToken cancellationToken) => inner.InitializeAsync(cancellationToken);
+        public Task EnqueueAsync(EventEnvelope envelope, CancellationToken cancellationToken) => inner.EnqueueAsync(envelope, cancellationToken);
+        public Task EnqueueBatchAsync(IReadOnlyCollection<EventEnvelope> envelopes, CancellationToken cancellationToken) => inner.EnqueueBatchAsync(envelopes, cancellationToken);
+        public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int maxEvents, CancellationToken cancellationToken) => inner.DequeueBatchAsync(maxEvents, cancellationToken);
+        public Task MarkAttemptAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken)
+        {
+            MarkedBatches.Add(queueIds.ToArray());
+            return inner.MarkAttemptAsync(queueIds, cancellationToken);
+        }
+        public Task DeleteAsync(IReadOnlyCollection<long> queueIds, CancellationToken cancellationToken) => inner.DeleteAsync(queueIds, cancellationToken);
+        public Task MarkPoisonAsync(IReadOnlyCollection<long> queueIds, string reason, CancellationToken cancellationToken) => inner.MarkPoisonAsync(queueIds, reason, cancellationToken);
+        public Task<int> CountAsync(CancellationToken cancellationToken) => inner.CountAsync(cancellationToken);
+        public Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken) => inner.GetMetricsAsync(lastSuccessfulSendTime, cancellationToken);
     }
     private sealed class BatchCountingQueue : CountQueue
     {

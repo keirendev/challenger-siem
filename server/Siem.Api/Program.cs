@@ -57,6 +57,7 @@ builder.Services.AddScoped<SecurityAuditRepository>();
 builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<NetworkGeographyRepository>();
+builder.Services.AddScoped<NetworkActivityRepository>();
 builder.Services.AddScoped<RetentionRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<AgentLivenessMonitorRepository>();
@@ -233,6 +234,26 @@ app.MapGet("/api/v2/network/geography", async Task<IResult> (
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers.Pragma = "no-cache";
     return Results.Ok(await geography.GetAsync(query, cancellationToken));
+});
+
+app.MapGet("/api/v2/network/activity", async Task<IResult> (
+    HttpContext context,
+    NetworkActivityRepository activity,
+    TokenService tokens,
+    IOptions<TrafficMapOptions> trafficMap,
+    CancellationToken cancellationToken) =>
+{
+    if (!tokens.HasServiceAccess(context)) return ServiceAccessFailure(context);
+    var query = NetworkActivityQuery.FromQuery(context.Request.Query);
+    if (query.ValidationErrors.Count > 0)
+    {
+        return Results.ValidationProblem(query.ValidationErrors
+            .GroupBy(item => item.Field)
+            .ToDictionary(item => item.Key, item => item.Select(error => error.Message).ToArray()));
+    }
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Pragma = "no-cache";
+    return Results.Ok(await activity.SearchAsync(query, trafficMap.Value.Enabled, cancellationToken));
 });
 
 app.MapPost("/api/v2/agents/register", async Task<IResult> (

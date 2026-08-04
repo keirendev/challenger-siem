@@ -1,14 +1,18 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Challenger.Siem.Api.Configuration;
 using Challenger.Siem.Api.Detections;
 using Challenger.Siem.Contracts.V2;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
 namespace Challenger.Siem.Api.Database;
 
-public sealed class AlertRepository(NpgsqlDataSource dataSource)
+public sealed class AlertRepository(
+    NpgsqlDataSource dataSource,
+    IOptions<TrafficMapOptions>? trafficMapOptions = null)
 {
     public const int MaxEvidencePerAlert = 128;
 
@@ -243,7 +247,11 @@ public sealed class AlertRepository(NpgsqlDataSource dataSource)
 
     public async Task<IReadOnlyList<DetectionRuleMetadata>> GetRulesAsync(CancellationToken cancellationToken)
     {
-        await EnsureBuiltInRulesAsync(cancellationToken);
+        if (trafficMapOptions?.Value.ReadOnlyDatabase != true)
+        {
+            await EnsureBuiltInRulesAsync(cancellationToken);
+        }
+
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """

@@ -55,6 +55,14 @@ public sealed class ContractV2Tests
     }
 
     [Fact]
+    public void NetworkActivityFixtureValidatesAndDeserializes()
+    {
+        var json = File.ReadAllText(Path.Combine(FixturesRoot, "network-activity.synthetic.json"));
+        AssertSchemaValid("network-activity.schema.json", JsonNode.Parse(json)!);
+        Assert.NotNull(JsonSerializer.Deserialize<NetworkActivityResponse>(json, JsonOptions));
+    }
+
+    [Fact]
     public void V2RegistrationSchemaRejectsAnyNonLinuxPlatform()
     {
         var instance = JsonNode.Parse(File.ReadAllText(Path.Combine(FixturesRoot, "linux-registration.synthetic.json")))!;

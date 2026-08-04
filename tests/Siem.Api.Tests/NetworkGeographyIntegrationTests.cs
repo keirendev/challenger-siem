@@ -39,6 +39,10 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
                 agentId, hostname, "socket_changed", start.AddMinutes(10 + index), 10 + index,
                 LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff, "8.8.8.8", 10000 + index, $"/usr/bin/synthetic-client-{index}")));
         var events = socketEvents
+            .Concat(new[] { "network_flow_started", "network_flow_sample", "network_flow_closed" }
+                .Select((code, index) => Envelope(
+                    agentId, hostname, code, start.AddMinutes(20 + index), index + 1,
+                    LinuxTelemetrySourceIds.NetworkFlowSummary, "8.8.8.8")))
             .Append(Envelope(agentId, hostname, "socket_observed", start.AddMinutes(5), 5, "synthetic-unrelated-source", "1.1.1.1"))
             .ToArray();
         var stored = await repository.StoreEventsAsync(new IngestBatchRequest
@@ -48,7 +52,7 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
             SentAt = start,
             Events = events
         }, CancellationToken.None);
-        Assert.Equal(15, stored.Accepted);
+        Assert.Equal(18, stored.Accepted);
 
         var options = Options.Create(new TrafficMapOptions
         {
@@ -63,18 +67,22 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
 
         var destination = Assert.Single(result.Destinations);
         Assert.Equal("8.8.8.8", destination.DestinationIp);
-        Assert.Equal(2, destination.ConnectionObservations);
-        Assert.Equal(14, destination.LifecycleEvents);
+        Assert.Equal(5, destination.ConnectionObservations);
+        Assert.Equal(17, destination.LifecycleEvents);
         Assert.Equal(1, destination.BaselineObservations);
-        Assert.Equal(1, destination.NewObservations);
-        Assert.Equal(11, destination.ChangeEvents);
-        Assert.Equal(1, destination.DisappearanceEvents);
+        Assert.Equal(2, destination.NewObservations);
+        Assert.Equal(12, destination.ChangeEvents);
+        Assert.Equal(2, destination.DisappearanceEvents);
+        Assert.Equal(3, destination.PacketCountDelta);
+        Assert.Equal(120, destination.ByteCountDelta);
+        Assert.Contains("kernel_flow", destination.EvidenceModes);
+        Assert.Contains("outbound", destination.Directions);
         Assert.Equal(8, destination.DestinationPorts.Count);
         Assert.Equal(8, destination.ProcessImages.Count);
         Assert.Equal("disabled", destination.GeolocationStatus);
         Assert.DoesNotContain(result.Destinations, item => item.DestinationIp == "1.1.1.1");
-        Assert.Equal(14, result.Summary.MatchedLifecycleEvents);
-        Assert.Equal(2, result.Summary.ConnectionObservations);
+        Assert.Equal(17, result.Summary.MatchedLifecycleEvents);
+        Assert.Equal(5, result.Summary.ConnectionObservations);
         Assert.Equal(1, result.Summary.UniqueDestinations);
         Assert.NotNull(result.RetainedFromUtc);
         Assert.NotNull(result.FromUtc);
@@ -123,9 +131,17 @@ public sealed class NetworkGeographyIntegrationTests(IntegrationTestDatabase dat
             Normalized = new NormalizedEventFields
             {
                 Category = "network",
-                Action = code["socket_".Length..],
+                Action = code.StartsWith("socket_", StringComparison.Ordinal) ? code["socket_".Length..] : code,
                 ProcessImage = processImage,
-                Network = new() { SourceIp = "192.0.2.10", SourcePort = 50000, DestinationIp = destinationIp, DestinationPort = destinationPort, Protocol = "tcp" }
+                Network = new()
+                {
+                    SourceIp = "192.0.2.10", SourcePort = 50000, DestinationIp = destinationIp, DestinationPort = destinationPort, Protocol = "tcp",
+                    LocalIp = "192.0.2.10", LocalPort = 50000, RemoteIp = destinationIp, RemotePort = destinationPort,
+                    Direction = sourceId == LinuxTelemetrySourceIds.NetworkFlowSummary ? "outbound" : null,
+                    EvidenceMode = sourceId == LinuxTelemetrySourceIds.NetworkFlowSummary ? "kernel_flow" : "snapshot_diff",
+                    PacketCountDelta = sourceId == LinuxTelemetrySourceIds.NetworkFlowSummary ? 1 : null,
+                    ByteCountDelta = sourceId == LinuxTelemetrySourceIds.NetworkFlowSummary ? 40 : null
+                }
             },
             Raw = System.Text.Json.JsonSerializer.SerializeToElement(new { fixture = "synthetic-network-map" }),
             DataHandling = new() { RawSizeBytes = 36 }

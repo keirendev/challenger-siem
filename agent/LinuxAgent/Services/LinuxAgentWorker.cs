@@ -7,6 +7,7 @@ using Challenger.Siem.Agent.Core.Util;
 using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.KernelNetwork;
 using Challenger.Siem.LinuxAgent.L4;
 using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
@@ -24,11 +25,14 @@ public sealed class LinuxAgentWorker(
     LinuxJournalRuntime journalRuntime,
     LinuxSelfIntegrityRuntime selfIntegrityRuntime,
     LinuxPassiveTelemetryRuntime passiveTelemetryRuntime,
+    LinuxKernelNetworkRuntime kernelNetworkRuntime,
     LinuxL4TelemetryRuntime l4TelemetryRuntime,
     TimeProvider timeProvider,
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan BacklogDrainDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan IdleDrainDelay = TimeSpan.FromSeconds(5);
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly RuntimeWarningThrottle failureLog = new(timeProvider, FailureLogInterval);
     private readonly string version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
@@ -49,9 +53,11 @@ public sealed class LinuxAgentWorker(
                     var selfIntegrityHealth = selfIntegrityRuntime.Health();
                     var passiveManifest = passiveTelemetryRuntime.Manifest;
                     var passiveHealth = passiveTelemetryRuntime.Health();
+                    var kernelNetworkManifest = kernelNetworkRuntime.Manifest;
+                    var kernelNetworkHealth = kernelNetworkRuntime.Health();
                     var l4Manifest = l4TelemetryRuntime.Manifest;
                     var l4Health = l4TelemetryRuntime.Health();
-                    var allHealth = journal.Health.Concat([selfIntegrityHealth]).Concat(passiveHealth).Concat(l4Health).ToArray();
+                    var allHealth = journal.Health.Concat([selfIntegrityHealth]).Concat(passiveHealth).Concat([kernelNetworkHealth]).Concat(l4Health).ToArray();
                     await client.SendHeartbeatAsync(new HeartbeatRequest
                     {
                         AgentId = options.AgentId,
@@ -66,13 +72,13 @@ public sealed class LinuxAgentWorker(
                         ResourceMetrics = ResourceMetricsSampler.Sample(),
                         ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json"),
                         QueueMetrics = transportState.Enrich(await queue.GetMetricsAsync(transportState.LastSuccessfulSendTime, cancellationToken)),
-                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).Concat(passiveManifest).Concat(l4Manifest).ToArray(),
+                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).Concat(passiveManifest).Concat([kernelNetworkManifest]).Concat(l4Manifest).ToArray(),
                         SourceHealth = allHealth
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
                 }
-                await queueDrainer.DrainAsync(cancellationToken);
-                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                var likelyBacklog = await queueDrainer.DrainAsync(cancellationToken);
+                await Task.Delay(DrainDelay(likelyBacklog), cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
             catch (Exception ex)
@@ -85,6 +91,8 @@ public sealed class LinuxAgentWorker(
             }
         }
     }
+
+    internal static TimeSpan DrainDelay(bool likelyBacklog) => likelyBacklog ? BacklogDrainDelay : IdleDrainDelay;
 }
 
 public sealed class LinuxTransportRuntimeState
@@ -171,24 +179,28 @@ public sealed class LinuxQueueDrainer(
         selfIntegrityRuntime,
         acknowledgementObservers);
 
-    public async Task DrainAsync(CancellationToken cancellationToken)
+    public async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         var dequeued = await queue.DequeueBatchAsync(options.DrainBatchSize, cancellationToken);
-        if (dequeued.Count == 0) return;
+        if (dequeued.Count == 0) return false;
         var auditRows = 0;
         var batch = dequeued.TakeWhile(item => item.Envelope.Source != EventSources.LinuxAudit
             || ++auditRows <= MaximumAuditRowsPerBatch).ToArray();
         var ids = batch.Select(item => item.QueueId).ToArray();
-        await queue.MarkAttemptAsync(ids, cancellationToken);
         runtimeState.ObserveAttempt();
         IngestBatchResponse acknowledgement;
         try
         {
             acknowledgement = await client.SendBatchAsync(batch.Select(item => item.Envelope).ToArray(), cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
             runtimeState.ObserveFailure(TimeSpan.FromSeconds(Math.Min(300, options.Queue.MaxBackoffSeconds)));
+            await queue.MarkAttemptAsync(ids, cancellationToken);
             throw;
         }
         var acknowledgedIds = IngestAcknowledgement.AcknowledgedQueueIds(batch, acknowledgement);
@@ -247,9 +259,25 @@ public sealed class LinuxQueueDrainer(
                 catch { }
             }
         }
-        await queue.DeleteAsync(deletableIds, cancellationToken);
+        var retainedOrRejectedIds = ids.Where(id => !deletableIds.Contains(id)).ToArray();
+        if (retainedOrRejectedIds.Length > 0)
+        {
+            await queue.MarkAttemptAsync(retainedOrRejectedIds, cancellationToken);
+        }
+        try
+        {
+            await queue.DeleteAsync(deletableIds, cancellationToken);
+        }
+        catch
+        {
+            // A failed atomic delete leaves the acknowledged rows durable. Mark only
+            // that exceptional replay path so restart/retry still observes backoff.
+            await queue.MarkAttemptAsync(deletableIds, cancellationToken);
+            throw;
+        }
         if (deletableIds.Count > 0) runtimeState.ObserveSuccess();
         if (poisonableIds.Count > 0) await queue.MarkPoisonAsync(poisonableIds, "server_rejected", cancellationToken);
+        return dequeued.Count >= options.DrainBatchSize;
     }
 
     private static IReadOnlyList<ILinuxAcknowledgementObserver> BuildObservers(

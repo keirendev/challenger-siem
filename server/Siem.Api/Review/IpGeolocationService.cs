@@ -37,7 +37,7 @@ public sealed class IpGeolocationService : BackgroundService
     private readonly Channel<string> queue;
     private readonly ConcurrentDictionary<string, byte> queued = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim initialization = new(1, 1);
-    private bool initialized;
+    private volatile bool initialized;
 
     public IpGeolocationService(
         IOptions<TrafficMapOptions> options,
@@ -74,29 +74,7 @@ public sealed class IpGeolocationService : BackgroundService
 
         await EnsureInitializedAsync(cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var results = new Dictionary<string, IpGeolocationRecord>(StringComparer.Ordinal);
-        await using var connection = await OpenAsync(cancellationToken);
-        foreach (var batch in distinct.Chunk(500))
-        {
-            await using var command = connection.CreateCommand();
-            var placeholders = new List<string>(batch.Length);
-            for (var index = 0; index < batch.Length; index++)
-            {
-                var name = $"@ip{index}";
-                placeholders.Add(name);
-                command.Parameters.AddWithValue(name, batch[index]);
-            }
-            command.CommandText = $"select ip,status,latitude,longitude,city,region,country,country_code,continent,asn,organization,isp,provider,fetched_at_utc,expires_at_utc from ip_geolocation_cache where ip in ({string.Join(',', placeholders)});";
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var record = ReadRecord(reader);
-                if (record.ExpiresAtUtc > now)
-                {
-                    results[record.Ip] = record;
-                }
-            }
-        }
+        var results = await LoadCachedAsync(distinct, now, readOnly: false, cancellationToken);
 
         foreach (var ip in distinct)
         {
@@ -107,6 +85,29 @@ public sealed class IpGeolocationService : BackgroundService
                 continue;
             }
             Enqueue(ip);
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Reads only already-initialized, unexpired cache entries. This method never creates the
+    /// cache, enqueues a lookup, updates quota state, or contacts the configured provider.
+    /// It is the only geolocation read path permitted from MCP tools.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, IpGeolocationRecord>> GetCachedReadOnlyAsync(
+        IEnumerable<string> addresses,
+        CancellationToken cancellationToken)
+    {
+        var distinct = addresses.Distinct(StringComparer.Ordinal).Take(10000).ToArray();
+        if (!options.Enabled || !options.Geolocation.Enabled || !initialized || distinct.Length == 0)
+            return new Dictionary<string, IpGeolocationRecord>(StringComparer.Ordinal);
+
+        var now = timeProvider.GetUtcNow();
+        var results = await LoadCachedAsync(distinct, now, readOnly: true, cancellationToken);
+        foreach (var ip in distinct)
+        {
+            if (!results.ContainsKey(ip) && !IpAddressScopeClassifier.IsPubliclyRoutable(ip))
+                results[ip] = Unmapped(ip, now);
         }
         return results;
     }
@@ -125,7 +126,36 @@ public sealed class IpGeolocationService : BackgroundService
         }
 
         await EnsureInitializedAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
+        return await SearchInitializedCacheAsync(query, countryCode, asn, limit, readOnly: false, cancellationToken);
+    }
+
+    /// <summary>Searches only an already-initialized cache and never causes a write or provider call.</summary>
+    public Task<IReadOnlyList<string>> SearchCachedIpsReadOnlyAsync(
+        string? query,
+        string? countryCode,
+        long? asn,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (!options.Enabled || !options.Geolocation.Enabled || !initialized
+            || string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(countryCode) && !asn.HasValue)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        }
+        return SearchInitializedCacheAsync(query, countryCode, asn, limit, readOnly: true, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<string>> SearchInitializedCacheAsync(
+        string? query,
+        string? countryCode,
+        long? asn,
+        int limit,
+        bool readOnly,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = readOnly
+            ? await OpenReadOnlyAsync(cancellationToken)
+            : await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         var predicates = new List<string> { "status = 'ready'", "expires_at_utc > @now" };
         command.Parameters.AddWithValue("@now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
@@ -149,6 +179,37 @@ public sealed class IpGeolocationService : BackgroundService
         var results = new List<string>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) results.Add(reader.GetString(0));
+        return results;
+    }
+
+    private async Task<Dictionary<string, IpGeolocationRecord>> LoadCachedAsync(
+        IReadOnlyList<string> distinct,
+        DateTimeOffset now,
+        bool readOnly,
+        CancellationToken cancellationToken)
+    {
+        var results = new Dictionary<string, IpGeolocationRecord>(StringComparer.Ordinal);
+        await using var connection = readOnly
+            ? await OpenReadOnlyAsync(cancellationToken)
+            : await OpenAsync(cancellationToken);
+        foreach (var batch in distinct.Chunk(500))
+        {
+            await using var command = connection.CreateCommand();
+            var placeholders = new List<string>(batch.Length);
+            for (var index = 0; index < batch.Length; index++)
+            {
+                var name = $"@ip{index}";
+                placeholders.Add(name);
+                command.Parameters.AddWithValue(name, batch[index]);
+            }
+            command.CommandText = $"select ip,status,latitude,longitude,city,region,country,country_code,continent,asn,organization,isp,provider,fetched_at_utc,expires_at_utc from ip_geolocation_cache where ip in ({string.Join(',', placeholders)});";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var record = ReadRecord(reader);
+                if (record.ExpiresAtUtc > now) results[record.Ip] = record;
+            }
+        }
         return results;
     }
 
@@ -293,7 +354,7 @@ public sealed class IpGeolocationService : BackgroundService
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(options.Geolocation.RequestTimeoutSeconds));
         using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Challenger-SIEM", "2.5"));
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Challenger-SIEM", "2.6"));
         if (!string.IsNullOrWhiteSpace(options.Geolocation.ApiKey))
             request.Headers.TryAddWithoutValidation(options.Geolocation.ApiKeyHeader, options.Geolocation.ApiKey);
         var client = httpClientFactory.CreateClient("traffic-map-geolocation");
@@ -427,6 +488,22 @@ public sealed class IpGeolocationService : BackgroundService
             Pooling = true
         }.ToString());
         await connection.OpenAsync(cancellationToken);
+        return connection;
+    }
+
+    private async Task<SqliteConnection> OpenReadOnlyAsync(CancellationToken cancellationToken)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = cachePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Cache = SqliteCacheMode.Private,
+            Pooling = false
+        }.ToString());
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "pragma query_only = on;";
+        await command.ExecuteNonQueryAsync(cancellationToken);
         return connection;
     }
 

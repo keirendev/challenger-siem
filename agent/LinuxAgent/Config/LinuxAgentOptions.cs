@@ -2,6 +2,7 @@ using Challenger.Siem.Agent.Core.Transport;
 using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.Journal;
+using Challenger.Siem.LinuxAgent.KernelNetwork;
 
 namespace Challenger.Siem.LinuxAgent.Config;
 
@@ -22,6 +23,7 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
     public AuditOptions Audit { get; set; } = new();
     public SelfIntegrityOptions SelfIntegrity { get; set; } = new();
     public PassiveTelemetryOptions PassiveTelemetry { get; set; } = new();
+    public KernelNetworkTelemetryOptions KernelNetworkTelemetry { get; set; } = new();
     public L4TelemetryOptions L4Telemetry { get; set; } = new();
     public QueueOptions Queue { get; set; } = new();
     public StateOptions State { get; set; } = new();
@@ -96,6 +98,20 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         && IsSafePassiveTelemetryStatePath(PassiveTelemetry.StatePath)
         && (string.IsNullOrWhiteSpace(PassiveTelemetry.ApprovedPlanHash)
             || PassiveTelemetry.ApprovedPlanHash.StartsWith("sha256:", StringComparison.Ordinal));
+
+    public bool HasValidKernelNetworkTelemetryBounds() =>
+        KernelNetworkTelemetry.StartupDelaySeconds is >= 0 and <= 300
+        && KernelNetworkTelemetry.QueuePauseDepth is >= LinuxKernelNetworkConstants.MaximumRecordsPerDrain and <= 1_000_000
+        && KernelNetworkTelemetry.QueuePauseDepth <= PassiveTelemetry.QueuePauseDepth
+        && KernelNetworkTelemetry.MaxCommandLineBytes is >= 256 and <= 4096
+        && string.Equals(KernelNetworkTelemetry.SocketPath, LinuxKernelNetworkConstants.SocketPath, StringComparison.Ordinal)
+        && string.Equals(KernelNetworkTelemetry.StatePath, LinuxKernelNetworkConstants.StatePath, StringComparison.Ordinal)
+        && IsOptionalSha256(KernelNetworkTelemetry.ApprovedPlanHash)
+        && IsOptionalSha256(KernelNetworkTelemetry.ApprovedHelperSha256)
+        && IsOptionalSha256(KernelNetworkTelemetry.ApprovedSignerPublicKeySha256)
+        && (!KernelNetworkTelemetry.Enabled
+            || IsRequiredSha256(KernelNetworkTelemetry.ApprovedHelperSha256)
+                && IsRequiredSha256(KernelNetworkTelemetry.ApprovedSignerPublicKeySha256));
 
     public bool HasValidL4TelemetryBounds() =>
         L4Telemetry.StartupDelaySeconds is >= 0 and <= 300
@@ -193,6 +209,9 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
         || value.Length == 71
             && value.StartsWith("sha256:", StringComparison.Ordinal)
             && value.AsSpan(7).ToString().All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool IsRequiredSha256(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && IsOptionalSha256(value);
 }
 
 public static class LinuxDeclaredRoles
@@ -292,6 +311,19 @@ public sealed class L4TelemetryOptions
     public int MaxEventsPerScan { get; set; } = 100;
     public bool CleanupStateOnDisable { get; set; }
     public string StatePath { get; set; } = "/var/lib/challenger-siem-agent/l4-telemetry-state.json";
+}
+
+public sealed class KernelNetworkTelemetryOptions
+{
+    public bool Enabled { get; set; }
+    public string ApprovedPlanHash { get; set; } = string.Empty;
+    public string ApprovedHelperSha256 { get; set; } = string.Empty;
+    public string ApprovedSignerPublicKeySha256 { get; set; } = string.Empty;
+    public int StartupDelaySeconds { get; set; } = 30;
+    public int QueuePauseDepth { get; set; } = 20_000;
+    public int MaxCommandLineBytes { get; set; } = 4096;
+    public string SocketPath { get; set; } = LinuxKernelNetworkConstants.SocketPath;
+    public string StatePath { get; set; } = LinuxKernelNetworkConstants.StatePath;
 }
 
 public sealed class QueueOptions

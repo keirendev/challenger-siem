@@ -45,7 +45,7 @@ function Unlock({ onUnlock }: { onUnlock: (token: string) => Promise<void> }) {
         </div>
         {error && <p role="alert" className="error-message">{error}</p>}
       </form>
-      <div className="evidence-note"><strong>Evidence boundary</strong><span>Socket snapshots can miss short-lived peers and do not measure packets, bytes, or proven traffic direction.</span></div>
+      <div className="evidence-note"><strong>Evidence boundary</strong><span>Kernel summaries contain bounded headers and aggregate counters only; snapshot evidence can miss short-lived peers and does not prove direction or volume.</span></div>
     </section>
   </main>
 }
@@ -101,6 +101,8 @@ function DetailPanel({ destination, events, loadingEvents, onClose }: { destinat
       <div><span>First seen</span><strong>{formatTime(destination.first_seen_utc)}</strong></div>
       <div><span>Last seen</span><strong>{formatTime(destination.last_seen_utc)}</strong></div>
       <div><span>Geo status</span><strong>{destination.geolocation_status.replace('_', ' ')}</strong></div>
+      <div><span>Packets</span><strong>{destination.evidence_modes.includes('kernel_flow') ? formatter.format(destination.packet_count_delta) : '—'}</strong></div>
+      <div><span>SKB bytes</span><strong>{destination.evidence_modes.includes('kernel_flow') ? formatter.format(destination.byte_count_delta) : '—'}</strong></div>
     </div>
     <dl className="metadata-list">
       <div><dt>Network</dt><dd>{destination.asn ? `AS${destination.asn}` : '—'} {destination.organization || destination.isp || ''}</dd></div>
@@ -108,6 +110,8 @@ function DetailPanel({ destination, events, loadingEvents, onClose }: { destinat
       <div><dt>Protocols</dt><dd>{destination.protocols.join(', ') || '—'}</dd></div>
       <div><dt>Hosts</dt><dd>{destination.hostnames.join(', ') || '—'}</dd></div>
       <div><dt>Processes</dt><dd>{destination.process_images.join(', ') || 'Not attributed'}</dd></div>
+      <div><dt>Evidence</dt><dd>{destination.evidence_modes.join(', ').replaceAll('_', ' ') || '—'}</dd></div>
+      <div><dt>Direction</dt><dd>{destination.directions.join(', ') || 'unknown'}</dd></div>
       <div><dt>Lifecycle</dt><dd>{destination.new_observations} new · {destination.baseline_observations} baseline · {destination.change_events} changed · {destination.disappearance_events} disappeared</dd></div>
     </dl>
     <div className="event-section">
@@ -202,7 +206,7 @@ function App() {
   useEffect(() => {
     if (!selected || !token) { setEvents([]); return }
     const controller = new AbortController()
-    const values = new URLSearchParams({ destination_ip: selected.destination_ip, source_id: 'linux-network-socket-snapshot-diff', limit: '25' })
+    const values = new URLSearchParams({ destination_ip: selected.destination_ip, limit: '25' })
     const geography = new URLSearchParams(query)
     if (geography.get('from')) values.set('from', geography.get('from')!)
     if (geography.get('to')) values.set('to', geography.get('to')!)
@@ -304,7 +308,7 @@ function App() {
       </main>
 
       <footer className="evidence-footer">
-        <div><strong>{response.coverage.evidence_mode.replace('_', ' ')} evidence</strong><span>{Object.entries(response.coverage.source_status_counts).map(([key, value]) => `${value} ${key}`).join(' · ') || 'source health unavailable'}</span></div>
+        <div><strong>{response.coverage.evidence_modes.join(' + ').replaceAll('_', ' ')} evidence</strong><span>{Object.entries(response.coverage.source_status_counts).map(([key, value]) => `${value} ${key}`).join(' · ') || 'source health unavailable'}</span></div>
         <p>{response.limitations.join(' ')}</p>
         <div className="footer-warnings" role="status">
           {(response.summary.candidate_truncated || response.summary.result_truncated) && <strong>Result bounds were reached; rows are a bounded view.</strong>}

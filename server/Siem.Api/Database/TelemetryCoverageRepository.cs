@@ -14,7 +14,8 @@ public sealed class TelemetryCoverageRepository(
     SourceHealthRepository sourceHealth,
     AlertRepository alerts,
     AgentLivenessMonitorState? livenessState = null,
-    IOptions<ManagedRetentionOptions>? retentionOptions = null)
+    IOptions<ManagedRetentionOptions>? retentionOptions = null,
+    AdminRepository? admin = null)
 {
     private static readonly IReadOnlyList<string> LinuxInventorySnapshotTypes = new[]
     {
@@ -128,7 +129,10 @@ public sealed class TelemetryCoverageRepository(
         }
 
         var liveness = livenessState?.Current;
-        var retention = retentionOptions?.Value ?? new ManagedRetentionOptions();
+        var configuredRetention = retentionOptions?.Value ?? new ManagedRetentionOptions();
+        var retention = admin is null
+            ? configuredRetention
+            : await admin.GetEffectiveRetentionOptionsAsync(configuredRetention, cancellationToken);
         return new TelemetryCoverageResponse
         {
             GeneratedAt = lookbackEnd,

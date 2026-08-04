@@ -14,12 +14,17 @@ public sealed class LinuxSelfIntegrityCollector(
     ILinuxSelfIntegritySource source,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-agent-self-integrity-snapshot-v3";
+    public const string CollectorVersion = "linux-agent-self-integrity-snapshot-v4";
     public static readonly IReadOnlyList<SelfIntegrityAllowlistEntry> Allowlist =
     [
         new("agent_binary", "/opt/challenger-siem-agent/Challenger.Siem.LinuxAgent", SelfIntegrityEntryKind.HashedFile, 64 * 1024 * 1024, "agent_executable_digest", false),
         new("systemd_unit", "/etc/systemd/system/challenger-siem-agent.service", SelfIntegrityEntryKind.HashedFile, 256 * 1024, "agent_service_digest", false),
         new("process_visibility_profile", "/etc/systemd/system/challenger-siem-agent.service.d/30-process-executable-visibility.conf", SelfIntegrityEntryKind.HashedFile, 256 * 1024, "agent_process_visibility_profile_digest", false),
+        new("kernel_network_profile", "/etc/systemd/system/challenger-siem-agent.service.d/40-kernel-network.conf", SelfIntegrityEntryKind.HashedFile, 256 * 1024, "agent_kernel_network_profile_digest", false),
+        new("kernel_network_helper", "/opt/challenger-siem-agent/Challenger.Siem.EbpfHelper", SelfIntegrityEntryKind.HashedFile, 16 * 1024 * 1024, "fixed_privileged_helper_digest", false),
+        new("kernel_network_helper_unit", "/etc/systemd/system/challenger-siem-ebpf-helper.service", SelfIntegrityEntryKind.HashedFile, 256 * 1024, "privileged_helper_service_digest", false),
+        new("kernel_network_socket_unit", "/etc/systemd/system/challenger-siem-ebpf-helper.socket", SelfIntegrityEntryKind.HashedFile, 256 * 1024, "helper_ipc_socket_digest", false),
+        new("kernel_network_signing_key", "/etc/challenger-siem-agent/kernel-network-signing-key.pem", SelfIntegrityEntryKind.HashedFile, 64 * 1024, "trusted_public_key_digest", false),
         new("agent_config", "/etc/challenger-siem-agent/agentsettings.json", SelfIntegrityEntryKind.MetadataFile, 256 * 1024, "credential_bearing_metadata_only", true),
         new("config_directory", "/etc/challenger-siem-agent/", SelfIntegrityEntryKind.Directory, 0, "directory_metadata_only", false),
         new("state_directory", "/var/lib/challenger-siem-agent/", SelfIntegrityEntryKind.Directory, 0, "directory_metadata_only", false)
@@ -71,7 +76,7 @@ public sealed class LinuxSelfIntegrityCollector(
             "POSIX stat/open on ordinary local filesystems; no audit, eBPF, fanotify, inotify, IMA, kernel modules, packages, or policy changes required.",
             "Existing agent service identity. The optional process-visibility profile is integrity-monitored here; its separately approved CAP_SYS_PTRACE grant is not required by this collector.",
             "Metadata and bounded SHA-256 digests only. The credential-bearing configuration file is never content-read or hashed; no secret values or file contents are emitted.",
-            $"At most {Allowlist.Count} literal allowlist entries, three bounded content hashes, non-overlapping scans, {options.SelfIntegrity.IntervalSeconds}s cadence, {options.SelfIntegrity.ScanTimeoutSeconds}s deadline, {options.SelfIntegrity.MaxEventsPerScan} events per scan.",
+            $"At most {Allowlist.Count} literal allowlist entries and bounded content hashes, non-overlapping scans, {options.SelfIntegrity.IntervalSeconds}s cadence, {options.SelfIntegrity.ScanTimeoutSeconds}s deadline, {options.SelfIntegrity.MaxEventsPerScan} events per scan.",
             "Queue-before-collected-sequence and accepted/duplicate-before-acknowledged-sequence. Pressure pauses L3 before journal L1/L2 and emits bounded gap/drop/sample states when capacity permits.",
             $"Disable Agent:SelfIntegrity:Enabled and remove only collector state {options.SelfIntegrity.StatePath}; monitored files and host policy are untouched.",
             entries);

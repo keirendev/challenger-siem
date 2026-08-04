@@ -106,6 +106,23 @@ public sealed class NetworkGeographyTests
     }
 
     [Fact]
+    public async Task McpCacheOnlyGeolocationMethodsNeverInitializeWriteOrCallProvider()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-siem-geo-readonly-{Guid.NewGuid():N}");
+        using var http = new StubHttpClientFactory(new SequenceHandler((_, _) =>
+            throw new InvalidOperationException("The cache-only path must not call the provider.")));
+        var service = CreateService(CreateOptions(Path.Combine(root, "cache.sqlite3")), root, http, TimeProvider.System);
+
+        var records = await service.GetCachedReadOnlyAsync(["8.8.8.8"], CancellationToken.None);
+        var matches = await service.SearchCachedIpsReadOnlyAsync(null, "CN", null, 100, CancellationToken.None);
+
+        Assert.Empty(records);
+        Assert.Empty(matches);
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, http.Handler.CallCount);
+    }
+
+    [Fact]
     public async Task GeolocationCachePersistsOnlyNormalizedFieldsWithPrivateModesAndExpiry()
     {
         var root = Path.Combine(Path.GetTempPath(), $"challenger-siem-geo-{Guid.NewGuid():N}");
