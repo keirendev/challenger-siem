@@ -22,6 +22,10 @@ If destination rows exist but markers do not, review their geolocation state and
 
 Check endpoint network/TLS trust, ignored agent configuration permissions, queue/source health, journal visibility, checkpoint state, and server validation responses. Do not broaden host permissions or alter journal policy merely to make health appear green.
 
+## Linux delivery stalls after reboot or upgrade
+
+Server 2.8.3 or later resolves a boot warm-up timestamp once per agent/boot ID for each bounded ingest batch and uses the existing normalized-event JSONB index. Agent 2.8.4 or later also emits the required original-size metadata for truncated Linux Audit Framework events and repairs only the known 2.8.3 omission in memory when transmitting an already durable audit row. Preserve the queue and allow deterministic accepted/duplicate acknowledgement processing to complete; confirm validation failures stop, acknowledgement gaps converge, and oldest-row age falls. The repair must not rewrite queue/WAL/checkpoint state. Do not delete or edit durable state, merely extend the transport timeout, or treat delivery recovery as approval of a new self-integrity or policy-posture baseline.
+
 ## Coverage is degraded
 
 Inspect applicability, prerequisite evidence, observed time, continuity gaps, queue pressure, and recent events. `missing`, `stale`, `permission_denied`, `unsupported`, and `degraded` are visibility statements, not proof of safety.

@@ -82,6 +82,47 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     }
 
     [Fact]
+    public async Task BootWarmupCacheLoadsEachAgentBootOnlyOncePerBatch()
+    {
+        var cache = new BootWarmupCache();
+        var bootTime = DateTimeOffset.Parse("2026-08-06T00:00:00Z");
+        var loads = 0;
+
+        for (var index = 0; index < 100; index++)
+        {
+            var result = await cache.GetOrLoadAsync(
+                "synthetic-agent",
+                "synthetic-boot",
+                _ =>
+                {
+                    loads++;
+                    return Task.FromResult<DateTimeOffset?>(bootTime);
+                },
+                CancellationToken.None);
+            Assert.Equal(bootTime, result);
+        }
+
+        var otherBoot = await cache.GetOrLoadAsync(
+            "synthetic-agent",
+            "synthetic-other-boot",
+            _ =>
+            {
+                loads++;
+                return Task.FromResult<DateTimeOffset?>(null);
+            },
+            CancellationToken.None);
+        var cachedMissingBoot = await cache.GetOrLoadAsync(
+            "synthetic-agent",
+            "synthetic-other-boot",
+            _ => throw new InvalidOperationException("A cached missing boot must not be loaded twice."),
+            CancellationToken.None);
+
+        Assert.Null(otherBoot);
+        Assert.Null(cachedMissingBoot);
+        Assert.Equal(2, loads);
+    }
+
+    [Fact]
     public void LinuxRulesHavePositiveAndNegativeSyntheticStructuredFixtures()
     {
         var engine = new DetectionEngine();
@@ -578,6 +619,7 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     {
         var schema = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "001_linux_v2.sql"));
         var validator = File.ReadAllText(RepositoryFile("scripts", "validate-schema.sh"));
+        var alerts = File.ReadAllText(RepositoryFile("server", "Siem.Api", "Database", "AlertRepository.cs"));
         foreach (var fragment in new[]
         {
             "create table detection_rules",
@@ -591,6 +633,9 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         }
         Assert.Contains("schema_version=2", validator, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("alerts", validator, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("using gin(normalized_json)", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("normalized_json @> @boot_marker", alerts, StringComparison.Ordinal);
+        Assert.DoesNotContain("normalized_json->'labels'->>'journal.boot_id' = @boot_id", alerts, StringComparison.Ordinal);
         Assert.DoesNotContain("alter table", schema, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -661,6 +706,93 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         Assert.Equal(5, reader.GetInt32(1));
         Assert.Equal(5, reader.GetInt32(2));
         Assert.False(await reader.ReadAsync());
+    }
+
+    [PostgresFact]
+    public async Task BootServiceBatchUsesWarmupSuppressionAndDuplicateRecoveryWithinBound()
+    {
+        var connectionString = database.RequireConnectionString();
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        var agentId = $"linux-boot-batch-{Guid.NewGuid():N}";
+        const string hostname = "SYNTHETIC-LINUX-BOOT-BATCH";
+        const string bootId = "11111111111111111111111111111111";
+        await InsertLinuxAgentAsync(dataSource, agentId, hostname);
+        await StoreHealthyHeartbeatAsync(dataSource, agentId, hostname, LinuxTelemetrySourceIds.ServiceChange);
+        await EnableDetectionRuleAsync(dataSource, "persistence.service-start.linux", 2);
+
+        var bootTime = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var boot = WithBootId(
+            LinuxJournalEvent(LinuxTelemetrySourceIds.JournalL1, "boot", "boot", "success", bootTime),
+            bootId) with
+        {
+            AgentId = agentId,
+            Hostname = hostname
+        };
+        var warmupServices = Enumerable.Range(1, 99)
+            .Select(index => WithBootId(
+                LinuxJournalEvent(
+                    LinuxTelemetrySourceIds.ServiceChange,
+                    "service",
+                    "service_start",
+                    "success",
+                    bootTime.AddSeconds(index),
+                    serviceName: $"synthetic-boot-{index}.service"),
+                bootId) with
+            {
+                AgentId = agentId,
+                Hostname = hostname
+            })
+            .ToArray();
+        var postWarmup = WithBootId(
+            LinuxJournalEvent(
+                LinuxTelemetrySourceIds.ServiceChange,
+                "service",
+                "service_start",
+                "success",
+                bootTime.AddMinutes(5).AddSeconds(1),
+                serviceName: "synthetic-post-boot.service"),
+            bootId) with
+        {
+            AgentId = agentId,
+            Hostname = hostname
+        };
+        var events = new[] { boot }.Concat(warmupServices).Append(postWarmup).ToArray();
+        var batch = new IngestBatchRequest
+        {
+            AgentId = agentId,
+            BatchId = Guid.NewGuid(),
+            SentAt = bootTime,
+            Events = events
+        };
+        var eventRepository = new EventRepository(dataSource);
+        var alertRepository = new AlertRepository(dataSource);
+        var stored = await eventRepository.StoreEventsAsync(batch, CancellationToken.None);
+        Assert.Equal(events.Length, stored.Accepted);
+        var canonical = await eventRepository.LoadStoredEventsAsync(agentId, stored.AcceptedEventIds, CancellationToken.None);
+
+        using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            await alertRepository.RunLinuxDetectionsAsync(canonical, new DetectionEngine(), deadline.Token);
+        }
+
+        var duplicate = await eventRepository.StoreEventsAsync(batch, CancellationToken.None);
+        Assert.Equal(events.Length, duplicate.Duplicates);
+        var recovered = await eventRepository.LoadStoredEventsAsync(
+            agentId,
+            duplicate.AcceptedEventIds.Concat(duplicate.DuplicateEventIds),
+            CancellationToken.None);
+        using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            await alertRepository.RunLinuxDetectionsAsync(recovered, new DetectionEngine(), deadline.Token);
+        }
+
+        await using var command = dataSource.CreateCommand("""
+            select count(*)::int
+            from alerts
+            where agent_id = @agent_id and rule_id = 'persistence.service-start.linux';
+            """);
+        command.Parameters.AddWithValue("agent_id", agentId);
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
     }
 
     [PostgresFact]
@@ -1065,6 +1197,18 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
 
         return envelope with { Normalized = envelope.Normalized! with { Labels = labels } };
     }
+
+    private static EventEnvelope WithBootId(EventEnvelope envelope, string bootId) =>
+        envelope with
+        {
+            Normalized = envelope.Normalized! with
+            {
+                Labels = new Dictionary<string, string>(envelope.Normalized.Labels, StringComparer.Ordinal)
+                {
+                    ["journal.boot_id"] = bootId
+                }
+            }
+        };
 
     private static EventEnvelope LinuxJournalEvent(
         string sourceId,
