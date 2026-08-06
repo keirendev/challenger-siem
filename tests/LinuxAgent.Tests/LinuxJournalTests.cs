@@ -829,6 +829,40 @@ public sealed class LinuxJournalTests
     }
 
     [Fact]
+    public void LegacyQueuedAuditTruncationMetadataIsRepairedOnlyOnOutboundCopy()
+    {
+        var eventId = Guid.NewGuid();
+        var legacy = new EventEnvelope
+        {
+            EventId = eventId,
+            Source = EventSources.LinuxAudit,
+            SourceId = LinuxTelemetrySourceIds.AuditFramework,
+            DataHandling = new DataHandlingMetadata
+            {
+                RawSizeBytes = 1377,
+                TruncationApplied = true,
+                TruncatedFields = ["raw.fields"]
+            }
+        };
+
+        var repaired = LinuxQueueDrainer.PrepareForTransport(legacy);
+
+        Assert.NotSame(legacy, repaired);
+        Assert.Equal(eventId, repaired.EventId);
+        Assert.Null(legacy.DataHandling!.OriginalSizeBytes);
+        Assert.Equal(1378, repaired.DataHandling!.OriginalSizeBytes);
+
+        var modern = legacy with
+        {
+            DataHandling = legacy.DataHandling with { OriginalSizeBytes = 2000 }
+        };
+        Assert.Same(modern, LinuxQueueDrainer.PrepareForTransport(modern));
+
+        var unrelated = legacy with { Source = EventSources.LinuxJournal };
+        Assert.Same(unrelated, LinuxQueueDrainer.PrepareForTransport(unrelated));
+    }
+
+    [Fact]
     public async Task FullDeliveryBatchUsesBoundedBacklogPacingUntilQueueIsCaughtUp()
     {
         using var temporary = new TemporaryPaths();

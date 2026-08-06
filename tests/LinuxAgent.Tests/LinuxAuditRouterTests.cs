@@ -90,6 +90,29 @@ public sealed class LinuxAuditRouterTests
     }
 
     [Fact]
+    public async Task TruncatedAuditEnvelopeDeclaresOriginalSizeGreaterThanRetainedRaw()
+    {
+        using var state = new TemporaryAuditState();
+        var options = Options(enabled: true);
+        var router = Router(options, state, new MutableTimeProvider(Now), new LinuxAuditRouterRuntime());
+        var longExecutable = "/usr/bin/" + new string('x', 600);
+
+        var pending = await router.RouteAsync(Record("truncated-one", Now, "SYSCALL",
+            $"type=SYSCALL msg=audit(1785542400.000:71) arch=c000003e syscall=59 success=yes pid=4242 ppid=41 uid=1001 auid=1001 exe=\"{longExecutable}\""),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default);
+        Assert.Equal(LinuxAuditRouteKind.Pending, pending.Kind);
+        var envelope = Assert.Single((await router.RouteAsync(Record("truncated-two", Now.AddMilliseconds(1), "EOE",
+            "type=EOE msg=audit(1785542400.000:71)"),
+            "synthetic-agent", "SYNTHETIC-LINUX-01", default)).Events);
+
+        var handling = Assert.IsType<DataHandlingMetadata>(envelope.DataHandling);
+        Assert.True(handling.TruncationApplied);
+        Assert.Equal(["raw.fields"], handling.TruncatedFields);
+        Assert.NotNull(handling.OriginalSizeBytes);
+        Assert.True(handling.OriginalSizeBytes > handling.RawSizeBytes);
+    }
+
+    [Fact]
     public async Task SharedJournalV2PreservesBroaderScopeAndRoutesTaggedPathEvidence()
     {
         using var state = new TemporaryAuditState();

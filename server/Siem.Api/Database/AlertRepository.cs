@@ -360,6 +360,7 @@ public sealed class AlertRepository(
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var disabledRules = await LoadDisabledDetectionRulesAsync(connection, cancellationToken);
+        var bootWarmupCache = new BootWarmupCache();
         foreach (var group in accepted.GroupBy(envelope => envelope.AgentId, StringComparer.Ordinal))
         {
             var sourceHealth = await LoadDetectionSourceHealthAsync(connection, group.Key, cancellationToken);
@@ -372,7 +373,7 @@ public sealed class AlertRepository(
                         continue;
                     }
 
-                    var evidence = await ResolveEvidenceAsync(connection, envelope, evaluation.Rule, cancellationToken);
+                    var evidence = await ResolveEvidenceAsync(connection, envelope, evaluation.Rule, bootWarmupCache, cancellationToken);
                     if (evidence.EventIds.Count == 0)
                     {
                         continue;
@@ -459,11 +460,12 @@ public sealed class AlertRepository(
         NpgsqlConnection connection,
         EventEnvelope envelope,
         DetectionRuleMetadata rule,
+        BootWarmupCache bootWarmupCache,
         CancellationToken cancellationToken)
     {
         if (rule.RuleId == "persistence.service-start.linux"
             && !string.Equals(envelope.Normalized?.Action, "service_failure", StringComparison.OrdinalIgnoreCase)
-            && await IsWithinBootWarmupAsync(connection, envelope, cancellationToken))
+            && await IsWithinBootWarmupAsync(connection, envelope, bootWarmupCache, cancellationToken))
             return new(Array.Empty<Guid>(), false);
         if (rule.RuleId == "persistence.scheduler-activity.linux"
             && string.Equals(envelope.Normalized?.Action, "timer_trigger", StringComparison.OrdinalIgnoreCase))
@@ -483,31 +485,53 @@ public sealed class AlertRepository(
     private static async Task<bool> IsWithinBootWarmupAsync(
         NpgsqlConnection connection,
         EventEnvelope envelope,
+        BootWarmupCache bootWarmupCache,
         CancellationToken cancellationToken)
     {
         var bootId = envelope.Normalized?.Labels.GetValueOrDefault("journal.boot_id");
         if (string.IsNullOrWhiteSpace(bootId)) return false;
+        var bootTime = await bootWarmupCache.GetOrLoadAsync(
+            envelope.AgentId,
+            bootId,
+            token => LoadBootTimeAsync(connection, envelope.AgentId, bootId, token),
+            cancellationToken);
+        return bootTime.HasValue
+            && envelope.EventTime >= bootTime.Value
+            && envelope.EventTime - bootTime.Value <= TimeSpan.FromMinutes(5);
+    }
+
+    private static async Task<DateTimeOffset?> LoadBootTimeAsync(
+        NpgsqlConnection connection,
+        string agentId,
+        string bootId,
+        CancellationToken cancellationToken)
+    {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            select min(event_time)
+            select event_time
             from events
             where agent_id = @agent_id
               and event_category = 'boot'
-              and normalized_json->'labels'->>'journal.boot_id' = @boot_id
-              and event_time <= @event_time;
+              and normalized_json @> @boot_marker
+            order by event_time asc
+            limit 1;
             """;
-        command.Parameters.AddWithValue("agent_id", envelope.AgentId);
-        command.Parameters.AddWithValue("boot_id", bootId);
-        command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
+        command.Parameters.AddWithValue("agent_id", agentId);
+        Jsonb.Add(command, "boot_marker", new
+        {
+            labels = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["journal.boot_id"] = bootId
+            }
+        });
         var value = await command.ExecuteScalarAsync(cancellationToken);
-        if (value is null or DBNull) return false;
-        var bootTime = value switch
+        if (value is null or DBNull) return null;
+        return value switch
         {
             DateTimeOffset dto => dto.ToUniversalTime(),
             DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
-            _ => envelope.EventTime.AddHours(-1)
+            _ => null
         };
-        return envelope.EventTime >= bootTime && envelope.EventTime - bootTime <= TimeSpan.FromMinutes(5);
     }
 
     private static async Task<DetectionEvidenceResolution> ResolveTimerEvidenceAsync(
@@ -1124,5 +1148,29 @@ public sealed class AlertRepository(
             DateTime dateTime => new DateTimeOffset(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)),
             _ => null
         };
+    }
+}
+
+internal readonly record struct BootWarmupKey(string AgentId, string BootId);
+
+internal sealed class BootWarmupCache
+{
+    private readonly Dictionary<BootWarmupKey, DateTimeOffset?> bootTimes = new();
+
+    public async Task<DateTimeOffset?> GetOrLoadAsync(
+        string agentId,
+        string bootId,
+        Func<CancellationToken, Task<DateTimeOffset?>> loader,
+        CancellationToken cancellationToken)
+    {
+        var key = new BootWarmupKey(agentId, bootId);
+        if (bootTimes.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var loaded = await loader(cancellationToken);
+        bootTimes.Add(key, loaded);
+        return loaded;
     }
 }

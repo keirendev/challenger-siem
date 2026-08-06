@@ -658,7 +658,8 @@ public sealed class LinuxAuditRouter : ILinuxAcknowledgementObserver
                 RedactionApplied = group.Redacted,
                 RedactedFields = group.Redacted ? ["raw.fields"] : [],
                 TruncationApplied = group.Truncated,
-                TruncatedFields = group.Truncated ? ["raw.fields"] : []
+                TruncatedFields = group.Truncated ? ["raw.fields"] : [],
+                OriginalSizeBytes = group.Truncated ? rawBytes + 1 : null
             }
         };
         return withoutId with { EventId = DeterministicEventIdentity.ComputeSha256Uuid(withoutId) };

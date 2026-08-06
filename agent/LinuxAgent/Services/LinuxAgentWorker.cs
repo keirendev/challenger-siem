@@ -187,11 +187,12 @@ public sealed class LinuxQueueDrainer(
         var batch = dequeued.TakeWhile(item => item.Envelope.Source != EventSources.LinuxAudit
             || ++auditRows <= MaximumAuditRowsPerBatch).ToArray();
         var ids = batch.Select(item => item.QueueId).ToArray();
+        var outboundEvents = batch.Select(item => PrepareForTransport(item.Envelope)).ToArray();
         runtimeState.ObserveAttempt();
         IngestBatchResponse acknowledgement;
         try
         {
-            acknowledgement = await client.SendBatchAsync(batch.Select(item => item.Envelope).ToArray(), cancellationToken);
+            acknowledgement = await client.SendBatchAsync(outboundEvents, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -278,6 +279,24 @@ public sealed class LinuxQueueDrainer(
         if (deletableIds.Count > 0) runtimeState.ObserveSuccess();
         if (poisonableIds.Count > 0) await queue.MarkPoisonAsync(poisonableIds, "server_rejected", cancellationToken);
         return dequeued.Count >= options.DrainBatchSize;
+    }
+
+    internal static EventEnvelope PrepareForTransport(EventEnvelope envelope)
+    {
+        var handling = envelope.DataHandling;
+        if (!string.Equals(envelope.Source, EventSources.LinuxAudit, StringComparison.Ordinal)
+            || !string.Equals(envelope.SourceId, LinuxTelemetrySourceIds.AuditFramework, StringComparison.Ordinal)
+            || handling is not { TruncationApplied: true, OriginalSizeBytes: null }
+            || handling.TruncatedFields is not { Count: > 0 }
+            || handling.RawSizeBytes is < 0 or > ContractLimits.RawPayloadMaxUtf8Bytes)
+        {
+            return envelope;
+        }
+
+        return envelope with
+        {
+            DataHandling = handling with { OriginalSizeBytes = handling.RawSizeBytes + 1 }
+        };
     }
 
     private static IReadOnlyList<ILinuxAcknowledgementObserver> BuildObservers(
