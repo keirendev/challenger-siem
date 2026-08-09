@@ -33,8 +33,10 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("detach", first.Rollback, StringComparison.Ordinal);
         Assert.Contains("100 events", first.Bounds, StringComparison.Ordinal);
         Assert.Contains("1048576 bytes", first.Bounds, StringComparison.Ordinal);
-        Assert.Equal("linux-network-flow-summary-v2", first.CollectorVersion);
-        Assert.Equal("challenger-siem-ebpf-helper-v1", first.HelperVersion);
+        Assert.Equal("linux-network-flow-summary-v3", first.CollectorVersion);
+        Assert.Equal("challenger-siem-ebpf-helper-v2", first.HelperVersion);
+        Assert.Contains("kernel pre-drain every 1 second", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("5000 per 10-second health interval", first.Bounds, StringComparison.Ordinal);
 
         options.KernelNetworkTelemetry.ApprovedPlanHash = first.PlanHash;
         Assert.True(LinuxKernelNetworkPlanBuilder.Build(options).ApprovalHashMatches);
@@ -86,6 +88,10 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("O_NONBLOCK", helper, StringComparison.Ordinal);
         Assert.Contains("\\\"process_name\\\":\\\"%s\\\"", helper, StringComparison.Ordinal);
         Assert.Contains("bpf_map_lookup_and_delete_elem", helper, StringComparison.Ordinal);
+        Assert.Contains("collect_flows(flow_fd, health_fd, &collected)", helper, StringComparison.Ordinal);
+        Assert.Contains("CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS * 1000", helper, StringComparison.Ordinal);
+        Assert.Contains("CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL", helper, StringComparison.Ordinal);
+        Assert.Contains("kernel_drain_backlog", helper, StringComparison.Ordinal);
         Assert.Contains("send_health", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("SOCK_RAW", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("AF_PACKET", helper, StringComparison.Ordinal);
@@ -150,6 +156,190 @@ public sealed class LinuxKernelNetworkTests
             Assert.False(runtime.Snapshot().ActiveLoss);
             Assert.Equal((ulong)1, runtime.Snapshot().ParseFailures);
             Assert.Equal(SourceHealthStatuses.Healthy, runtime.Health().Status);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HelperCountersRemainMonotonicAcrossLegacyMigrationAndHelperEpochs()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var options = CreateOptions();
+            options.KernelNetworkTelemetry.Enabled = true;
+            options.KernelNetworkTelemetry.ApprovedPlanHash = LinuxKernelNetworkPlanBuilder.Build(options).PlanHash;
+            var store = new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json"));
+            var firstEpoch = new string('1', 32);
+            await store.WriteAsync(new LinuxKernelNetworkState
+            {
+                LastHelperEpoch = firstEpoch,
+                LastHelperSequence = 10,
+                ParseFailures = 1,
+                FlowMapFull = 3,
+                OwnerMisses = 4,
+                RingLosses = 2,
+                IpcSendFailures = 1
+            }, default);
+
+            var runtime = new LinuxKernelNetworkRuntime(Options.Create(options), store, TimeProvider.System);
+            await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = firstEpoch, Sequence = 11 }, default);
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = firstEpoch,
+                Sequence = 11,
+                ParseFailures = 1,
+                FlowMapFull = 3,
+                OwnerMisses = 4,
+                RingLosses = 2,
+                IpcSendFailures = 1
+            }, default);
+            Assert.Equal((ulong)3, runtime.Snapshot().FlowMapFull);
+
+            var secondEpoch = new string('2', 32);
+            await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = secondEpoch, Sequence = 1 }, default);
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame { Epoch = secondEpoch, Sequence = 1 }, default);
+            Assert.Equal((ulong)3, runtime.Snapshot().FlowMapFull);
+            Assert.Equal((ulong)1, runtime.Snapshot().ParseFailures);
+            Assert.Equal((ulong)4, runtime.Snapshot().OwnerMisses);
+            Assert.Equal((ulong)2, runtime.Snapshot().RingLosses);
+            Assert.Equal((ulong)1, runtime.Snapshot().IpcSendFailures);
+
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = secondEpoch,
+                Sequence = 2,
+                ParseFailures = 2,
+                FlowMapFull = 1,
+                KernelFlowMapUpdateFailures = 1,
+                OwnerMisses = 3,
+                RingLosses = 1,
+                KernelDrainCappedTicks = 2,
+                KernelDrainBacklogTicks = 1
+            }, default);
+            Assert.Equal((ulong)4, runtime.Snapshot().FlowMapFull);
+            Assert.Equal((ulong)1, runtime.Snapshot().KernelFlowMapUpdateFailures);
+            Assert.Equal((ulong)3, runtime.Snapshot().ParseFailures);
+            Assert.Equal((ulong)7, runtime.Snapshot().OwnerMisses);
+            Assert.Equal((ulong)3, runtime.Snapshot().RingLosses);
+            Assert.Equal((ulong)2, runtime.Snapshot().KernelDrainCappedTicks);
+            Assert.Equal((ulong)1, runtime.Snapshot().KernelDrainBacklogTicks);
+
+            var thirdEpoch = new string('3', 32);
+            await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = thirdEpoch, Sequence = 1 }, default);
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = thirdEpoch,
+                Sequence = 1,
+                FlowMapFull = 1,
+                TrackedFlowTableFull = 1,
+                OwnerMisses = 1,
+                IpcSendFailures = 1,
+                KernelDrainCappedTicks = 1
+            }, default);
+            var snapshot = runtime.Snapshot();
+            Assert.Equal((ulong)5, snapshot.FlowMapFull);
+            Assert.Equal((ulong)1, snapshot.KernelFlowMapUpdateFailures);
+            Assert.Equal((ulong)1, snapshot.TrackedFlowTableFull);
+            Assert.Equal((ulong)8, snapshot.OwnerMisses);
+            Assert.Equal((ulong)2, snapshot.IpcSendFailures);
+            Assert.Equal((ulong)3, snapshot.KernelDrainCappedTicks);
+            Assert.Equal((ulong)1, snapshot.KernelDrainBacklogTicks);
+            Assert.Equal(thirdEpoch, snapshot.CounterHelperEpoch);
+
+            var persisted = await store.ReadAsync(default);
+            Assert.Equal((ulong)5, persisted.FlowMapFull);
+            Assert.Equal((ulong)1, persisted.RawFlowMapFull);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task KernelDrainBacklogDegradesAndDelaysLossRecoveryWithoutInventingLoss()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var options = CreateOptions();
+            options.KernelNetworkTelemetry.Enabled = true;
+            options.KernelNetworkTelemetry.ApprovedPlanHash = LinuxKernelNetworkPlanBuilder.Build(options).PlanHash;
+            var runtime = new LinuxKernelNetworkRuntime(
+                Options.Create(options),
+                new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json")),
+                new FixedTimeProvider(DateTimeOffset.Parse("2026-08-09T08:00:00Z")));
+            var epoch = new string('7', 32);
+            await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = epoch, Sequence = 1 }, default);
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = epoch,
+                Sequence = 1,
+                FlowMapFull = 1,
+                KernelFlowMapUpdateFailures = 1,
+                KernelDrainRecords = 5_000,
+                KernelDrainHighWater = 5_000,
+                KernelDrainCappedTicks = 10
+            }, default);
+
+            Assert.True(runtime.Snapshot().ActiveLoss);
+            Assert.Equal("kernel_flow_map_update_failed", runtime.Health().ErrorCode);
+            Assert.Equal("1", runtime.Health().Details!["kernel_flow_map_update_failures"]);
+
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = epoch,
+                Sequence = 2,
+                FlowMapFull = 1,
+                KernelFlowMapUpdateFailures = 1,
+                KernelDrainRecords = 500,
+                KernelDrainHighWater = 5_000,
+                KernelDrainCappedTicks = 11,
+                KernelDrainBacklogTicks = 1,
+                KernelDrainBacklog = true
+            }, default);
+            Assert.True(runtime.Snapshot().ActiveLoss);
+            Assert.Equal(0, runtime.Snapshot().CleanHealthFrames);
+            Assert.Equal("kernel_flow_map_update_failed", runtime.Health().ErrorCode);
+            Assert.Equal("true", runtime.Health().Details!["kernel_drain_backlog"]);
+
+            for (ulong sequence = 3; sequence <= 5; sequence++)
+                await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+                {
+                    Epoch = epoch,
+                    Sequence = sequence,
+                    FlowMapFull = 1,
+                    KernelFlowMapUpdateFailures = 1,
+                    KernelDrainHighWater = 5_000,
+                    KernelDrainCappedTicks = 11,
+                    KernelDrainBacklogTicks = 1
+                }, default);
+
+            Assert.False(runtime.Snapshot().ActiveLoss);
+            Assert.Equal(SourceHealthStatuses.Healthy, runtime.Health().Status);
+
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = epoch,
+                Sequence = 6,
+                FlowMapFull = 1,
+                KernelFlowMapUpdateFailures = 1,
+                KernelDrainRecords = 500,
+                KernelDrainHighWater = 5_000,
+                KernelDrainCappedTicks = 12,
+                KernelDrainBacklogTicks = 2,
+                KernelDrainBacklog = true
+            }, default);
+            Assert.False(runtime.Snapshot().ActiveLoss);
+            Assert.False(runtime.Health().GapDetected);
+            Assert.Equal(SourceHealthStatuses.Degraded, runtime.Health().Status);
+            Assert.Equal("kernel_flow_map_drain_backlog", runtime.Health().ErrorCode);
         }
         finally
         {
@@ -531,6 +721,31 @@ public sealed class LinuxKernelNetworkTests
     }
 
     [Fact]
+    public void IpcHealthFramesEnforceSplitLossAndKernelDrainBounds()
+    {
+        var hello = LinuxKernelNetworkService.ParseFrame(HelloJson(1));
+        LinuxKernelNetworkService.ValidateHello(hello);
+        var legacyHello = LinuxKernelNetworkService.ParseFrame(
+            HelloJson(1).Replace(",\"kernel_drain_interval_seconds\":1,\"max_kernel_records_per_drain\":500,\"max_kernel_records_per_health_interval\":5000", string.Empty, StringComparison.Ordinal));
+        Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHello(legacyHello));
+
+        var health = LinuxKernelNetworkService.ParseFrame(HealthJson(1));
+        LinuxKernelNetworkService.ValidateHealth(health);
+
+        var inconsistentLoss = LinuxKernelNetworkService.ParseFrame(
+            HealthJson(1).Replace("\"flow_map_full\":0", "\"flow_map_full\":1", StringComparison.Ordinal));
+        Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(inconsistentLoss));
+
+        var oversizedDrain = LinuxKernelNetworkService.ParseFrame(
+            HealthJson(1).Replace("\"kernel_drain_records\":0", "\"kernel_drain_records\":5001", StringComparison.Ordinal));
+        Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(oversizedDrain));
+
+        var uncountedBacklog = LinuxKernelNetworkService.ParseFrame(
+            HealthJson(1).Replace("\"kernel_drain_backlog\":false", "\"kernel_drain_backlog\":true", StringComparison.Ordinal));
+        Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(uncountedBacklog));
+    }
+
+    [Fact]
     public void ProcessEnrichmentIsBoundedAndRedactsCredentialShapedArguments()
     {
         const string secret = "synthetic-private-value";
@@ -592,11 +807,15 @@ public sealed class LinuxKernelNetworkTests
         new(count, count * 1024L, count, 0, 1, 2);
 
     private static string FlowJson(string eventCode, ulong packetCount = 1, ulong sequence = 1) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v1","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
         """;
 
     private static string HealthJson(ulong sequence) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v1","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"health","payload_capture":false,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"health","payload_capture":false,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0,"kernel_drain_records":0,"kernel_drain_high_water":0,"kernel_drain_capped_ticks":0,"kernel_drain_backlog_ticks":0,"kernel_drain_backlog":false}
+        """;
+
+    private static string HelloJson(ulong sequence) => $$"""
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"hello","payload_capture":false,"flow_capacity":16384,"owner_capacity":32768,"ring_bytes":1048576,"drain_seconds":10,"max_records_per_drain":500,"kernel_drain_interval_seconds":1,"max_kernel_records_per_drain":500,"max_kernel_records_per_health_interval":5000}
         """;
 
     private static string FindRepositoryRoot()

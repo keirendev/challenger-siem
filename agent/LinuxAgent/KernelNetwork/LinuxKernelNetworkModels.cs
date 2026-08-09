@@ -4,15 +4,18 @@ namespace Challenger.Siem.LinuxAgent.KernelNetwork;
 
 public static class LinuxKernelNetworkConstants
 {
-    public const string HelperVersion = "challenger-siem-ebpf-helper-v1";
-    public const string CollectorVersion = "linux-network-flow-summary-v2";
+    public const string HelperVersion = "challenger-siem-ebpf-helper-v2";
+    public const string CollectorVersion = "linux-network-flow-summary-v3";
     public const string SocketPath = "/run/challenger-siem-ebpf/challenger-siem-ebpf.sock";
     public const string StatePath = "/var/lib/challenger-siem-agent/kernel-network-state.json";
     public const int MaximumFrameBytes = 16_384;
     public const int FlowMapEntries = 16_384;
     public const int OwnerMapEntries = 32_768;
     public const int RingBytes = 1024 * 1024;
+    public const int HealthIntervalSeconds = 10;
+    public const int KernelDrainIntervalSeconds = 1;
     public const int MaximumRecordsPerDrain = 500;
+    public const int MaximumKernelRecordsPerHealthInterval = 5_000;
     public const int MaximumDurableBatchEvents = 100;
     public const int MaximumDurableBatchBytes = 1024 * 1024;
 }
@@ -32,6 +35,9 @@ public sealed record LinuxKernelNetworkFrame
     [JsonPropertyName("ring_bytes")] public int RingBytes { get; init; }
     [JsonPropertyName("drain_seconds")] public int DrainSeconds { get; init; }
     [JsonPropertyName("max_records_per_drain")] public int MaxRecordsPerDrain { get; init; }
+    [JsonPropertyName("kernel_drain_interval_seconds")] public int KernelDrainIntervalSeconds { get; init; }
+    [JsonPropertyName("max_kernel_records_per_drain")] public int MaxKernelRecordsPerDrain { get; init; }
+    [JsonPropertyName("max_kernel_records_per_health_interval")] public int MaxKernelRecordsPerHealthInterval { get; init; }
     [JsonPropertyName("family")] public int Family { get; init; }
     [JsonPropertyName("protocol")] public string? Protocol { get; init; }
     [JsonPropertyName("direction")] public string? Direction { get; init; }
@@ -51,9 +57,16 @@ public sealed record LinuxKernelNetworkFrame
     [JsonPropertyName("parse_failures")] public ulong ParseFailures { get; init; }
     [JsonPropertyName("unsupported_headers")] public ulong UnsupportedHeaders { get; init; }
     [JsonPropertyName("flow_map_full")] public ulong FlowMapFull { get; init; }
+    [JsonPropertyName("kernel_flow_map_update_failures")] public ulong KernelFlowMapUpdateFailures { get; init; }
+    [JsonPropertyName("tracked_flow_table_full")] public ulong TrackedFlowTableFull { get; init; }
     [JsonPropertyName("owner_misses")] public ulong OwnerMisses { get; init; }
     [JsonPropertyName("ring_losses")] public ulong RingLosses { get; init; }
     [JsonPropertyName("ipc_send_failures")] public ulong IpcSendFailures { get; init; }
+    [JsonPropertyName("kernel_drain_records")] public ulong KernelDrainRecords { get; init; }
+    [JsonPropertyName("kernel_drain_high_water")] public ulong KernelDrainHighWater { get; init; }
+    [JsonPropertyName("kernel_drain_capped_ticks")] public ulong KernelDrainCappedTicks { get; init; }
+    [JsonPropertyName("kernel_drain_backlog_ticks")] public ulong KernelDrainBacklogTicks { get; init; }
+    [JsonPropertyName("kernel_drain_backlog")] public bool KernelDrainBacklog { get; init; }
 }
 
 public sealed record LinuxKernelNetworkPendingFrame(
@@ -103,12 +116,30 @@ public sealed record LinuxKernelNetworkState
     [JsonPropertyName("parse_failures")] public ulong ParseFailures { get; init; }
     [JsonPropertyName("unsupported_headers")] public ulong UnsupportedHeaders { get; init; }
     [JsonPropertyName("flow_map_full")] public ulong FlowMapFull { get; init; }
+    [JsonPropertyName("kernel_flow_map_update_failures")] public ulong KernelFlowMapUpdateFailures { get; init; }
+    [JsonPropertyName("tracked_flow_table_full")] public ulong TrackedFlowTableFull { get; init; }
     [JsonPropertyName("owner_misses")] public ulong OwnerMisses { get; init; }
     [JsonPropertyName("ring_losses")] public ulong RingLosses { get; init; }
     [JsonPropertyName("ipc_send_failures")] public ulong IpcSendFailures { get; init; }
+    [JsonPropertyName("counter_helper_epoch")] public string? CounterHelperEpoch { get; init; }
+    [JsonPropertyName("raw_parse_failures")] public ulong? RawParseFailures { get; init; }
+    [JsonPropertyName("raw_unsupported_headers")] public ulong? RawUnsupportedHeaders { get; init; }
+    [JsonPropertyName("raw_flow_map_full")] public ulong? RawFlowMapFull { get; init; }
+    [JsonPropertyName("raw_kernel_flow_map_update_failures")] public ulong? RawKernelFlowMapUpdateFailures { get; init; }
+    [JsonPropertyName("raw_tracked_flow_table_full")] public ulong? RawTrackedFlowTableFull { get; init; }
+    [JsonPropertyName("raw_owner_misses")] public ulong? RawOwnerMisses { get; init; }
+    [JsonPropertyName("raw_ring_losses")] public ulong? RawRingLosses { get; init; }
+    [JsonPropertyName("raw_ipc_send_failures")] public ulong? RawIpcSendFailures { get; init; }
+    [JsonPropertyName("raw_kernel_drain_capped_ticks")] public ulong? RawKernelDrainCappedTicks { get; init; }
+    [JsonPropertyName("raw_kernel_drain_backlog_ticks")] public ulong? RawKernelDrainBacklogTicks { get; init; }
     [JsonPropertyName("helper_restart_count")] public long HelperRestartCount { get; init; }
     [JsonPropertyName("helper_connection_failure_count")] public long HelperConnectionFailureCount { get; init; }
     [JsonPropertyName("queue_pressure_count")] public long QueuePressureCount { get; init; }
+    [JsonPropertyName("last_kernel_drain_records")] public ulong LastKernelDrainRecords { get; init; }
+    [JsonPropertyName("high_water_kernel_drain_records")] public ulong HighWaterKernelDrainRecords { get; init; }
+    [JsonPropertyName("kernel_drain_capped_ticks")] public ulong KernelDrainCappedTicks { get; init; }
+    [JsonPropertyName("kernel_drain_backlog_ticks")] public ulong KernelDrainBacklogTicks { get; init; }
+    [JsonPropertyName("kernel_drain_backlog")] public bool KernelDrainBacklog { get; init; }
     [JsonPropertyName("last_drain_record_count")] public int LastDrainRecordCount { get; init; }
     [JsonPropertyName("high_water_drain_record_count")] public int HighWaterDrainRecordCount { get; init; }
     [JsonPropertyName("last_drain_serialized_bytes")] public long LastDrainSerializedBytes { get; init; }

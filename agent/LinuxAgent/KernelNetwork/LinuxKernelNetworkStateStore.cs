@@ -37,9 +37,24 @@ public sealed class LinuxKernelNetworkStateStore(string path)
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
             var state = await JsonSerializer.DeserializeAsync<LinuxKernelNetworkState>(stream, JsonDefaults.Options, cancellationToken);
-            return state is { SchemaVersion: 1 or 2, NextSequence: > 0 }
+            if (state is not { SchemaVersion: 1 or 2, NextSequence: > 0 }) return new();
+            return state.CounterHelperEpoch is not null || state.LastHelperEpoch is null
                 ? state with { SchemaVersion = 2 }
-                : new();
+                : state with
+                {
+                    SchemaVersion = 2,
+                    CounterHelperEpoch = state.LastHelperEpoch,
+                    RawParseFailures = state.ParseFailures,
+                    RawUnsupportedHeaders = state.UnsupportedHeaders,
+                    RawFlowMapFull = state.FlowMapFull,
+                    RawKernelFlowMapUpdateFailures = state.KernelFlowMapUpdateFailures,
+                    RawTrackedFlowTableFull = state.TrackedFlowTableFull,
+                    RawOwnerMisses = state.OwnerMisses,
+                    RawRingLosses = state.RingLosses,
+                    RawIpcSendFailures = state.IpcSendFailures,
+                    RawKernelDrainCappedTicks = state.KernelDrainCappedTicks,
+                    RawKernelDrainBacklogTicks = state.KernelDrainBacklogTicks
+                };
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {

@@ -22,10 +22,11 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "challenger_network_drain.h"
 #include "challenger_network_shared.h"
 #include "challenger_network_time.h"
 
-#define HELPER_VERSION "challenger-siem-ebpf-helper-v1"
+#define HELPER_VERSION "challenger-siem-ebpf-helper-v2"
 #define DEFAULT_CGROUP "/sys/fs/cgroup"
 #define EXPECTED_CLIENT "challenger-siem"
 #define ACTIVE_SUMMARY_NS (60ULL * 1000000000ULL)
@@ -53,6 +54,12 @@ struct tracked_flow {
 
 static struct tracked_flow tracked_flows[CHALLENGER_FLOW_MAP_ENTRIES];
 static size_t tracked_cursor;
+static struct challenger_kernel_drain_diagnostics kernel_drain_diagnostics;
+
+struct collect_result {
+    uint64_t records;
+    bool capped;
+};
 
 static void handle_signal(int signal_number)
 {
@@ -231,25 +238,28 @@ static struct tracked_flow *find_tracked_flow(
         if (memcmp(&candidate->key, key, sizeof(*key)) == 0)
             return candidate;
     }
-    increment_health_counter(health_fd, CHALLENGER_COUNTER_FLOW_MAP_FULL);
+    increment_health_counter(health_fd, CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL);
     return NULL;
 }
 
 static int collect_flows(
     int flow_fd,
-    int health_fd)
+    int health_fd,
+    struct collect_result *result)
 {
-    int collected = 0;
-    for (; collected < CHALLENGER_MAX_DRAIN_RECORDS && !stopping; collected++) {
+    memset(result, 0, sizeof(*result));
+    int attempted = 0;
+    for (; attempted < CHALLENGER_MAX_DRAIN_RECORDS && !stopping; attempted++) {
         struct challenger_flow_key key = {};
         struct challenger_flow_value value = {};
         if (bpf_map_get_next_key(flow_fd, NULL, &key) != 0) {
             if (errno == ENOENT)
-                return collected;
+                return 0;
             return -1;
         }
         if (bpf_map_lookup_and_delete_elem(flow_fd, &key, &value) != 0)
             continue;
+        result->records++;
         struct tracked_flow *tracked = find_tracked_flow(&key, health_fd);
         if (!tracked)
             continue;
@@ -265,7 +275,23 @@ static int collect_flows(
         if (key.protocol == IPPROTO_TCP && (value.tcp_flags & (TCP_FIN_FLAG | TCP_RST_FLAG)) != 0)
             tracked->close_requested = true;
     }
-    return collected;
+    result->capped = attempted == CHALLENGER_MAX_DRAIN_RECORDS;
+    return 0;
+}
+
+static int flow_map_has_entries(int flow_fd)
+{
+    struct challenger_flow_key key = {};
+    if (bpf_map_get_next_key(flow_fd, NULL, &key) == 0)
+        return 1;
+    return errno == ENOENT ? 0 : -1;
+}
+
+static uint64_t aggregate_flow_loss(const uint64_t health[CHALLENGER_COUNTER_MAX])
+{
+    return challenger_saturating_add_u64(
+        health[CHALLENGER_COUNTER_FLOW_MAP_FULL],
+        health[CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL]);
 }
 
 static int send_tracked_flow(
@@ -295,6 +321,7 @@ static int send_tracked_flow(
         const char *direction = key->direction == CHALLENGER_DIRECTION_EGRESS ? "outbound"
             : key->direction == CHALLENGER_DIRECTION_INGRESS ? "inbound" : "unknown";
         const char *attribution_source = key->reserved == 1 ? "current_task" : key->reserved == 2 ? "recent_socket_owner" : "unattributed";
+        uint64_t aggregate_loss = aggregate_flow_loss(health);
         int written = snprintf(frame, sizeof(frame),
             "{\"schema_version\":1,\"helper_version\":\"%s\",\"epoch\":\"%s\",\"sequence\":%llu,"
             "\"type\":\"flow\",\"event_code\":\"%s\",\"family\":%u,\"protocol\":\"%s\",\"direction\":\"%s\","
@@ -302,6 +329,7 @@ static int send_tracked_flow(
             "\"process_id\":%u,\"user_id\":%u,\"process_name\":\"%s\",\"attribution_source\":\"%s\",\"first_seen_unix_ns\":%llu,\"last_seen_unix_ns\":%llu,"
             "\"packet_count_delta\":%llu,\"byte_count_delta\":%llu,\"tcp_flags_mask\":%u,"
             "\"parse_failures\":%llu,\"unsupported_headers\":%llu,\"flow_map_full\":%llu,"
+            "\"kernel_flow_map_update_failures\":%llu,\"tracked_flow_table_full\":%llu,"
             "\"owner_misses\":%llu,\"ring_losses\":%llu,\"ipc_send_failures\":%llu}",
             HELPER_VERSION, epoch, (unsigned long long)(*sequence), event_code, key->family, protocol, direction,
             local_address, key->local_port, remote_address, key->remote_port,
@@ -313,7 +341,9 @@ static int send_tracked_flow(
             (unsigned long long)tracked->packet_count, (unsigned long long)tracked->byte_count, tracked->tcp_flags,
             (unsigned long long)health[CHALLENGER_COUNTER_PARSE_FAILURE],
             (unsigned long long)health[CHALLENGER_COUNTER_UNSUPPORTED_HEADER],
+            (unsigned long long)aggregate_loss,
             (unsigned long long)health[CHALLENGER_COUNTER_FLOW_MAP_FULL],
+            (unsigned long long)health[CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL],
             (unsigned long long)health[CHALLENGER_COUNTER_OWNER_MISS],
             (unsigned long long)health[CHALLENGER_COUNTER_RING_LOSS],
             (unsigned long long)ipc_send_failures);
@@ -368,23 +398,40 @@ static int emit_tracked_flows(
     return emitted;
 }
 
-static int send_health(int client, int health_fd, const char *epoch, uint64_t sequence)
+static int send_health(
+    int client,
+    int health_fd,
+    const char *epoch,
+    uint64_t sequence,
+    const struct challenger_kernel_drain_diagnostics *diagnostics)
 {
-    char frame[1024] = {};
+    char frame[2048] = {};
     uint64_t health[CHALLENGER_COUNTER_MAX] = {};
     read_health(health_fd, health);
+    uint64_t aggregate_loss = aggregate_flow_loss(health);
     int written = snprintf(frame, sizeof(frame),
         "{\"schema_version\":1,\"helper_version\":\"%s\",\"epoch\":\"%s\",\"sequence\":%llu,"
         "\"type\":\"health\",\"payload_capture\":false,\"parse_failures\":%llu,"
-        "\"unsupported_headers\":%llu,\"flow_map_full\":%llu,\"owner_misses\":%llu,"
-        "\"ring_losses\":%llu,\"ipc_send_failures\":%llu}",
+        "\"unsupported_headers\":%llu,\"flow_map_full\":%llu,"
+        "\"kernel_flow_map_update_failures\":%llu,\"tracked_flow_table_full\":%llu,"
+        "\"owner_misses\":%llu,\"ring_losses\":%llu,\"ipc_send_failures\":%llu,"
+        "\"kernel_drain_records\":%llu,\"kernel_drain_high_water\":%llu,"
+        "\"kernel_drain_capped_ticks\":%llu,\"kernel_drain_backlog_ticks\":%llu,"
+        "\"kernel_drain_backlog\":%s}",
         HELPER_VERSION, epoch, (unsigned long long)sequence,
         (unsigned long long)health[CHALLENGER_COUNTER_PARSE_FAILURE],
         (unsigned long long)health[CHALLENGER_COUNTER_UNSUPPORTED_HEADER],
+        (unsigned long long)aggregate_loss,
         (unsigned long long)health[CHALLENGER_COUNTER_FLOW_MAP_FULL],
+        (unsigned long long)health[CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL],
         (unsigned long long)health[CHALLENGER_COUNTER_OWNER_MISS],
         (unsigned long long)health[CHALLENGER_COUNTER_RING_LOSS],
-        (unsigned long long)ipc_send_failures);
+        (unsigned long long)ipc_send_failures,
+        (unsigned long long)diagnostics->interval_records,
+        (unsigned long long)diagnostics->high_water_interval_records,
+        (unsigned long long)diagnostics->capped_ticks,
+        (unsigned long long)diagnostics->backlog_ticks,
+        diagnostics->interval_backlog ? "true" : "false");
     if (written <= 0 || written >= (int)sizeof(frame)) {
         errno = EMSGSIZE;
         return -1;
@@ -398,9 +445,13 @@ static int send_hello(int client, const char *epoch, uint64_t sequence)
     snprintf(frame, sizeof(frame),
         "{\"schema_version\":1,\"helper_version\":\"%s\",\"epoch\":\"%s\",\"sequence\":%llu,"
         "\"type\":\"hello\",\"payload_capture\":false,\"flow_capacity\":%d,\"owner_capacity\":%d,"
-        "\"ring_bytes\":%d,\"drain_seconds\":10,\"max_records_per_drain\":%d}",
+        "\"ring_bytes\":%d,\"drain_seconds\":%d,\"max_records_per_drain\":%d,"
+        "\"kernel_drain_interval_seconds\":%d,\"max_kernel_records_per_drain\":%d,"
+        "\"max_kernel_records_per_health_interval\":%d}",
         HELPER_VERSION, epoch, (unsigned long long)sequence, CHALLENGER_FLOW_MAP_ENTRIES,
-        CHALLENGER_OWNER_MAP_ENTRIES, CHALLENGER_RING_BYTES, CHALLENGER_MAX_DRAIN_RECORDS);
+        CHALLENGER_OWNER_MAP_ENTRIES, CHALLENGER_RING_BYTES, CHALLENGER_HEALTH_INTERVAL_SECONDS,
+        CHALLENGER_MAX_DRAIN_RECORDS, CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS,
+        CHALLENGER_MAX_DRAIN_RECORDS, CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
     return send_frame(client, frame);
 }
 
@@ -557,22 +608,40 @@ int main(int argc, char **argv)
             continue;
         }
         while (!stopping) {
-            for (int tick = 0; tick < 10 && !stopping; tick++) {
+            challenger_begin_kernel_drain_interval(&kernel_drain_diagnostics);
+            for (int tick = 0; tick < CHALLENGER_HEALTH_INTERVAL_SECONDS && !stopping; tick++) {
                 ring_buffer__poll(ring, 0);
+                struct collect_result collected = {};
+                if (collect_flows(flow_fd, health_fd, &collected) < 0)
+                    goto disconnected;
+                int backlog = collected.capped ? flow_map_has_entries(flow_fd) : 0;
+                if (backlog < 0)
+                    goto disconnected;
+                challenger_record_kernel_drain_tick(
+                    &kernel_drain_diagnostics,
+                    collected.records,
+                    collected.capped,
+                    backlog > 0);
                 struct pollfd descriptor = { .fd = client, .events = POLLHUP | POLLERR };
-                int poll_result = poll(&descriptor, 1, 1000);
+                int poll_result = poll(
+                    &descriptor,
+                    1,
+                    CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS * 1000);
                 if (poll_result > 0 && descriptor.revents) goto disconnected;
                 if (poll_result < 0 && errno != EINTR) goto disconnected;
             }
-            if (collect_flows(flow_fd, health_fd) < 0)
-                goto disconnected;
             struct timespec now = {};
             if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
                 goto disconnected;
             uint64_t now_ns = (uint64_t)now.tv_sec * 1000000000ULL + (uint64_t)now.tv_nsec;
             if (emit_tracked_flows(client, health_fd, epoch, &sequence, now_ns) < 0)
                 goto disconnected;
-            if (send_health(client, health_fd, epoch, sequence) < 0)
+            if (send_health(
+                client,
+                health_fd,
+                epoch,
+                sequence,
+                &kernel_drain_diagnostics) < 0)
                 goto disconnected;
             sequence++;
         }
