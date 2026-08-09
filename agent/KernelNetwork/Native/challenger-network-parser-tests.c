@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "challenger_network_drain.h"
 #include "challenger_network_parser.h"
 #include "challenger_network_time.h"
 #include "challenger_network_shared.h"
@@ -115,6 +116,23 @@ int main(void)
     uint64_t last_seen = challenger_realtime_from_monotonic(
         equal_observation, realtime_anchor, monotonic_anchor);
     assert(first_seen == last_seen);
+
+    struct challenger_kernel_drain_diagnostics diagnostics = {};
+    challenger_begin_kernel_drain_interval(&diagnostics);
+    for (int tick = 0; tick < CHALLENGER_HEALTH_INTERVAL_SECONDS; tick++)
+        challenger_record_kernel_drain_tick(&diagnostics, CHALLENGER_MAX_DRAIN_RECORDS, true, tick == 0);
+    assert(diagnostics.interval_records == CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
+    assert(diagnostics.high_water_interval_records == CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
+    assert(diagnostics.capped_ticks == CHALLENGER_HEALTH_INTERVAL_SECONDS);
+    assert(diagnostics.backlog_ticks == 1);
+    assert(diagnostics.interval_backlog);
+    challenger_begin_kernel_drain_interval(&diagnostics);
+    challenger_record_kernel_drain_tick(&diagnostics, 7, false, false);
+    assert(diagnostics.interval_records == 7);
+    assert(diagnostics.high_water_interval_records == CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
+    assert(diagnostics.capped_ticks == CHALLENGER_HEALTH_INTERVAL_SECONDS);
+    assert(diagnostics.backlog_ticks == 1);
+    assert(!diagnostics.interval_backlog);
 
     puts("native parser tests passed");
     return 0;

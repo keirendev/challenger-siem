@@ -18,13 +18,13 @@ $(BUILD_DIR)/challenger_network_bpf.o: challenger_network.bpf.c challenger_netwo
 $(BUILD_DIR)/challenger_network_embedded.o: $(BUILD_DIR)/challenger_network_bpf.o
 	cd $(BUILD_DIR) && $(LD) -r -b binary -o challenger_network_embedded.o challenger_network_bpf.o
 
-$(BUILD_DIR)/challenger-siem-ebpf-helper: challenger-siem-ebpf-helper.c challenger_network_shared.h challenger_network_time.h $(BUILD_DIR)/challenger_network_embedded.o
+$(BUILD_DIR)/challenger-siem-ebpf-helper: challenger-siem-ebpf-helper.c challenger_network_shared.h challenger_network_drain.h challenger_network_time.h $(BUILD_DIR)/challenger_network_embedded.o
 	$(CC) $(CFLAGS) -I. challenger-siem-ebpf-helper.c $(BUILD_DIR)/challenger_network_embedded.o -lbpf -lelf -lz -o $@
 
 clean:
 	rm -rf -- $(BUILD_DIR)
 
-$(BUILD_DIR)/challenger-network-parser-tests: challenger-network-parser-tests.c challenger_network_parser.h challenger_network_time.h | $(BUILD_DIR)
+$(BUILD_DIR)/challenger-network-parser-tests: challenger-network-parser-tests.c challenger_network_parser.h challenger_network_drain.h challenger_network_time.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -I. challenger-network-parser-tests.c -o $@
 
 test: $(BUILD_DIR)/challenger-network-parser-tests

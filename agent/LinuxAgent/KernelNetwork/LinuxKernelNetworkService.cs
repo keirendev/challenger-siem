@@ -24,27 +24,34 @@ public sealed class LinuxKernelNetworkService(
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "event_code", "payload_capture",
         "flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds", "max_records_per_drain",
+        "kernel_drain_interval_seconds", "max_kernel_records_per_drain", "max_kernel_records_per_health_interval",
         "family", "protocol", "direction", "local_ip", "local_port", "remote_ip", "remote_port",
         "process_id", "user_id", "process_name", "attribution_source", "first_seen_unix_ns", "last_seen_unix_ns",
         "packet_count_delta", "byte_count_delta", "tcp_flags_mask", "parse_failures",
-        "unsupported_headers", "flow_map_full", "owner_misses", "ring_losses", "ipc_send_failures"
+        "unsupported_headers", "flow_map_full", "kernel_flow_map_update_failures", "tracked_flow_table_full",
+        "owner_misses", "ring_losses", "ipc_send_failures", "kernel_drain_records", "kernel_drain_high_water",
+        "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog"
     };
     private static readonly HashSet<string> HelloFrameProperties = new(StringComparer.Ordinal)
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "payload_capture",
-        "flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds", "max_records_per_drain"
+        "flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds", "max_records_per_drain",
+        "kernel_drain_interval_seconds", "max_kernel_records_per_drain", "max_kernel_records_per_health_interval"
     };
     private static readonly HashSet<string> HealthFrameProperties = new(StringComparer.Ordinal)
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "payload_capture",
-        "parse_failures", "unsupported_headers", "flow_map_full", "owner_misses", "ring_losses", "ipc_send_failures"
+        "parse_failures", "unsupported_headers", "flow_map_full", "kernel_flow_map_update_failures",
+        "tracked_flow_table_full", "owner_misses", "ring_losses", "ipc_send_failures", "kernel_drain_records",
+        "kernel_drain_high_water", "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog"
     };
     private static readonly HashSet<string> FlowFrameProperties = new(StringComparer.Ordinal)
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "event_code", "family", "protocol", "direction",
         "local_ip", "local_port", "remote_ip", "remote_port", "process_id", "user_id", "process_name", "attribution_source",
         "first_seen_unix_ns", "last_seen_unix_ns", "packet_count_delta", "byte_count_delta", "tcp_flags_mask",
-        "parse_failures", "unsupported_headers", "flow_map_full", "owner_misses", "ring_losses", "ipc_send_failures"
+        "parse_failures", "unsupported_headers", "flow_map_full", "kernel_flow_map_update_failures",
+        "tracked_flow_table_full", "owner_misses", "ring_losses", "ipc_send_failures"
     };
     private readonly LinuxAgentOptions options = configured.Value;
 
@@ -252,8 +259,11 @@ public sealed class LinuxKernelNetworkService(
             || frame.FlowCapacity != LinuxKernelNetworkConstants.FlowMapEntries
             || frame.OwnerCapacity != LinuxKernelNetworkConstants.OwnerMapEntries
             || frame.RingBytes != LinuxKernelNetworkConstants.RingBytes
-            || frame.DrainSeconds != 10
-            || frame.MaxRecordsPerDrain != LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+            || frame.DrainSeconds != LinuxKernelNetworkConstants.HealthIntervalSeconds
+            || frame.MaxRecordsPerDrain != LinuxKernelNetworkConstants.MaximumRecordsPerDrain
+            || frame.KernelDrainIntervalSeconds != LinuxKernelNetworkConstants.KernelDrainIntervalSeconds
+            || frame.MaxKernelRecordsPerDrain != LinuxKernelNetworkConstants.MaximumRecordsPerDrain
+            || frame.MaxKernelRecordsPerHealthInterval != LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval)
             throw new InvalidDataException("The helper hello frame does not match the fixed plan.");
     }
 
@@ -261,8 +271,14 @@ public sealed class LinuxKernelNetworkService(
     {
         ValidateCommon(frame);
         if (!frame.PresentProperties.SetEquals(HealthFrameProperties)
-            || frame.Type != "health" || frame.PayloadCapture)
+            || frame.Type != "health" || frame.PayloadCapture
+            || frame.KernelDrainRecords > LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval
+            || frame.KernelDrainHighWater > LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval
+            || frame.KernelDrainRecords > frame.KernelDrainHighWater
+            || frame.KernelDrainBacklogTicks > frame.KernelDrainCappedTicks
+            || frame.KernelDrainBacklog && frame.KernelDrainBacklogTicks == 0)
             throw new InvalidDataException("The helper health frame does not match the fixed protocol.");
+        ValidateLossCounters(frame);
     }
 
     internal static void ValidateFlow(LinuxKernelNetworkFrame frame)
@@ -290,6 +306,16 @@ public sealed class LinuxKernelNetworkService(
         if (frame.EventCode != "network_flow_closed" && frame.PacketCountDelta == 0
             || frame.TcpFlagsMask > byte.MaxValue)
             throw new InvalidDataException("helper_flow_counter_rejected");
+        ValidateLossCounters(frame);
+    }
+
+    private static void ValidateLossCounters(LinuxKernelNetworkFrame frame)
+    {
+        var aggregate = ulong.MaxValue - frame.KernelFlowMapUpdateFailures < frame.TrackedFlowTableFull
+            ? ulong.MaxValue
+            : frame.KernelFlowMapUpdateFailures + frame.TrackedFlowTableFull;
+        if (frame.FlowMapFull != aggregate)
+            throw new InvalidDataException("helper_flow_loss_counter_rejected");
     }
 
     private static void ValidateCommon(LinuxKernelNetworkFrame frame)
@@ -306,7 +332,8 @@ public sealed class LinuxKernelNetworkService(
     {
         "helper_flow_shape_rejected" or "helper_flow_identity_rejected" or "helper_flow_attribution_rejected"
             or "helper_flow_process_name_rejected" or "helper_flow_port_rejected" or "helper_flow_address_rejected"
-            or "helper_flow_timestamp_rejected" or "helper_flow_counter_rejected" or "helper_flow_batch_rejected" => exception.Message,
+            or "helper_flow_timestamp_rejected" or "helper_flow_counter_rejected" or "helper_flow_loss_counter_rejected"
+            or "helper_flow_batch_rejected" => exception.Message,
         "Helper timestamps are outside the bounded acceptance window." => "helper_flow_time_window_rejected",
         "The helper hello frame does not match the fixed plan." => "helper_hello_rejected",
         "The helper health frame does not match the fixed protocol." => "helper_health_rejected",
@@ -450,6 +477,8 @@ public sealed class LinuxKernelNetworkService(
             ["parse_failures"] = Clamp(frame.ParseFailures),
             ["unsupported_headers"] = Clamp(frame.UnsupportedHeaders),
             ["flow_map_full"] = Clamp(frame.FlowMapFull),
+            ["kernel_flow_map_update_failures"] = Clamp(frame.KernelFlowMapUpdateFailures),
+            ["tracked_flow_table_full"] = Clamp(frame.TrackedFlowTableFull),
             ["owner_misses"] = Clamp(frame.OwnerMisses),
             ["ring_losses"] = Clamp(frame.RingLosses),
             ["ipc_send_failures"] = Clamp(frame.IpcSendFailures)

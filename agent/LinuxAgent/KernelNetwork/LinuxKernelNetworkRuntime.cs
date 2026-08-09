@@ -289,6 +289,8 @@ public sealed class LinuxKernelNetworkRuntime(
                 ["parse_failures"] = current.ParseFailures.ToString(CultureInfo.InvariantCulture),
                 ["unsupported_headers"] = current.UnsupportedHeaders.ToString(CultureInfo.InvariantCulture),
                 ["flow_map_full"] = current.FlowMapFull.ToString(CultureInfo.InvariantCulture),
+                ["kernel_flow_map_update_failures"] = current.KernelFlowMapUpdateFailures.ToString(CultureInfo.InvariantCulture),
+                ["tracked_flow_table_full"] = current.TrackedFlowTableFull.ToString(CultureInfo.InvariantCulture),
                 ["owner_misses"] = current.OwnerMisses.ToString(CultureInfo.InvariantCulture),
                 ["attribution_status"] = current.OwnerMisses > 0 ? "partial" : "complete_for_observed_flows",
                 ["ring_losses"] = current.RingLosses.ToString(CultureInfo.InvariantCulture),
@@ -300,6 +302,11 @@ public sealed class LinuxKernelNetworkRuntime(
                 ["queue_pressure_count"] = current.QueuePressureCount.ToString(CultureInfo.InvariantCulture),
                 ["acknowledgement_gap"] = Math.Max(0, current.CollectedSequence - current.AcknowledgedSequence).ToString(CultureInfo.InvariantCulture),
                 ["queue_pause_depth"] = options.KernelNetworkTelemetry.QueuePauseDepth.ToString(CultureInfo.InvariantCulture),
+                ["last_kernel_drain_records"] = current.LastKernelDrainRecords.ToString(CultureInfo.InvariantCulture),
+                ["high_water_kernel_drain_records"] = current.HighWaterKernelDrainRecords.ToString(CultureInfo.InvariantCulture),
+                ["kernel_drain_capped_ticks"] = current.KernelDrainCappedTicks.ToString(CultureInfo.InvariantCulture),
+                ["kernel_drain_backlog_ticks"] = current.KernelDrainBacklogTicks.ToString(CultureInfo.InvariantCulture),
+                ["kernel_drain_backlog"] = current.KernelDrainBacklog.ToString(CultureInfo.InvariantCulture).ToLowerInvariant(),
                 ["last_drain_record_count"] = current.LastDrainRecordCount.ToString(CultureInfo.InvariantCulture),
                 ["high_water_drain_record_count"] = current.HighWaterDrainRecordCount.ToString(CultureInfo.InvariantCulture),
                 ["last_drain_serialized_bytes"] = current.LastDrainSerializedBytes.ToString(CultureInfo.InvariantCulture),
@@ -363,8 +370,9 @@ public sealed class LinuxKernelNetworkRuntime(
         LinuxKernelNetworkSequenceAssignment assignment)
     {
         var frame = pending.Frame;
-        var counterIncrease = CountersIncreased(current, frame);
-        return current with
+        var counters = AccumulateHelperCounters(current, frame, includeDrainCounters: false);
+        var counterIncrease = CountersIncreased(current, counters);
+        return counters with
         {
             CollectedSequence = assignment.AgentSequence,
             LastHelperEpoch = frame.Epoch,
@@ -372,17 +380,11 @@ public sealed class LinuxKernelNetworkRuntime(
             ObservedAt = timeProvider.GetUtcNow(),
             LastEventAt = pending.EventTime,
             GapCount = assignment.HelperGap ? SaturatingIncrement(current.GapCount) : current.GapCount,
-            ParseFailures = frame.ParseFailures,
-            UnsupportedHeaders = frame.UnsupportedHeaders,
-            FlowMapFull = frame.FlowMapFull,
-            OwnerMisses = frame.OwnerMisses,
-            RingLosses = frame.RingLosses,
-            IpcSendFailures = frame.IpcSendFailures,
             ActiveLoss = current.ActiveLoss || assignment.HelperGap || counterIncrease,
             CleanHealthFrames = assignment.HelperGap || counterIncrease ? 0 : current.CleanHealthFrames,
             EventFamilyCounts = IncrementFamily(current.EventFamilyCounts, frame.EventCode!),
             LastError = assignment.HelperGap ? "helper_sequence_gap"
-                : counterIncrease ? "kernel_network_loss_observed"
+                : counterIncrease ? LossError(current, counters)
                 : current.LastError
         };
     }
@@ -394,21 +396,20 @@ public sealed class LinuxKernelNetworkRuntime(
     {
         var epochChanged = !string.Equals(current.LastHelperEpoch, frame.Epoch, StringComparison.Ordinal);
         var helperGap = !epochChanged && frame.Sequence != current.LastHelperSequence + 1;
-        var counterIncrease = CountersIncreased(current, frame);
-        var cleanFrames = helperGap || counterIncrease ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
+        var counters = AccumulateHelperCounters(current, frame, includeDrainCounters: true);
+        var counterIncrease = CountersIncreased(current, counters);
+        var drainBacklog = frame.KernelDrainBacklog;
+        var cleanFrames = helperGap || counterIncrease || drainBacklog ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
         var activeLoss = helperGap || counterIncrease || current.ActiveLoss && cleanFrames < 3;
-        return current with
+        return counters with
         {
             LastHelperEpoch = frame.Epoch,
             LastHelperSequence = frame.Sequence,
             ObservedAt = timeProvider.GetUtcNow(),
             GapCount = helperGap ? SaturatingIncrement(current.GapCount) : current.GapCount,
-            ParseFailures = frame.ParseFailures,
-            UnsupportedHeaders = frame.UnsupportedHeaders,
-            FlowMapFull = frame.FlowMapFull,
-            OwnerMisses = frame.OwnerMisses,
-            RingLosses = frame.RingLosses,
-            IpcSendFailures = frame.IpcSendFailures,
+            LastKernelDrainRecords = frame.KernelDrainRecords,
+            HighWaterKernelDrainRecords = Math.Max(current.HighWaterKernelDrainRecords, frame.KernelDrainHighWater),
+            KernelDrainBacklog = drainBacklog,
             LastDrainRecordCount = diagnostics?.RecordCount ?? current.LastDrainRecordCount,
             HighWaterDrainRecordCount = diagnostics is null
                 ? current.HighWaterDrainRecordCount
@@ -421,7 +422,8 @@ public sealed class LinuxKernelNetworkRuntime(
             ActiveLoss = activeLoss,
             CleanHealthFrames = cleanFrames,
             LastError = helperGap ? "helper_sequence_gap"
-                : counterIncrease ? "kernel_network_loss_observed"
+                : counterIncrease ? LossError(current, counters)
+                : drainBacklog ? (current.ActiveLoss ? current.LastError : "kernel_flow_map_drain_backlog")
                 : activeLoss ? current.LastError
                 : "none"
         };
@@ -449,12 +451,65 @@ public sealed class LinuxKernelNetworkRuntime(
     }
 
     private static string BoundError(string value) => string.IsNullOrWhiteSpace(value) ? "unknown" : value.Trim().Length <= 96 ? value.Trim() : value.Trim()[..96];
-    private static bool CountersIncreased(LinuxKernelNetworkState current, LinuxKernelNetworkFrame frame) =>
-        frame.ParseFailures > current.ParseFailures
-        || frame.UnsupportedHeaders > current.UnsupportedHeaders
-        || frame.FlowMapFull > current.FlowMapFull
-        || frame.RingLosses > current.RingLosses
-        || frame.IpcSendFailures > current.IpcSendFailures;
+    private static LinuxKernelNetworkState AccumulateHelperCounters(
+        LinuxKernelNetworkState current,
+        LinuxKernelNetworkFrame frame,
+        bool includeDrainCounters)
+    {
+        var sameEpoch = string.Equals(current.CounterHelperEpoch, frame.Epoch, StringComparison.Ordinal);
+        var rawParseFailures = sameEpoch ? current.RawParseFailures ?? 0 : 0;
+        var rawUnsupportedHeaders = sameEpoch ? current.RawUnsupportedHeaders ?? 0 : 0;
+        var rawFlowMapFull = sameEpoch ? current.RawFlowMapFull ?? 0 : 0;
+        var rawKernelFlowMapUpdateFailures = sameEpoch ? current.RawKernelFlowMapUpdateFailures ?? 0 : 0;
+        var rawTrackedFlowTableFull = sameEpoch ? current.RawTrackedFlowTableFull ?? 0 : 0;
+        var rawOwnerMisses = sameEpoch ? current.RawOwnerMisses ?? 0 : 0;
+        var rawRingLosses = sameEpoch ? current.RawRingLosses ?? 0 : 0;
+        var rawIpcSendFailures = sameEpoch ? current.RawIpcSendFailures ?? 0 : 0;
+        var rawKernelDrainCappedTicks = sameEpoch ? current.RawKernelDrainCappedTicks ?? 0 : 0;
+        var rawKernelDrainBacklogTicks = sameEpoch ? current.RawKernelDrainBacklogTicks ?? 0 : 0;
+        return current with
+        {
+            CounterHelperEpoch = frame.Epoch,
+            ParseFailures = SaturatingAdd(current.ParseFailures, CounterDelta(frame.ParseFailures, rawParseFailures)),
+            UnsupportedHeaders = SaturatingAdd(current.UnsupportedHeaders, CounterDelta(frame.UnsupportedHeaders, rawUnsupportedHeaders)),
+            FlowMapFull = SaturatingAdd(current.FlowMapFull, CounterDelta(frame.FlowMapFull, rawFlowMapFull)),
+            KernelFlowMapUpdateFailures = SaturatingAdd(current.KernelFlowMapUpdateFailures, CounterDelta(frame.KernelFlowMapUpdateFailures, rawKernelFlowMapUpdateFailures)),
+            TrackedFlowTableFull = SaturatingAdd(current.TrackedFlowTableFull, CounterDelta(frame.TrackedFlowTableFull, rawTrackedFlowTableFull)),
+            OwnerMisses = SaturatingAdd(current.OwnerMisses, CounterDelta(frame.OwnerMisses, rawOwnerMisses)),
+            RingLosses = SaturatingAdd(current.RingLosses, CounterDelta(frame.RingLosses, rawRingLosses)),
+            IpcSendFailures = SaturatingAdd(current.IpcSendFailures, CounterDelta(frame.IpcSendFailures, rawIpcSendFailures)),
+            RawParseFailures = frame.ParseFailures,
+            RawUnsupportedHeaders = frame.UnsupportedHeaders,
+            RawFlowMapFull = frame.FlowMapFull,
+            RawKernelFlowMapUpdateFailures = frame.KernelFlowMapUpdateFailures,
+            RawTrackedFlowTableFull = frame.TrackedFlowTableFull,
+            RawOwnerMisses = frame.OwnerMisses,
+            RawRingLosses = frame.RingLosses,
+            RawIpcSendFailures = frame.IpcSendFailures,
+            KernelDrainCappedTicks = includeDrainCounters
+                ? SaturatingAdd(current.KernelDrainCappedTicks, CounterDelta(frame.KernelDrainCappedTicks, rawKernelDrainCappedTicks))
+                : current.KernelDrainCappedTicks,
+            KernelDrainBacklogTicks = includeDrainCounters
+                ? SaturatingAdd(current.KernelDrainBacklogTicks, CounterDelta(frame.KernelDrainBacklogTicks, rawKernelDrainBacklogTicks))
+                : current.KernelDrainBacklogTicks,
+            RawKernelDrainCappedTicks = includeDrainCounters ? frame.KernelDrainCappedTicks : sameEpoch ? current.RawKernelDrainCappedTicks : 0,
+            RawKernelDrainBacklogTicks = includeDrainCounters ? frame.KernelDrainBacklogTicks : sameEpoch ? current.RawKernelDrainBacklogTicks : 0
+        };
+    }
+
+    private static ulong CounterDelta(ulong current, ulong prior) => current >= prior ? current - prior : 0;
+    private static bool CountersIncreased(LinuxKernelNetworkState current, LinuxKernelNetworkState projected) =>
+        projected.ParseFailures > current.ParseFailures
+        || projected.UnsupportedHeaders > current.UnsupportedHeaders
+        || projected.FlowMapFull > current.FlowMapFull
+        || projected.KernelFlowMapUpdateFailures > current.KernelFlowMapUpdateFailures
+        || projected.TrackedFlowTableFull > current.TrackedFlowTableFull
+        || projected.RingLosses > current.RingLosses
+        || projected.IpcSendFailures > current.IpcSendFailures;
+    private static string LossError(LinuxKernelNetworkState current, LinuxKernelNetworkState projected) =>
+        projected.KernelFlowMapUpdateFailures > current.KernelFlowMapUpdateFailures ? "kernel_flow_map_update_failed"
+        : projected.TrackedFlowTableFull > current.TrackedFlowTableFull ? "helper_tracked_flow_table_full"
+        : "kernel_network_loss_observed";
     private static IReadOnlyDictionary<string, long> IncrementFamily(IReadOnlyDictionary<string, long> current, string family)
     {
         var result = new Dictionary<string, long>(current, StringComparer.Ordinal);
@@ -463,4 +518,5 @@ public sealed class LinuxKernelNetworkRuntime(
     }
     private static long SaturatingIncrement(long value) => value == long.MaxValue ? value : value + 1;
     private static long SaturatingAdd(long value, long add) => value > long.MaxValue - add ? long.MaxValue : value + add;
+    private static ulong SaturatingAdd(ulong value, ulong add) => value > ulong.MaxValue - add ? ulong.MaxValue : value + add;
 }
