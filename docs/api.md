@@ -33,6 +33,15 @@ claim by itself. Latest complete generations are used for coverage and L4 postur
 missing or source-truncated generations degrade those consumers. Paging keys do not
 participate in posture fingerprints.
 
+Current L2 agents report mandatory `linux-package-inventory-diff` health with a sequence
+checkpoint and retain `linux-package-management` as supplemental journal health. For an
+API-first rolling upgrade, heartbeat validation also accepts the exact pre-2.9 package
+descriptor in which the journal source is mandatory. Once the inventory-diff source is
+present, the server enforces the current mandatory-diff/supplemental-journal relationship;
+known source kind, namespace, checkpoint, requirement, and catalog metadata remain
+canonical. This is an additive `/api/v2` compatibility rule and requires no PostgreSQL
+schema change.
+
 Telemetry-coverage responses add liveness-monitor attempt/success freshness, active
 outage count, per-agent 24-hour/seven-day history readiness, and retention-scheduler
 configuration. Liveness freshness and `active_outage_count` describe the global server

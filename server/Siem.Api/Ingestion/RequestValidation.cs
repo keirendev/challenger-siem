@@ -811,6 +811,7 @@ public static class RequestValidation
 
     private static void ValidateHeartbeatSourceRelationships(Dictionary<string, List<string>> errors, HeartbeatRequest request)
     {
+        ValidatePackageSourceTransition(errors, request);
         var portableManifest = request.SourceManifest
             .Select((source, index) => (Source: source, Index: index))
             .Where(item => item.Source is not null && TelemetrySourceKinds.UsesPortableIdentity(item.Source.SourceKind))
@@ -881,6 +882,37 @@ public static class RequestValidation
                 Add(errors, $"source_manifest[{manifestItem.Index}].source_id", "Each portable manifest entry must match exactly one health source_id.");
             }
         }
+    }
+
+    private static void ValidatePackageSourceTransition(Dictionary<string, List<string>> errors, HeartbeatRequest request)
+    {
+        var hasInventoryDiff = request.SourceManifest.Any(source => source is not null
+            && string.Equals(source.SourceId, LinuxTelemetrySourceIds.PackageInventoryDiff, StringComparison.Ordinal));
+        var packageManifest = request.SourceManifest
+            .Select((source, index) => (Source: source, Index: index))
+            .FirstOrDefault(item => item.Source is not null
+                && string.Equals(item.Source.SourceId, LinuxTelemetrySourceIds.PackageManagement, StringComparison.Ordinal));
+        var packageHealth = request.SourceHealth
+            .Select((source, index) => (Source: source, Index: index))
+            .FirstOrDefault(item => item.Source is not null
+                && string.Equals(item.Source.SourceId, LinuxTelemetrySourceIds.PackageManagement, StringComparison.Ordinal));
+
+        if (hasInventoryDiff)
+        {
+            if (packageManifest.Source is null || packageHealth.Source is null)
+            {
+                Add(errors, "source_manifest", "Current package inventory-diff heartbeats must retain the supplemental package journal source.");
+                return;
+            }
+            if (packageManifest.Source.Requirement != SourceRequirementKinds.Optional || packageManifest.Source.Required)
+                Add(errors, $"source_manifest[{packageManifest.Index}].requirement", "The package journal source must be supplemental when package inventory-diff is present.");
+            if (packageHealth.Source.Requirement != SourceRequirementKinds.Optional || packageHealth.Source.Required)
+                Add(errors, $"source_health[{packageHealth.Index}].requirement", "The package journal source must be supplemental when package inventory-diff is present.");
+            return;
+        }
+
+        // Without the new source, both the exact legacy descriptor and bounded partial/current
+        // manifests remain valid. Coverage merging, not request parsing, marks missing sources.
     }
 
     private static void ValidateUniquePortableSourceIds(
@@ -1308,7 +1340,10 @@ public static class RequestValidation
         string prefix,
         SourceManifestEntry submitted)
     {
-        var canonical = FindKnownLinuxSource(submitted.SourceId);
+        var canonical = string.Equals(submitted.SourceId, LinuxTelemetrySourceIds.PackageManagement, StringComparison.OrdinalIgnoreCase)
+            && submitted.Requirement == SourceRequirementKinds.Mandatory && submitted.Required
+                ? LinuxTelemetrySourceCatalog.LegacyPackageManagement
+                : FindKnownLinuxSource(submitted.SourceId);
         if (canonical is null)
         {
             return;
@@ -1344,7 +1379,10 @@ public static class RequestValidation
         string prefix,
         SourceHealthReport submitted)
     {
-        var canonical = FindKnownLinuxSource(submitted.SourceId);
+        var canonical = string.Equals(submitted.SourceId, LinuxTelemetrySourceIds.PackageManagement, StringComparison.OrdinalIgnoreCase)
+            && submitted.Requirement == SourceRequirementKinds.Mandatory && submitted.Required
+                ? LinuxTelemetrySourceCatalog.LegacyPackageManagement
+                : FindKnownLinuxSource(submitted.SourceId);
         if (canonical is null)
         {
             return;
@@ -1366,7 +1404,8 @@ public static class RequestValidation
         }
         if (canonical.Requirement == SourceRequirementKinds.Mandatory
             && canonical.Applicability == SourceApplicabilityStatuses.Applicable
-            && canonical.SourceId != LinuxTelemetrySourceIds.PackageManagement
+            && canonical.SourceId is not LinuxTelemetrySourceIds.PackageManagement
+                and not LinuxTelemetrySourceIds.PackageInventoryDiff
             && submitted.Applicability != SourceApplicabilityStatuses.Applicable)
         {
             Add(errors, $"{prefix}.applicability", "Known mandatory applicable Linux source cannot report itself as inapplicable.");

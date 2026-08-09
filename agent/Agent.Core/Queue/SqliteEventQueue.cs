@@ -14,7 +14,12 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
     internal const int MaximumEventsPerTransaction = 100;
     internal const int MaximumPayloadBytesPerTransaction = 1024 * 1024;
     private static readonly TimeSpan QueueWarningInterval = TimeSpan.FromMinutes(5);
+    private const int MaximumAttributedSources = 64;
+    private const string OtherSource = "_other";
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly object workSync = new();
+    private readonly Dictionary<string, QueueSourceWorkCounters> workBySource = new(StringComparer.Ordinal);
+    private readonly string workGenerationId = Guid.NewGuid().ToString("N");
 
     private bool initialized;
     private DateTimeOffset lastQueueWarningAt = DateTimeOffset.MinValue;
@@ -52,7 +57,8 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
             pendingPayloadBytes += Encoding.UTF8.GetByteCount(payloadJson);
             if (pendingPayloadBytes > MaximumPayloadBytesPerTransaction)
                 throw new InvalidOperationException("Queue batch exceeds the durable transaction payload limit.");
-            pending.Add(new(envelope.EventId.ToString(), envelope.AgentId, payloadJson));
+            pending.Add(new(envelope.EventId.ToString(), envelope.AgentId, envelope.SourceId ?? envelope.Source, payloadJson,
+                Encoding.UTF8.GetByteCount(payloadJson)));
         }
 
         await gate.WaitAsync(cancellationToken);
@@ -60,6 +66,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         {
             await InitializeUnsafeAsync(cancellationToken);
             await InsertBatchUnsafeAsync(pending, cancellationToken);
+            RecordEnqueuedWork(pending);
         }
         finally
         {
@@ -117,7 +124,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
                     }
                     if (sequentialSource is not null && blockedSequentialSources.Contains(sequentialSource)) continue;
 
-                    results.Add(new QueuedEvent(queueId, envelope, sendAttempts, lastAttemptAt));
+                    results.Add(new QueuedEvent(queueId, envelope, sendAttempts, lastAttemptAt, Encoding.UTF8.GetByteCount(payloadJson)));
                 }
                 if (scanned < scanLimit) break;
             }
@@ -182,14 +189,20 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
             await using var connection = OpenConnection();
             await using var transaction = connection.BeginTransaction();
 
-            foreach (var queueId in queueIds)
+            var distinctIds = queueIds.Distinct().ToArray();
+            var parameterNames = new List<string>(distinctIds.Length);
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var index = 0;
+            foreach (var queueId in distinctIds)
             {
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = "delete from queued_events where id = $id;";
-                command.Parameters.AddWithValue("$id", queueId);
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                var name = $"$id_{index++}";
+                parameterNames.Add(name);
+                command.Parameters.AddWithValue(name, queueId);
             }
+
+            command.CommandText = $"delete from queued_events where id in ({string.Join(',', parameterNames)});";
+            await command.ExecuteNonQueryAsync(cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
         }
@@ -321,6 +334,32 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         }
     }
 
+    public QueueWorkSnapshot GetWorkSnapshot()
+    {
+        lock (workSync)
+        {
+            return new(workGenerationId,
+                workBySource.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal));
+        }
+    }
+
+    public void RecordAcknowledgedWork(IReadOnlyCollection<QueuedEvent> events)
+    {
+        lock (workSync)
+        {
+            foreach (var item in events)
+            {
+                var source = AttributedSource(item.Envelope.SourceId ?? item.Envelope.Source);
+                var current = workBySource.GetValueOrDefault(source) ?? new(0, 0, 0, 0);
+                workBySource[source] = current with
+                {
+                    AcknowledgedEvents = SaturatingAdd(current.AcknowledgedEvents, 1),
+                    AcknowledgedPayloadBytes = SaturatingAdd(current.AcknowledgedPayloadBytes, Math.Max(0, item.SerializedPayloadBytes))
+                };
+            }
+        }
+    }
+
     public static TimeSpan BackoffDelayForAttempts(int sendAttempts, int maxBackoffSeconds)
     {
         return RetrySchedule.Exponential(sendAttempts, maxBackoffSeconds);
@@ -394,24 +433,53 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         await using var transaction = connection.BeginTransaction();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            insert or ignore into queued_events (event_id, agent_id, payload_json, enqueued_at)
-            values ($event_id, $agent_id, $payload_json, $enqueued_at);
-            """;
-        var eventId = command.Parameters.Add("$event_id", SqliteType.Text);
-        var agentId = command.Parameters.Add("$agent_id", SqliteType.Text);
-        var payloadJson = command.Parameters.Add("$payload_json", SqliteType.Text);
-        var enqueuedAt = command.Parameters.Add("$enqueued_at", SqliteType.Text);
-        enqueuedAt.Value = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        foreach (var item in pending)
+        var values = new List<string>(pending.Count);
+        var enqueuedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+        for (var index = 0; index < pending.Count; index++)
         {
-            eventId.Value = item.EventId;
-            agentId.Value = item.AgentId;
-            payloadJson.Value = item.PayloadJson;
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            var item = pending[index];
+            var eventName = $"$event_id_{index}";
+            var agentName = $"$agent_id_{index}";
+            var payloadName = $"$payload_json_{index}";
+            var timeName = $"$enqueued_at_{index}";
+            values.Add($"({eventName},{agentName},{payloadName},{timeName})");
+            command.Parameters.Add(eventName, SqliteType.Text).Value = item.EventId;
+            command.Parameters.Add(agentName, SqliteType.Text).Value = item.AgentId;
+            command.Parameters.Add(payloadName, SqliteType.Text).Value = item.PayloadJson;
+            command.Parameters.Add(timeName, SqliteType.Text).Value = enqueuedAt;
         }
+        command.CommandText = $"insert or ignore into queued_events (event_id, agent_id, payload_json, enqueued_at) values {string.Join(',', values)};";
+        await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    private void RecordEnqueuedWork(IReadOnlyCollection<PendingEnqueue> pending)
+    {
+        lock (workSync)
+        {
+            foreach (var item in pending)
+            {
+                var source = AttributedSource(item.SourceId);
+                var current = workBySource.GetValueOrDefault(source) ?? new(0, 0, 0, 0);
+                workBySource[source] = current with
+                {
+                    EnqueuedEvents = SaturatingAdd(current.EnqueuedEvents, 1),
+                    EnqueuedPayloadBytes = SaturatingAdd(current.EnqueuedPayloadBytes, item.PayloadBytes)
+                };
+            }
+        }
+    }
+
+    private string AttributedSource(string? sourceId)
+    {
+        var bounded = string.IsNullOrWhiteSpace(sourceId) || sourceId.Length > 128 ? "unknown" : sourceId;
+        return workBySource.ContainsKey(bounded) || workBySource.Count < MaximumAttributedSources
+            ? bounded
+            : OtherSource;
+    }
+
+    private static long SaturatingAdd(long left, long right) =>
+        left > long.MaxValue - right ? long.MaxValue : left + right;
 
     private static async Task<int> CountRowsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
     {
@@ -570,7 +638,7 @@ public sealed class SqliteEventQueue(AgentQueueOptions options, ILogger<SqliteEv
         return value.Length <= maxLength ? value : value[..maxLength];
     }
 
-    private sealed record PendingEnqueue(string EventId, string AgentId, string PayloadJson);
+    private sealed record PendingEnqueue(string EventId, string AgentId, string SourceId, string PayloadJson, int PayloadBytes);
 }
 
 public static class EventQueueBatcher

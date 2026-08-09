@@ -15,7 +15,7 @@ An L4-capable agent reports these mandatory L4 sources:
 | Source ID | Kind | Purpose | Healthy boundary |
 | --- | --- | --- | --- |
 | `linux-policy-posture-drift` | `inventory_diff` | Compare a bounded, fixed security-posture observation with the exact operator-approved baseline | The L4 plan and baseline hashes match, the latest complete scan matches the approved baseline, and no gap, denial, truncation, or queue failure is active |
-| `linux-agent-performance-slo` | `agent_health` | Evaluate bounded rolling process CPU, RSS, and write-rate evidence plus queue health | The rolling window is complete, every implemented required counter is available, process thresholds and queue-health checks pass, and no active pressure/collection gap exists |
+| `linux-agent-performance-slo` | `agent_health` | Evaluate bounded rolling process CPU, RSS, and write-rate evidence plus queue health and content-free per-source queue-work attribution | The rolling window is complete, every implemented required counter is available, process thresholds and queue-health checks pass, and no active pressure, counter discontinuity, or collection gap exists |
 
 Six L4 journal packs reuse the existing physical systemd-journal reader and cursor:
 
@@ -52,7 +52,7 @@ A Linux host reaches L4 only when all of the following are true at the same asse
 
 This last rule is intentionally stricter than lower levels. An approved exception remains useful for recording and explaining a gap, but a host with an exception cannot claim full-target L4 coverage. `not_applicable` is valid only for a role pack whose role was explicitly resolved as absent; it resolves the matrix but never counts as L4 evidence, cannot stand in for the two mandatory sources, and cannot erase an unresolved role.
 
-Policy-posture and role-journal observations become stale after two hours; the rolling performance row becomes stale after five minutes. An observation more than five minutes in the future degrades. These server-enforced freshness rules prevent a stopped collector or old SLO window from retaining L4.
+Policy-posture and role-journal observations become stale after two hours; the rolling performance row becomes stale after five minutes. An observation more than five minutes in the future degrades. Queue-work counters are in-memory and restart-scoped, so a generation change forces an explicit SLO discontinuity and a fresh complete window. These server-enforced freshness rules prevent a stopped collector or old SLO window from retaining L4.
 
 Optional disabled, not-applicable, or unsupported sources, including Linux Audit Framework, remain visible but do not independently block L4. Their status must not be summarized as collected coverage.
 

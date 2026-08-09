@@ -1,34 +1,34 @@
-# Linux package-management evidence
+# Linux package-change evidence
 
-`linux-package-management` separates producer applicability from journal visibility. A host can be quiet, an in-scope producer can be present without emitting a supported record, or the host can use an out-of-scope producer. Event absence alone cannot distinguish those cases. The agent therefore uses bounded read-only package inventory to resolve applicability and retains `degraded` visibility until a matching journal record proves that the event family is observable.
+Package visibility has two complementary L2 sources. `linux-package-inventory-diff` is the mandatory detection source for current agents. `linux-package-management` is supplemental direct journal evidence. During an API-first rolling upgrade, the server continues to accept the exact pre-2.9 manifest in which the journal source is mandatory; once an agent reports the inventory-diff source, the current mandatory-diff/supplemental-journal shape is enforced.
 
-## Supported producer and evidence matrix
+## Inventory-difference source
 
-| Package family | Bounded inventory applicability evidence | Accepted journal producer identifier | Accepted event evidence |
-| --- | --- | --- | --- |
-| Debian family | fixed `dpkg-query -W -f=...` installed-package listing | `apt`, `apt-get`, `dpkg` | structured `ACTION` plus `PACKAGE_NAME` or `PACKAGE`; otherwise a bounded leading install/update/remove message form |
-| RPM family | fixed `rpm -qa --qf ...` installed-package listing | `dnf`, `yum`, `rpm` | the same structured fields or bounded leading message form |
-| PackageKit | resolved through an in-scope dpkg, RPM, or pacman backend; PackageKit alone does not establish inventory applicability | `packagekit`, `packagekitd` | the same structured fields or bounded leading message form |
-| Arch family | fixed `pacman -Q` installed-package listing | `pacman` | the same structured fields or a bounded leading `[ALPM]` install/update/remove form |
+`linux-package-inventory-diff` reuses only the complete `linux_packages` inventory already collected through the fixed dpkg, RPM, or pacman commands. It adds no reader, command, path, privilege, package operation, or host-policy change. Its private baseline is stored as `package-inventory-diff-state.json` under the existing agent state directory with mode 0600.
 
-The journal producer is the normalized lower-case first non-empty value of `SYSLOG_IDENTIFIER` or `_COMM`. Structured `ACTION`, `RESULT`, `PACKAGE_NAME`, and `PACKAGE` values take precedence. Message fallback examines at most 4,096 characters with a fixed 50 ms regex timeout. A package action and bounded package name are both required. An interactive package-manager command line, an available-update inventory row, or package presence alone is never classified as a package-change event.
+The first complete observation establishes a non-alerting baseline. Later complete observations compare stable package identity and version and emit deterministic `install`, `update`, and `remove` evidence with a sequence checkpoint. The event time is the inventory observation end, and raw metadata records the observation start/end. `outcome=unknown`; the evidence does not claim exact operation time, actor, command, intent, or authorization.
 
-Known out-of-scope distribution families are reported only after every fixed in-scope inventory probe is unavailable: Alpine/Wolfi (`apk`), Gentoo (`portage`), NixOS (`nix`), Solus (`eopkg`), and Void (`xbps`). Other absent in-scope probes remain `missing`, not `unsupported`, because distribution identity alone is not enough to invent a producer.
+An observation emits at most 200 events. When more changes exist, the final retained event is an explicit gap with the omitted count. The new complete baseline is committed only after every event for the observation is durably queued. A failed or interrupted enqueue leaves the prior baseline intact, abandons the reserved sequence range on recovery, and reports a gap; queue, WAL, checkpoint, and prior baseline state are never deleted or rewritten to recover.
 
-## Deterministic health states
+Partial, truncated, denied, timed-out, malformed, oversized, or duplicate-identity inventories do not replace the last valid baseline. They degrade the source and emit one transition gap when possible. The next complete observation emits recovery evidence and compares against the last valid baseline. A complete observation with no changes advances the observation boundary without manufacturing a change event.
 
-`systemd_journal_readable` continues to report the physical journal prerequisite independently. The table below defines the package-specific applicability, `package_manager_journal_visibility` prerequisite, and all three event-family states.
+## Supplemental direct journal source
 
-| Evidence case | Applicability | Source status | Package visibility prerequisite | `package_install`, `package_update`, `package_remove` |
-| --- | --- | --- | --- | --- |
-| Supported producer and matching record observed | `applicable` | follows physical journal health; normally `healthy` | `satisfied` | each family is independently `observed` or `not_observed` |
-| Supported producer, successful journal reads, no matching record | `applicable` | `degraded` with `package_manager_journal_visibility_unverified` | `unknown` | `not_observed` |
-| Known out-of-scope producer | `unsupported` | `unsupported` | `unsupported` | `unsupported` |
-| No supported producer evidence | `unknown` | `degraded` | `missing` | `not_observed` |
-| Malformed package inventory | `unknown` | `degraded` | `degraded` | `not_observed` |
-| Package inventory permission denial | `unknown` | `degraded` unless the physical journal has a stronger failure | `permission_denied` | `not_observed` |
-| Package inventory timeout | `unknown` | `degraded` unless the physical journal has a stronger failure | `stale` | `not_observed` |
+`linux-package-management` retains the existing bounded journald classifier. A matching direct event requires an install/update/remove action and a package name from the fixed structured fields or bounded producer-specific message forms. An interactive package-manager command line, available-update row, package presence, or sudo command alone is not a package-change event.
 
-A genuine matching journal record is stronger evidence than a stale or contradictory inventory observation: it makes the source applicable and satisfies journal visibility. Permission loss, cursor gaps, throttling, and other physical-journal failures still take precedence and cannot be hidden by inventory or an older package event.
+For each complete inventory interval, the agent correlates process-local direct journal observations by exact normalized action and package name. If an inventory change has no matching journal record, the journal source becomes degraded with `package_record_change_unobserved`, while the mandatory inventory-diff source still supplies detection evidence. A later fully matched or change-free interval clears the active journal gap; the cumulative missed-change count remains visible. Restart discards this correlation cache so historical activity cannot be claimed as directly observed.
 
-The `linux_packages` snapshot adds only aggregate `package_manager_evidence`, `package_manager_producer`, and `package_manager_reason` values. It does not add mutating package operations, read package-manager log files, quote raw command output, or generate install, update, or removal activity. Validation uses hand-authored synthetic fixtures and aggregate assertions only.
+| Package family | Fixed inventory evidence | Accepted journal identifiers |
+| --- | --- | --- |
+| Debian | `dpkg-query -W -f=...` | `apt`, `apt-get`, `dpkg` |
+| RPM | `rpm -qa --qf ...` | `dnf`, `yum`, `rpm` |
+| Arch | `pacman -Q` | `pacman` |
+| PackageKit | An in-scope dpkg/RPM/pacman backend | `packagekit`, `packagekitd` |
+
+Known out-of-scope producers remain explicit `unsupported`; absent, denied, malformed, and timed-out inventory remain distinct health states. Event absence is never evidence that no package activity occurred.
+
+## Detection semantics
+
+`package.change.linux` version 2 accepts either canonical package source and preserves the existing package/action suppression keys. Inventory baselines, recovery markers, and gaps are non-alerting. A directly matching event is still evaluated when health is degraded, but confidence is lowered when the source has an active gap or unavailable prerequisite.
+
+Validation uses only hand-authored synthetic package names and versions. It never modifies the validating host's installed packages.

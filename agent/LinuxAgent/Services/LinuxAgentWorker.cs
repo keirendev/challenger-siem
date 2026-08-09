@@ -9,6 +9,7 @@ using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Journal;
 using Challenger.Siem.LinuxAgent.KernelNetwork;
 using Challenger.Siem.LinuxAgent.L4;
+using Challenger.Siem.LinuxAgent.Package;
 using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.LinuxAgent.SelfIntegrity;
 using Microsoft.Extensions.Options;
@@ -23,6 +24,7 @@ public sealed class LinuxAgentWorker(
     LinuxTransportRuntimeState transportState,
     LinuxEnrollmentService enrollment,
     LinuxJournalRuntime journalRuntime,
+    LinuxPackageInventoryDiffRuntime packageInventoryRuntime,
     LinuxSelfIntegrityRuntime selfIntegrityRuntime,
     LinuxPassiveTelemetryRuntime passiveTelemetryRuntime,
     LinuxKernelNetworkRuntime kernelNetworkRuntime,
@@ -41,6 +43,7 @@ public sealed class LinuxAgentWorker(
     {
         await enrollment.EnsureAsync(version, cancellationToken);
         await queue.InitializeAsync(cancellationToken);
+        await packageInventoryRuntime.InitializeAsync(cancellationToken);
         var nextHeartbeat = DateTimeOffset.MinValue;
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -49,6 +52,8 @@ public sealed class LinuxAgentWorker(
                 if (DateTimeOffset.UtcNow >= nextHeartbeat)
                 {
                     var journal = journalRuntime.Snapshot();
+                    var packageManifest = packageInventoryRuntime.Manifest;
+                    var packageHealth = packageInventoryRuntime.Health();
                     var selfIntegrityManifest = selfIntegrityRuntime.Manifest;
                     var selfIntegrityHealth = selfIntegrityRuntime.Health();
                     var passiveManifest = passiveTelemetryRuntime.Manifest;
@@ -57,7 +62,7 @@ public sealed class LinuxAgentWorker(
                     var kernelNetworkHealth = kernelNetworkRuntime.Health();
                     var l4Manifest = l4TelemetryRuntime.Manifest;
                     var l4Health = l4TelemetryRuntime.Health();
-                    var allHealth = journal.Health.Concat([selfIntegrityHealth]).Concat(passiveHealth).Concat([kernelNetworkHealth]).Concat(l4Health).ToArray();
+                    var allHealth = journal.Health.Concat([packageHealth, selfIntegrityHealth]).Concat(passiveHealth).Concat([kernelNetworkHealth]).Concat(l4Health).ToArray();
                     await client.SendHeartbeatAsync(new HeartbeatRequest
                     {
                         AgentId = options.AgentId,
@@ -72,7 +77,7 @@ public sealed class LinuxAgentWorker(
                         ResourceMetrics = ResourceMetricsSampler.Sample(),
                         ConfigHash = AgentConfigurationHasher.ComputeConfigurationHash(Environment.GetEnvironmentVariable("CHALLENGER_SIEM_AGENT_CONFIG") ?? "/etc/challenger-siem-agent/agentsettings.json"),
                         QueueMetrics = transportState.Enrich(await queue.GetMetricsAsync(transportState.LastSuccessfulSendTime, cancellationToken)),
-                        SourceManifest = journal.Manifest.Concat([selfIntegrityManifest]).Concat(passiveManifest).Concat([kernelNetworkManifest]).Concat(l4Manifest).ToArray(),
+                        SourceManifest = journal.Manifest.Concat([packageManifest, selfIntegrityManifest]).Concat(passiveManifest).Concat([kernelNetworkManifest]).Concat(l4Manifest).ToArray(),
                         SourceHealth = allHealth
                     }, cancellationToken);
                     nextHeartbeat = DateTimeOffset.UtcNow.AddSeconds(options.HeartbeatIntervalSeconds);
@@ -268,6 +273,7 @@ public sealed class LinuxQueueDrainer(
         try
         {
             await queue.DeleteAsync(deletableIds, cancellationToken);
+            queue.RecordAcknowledgedWork(batch.Where(item => deletableIds.Contains(item.QueueId)).ToArray());
         }
         catch
         {

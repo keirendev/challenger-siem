@@ -38,9 +38,11 @@ public sealed record LinuxL4PolicyState
     [JsonPropertyName("progress")] public LinuxL4SourceProgress Progress { get; init; } = new();
     [JsonPropertyName("baseline_established")] public bool BaselineEstablished { get; init; }
     [JsonPropertyName("approved_baseline_hash")] public string? ApprovedBaselineHash { get; init; }
-    [JsonPropertyName("baseline_signatures")] public IReadOnlyDictionary<string, string> BaselineSignatures { get; init; } =
+    [JsonPropertyName("baseline_signatures")]
+    public IReadOnlyDictionary<string, string> BaselineSignatures { get; init; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
-    [JsonPropertyName("current_signatures")] public IReadOnlyDictionary<string, string> CurrentSignatures { get; init; } =
+    [JsonPropertyName("current_signatures")]
+    public IReadOnlyDictionary<string, string> CurrentSignatures { get; init; } =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
@@ -61,7 +63,19 @@ public sealed record LinuxL4SloState
     [JsonPropertyName("previous_processor_time_ticks")] public long? PreviousProcessorTimeTicks { get; init; }
     [JsonPropertyName("previous_write_bytes")] public long? PreviousWriteBytes { get; init; }
     [JsonPropertyName("previous_process_start_time_utc_ticks")] public long? PreviousProcessStartTimeUtcTicks { get; init; }
+    [JsonPropertyName("previous_queue_work_generation_id")] public string? PreviousQueueWorkGenerationId { get; init; }
+    [JsonPropertyName("previous_queue_work")]
+    public IReadOnlyDictionary<string, LinuxL4QueueWorkCounter> PreviousQueueWork { get; init; } =
+        new Dictionary<string, LinuxL4QueueWorkCounter>(StringComparer.Ordinal);
     [JsonPropertyName("samples")] public IReadOnlyList<LinuxL4SloSample> Samples { get; init; } = Array.Empty<LinuxL4SloSample>();
+}
+
+public sealed record LinuxL4QueueWorkCounter
+{
+    [JsonPropertyName("enqueued_events")] public long EnqueuedEvents { get; init; }
+    [JsonPropertyName("enqueued_payload_bytes")] public long EnqueuedPayloadBytes { get; init; }
+    [JsonPropertyName("acknowledged_events")] public long AcknowledgedEvents { get; init; }
+    [JsonPropertyName("acknowledged_payload_bytes")] public long AcknowledgedPayloadBytes { get; init; }
 }
 
 public sealed record LinuxL4TelemetryState

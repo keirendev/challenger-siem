@@ -67,6 +67,69 @@ public sealed class SqliteQueuePressureTests
     }
 
     [Fact]
+    public async Task QueueWorkCountersAreBoundedPerSourceAndAcknowledgementCountsOnlyAfterDelete()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-work-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var queue = new SqliteEventQueue(new AgentQueueOptions { Path = Path.Combine(root, "queue.sqlite") }, new CountingLogger());
+            var first = Event(1, 128) with { SourceId = LinuxTelemetrySourceIds.PackageInventoryDiff };
+            var second = Event(2, 256) with { SourceId = LinuxTelemetrySourceIds.NetworkFlowSummary };
+            await queue.EnqueueBatchAsync([first, second], default);
+
+            var afterEnqueue = queue.GetWorkSnapshot();
+            Assert.NotEqual("unavailable", afterEnqueue.GenerationId);
+            Assert.Equal(1, afterEnqueue.Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].EnqueuedEvents);
+            Assert.True(afterEnqueue.Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].EnqueuedPayloadBytes > 128);
+            Assert.Equal(0, afterEnqueue.Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].AcknowledgedEvents);
+
+            var batch = await queue.DequeueBatchAsync(10, default);
+            await queue.DeleteAsync([batch[0].QueueId], default);
+            Assert.Equal(0, queue.GetWorkSnapshot().Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].AcknowledgedEvents);
+            queue.RecordAcknowledgedWork([batch[0]]);
+
+            var afterAcknowledgement = queue.GetWorkSnapshot();
+            Assert.Equal(1, afterAcknowledgement.Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].AcknowledgedEvents);
+            Assert.Equal(batch[0].SerializedPayloadBytes,
+                afterAcknowledgement.Sources[LinuxTelemetrySourceIds.PackageInventoryDiff].AcknowledgedPayloadBytes);
+            Assert.Equal(0, afterAcknowledgement.Sources[LinuxTelemetrySourceIds.NetworkFlowSummary].AcknowledgedEvents);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SetBasedDeleteIsAtomicWhenOneRowTriggersFailure()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-delete-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "queue.sqlite");
+            var queue = new SqliteEventQueue(new AgentQueueOptions { Path = path }, new CountingLogger());
+            await queue.EnqueueBatchAsync([Event(1, 64), Event(2, 64)], default);
+            var batch = await queue.DequeueBatchAsync(10, default);
+            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString());
+            await connection.OpenAsync();
+            await using (var trigger = connection.CreateCommand())
+            {
+                trigger.CommandText = $"create trigger synthetic_delete_failure before delete on queued_events when old.id = {batch[1].QueueId} begin select raise(abort, 'synthetic delete failure'); end;";
+                await trigger.ExecuteNonQueryAsync();
+            }
+
+            await Assert.ThrowsAsync<SqliteException>(() => queue.DeleteAsync(batch.Select(item => item.QueueId).ToArray(), default));
+            Assert.Equal(2, await queue.CountAsync(default));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task QueueUpgradeDropsOnlyUnusedIndexesAndPreservesRowsAttemptsPoisonAndOldestIdAge()
     {
         var root = Path.Combine(Path.GetTempPath(), $"challenger-queue-upgrade-{Guid.NewGuid():N}");

@@ -119,9 +119,11 @@ public sealed class LinuxL4TelemetryStateStore(string configuredPath, string? al
             || state.Policy is null || state.Slo is null
             || state.Policy.Progress is null || state.Slo.Progress is null
             || state.Policy.BaselineSignatures is null || state.Policy.CurrentSignatures is null || state.Slo.Samples is null
+            || state.Slo.PreviousQueueWork is null
             || state.Policy.BaselineSignatures.Count > LinuxL4TelemetryLimits.MaximumPolicySnapshots
             || state.Policy.CurrentSignatures.Count > LinuxL4TelemetryLimits.MaximumPolicySnapshots
             || state.Slo.Samples.Count > LinuxL4TelemetryLimits.MaximumSloSamples
+            || state.Slo.PreviousQueueWork.Count > 64
             || state.Slo.PreviousProcessStartTimeUtcTicks is <= 0
             || !ValidProgress(state.Policy.Progress) || !ValidProgress(state.Slo.Progress)) return false;
 
@@ -129,6 +131,11 @@ public sealed class LinuxL4TelemetryStateStore(string configuredPath, string? al
         if (state.Policy.BaselineEstablished && state.Policy.BaselineSignatures.Count == 0) return false;
         if (state.Policy.BaselineSignatures.Concat(state.Policy.CurrentSignatures)
             .Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 || !IsSha256(pair.Value))) return false;
+        if (state.Slo.PreviousQueueWorkGenerationId is { Length: > 64 }
+            || state.Slo.PreviousQueueWork.Any(pair => pair.Key.Length is < 1 or > 128
+                || pair.Value is null
+                || pair.Value.EnqueuedEvents < 0 || pair.Value.EnqueuedPayloadBytes < 0
+                || pair.Value.AcknowledgedEvents < 0 || pair.Value.AcknowledgedPayloadBytes < 0)) return false;
         return state.Slo.Samples.All(sample => sample is not null
             && sample.ObservedAt != default
             && sample.CpuPercentMilli is null or >= 0 and <= 100_000

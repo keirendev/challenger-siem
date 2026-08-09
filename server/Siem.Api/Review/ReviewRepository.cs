@@ -14,9 +14,14 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         .ToArray();
 
     private static readonly string[] LinuxL2MandatorySourceIds = LinuxTelemetrySourceCatalog.L2Security
+        .Concat(LinuxTelemetrySourceCatalog.L2InventoryDiff)
         .Where(source => source.Requirement == SourceRequirementKinds.Mandatory)
         .Select(source => source.SourceId)
+        .Append(LinuxTelemetrySourceIds.PackageManagement)
+        .Distinct(StringComparer.Ordinal)
         .ToArray();
+
+    private static readonly int LinuxL2MandatorySourceCount = LinuxL2MandatorySourceIds.Length - 1;
 
     private static readonly string[] LinuxL2RoleSourceIds = LinuxTelemetrySourceCatalog.L2Security
         .Where(source => source.Requirement == SourceRequirementKinds.RoleSpecific)
@@ -176,7 +181,7 @@ public sealed class ReviewRepository(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("linux_l1_mandatory_source_ids", LinuxL1MandatorySourceIds);
         command.Parameters.AddWithValue("linux_l1_mandatory_source_count", LinuxL1MandatorySourceIds.Length);
         command.Parameters.AddWithValue("linux_l2_mandatory_source_ids", LinuxL2MandatorySourceIds);
-        command.Parameters.AddWithValue("linux_l2_mandatory_source_count", LinuxL2MandatorySourceIds.Length);
+        command.Parameters.AddWithValue("linux_l2_mandatory_source_count", LinuxL2MandatorySourceCount);
         command.Parameters.AddWithValue("linux_l2_role_source_ids", LinuxL2RoleSourceIds);
         command.Parameters.AddWithValue("linux_l2_role_source_count", LinuxL2RoleSourceIds.Length);
         command.Parameters.AddWithValue("linux_l4_mandatory_source_ids", LinuxL4MandatorySourceIds);

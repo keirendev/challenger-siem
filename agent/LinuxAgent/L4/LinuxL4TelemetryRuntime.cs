@@ -135,13 +135,14 @@ public sealed class LinuxL4TelemetryRuntime(
         try
         {
             var metrics = await queue.GetMetricsAsync(null, cancellationToken);
+            var queueWork = queue.GetWorkSnapshot();
             var pressure = PressureReason(metrics);
             if (pressure is not null)
             {
                 await RecordPressureStateAsync(LinuxTelemetrySourceIds.AgentPerformanceSlo, pressure, cancellationToken);
                 return;
             }
-            var result = await collector.CollectSloAsync(CurrentState, metrics, options.AgentId, Environment.MachineName, cancellationToken);
+            var result = await collector.CollectSloAsync(CurrentState, metrics, queueWork, options.AgentId, Environment.MachineName, cancellationToken);
             await CommitAsync(result, cancellationToken);
         }
         finally { collectionGate.Release(); }
