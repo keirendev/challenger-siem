@@ -497,6 +497,74 @@ public sealed class LinuxL4TelemetryTests
     }
 
     [Fact]
+    public async Task SloReportsBoundedPerSourceQueueWorkAndGenerationDiscontinuity()
+    {
+        var options = BaseOptions();
+        options.L4Telemetry.SloSampleIntervalSeconds = 120;
+        options.L4Telemetry.SloWindowMinutes = 10;
+        var collector = Collector(options, new SyntheticSloSource(
+            Observation(Start, 1, 1_000),
+            Observation(Start.AddMinutes(2), 1.1, 13_000),
+            Observation(Start.AddMinutes(4), 1.2, 14_000)));
+        var initialWork = new QueueWorkSnapshot("generation-a", new Dictionary<string, QueueSourceWorkCounters>(StringComparer.Ordinal)
+        {
+            [LinuxTelemetrySourceIds.NetworkFlowSummary] = new(10, 1_000, 10, 1_000)
+        });
+        var currentWork = new QueueWorkSnapshot("generation-a", new Dictionary<string, QueueSourceWorkCounters>(StringComparer.Ordinal)
+        {
+            [LinuxTelemetrySourceIds.NetworkFlowSummary] = new(12, 3_000, 11, 2_000)
+        });
+
+        var first = await collector.CollectSloAsync(new(), HealthyQueue(), initialWork,
+            options.AgentId, "SYNTHETIC-LINUX-01", default);
+        var second = await collector.CollectSloAsync(first.NewState, HealthyQueue(), currentWork,
+            options.AgentId, "SYNTHETIC-LINUX-01", default);
+        var raw = Assert.Single(second.Events).Raw;
+        Assert.Equal("complete", raw.GetProperty("queue_work_counter_state").GetString());
+        Assert.Equal(3_000, raw.GetProperty("queue_work_payload_bytes").GetInt64());
+        Assert.Equal(25, raw.GetProperty("queue_work_payload_bytes_per_second").GetInt64());
+        Assert.Equal(9_000, raw.GetProperty("queue_work_unattributed_write_bytes").GetInt64());
+        var contributor = Assert.Single(raw.GetProperty("queue_work_top_sources").EnumerateArray());
+        Assert.Equal(LinuxTelemetrySourceIds.NetworkFlowSummary, contributor.GetProperty("source_id").GetString());
+
+        var reset = await collector.CollectSloAsync(second.NewState, HealthyQueue(), currentWork with { GenerationId = "generation-b" },
+            options.AgentId, "SYNTHETIC-LINUX-01", default);
+        Assert.Equal("slo_counter_discontinuity", reset.ErrorCode);
+        Assert.Equal("counter_discontinuity", Assert.Single(reset.Events).Raw.GetProperty("queue_work_counter_state").GetString());
+    }
+
+    [Fact]
+    public async Task SloAttributionRetainsTopEightAndAggregatesTheRemainder()
+    {
+        var options = BaseOptions();
+        options.L4Telemetry.SloSampleIntervalSeconds = 120;
+        options.L4Telemetry.SloWindowMinutes = 10;
+        var collector = Collector(options, new SyntheticSloSource(
+            Observation(Start, 1, 1_000),
+            Observation(Start.AddMinutes(2), 1.1, 21_000)));
+        var initial = Enumerable.Range(0, 10).ToDictionary(
+            index => $"synthetic-source-{index:D2}",
+            _ => new QueueSourceWorkCounters(0, 0, 0, 0),
+            StringComparer.Ordinal);
+        var current = Enumerable.Range(0, 10).ToDictionary(
+            index => $"synthetic-source-{index:D2}",
+            index => new QueueSourceWorkCounters(index + 1, (index + 1) * 100, index + 1, (index + 1) * 100),
+            StringComparer.Ordinal);
+
+        var first = await collector.CollectSloAsync(new(), HealthyQueue(), new QueueWorkSnapshot("generation", initial),
+            options.AgentId, "SYNTHETIC-LINUX-01", default);
+        var second = await collector.CollectSloAsync(first.NewState, HealthyQueue(), new QueueWorkSnapshot("generation", current),
+            options.AgentId, "SYNTHETIC-LINUX-01", default);
+
+        var contributors = Assert.Single(second.Events).Raw.GetProperty("queue_work_top_sources").EnumerateArray().ToArray();
+        Assert.Equal(9, contributors.Length);
+        Assert.Equal("synthetic-source-09", contributors[0].GetProperty("source_id").GetString());
+        Assert.Equal("_other", contributors[^1].GetProperty("source_id").GetString());
+        Assert.Equal(300, contributors[^1].GetProperty("enqueued_payload_bytes").GetInt64());
+        Assert.Equal(300, contributors[^1].GetProperty("acknowledged_payload_bytes").GetInt64());
+    }
+
+    [Fact]
     public async Task SloCannotBecomeHealthyBeforeTheFullRollingWindowIsCovered()
     {
         var options = BaseOptions();
@@ -1219,8 +1287,13 @@ public sealed class LinuxL4TelemetryTests
                 "linux_agent_integrity" =>
                 [
                     new InventoryItem { Kind = "agent_integrity", Name = "configuration", Status = "expected_permissions" },
-                    new InventoryItem { Kind = "agent_integrity", Name = "executable", Status = "expected_permissions",
-                        Metadata = new Dictionary<string, string> { ["sha256"] = new string('0', 64) } }
+                    new InventoryItem
+                    {
+                        Kind = "agent_integrity",
+                        Name = "executable",
+                        Status = "expected_permissions",
+                        Metadata = new Dictionary<string, string> { ["sha256"] = new string('0', 64) }
+                    }
                 ],
                 "linux_mandatory_access_control" =>
                 [new InventoryItem { Kind = "mandatory_access_control", Name = "apparmor", Status = "enabled" }],

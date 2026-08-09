@@ -13,6 +13,27 @@ namespace Challenger.Siem.Api.Tests;
 public sealed class LinuxL2CoverageTests
 {
     [Fact]
+    public void LegacyPackageRequirementRemainsSatisfiedDuringApiFirstRollout()
+    {
+        var now = DateTimeOffset.Parse("2026-08-09T00:00:00Z");
+        var legacyReports = LinuxTelemetrySourceCatalog.ExpectedForLegacyPackage(CoverageLevel.L2)
+            .Select(entry => Report(entry, now))
+            .ToArray();
+        var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
+            legacyReports,
+            CoverageLevel.L2,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            now,
+            TelemetryPlatforms.Linux);
+
+        Assert.DoesNotContain(merged, item => item.SourceId == LinuxTelemetrySourceIds.PackageInventoryDiff);
+        var package = Assert.Single(merged, item => item.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+        Assert.Equal(SourceRequirementKinds.Mandatory, package.Requirement);
+        Assert.Equal(CoverageLevel.L2,
+            TelemetryCoverageEvaluator.CreateSummary("linux-legacy", "SYNTHETIC-LINUX-01", 0, now, merged, CoverageLevel.L2).CurrentLevel);
+    }
+
+    [Fact]
     public void LinuxCatalogOverlayDistinguishesRequirementApplicabilityAndImplementedAuditStates()
     {
         var merged = TelemetryCoverageEvaluator.MergeExpectedSources(
@@ -328,7 +349,7 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
         Assert.Equal(0, summary.UnsupportedSources);
-        Assert.Equal(1, summary.DegradedSources);
+        Assert.Equal(2, summary.DegradedSources);
         Assert.Equal(0, summary.MissingMandatorySources);
 
         var audit = Assert.Single(merged, source => source.SourceId == LinuxTelemetrySourceIds.AuditFramework);
@@ -376,7 +397,7 @@ public sealed class LinuxL2CoverageTests
         var summary = TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, baseline, CoverageLevel.L2);
         Assert.Equal(CoverageLevel.L2, summary.CurrentLevel);
         Assert.Equal(SourceHealthStatuses.Healthy, summary.OverallStatus);
-        Assert.Equal(2, summary.DegradedSources);
+        Assert.Equal(3, summary.DegradedSources);
         Assert.Equal(0, summary.UnsupportedSources);
         Assert.Equal(1, summary.NotApplicableSources);
         Assert.Equal(0, summary.MissingMandatorySources);
@@ -413,7 +434,7 @@ public sealed class LinuxL2CoverageTests
         Assert.Equal(SourceHealthStatuses.Stale, staleSummary.OverallStatus);
         Assert.Equal(1, staleSummary.StaleSources);
 
-        var selfExceptedReports = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageManagement
+        var selfExceptedReports = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageInventoryDiff
             ? report with { Status = SourceHealthStatuses.Excepted }
             : report).ToArray();
         var selfExcepted = TelemetryCoverageEvaluator.MergeExpectedSources(
@@ -423,21 +444,21 @@ public sealed class LinuxL2CoverageTests
             now,
             TelemetryPlatforms.Linux);
         Assert.Equal(SourceHealthStatuses.Degraded,
-            Assert.Single(selfExcepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).Status);
+            Assert.Single(selfExcepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageInventoryDiff).Status);
         Assert.Equal(CoverageLevel.L1,
             TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, selfExcepted, CoverageLevel.L2).CurrentLevel);
 
-        var missingPackage = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageManagement
+        var missingPackage = reports.Select(report => report.SourceId == LinuxTelemetrySourceIds.PackageInventoryDiff
             ? report with { Status = SourceHealthStatuses.Missing }
             : report).ToArray();
         var excepted = TelemetryCoverageEvaluator.MergeExpectedSources(
             missingPackage,
             CoverageLevel.L2,
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.PackageManagement },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { LinuxTelemetrySourceIds.PackageInventoryDiff },
             now,
             TelemetryPlatforms.Linux);
         Assert.Equal(SourceHealthStatuses.Excepted,
-            Assert.Single(excepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageManagement).Status);
+            Assert.Single(excepted, source => source.SourceId == LinuxTelemetrySourceIds.PackageInventoryDiff).Status);
         Assert.Equal(CoverageLevel.L2,
             TelemetryCoverageEvaluator.CreateSummary("linux-synthetic", "SYNTHETIC-LINUX-01", 0, now, excepted, CoverageLevel.L2).CurrentLevel);
     }

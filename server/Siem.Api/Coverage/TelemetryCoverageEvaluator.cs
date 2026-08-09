@@ -41,7 +41,10 @@ public static class TelemetryCoverageEvaluator
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var merged = new List<SourceHealthReport>();
 
-        foreach (var expected in ExpectedFor(platform, targetLevel))
+        var expectedSources = UsesLegacyPackageDescriptor(reportedSources)
+            ? LinuxTelemetrySourceCatalog.ExpectedForLegacyPackage(targetLevel)
+            : ExpectedFor(platform, targetLevel);
+        foreach (var expected in expectedSources)
         {
             if (reportedBySource.TryGetValue(expected.SourceId, out var reported))
             {
@@ -52,7 +55,8 @@ public static class TelemetryCoverageEvaluator
                 }
                 var forceRequiredApplicability = expected.Requirement == SourceRequirementKinds.Mandatory
                     && expected.Applicability == SourceApplicabilityStatuses.Applicable
-                    && expected.SourceId != LinuxTelemetrySourceIds.PackageManagement
+                    && expected.SourceId is not LinuxTelemetrySourceIds.PackageManagement
+                        and not LinuxTelemetrySourceIds.PackageInventoryDiff
                     && reported.Applicability != SourceApplicabilityStatuses.Applicable;
                 if (forceRequiredApplicability)
                 {
@@ -217,6 +221,7 @@ public static class TelemetryCoverageEvaluator
         string platform)
     {
         var current = CoverageLevel.L0;
+        var usesLegacyPackageDescriptor = UsesLegacyPackageDescriptor(sources);
         foreach (var level in new[] { CoverageLevel.L1, CoverageLevel.L2, CoverageLevel.L3, CoverageLevel.L4 })
         {
             if (level > targetLevel)
@@ -224,7 +229,9 @@ public static class TelemetryCoverageEvaluator
                 break;
             }
 
-            var expected = ExpectedFor(platform, level)
+            var expected = (usesLegacyPackageDescriptor
+                    ? LinuxTelemetrySourceCatalog.ExpectedForLegacyPackage(level)
+                    : ExpectedFor(platform, level))
                 .Where(expected => expected.CoverageLevel <= level)
                 .ToArray();
 
@@ -573,6 +580,12 @@ public static class TelemetryCoverageEvaluator
 
     private static IReadOnlyList<SourceManifestEntry> ExpectedFor(string platform, CoverageLevel targetLevel) =>
         LinuxTelemetrySourceCatalog.ExpectedFor(targetLevel);
+
+    private static bool UsesLegacyPackageDescriptor(IReadOnlyList<SourceHealthReport> sources) =>
+        !sources.Any(source => string.Equals(source.SourceId, LinuxTelemetrySourceIds.PackageInventoryDiff, StringComparison.OrdinalIgnoreCase))
+        && sources.Any(source => string.Equals(source.SourceId, LinuxTelemetrySourceIds.PackageManagement, StringComparison.OrdinalIgnoreCase)
+            && source.Requirement == SourceRequirementKinds.Mandatory
+            && source.Required);
 
     private static string InferPlatform(IReadOnlyList<SourceHealthReport> sources) =>
         TelemetryPlatforms.Linux;

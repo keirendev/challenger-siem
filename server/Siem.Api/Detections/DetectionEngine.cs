@@ -218,7 +218,8 @@ public sealed class DetectionEngine
             "persistence.scheduler-activity.linux" => SourceIdEquals(envelope, LinuxTelemetrySourceIds.Scheduler)
                 && CategoryEquals(normalized, "scheduler")
                 && ActionIn(normalized, "job_execute", "timer_trigger"),
-            "package.change.linux" => SourceIdEquals(envelope, LinuxTelemetrySourceIds.PackageManagement)
+            "package.change.linux" => (SourceIdEquals(envelope, LinuxTelemetrySourceIds.PackageManagement)
+                    || SourceIdEquals(envelope, LinuxTelemetrySourceIds.PackageInventoryDiff))
                 && CategoryEquals(normalized, "package")
                 && ActionIn(normalized, "install", "update", "remove")
                 && HasValue(normalized.PackageName),

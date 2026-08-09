@@ -52,6 +52,14 @@ public sealed class LinuxL2JournalTests
         Assert.Equal(SourceRequirementKinds.Optional, firewall.Requirement);
         Assert.Equal(SourceApplicabilityStatuses.Unknown, firewall.Applicability);
         Assert.Equal(new[] { "firewall_allow_deny", "firewall_policy_change" }, firewall.ValidationScenarios);
+        var packageJournal = Assert.Single(LinuxTelemetrySourceCatalog.L2Security, item => item.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+        Assert.Equal(SourceRequirementKinds.Optional, packageJournal.Requirement);
+        Assert.False(packageJournal.Required);
+        var packageDiff = Assert.Single(LinuxTelemetrySourceCatalog.L2InventoryDiff);
+        Assert.Equal(LinuxTelemetrySourceIds.PackageInventoryDiff, packageDiff.SourceId);
+        Assert.Equal(TelemetrySourceKinds.InventoryDiff, packageDiff.SourceKind);
+        Assert.Equal(SourceCheckpointKinds.Sequence, packageDiff.CheckpointKind);
+        Assert.Equal(SourceRequirementKinds.Mandatory, packageDiff.Requirement);
         Assert.Equal(
             new[]
             {

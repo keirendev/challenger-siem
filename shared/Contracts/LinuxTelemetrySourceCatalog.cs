@@ -9,6 +9,7 @@ public static class LinuxTelemetrySourceIds
     public const string Privilege = "linux-sudo-su";
     public const string Scheduler = "linux-cron-timers";
     public const string PackageManagement = "linux-package-management";
+    public const string PackageInventoryDiff = "linux-package-inventory-diff";
     public const string Firewall = "linux-firewall";
     public const string KernelSecurity = "linux-kernel-security";
     public const string ServiceChange = "linux-service-change";
@@ -127,9 +128,9 @@ public static class LinuxTelemetrySourceCatalog
             validationScenarios: "cron_execution,timer_trigger"),
         Entry(
             LinuxTelemetrySourceIds.PackageManagement,
-            "Linux package-management activity",
+            "Linux package-management journal activity",
             CoverageLevel.L2,
-            SourceRequirementKinds.Mandatory,
+            SourceRequirementKinds.Optional,
             "linux-package-v1",
             prerequisites: "systemd_journal_readable,package_manager_journal_visibility",
             eventFamilies: "package_install,package_update,package_remove",
@@ -171,6 +172,10 @@ public static class LinuxTelemetrySourceCatalog
             eventFamilies: "agent_tamper,log_tamper",
             validationScenarios: "agent_unit_change,journal_gap_or_corruption")
     ];
+
+    public static readonly SourceManifestEntry PackageInventoryDiff = PackageInventoryDiffEntry();
+
+    public static readonly IReadOnlyList<SourceManifestEntry> L2InventoryDiff = [PackageInventoryDiff];
 
     public static readonly SourceManifestEntry SelfIntegritySnapshot = new()
     {
@@ -309,11 +314,36 @@ public static class LinuxTelemetrySourceCatalog
 
     public static readonly IReadOnlyList<SourceManifestEntry> All = L1
         .Concat(L2Security)
+        .Concat(L2InventoryDiff)
         .Append(AuditFramework)
         .Append(SelfIntegritySnapshot)
         .Concat(L3Passive)
         .Append(KernelNetworkFlow)
         .Concat(L4)
+        .OrderBy(entry => entry.CoverageLevel)
+        .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)
+        .ToArray();
+
+    /// <summary>
+    /// Exact pre-2.9 package descriptor accepted during an API-first rolling upgrade. It is not
+    /// emitted by current agents and does not change the identity of queued journal events.
+    /// </summary>
+    public static readonly SourceManifestEntry LegacyPackageManagement = Entry(
+        LinuxTelemetrySourceIds.PackageManagement,
+        "Linux package-management activity",
+        CoverageLevel.L2,
+        SourceRequirementKinds.Mandatory,
+        "linux-package-v1",
+        prerequisites: "systemd_journal_readable,package_manager_journal_visibility",
+        eventFamilies: "package_install,package_update,package_remove",
+        validationScenarios: "package_install_update_remove");
+
+    public static IReadOnlyList<SourceManifestEntry> ExpectedForLegacyPackage(CoverageLevel targetLevel, bool includeOptional = true) => All
+        .Where(entry => entry.CoverageLevel <= targetLevel
+            && entry.SourceId != LinuxTelemetrySourceIds.PackageInventoryDiff
+            && entry.SourceId != LinuxTelemetrySourceIds.PackageManagement
+            && (includeOptional || entry.Requirement == SourceRequirementKinds.Mandatory))
+        .Concat(targetLevel >= CoverageLevel.L2 ? [LegacyPackageManagement] : [])
         .OrderBy(entry => entry.CoverageLevel)
         .ThenBy(entry => entry.DisplayName, StringComparer.Ordinal)
         .ToArray();
@@ -449,6 +479,28 @@ public static class LinuxTelemetrySourceCatalog
     private static IReadOnlyList<string> Split(string value) => string.IsNullOrWhiteSpace(value)
         ? Array.Empty<string>()
         : value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static SourceManifestEntry PackageInventoryDiffEntry() => new()
+    {
+        SourceId = LinuxTelemetrySourceIds.PackageInventoryDiff,
+        Platform = TelemetryPlatforms.Linux,
+        SourceKind = TelemetrySourceKinds.InventoryDiff,
+        SourceNamespace = "linux.package.inventory",
+        Applicability = SourceApplicabilityStatuses.Applicable,
+        CheckpointKind = SourceCheckpointKinds.Sequence,
+        DisplayName = "Linux package inventory differences",
+        CoverageLevel = CoverageLevel.L2,
+        Required = true,
+        Requirement = SourceRequirementKinds.Mandatory,
+        EnabledByDefault = false,
+        SourcePack = L2PackId,
+        ParserId = "linux-package-inventory-diff-v1",
+        Prerequisites = ["bounded_package_inventory_available", "complete_package_inventory_baseline"],
+        EventFamilies = ["package_baseline", "package_install", "package_update", "package_remove", "package_gap", "package_recovery"],
+        ValidationScenarios = ["baseline_diff", "partial_truncated", "event_cap", "queue_restart", "acknowledgement"],
+        Privacy = "high_sensitivity_metadata",
+        InstallerManaged = false
+    };
 
     private static SourceManifestEntry PassiveEntry(
         string sourceId,

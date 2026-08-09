@@ -447,7 +447,8 @@
       ],
       "properties": {
         "source_id": {
-          "type": "string"
+          "type": "string",
+          "examples": ["linux-package-inventory-diff", "linux-package-management"]
         },
         "display_name": {
           "type": "string"

@@ -49,6 +49,41 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         Assert.Equal(2, pressure.Version);
         Assert.Equal(2, Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "persistence.service-start.linux").Version);
         Assert.Equal(2, Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "persistence.scheduler-activity.linux").Version);
+        var package = Assert.Single(DetectionRuleCatalog.BuiltInRules, rule => rule.RuleId == "package.change.linux");
+        Assert.Equal(2, package.Version);
+        Assert.Equal([LinuxTelemetrySourceIds.PackageManagement, LinuxTelemetrySourceIds.PackageInventoryDiff], package.RequiredSources);
+    }
+
+    [Fact]
+    public void PackageInventoryDiffEventsMatchWithHealthyOrGappedConfidence()
+    {
+        var engine = new DetectionEngine();
+        var envelope = PortableEvent(
+            EventSources.InventoryDiff,
+            LinuxTelemetrySourceIds.PackageInventoryDiff,
+            "package_inventory_update",
+            new NormalizedEventFields
+            {
+                Category = "package",
+                Action = "update",
+                Outcome = "unknown",
+                PackageName = "synthetic-package"
+            });
+        var healthy = Assert.Single(engine.EvaluateLinux(envelope, HealthySources(LinuxTelemetrySourceIds.PackageInventoryDiff)),
+            result => result.Rule.RuleId == "package.change.linux");
+        Assert.True(healthy.Matched);
+        Assert.Equal("medium", healthy.EffectiveConfidence);
+
+        var gappedHealth = HealthySources(LinuxTelemetrySourceIds.PackageInventoryDiff)
+            .ToDictionary(pair => pair.Key, pair => pair.Value with
+            {
+                Status = SourceHealthStatuses.Degraded,
+                GapDetected = true
+            }, StringComparer.OrdinalIgnoreCase);
+        var gapped = Assert.Single(engine.EvaluateLinux(envelope, gappedHealth),
+            result => result.Rule.RuleId == "package.change.linux");
+        Assert.True(gapped.Matched);
+        Assert.Equal("low", gapped.EffectiveConfidence);
     }
 
     [Theory]

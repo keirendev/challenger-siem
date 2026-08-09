@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.Agent.Core.Serialization;
 using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
@@ -16,7 +17,7 @@ public sealed class LinuxL4TelemetryCollector(
     ILinuxAgentSloSource sloSource,
     TimeProvider timeProvider)
 {
-    public const string CollectorVersion = "linux-l4-telemetry-v1";
+    public const string CollectorVersion = "linux-l4-telemetry-v2";
     public const long MaximumRssBytes = 250L * 1024 * 1024;
     public const long MaximumAverageWriteBytesPerSecond = 1024L * 1024;
     public const long MaximumAverageCpuPercentMilli = 2_000;
@@ -80,7 +81,7 @@ public sealed class LinuxL4TelemetryCollector(
             $"state_path={l4.StatePath}",
             $"policy_snapshots={string.Join(',', PolicySnapshotTypes)}",
             $"slo_thresholds=average_cpu_milli<{MaximumAverageCpuPercentMilli},p95_cpu_milli<{MaximumP95CpuPercentMilli},rss_bytes<{MaximumRssBytes},write_bytes_per_second<{MaximumAverageWriteBytesPerSecond}",
-            "slo_inputs=process_total_processor_time,process_rss,managed_memory,/proc/self/io:write_bytes,queue_metrics",
+            "slo_inputs=process_total_processor_time,process_rss,managed_memory,/proc/self/io:write_bytes,queue_metrics,bounded_per_source_queue_work",
             $"role_inputs=existing_{LinuxJournalScopes.Configured(configured.Journal)}_systemd_journal_identifier_and_unit_only",
             "exclusions=raw_inventory_values,raw_policy_files,sql,dns_queries,file_paths,container_environment,credentials,payloads");
         return Sha256(canonical);
@@ -278,7 +279,8 @@ public sealed class LinuxL4TelemetryCollector(
         var policyStatus = driftedCount > 0 ? SourceHealthStatuses.Degraded : SourceHealthStatuses.Healthy;
         var policyError = driftedCount > 0 ? "policy_posture_drift_active" : "none";
         var progress = UpdatedProgress(previous.Policy.Progress, sequence, events, now, policyStatus, policyError,
-            previous.Policy.Progress.ActiveGap, 0, 0) with { RecoveryGapSequence = recoveryGapSequence };
+            previous.Policy.Progress.ActiveGap, 0, 0) with
+        { RecoveryGapSequence = recoveryGapSequence };
         var policy = previous.Policy with
         {
             Progress = progress,
@@ -308,6 +310,20 @@ public sealed class LinuxL4TelemetryCollector(
     public async Task<LinuxL4CollectionResult> CollectSloAsync(
         LinuxL4TelemetryState previous,
         QueueSloMetrics queueMetrics,
+        string agentId,
+        string hostname,
+        CancellationToken cancellationToken) => await CollectSloAsync(
+            previous,
+            queueMetrics,
+            QueueWorkSnapshot.Empty,
+            agentId,
+            hostname,
+            cancellationToken);
+
+    public async Task<LinuxL4CollectionResult> CollectSloAsync(
+        LinuxL4TelemetryState previous,
+        QueueSloMetrics queueMetrics,
+        QueueWorkSnapshot queueWork,
         string agentId,
         string hostname,
         CancellationToken cancellationToken)
@@ -341,13 +357,20 @@ public sealed class LinuxL4TelemetryCollector(
             ? observation.TotalProcessorTime.Ticks - prior.PreviousProcessorTimeTicks.Value : 0;
         var writeDeltaBytes = prior.PreviousWriteBytes.HasValue && observation.WriteBytes.HasValue
             ? observation.WriteBytes.Value - prior.PreviousWriteBytes.Value : 0;
+        var queueWorkAvailable = !string.Equals(queueWork.GenerationId, "unavailable", StringComparison.Ordinal);
+        var queueWorkGenerationChanged = queueWorkAvailable
+            && prior.PreviousQueueWorkGenerationId is not null
+            && !string.Equals(prior.PreviousQueueWorkGenerationId, queueWork.GenerationId, StringComparison.Ordinal);
+        var queueWorkDeltas = QueueWorkDeltas(prior.PreviousQueueWork, queueWork.Sources, out var queueWorkCounterReset);
         var discontinuity = prior.PreviousObservedAt.HasValue
             && (elapsed <= 0
                 || elapsed > options.L4Telemetry.SloSampleIntervalSeconds * 3L
                 || prior.PreviousProcessStartTimeUtcTicks.HasValue
                     && prior.PreviousProcessStartTimeUtcTicks.Value != observation.ProcessStartTimeUtcTicks
                 || prior.PreviousProcessorTimeTicks.HasValue && processorDeltaTicks < 0
-                || prior.PreviousWriteBytes.HasValue && observation.WriteBytes.HasValue && writeDeltaBytes < 0);
+                || prior.PreviousWriteBytes.HasValue && observation.WriteBytes.HasValue && writeDeltaBytes < 0
+                || queueWorkGenerationChanged
+                || queueWorkCounterReset);
 
         var currentSample = new LinuxL4SloSample
         {
@@ -419,6 +442,12 @@ public sealed class LinuxL4TelemetryCollector(
                 hostname,
                 $"recovered_from_{prior.Progress.ErrorCode}"));
         }
+        var queueAttribution = QueueWorkAttribution(queueWorkDeltas, elapsed,
+            queueWorkAvailable && !discontinuity && prior.PreviousQueueWorkGenerationId is not null);
+        var processWriteDelta = elapsed > 0 && writeDeltaBytes >= 0 ? (long?)writeDeltaBytes : null;
+        long? unattributedWriteBytes = processWriteDelta.HasValue && queueAttribution.TotalPayloadBytes.HasValue
+            ? Math.Max(0, processWriteDelta.Value - queueAttribution.TotalPayloadBytes.Value)
+            : null;
         var evt = BuildEvent(
             LinuxTelemetrySourceIds.AgentPerformanceSlo, EventSources.AgentHealth,
             $"slo_{action}", action, sequence++, observation.ObservedAt, agentId, hostname,
@@ -435,6 +464,14 @@ public sealed class LinuxL4TelemetryCollector(
                 ["maximum_rss_bytes"] = maximumRss,
                 ["maximum_managed_memory_bytes"] = boundedMaximumManagedMemory,
                 ["average_write_bytes_per_second"] = averageWrites,
+                ["process_write_bytes_delta"] = processWriteDelta,
+                ["queue_work_counter_state"] = !queueWorkAvailable ? "unavailable"
+                    : queueWorkGenerationChanged || queueWorkCounterReset ? "counter_discontinuity"
+                    : prior.PreviousQueueWorkGenerationId is null ? "warmup" : "complete",
+                ["queue_work_payload_bytes"] = queueAttribution.TotalPayloadBytes,
+                ["queue_work_payload_bytes_per_second"] = queueAttribution.TotalPayloadBytesPerSecond,
+                ["queue_work_unattributed_write_bytes"] = unattributedWriteBytes,
+                ["queue_work_top_sources"] = queueAttribution.TopSources,
                 ["queue_depth"] = queueMetrics.QueueDepth,
                 ["queue_size_bytes"] = queueMetrics.QueueSizeBytes,
                 ["queue_oldest_age_seconds"] = queueMetrics.OldestQueuedAgeSeconds,
@@ -456,6 +493,19 @@ public sealed class LinuxL4TelemetryCollector(
             PreviousProcessorTimeTicks = observation.TotalProcessorTime.Ticks,
             PreviousWriteBytes = observation.WriteBytes,
             PreviousProcessStartTimeUtcTicks = observation.ProcessStartTimeUtcTicks,
+            PreviousQueueWorkGenerationId = queueWorkAvailable ? queueWork.GenerationId : prior.PreviousQueueWorkGenerationId,
+            PreviousQueueWork = queueWorkAvailable
+                ? queueWork.Sources.ToDictionary(
+                    pair => pair.Key,
+                    pair => new LinuxL4QueueWorkCounter
+                    {
+                        EnqueuedEvents = pair.Value.EnqueuedEvents,
+                        EnqueuedPayloadBytes = pair.Value.EnqueuedPayloadBytes,
+                        AcknowledgedEvents = pair.Value.AcknowledgedEvents,
+                        AcknowledgedPayloadBytes = pair.Value.AcknowledgedPayloadBytes
+                    },
+                    StringComparer.Ordinal)
+                : prior.PreviousQueueWork,
             Samples = samples
         };
         return new(
@@ -701,6 +751,83 @@ public sealed class LinuxL4TelemetryCollector(
         };
         return envelope with { EventId = DeterministicEventIdentity.ComputeSha256Uuid(envelope) };
     }
+
+    private static IReadOnlyList<QueueWorkDelta> QueueWorkDeltas(
+        IReadOnlyDictionary<string, LinuxL4QueueWorkCounter> previous,
+        IReadOnlyDictionary<string, QueueSourceWorkCounters> current,
+        out bool counterReset)
+    {
+        counterReset = false;
+        var result = new List<QueueWorkDelta>(current.Count);
+        foreach (var pair in current.OrderBy(item => item.Key, StringComparer.Ordinal))
+        {
+            var prior = previous.GetValueOrDefault(pair.Key) ?? new LinuxL4QueueWorkCounter();
+            var enqueuedEvents = pair.Value.EnqueuedEvents - prior.EnqueuedEvents;
+            var enqueuedBytes = pair.Value.EnqueuedPayloadBytes - prior.EnqueuedPayloadBytes;
+            var acknowledgedEvents = pair.Value.AcknowledgedEvents - prior.AcknowledgedEvents;
+            var acknowledgedBytes = pair.Value.AcknowledgedPayloadBytes - prior.AcknowledgedPayloadBytes;
+            if (enqueuedEvents < 0 || enqueuedBytes < 0 || acknowledgedEvents < 0 || acknowledgedBytes < 0)
+            {
+                counterReset = true;
+                continue;
+            }
+            result.Add(new(pair.Key, enqueuedEvents, enqueuedBytes, acknowledgedEvents, acknowledgedBytes));
+        }
+        if (previous.Keys.Any(key => !current.ContainsKey(key))) counterReset = true;
+        return result;
+    }
+
+    private static QueueAttributionResult QueueWorkAttribution(
+        IReadOnlyList<QueueWorkDelta> deltas,
+        double elapsedSeconds,
+        bool intervalAvailable)
+    {
+        if (!intervalAvailable || elapsedSeconds <= 0)
+            return new(null, null, Array.Empty<IReadOnlyDictionary<string, object?>>());
+
+        var ordered = deltas.OrderByDescending(item => item.TotalPayloadBytes)
+            .ThenBy(item => item.SourceId, StringComparer.Ordinal).ToArray();
+        var rows = new List<QueueWorkDelta>(9);
+        rows.AddRange(ordered.Take(8));
+        if (ordered.Length > 8)
+        {
+            var remainder = ordered.Skip(8).ToArray();
+            rows.Add(new(
+                "_other",
+                remainder.Aggregate(0L, (value, item) => SaturatingAdd(value, item.EnqueuedEvents)),
+                remainder.Aggregate(0L, (value, item) => SaturatingAdd(value, item.EnqueuedPayloadBytes)),
+                remainder.Aggregate(0L, (value, item) => SaturatingAdd(value, item.AcknowledgedEvents)),
+                remainder.Aggregate(0L, (value, item) => SaturatingAdd(value, item.AcknowledgedPayloadBytes))));
+        }
+        var totalBytes = ordered.Aggregate(0L, (value, item) => SaturatingAdd(value, item.TotalPayloadBytes));
+        var top = rows.Select(item => (IReadOnlyDictionary<string, object?>)new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["source_id"] = item.SourceId,
+            ["enqueued_events"] = item.EnqueuedEvents,
+            ["enqueued_payload_bytes"] = item.EnqueuedPayloadBytes,
+            ["acknowledged_events"] = item.AcknowledgedEvents,
+            ["acknowledged_payload_bytes"] = item.AcknowledgedPayloadBytes,
+            ["payload_bytes_per_second"] = (long)Math.Round(item.TotalPayloadBytes / elapsedSeconds, MidpointRounding.AwayFromZero)
+        }).ToArray();
+        return new(totalBytes,
+            (long)Math.Round(totalBytes / elapsedSeconds, MidpointRounding.AwayFromZero),
+            top);
+    }
+
+    private sealed record QueueWorkDelta(
+        string SourceId,
+        long EnqueuedEvents,
+        long EnqueuedPayloadBytes,
+        long AcknowledgedEvents,
+        long AcknowledgedPayloadBytes)
+    {
+        public long TotalPayloadBytes => SaturatingAdd(EnqueuedPayloadBytes, AcknowledgedPayloadBytes);
+    }
+
+    private sealed record QueueAttributionResult(
+        long? TotalPayloadBytes,
+        long? TotalPayloadBytesPerSecond,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> TopSources);
 
     private static long? Percentile95(IEnumerable<long> values)
     {

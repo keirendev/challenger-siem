@@ -27,4 +27,8 @@ public interface IEventQueue
     Task<int> CountAsync(CancellationToken cancellationToken);
 
     Task<QueueSloMetrics> GetMetricsAsync(DateTimeOffset? lastSuccessfulSendTime, CancellationToken cancellationToken);
+
+    QueueWorkSnapshot GetWorkSnapshot() => QueueWorkSnapshot.Empty;
+
+    void RecordAcknowledgedWork(IReadOnlyCollection<QueuedEvent> events) { }
 }

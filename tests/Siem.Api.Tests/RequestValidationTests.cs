@@ -406,6 +406,68 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
+    public void ValidateHeartbeatAcceptsLegacyPackageDescriptorThenEnforcesSupplementalShapeWithInventoryDiff()
+    {
+        var legacy = LinuxTelemetrySourceCatalog.LegacyPackageManagement;
+        var legacyHealth = PackageHealth(legacy, SourceHealthStatuses.Degraded, SourceEvidenceStatuses.Unknown);
+        var legacyHeartbeat = CreateLinuxHeartbeat() with
+        {
+            AgentVersion = "2.8.4",
+            SourceManifest = [legacy],
+            SourceHealth = [legacyHealth]
+        };
+        Assert.Empty(RequestValidation.ValidateHeartbeat(legacyHeartbeat));
+
+        var supplemental = LinuxTelemetrySourceCatalog.L2Security.Single(entry => entry.SourceId == LinuxTelemetrySourceIds.PackageManagement);
+        var inventory = LinuxTelemetrySourceCatalog.PackageInventoryDiff;
+        var currentHeartbeat = CreateLinuxHeartbeat() with
+        {
+            AgentVersion = "2.9.0",
+            SourceManifest = [supplemental, inventory],
+            SourceHealth =
+            [
+                PackageHealth(supplemental, SourceHealthStatuses.Degraded, SourceEvidenceStatuses.Unknown),
+                PackageHealth(inventory, SourceHealthStatuses.Healthy, SourceEvidenceStatuses.Satisfied) with
+                {
+                    CollectedCheckpoint = new SourceCheckpoint { Sequence = 1, EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") },
+                    AcknowledgedCheckpoint = new SourceCheckpoint { Sequence = 1, EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") }
+                }
+            ]
+        };
+        Assert.Empty(RequestValidation.ValidateHeartbeat(currentHeartbeat));
+
+        var unsupportedInventory = inventory with
+        {
+            Applicability = SourceApplicabilityStatuses.Unsupported,
+            ApplicabilityReason = "package_manager_producer_out_of_scope"
+        };
+        var unsupportedJournal = supplemental with
+        {
+            Applicability = SourceApplicabilityStatuses.Unsupported,
+            ApplicabilityReason = "package_manager_producer_out_of_scope"
+        };
+        var unsupportedHeartbeat = currentHeartbeat with
+        {
+            SourceManifest = [unsupportedJournal, unsupportedInventory],
+            SourceHealth =
+            [
+                PackageHealth(unsupportedJournal, SourceHealthStatuses.Unsupported, SourceEvidenceStatuses.Unsupported) with { Enabled = false },
+                PackageHealth(unsupportedInventory, SourceHealthStatuses.Unsupported, SourceEvidenceStatuses.Unsupported) with { Enabled = false }
+            ]
+        };
+        Assert.Empty(RequestValidation.ValidateHeartbeat(unsupportedHeartbeat));
+
+        var mixed = currentHeartbeat with
+        {
+            SourceManifest = [legacy, inventory],
+            SourceHealth = [legacyHealth, currentHeartbeat.SourceHealth[1]]
+        };
+        var errors = RequestValidation.ValidateHeartbeat(mixed);
+        Assert.Contains("source_manifest[0].requirement", errors.Keys);
+        Assert.Contains("source_health[0].requirement", errors.Keys);
+    }
+
+    [Fact]
     public void ValidateRegistrationRequiresAgentIdentity()
     {
         var request = new AgentRegistrationRequest
@@ -477,6 +539,40 @@ public sealed class RequestValidationTests
             }
         };
     }
+
+    private static SourceHealthReport PackageHealth(SourceManifestEntry manifest, string status, string evidence) => new()
+    {
+        SourceId = manifest.SourceId,
+        Platform = manifest.Platform,
+        SourceKind = manifest.SourceKind,
+        SourceNamespace = manifest.SourceNamespace,
+        Applicability = manifest.Applicability,
+        ApplicabilityReason = manifest.ApplicabilityReason,
+        DisplayName = manifest.DisplayName,
+        CoverageLevel = manifest.CoverageLevel,
+        Status = status,
+        Required = manifest.Required,
+        Requirement = manifest.Requirement,
+        ApplicableRoles = manifest.ApplicableRoles,
+        Enabled = true,
+        ObservedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+        CollectedCheckpoint = manifest.CheckpointKind == SourceCheckpointKinds.Cursor
+            ? new SourceCheckpoint { Cursor = "s=synthetic-package;i=1", EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") }
+            : new SourceCheckpoint { Sequence = 1, EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") },
+        AcknowledgedCheckpoint = manifest.CheckpointKind == SourceCheckpointKinds.Cursor
+            ? new SourceCheckpoint { Cursor = "s=synthetic-package;i=1", EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") }
+            : new SourceCheckpoint { Sequence = 1, EventTime = DateTimeOffset.Parse("2026-07-11T12:00:00Z"), RecordedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z") },
+        PrerequisiteStatuses = manifest.Prerequisites.ToDictionary(item => item, _ => evidence, StringComparer.Ordinal),
+        EventFamilyStatuses = manifest.EventFamilies.ToDictionary(item => item,
+            item => item.Contains("baseline", StringComparison.Ordinal) ? SourceEvidenceStatuses.Observed : SourceEvidenceStatuses.NotObserved,
+            StringComparer.Ordinal),
+        EventRatePerMinute = 0,
+        GapCount = 0,
+        TransitionState = HealthTransitionStates.Healthy,
+        TransitionedAt = DateTimeOffset.Parse("2026-07-11T12:00:00Z"),
+        DroppedEvents = 0,
+        PoisonEvents = 0
+    };
 
     private static IngestBatchRequest CreateValidBatch()
     {

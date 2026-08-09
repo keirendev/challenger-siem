@@ -4,6 +4,7 @@ using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.Inventory;
 using Challenger.Siem.LinuxAgent.Services;
 using Challenger.Siem.LinuxAgent.L4;
+using Challenger.Siem.LinuxAgent.Package;
 using Challenger.Siem.LinuxAgent.State;
 using Microsoft.Extensions.Options;
 
@@ -13,7 +14,8 @@ public sealed class LinuxJournalRuntime(
     IOptions<LinuxAgentOptions> configured,
     LinuxStateStore state,
     TimeProvider timeProvider,
-    LinuxAuditRouterRuntime? auditRouterRuntime = null) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
+    LinuxAuditRouterRuntime? auditRouterRuntime = null,
+    LinuxPackageJournalEvidenceTracker? packageJournalEvidence = null) : ILinuxAcknowledgementObserver, ILinuxInventoryObserver
 {
     private const string OversizedGapState = "oversized_record_omitted";
     private static readonly IReadOnlySet<string> AcknowledgedSourceIds = LinuxTelemetrySourceCatalog.All
@@ -21,6 +23,7 @@ public sealed class LinuxJournalRuntime(
         .Select(entry => entry.SourceId)
         .ToHashSet(StringComparer.Ordinal);
     private readonly LinuxAgentOptions options = configured.Value;
+    private readonly LinuxPackageJournalEvidenceTracker packageJournalEvidence = packageJournalEvidence ?? new();
     private readonly object sync = new();
     private readonly Dictionary<string, DateTimeOffset> latestBySource = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> observedFamilies = new(StringComparer.Ordinal);
@@ -305,6 +308,7 @@ public sealed class LinuxJournalRuntime(
             latestBySource[record.Envelope.SourceId!] = record.Envelope.EventTime;
         }
         observedSources.Add(record.Envelope.SourceId!);
+        packageJournalEvidence.Record(record.Envelope);
         RecordCurrentProducerObservation(record.Envelope.SourceId!, record.Envelope.EventTime);
         if (!observedFamilies.TryGetValue(record.Envelope.SourceId!, out var families))
         {
@@ -710,6 +714,7 @@ public sealed class LinuxJournalRuntime(
         }
         if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement)
         {
+            var boundary = packageJournalEvidence.Status();
             details["package_manager_inventory_state"] = packageManagementInventory.State;
             details["package_manager_producer"] = packageManagementInventory.Producer;
             details["package_manager_inventory_reason"] = packageManagementInventory.Reason;
@@ -717,6 +722,9 @@ public sealed class LinuxJournalRuntime(
                 ? "observed"
                 : "unverified";
             details["package_management_state"] = PackageManagementState();
+            details["package_inventory_boundary_state"] = boundary.ActiveGap ? "change_unobserved" : boundary.LastBoundaryAt.HasValue ? "observed" : "not_observed";
+            details["package_record_changes_unobserved"] = boundary.MissingChangeCount.ToString(CultureInfo.InvariantCulture);
+            details["package_inventory_boundary_at"] = boundary.LastBoundaryAt?.ToString("O", CultureInfo.InvariantCulture) ?? "not_observed";
         }
         if (manifest.SourceId == LinuxTelemetrySourceIds.Firewall)
         {
@@ -899,6 +907,7 @@ public sealed class LinuxJournalRuntime(
 
     private string PackageManagementState()
     {
+        if (packageJournalEvidence.Status().ActiveGap) return "package_record_change_unobserved";
         if (observedSources.Contains(LinuxTelemetrySourceIds.PackageManagement)) return "supported_observed";
         return packageManagementInventory.State == LinuxPackageManagementInventoryStates.Supported
             ? "supported_quiet_visibility_unverified"
@@ -983,6 +992,12 @@ public sealed class LinuxJournalRuntime(
                 _ => SourceHealthStatuses.Missing
             };
             if (visibilityStatus != SourceHealthStatuses.Healthy) return visibilityStatus;
+        }
+        if (status == SourceHealthStatuses.Healthy
+            && manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement
+            && packageJournalEvidence.Status().ActiveGap)
+        {
+            return SourceHealthStatuses.Degraded;
         }
         if (status == SourceHealthStatuses.Healthy
             && manifest.SourceId == LinuxTelemetrySourceIds.Firewall
@@ -1095,6 +1110,11 @@ public sealed class LinuxJournalRuntime(
         }
         if (effectiveStatus == SourceHealthStatuses.Degraded)
         {
+            if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement
+                && packageJournalEvidence.Status().ActiveGap)
+            {
+                return "package_record_change_unobserved";
+            }
             if (manifest.SourceId == LinuxTelemetrySourceIds.PackageManagement
                 && packageManagementInventory.State == LinuxPackageManagementInventoryStates.Supported
                 && !observedSources.Contains(manifest.SourceId))
@@ -1256,6 +1276,7 @@ public sealed class LinuxJournalRuntime(
         if (effectiveStatus == SourceHealthStatuses.Stale) return SourceEvidenceStatuses.Stale;
         if (effectiveStatus == SourceHealthStatuses.Missing) return SourceEvidenceStatuses.Missing;
         if (gap || throttled || status == SourceHealthStatuses.Error) return SourceEvidenceStatuses.Degraded;
+        if (packageJournalEvidence.Status().ActiveGap) return SourceEvidenceStatuses.Degraded;
         if (observedSources.Contains(LinuxTelemetrySourceIds.PackageManagement)) return SourceEvidenceStatuses.Satisfied;
         return packageManagementInventory.PrerequisiteStatus;
     }

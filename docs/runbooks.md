@@ -126,6 +126,16 @@ A protected-host canary requires fresh exact approval for the target, window, ar
 
 Current sanitized status (2026-08-04): the exact 2.8.1 single-host agent-only rollout passed the initial 30-minute acceptance window and one additional complete healthy L4 rolling window. Strict L4 recovered, acknowledgement lag returned to zero, queue pressure and loss counters remained normal, and the unchanged helper did not restart. The 24-hour read-only soak is in progress; keep its private measurements outside the repository and update only the aggregate decision when it completes.
 
+## Package visibility and recurring write-rate rollout
+
+For 2.9, deploy the API before the agent. Verify two heartbeat cycles from the still-running 2.8.x agent: its exact mandatory `linux-package-management` descriptor remains the legacy package requirement. After the current agent appears, require the mandatory `linux-package-inventory-diff` plus supplemental journal shape; mixed or spoofed descriptors must be rejected.
+
+Stage the agent without restart, run installed lifecycle validation, and repeat the two-pass L4 baseline/plan approval because the agent binary and L4 collector version changed. Activation is agent-only: do not restart the eBPF helper or change packages, capabilities, audit, firewall, journal access, or other host policy. Preserve the prior API drop-in, agent payload, protected configuration, queue/WAL/SHM, checkpoints, and all collector state.
+
+Soak for at least 20 minutes and one complete SLO window. Require heartbeat/ingestion success, a drained queue, zero acknowledgement lag, no poison/drop/backoff/network-loss increase, a healthy package-inventory source after its first complete non-alerting baseline, correct strict coverage, and no write-rate breach. Review SLO attribution as serialized queue work rather than physical-write proof. A representative private synthetic replay must exceed the historical event rate, reduce queue-attributed writes by at least 25% versus the per-row path, stay below 1,048,576 process-write bytes/second for the full 15-minute window, drain, and lose no event.
+
+On any failed gate, restore only the affected prior API drop-in or prior agent payload/protected configuration and restart only that service. Never delete, reset, vacuum, or edit queue/checkpoint/collector state to make the gate pass.
+
 ## Incident safety
 
 The SIEM does not execute endpoint response commands. Reboots, service changes, firewall/authentication changes, package changes, and data deletion require a separate authorized host procedure. Keep all real evidence under ignored local or approved runtime paths.

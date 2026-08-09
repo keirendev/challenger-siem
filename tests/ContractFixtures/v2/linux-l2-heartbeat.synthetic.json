@@ -39,6 +39,73 @@
       "installer_managed": false
     },
     {
+      "source_id": "linux-package-inventory-diff",
+      "platform": "linux",
+      "source_kind": "inventory_diff",
+      "source_namespace": "linux.package.inventory",
+      "applicability": "applicable",
+      "checkpoint_kind": "sequence",
+      "display_name": "Linux package inventory differences",
+      "coverage_level": "L2",
+      "required": true,
+      "requirement": "mandatory",
+      "applicable_roles": [],
+      "enabled_by_default": false,
+      "source_pack": "linux-l2-security",
+      "parser_id": "linux-package-inventory-diff-v1",
+      "prerequisites": [
+        "bounded_package_inventory_available",
+        "complete_package_inventory_baseline"
+      ],
+      "event_families": [
+        "package_baseline",
+        "package_install",
+        "package_update",
+        "package_remove",
+        "package_gap",
+        "package_recovery"
+      ],
+      "validation_scenarios": [
+        "baseline_diff",
+        "partial_truncated",
+        "event_cap",
+        "queue_restart",
+        "acknowledgement"
+      ],
+      "privacy": "high_sensitivity_metadata",
+      "installer_managed": false
+    },
+    {
+      "source_id": "linux-package-management",
+      "platform": "linux",
+      "source_kind": "linux_journal",
+      "source_namespace": "systemd.journal",
+      "applicability": "applicable",
+      "checkpoint_kind": "cursor",
+      "display_name": "Linux package-management journal activity",
+      "coverage_level": "L2",
+      "required": false,
+      "requirement": "optional",
+      "applicable_roles": [],
+      "enabled_by_default": false,
+      "source_pack": "linux-l2-security",
+      "parser_id": "linux-package-v1",
+      "prerequisites": [
+        "systemd_journal_readable",
+        "package_manager_journal_visibility"
+      ],
+      "event_families": [
+        "package_install",
+        "package_update",
+        "package_remove"
+      ],
+      "validation_scenarios": [
+        "package_install_update_remove"
+      ],
+      "privacy": "high_sensitivity",
+      "installer_managed": false
+    },
+    {
       "source_id": "linux-audit-framework",
       "platform": "linux",
       "source_kind": "linux_audit",
@@ -106,6 +173,96 @@
       "gap_count": 0,
       "transition_state": "healthy",
       "transitioned_at": "2026-07-11T11:00:06Z",
+      "dropped_events": 0,
+      "poison_events": 0
+    },
+    {
+      "source_id": "linux-package-inventory-diff",
+      "platform": "linux",
+      "source_kind": "inventory_diff",
+      "display_name": "Linux package inventory differences",
+      "source_namespace": "linux.package.inventory",
+      "applicability": "applicable",
+      "coverage_level": "L2",
+      "status": "healthy",
+      "required": true,
+      "requirement": "mandatory",
+      "applicable_roles": [],
+      "enabled": true,
+      "last_event_time": "2026-07-13T12:00:00Z",
+      "observed_at": "2026-07-13T12:00:00Z",
+      "collected_checkpoint": {
+        "sequence": 1,
+        "event_time": "2026-07-13T12:00:00Z",
+        "recorded_at": "2026-07-13T12:00:00Z"
+      },
+      "acknowledged_checkpoint": {
+        "sequence": 1,
+        "event_time": "2026-07-13T12:00:00Z",
+        "recorded_at": "2026-07-13T12:00:01Z"
+      },
+      "prerequisite_statuses": {
+        "bounded_package_inventory_available": "satisfied",
+        "complete_package_inventory_baseline": "satisfied"
+      },
+      "event_family_statuses": {
+        "package_baseline": "observed",
+        "package_install": "not_observed",
+        "package_update": "not_observed",
+        "package_remove": "not_observed",
+        "package_gap": "not_observed",
+        "package_recovery": "not_observed"
+      },
+      "details": {
+        "evidence_mode": "snapshot_diff",
+        "baseline_state": "established"
+      },
+      "event_rate_per_minute": 0,
+      "gap_count": 0,
+      "transition_state": "healthy",
+      "transitioned_at": "2026-07-13T12:00:00Z",
+      "dropped_events": 0,
+      "poison_events": 0
+    },
+    {
+      "source_id": "linux-package-management",
+      "platform": "linux",
+      "source_kind": "linux_journal",
+      "display_name": "Linux package-management journal activity",
+      "source_namespace": "systemd.journal",
+      "applicability": "applicable",
+      "coverage_level": "L2",
+      "status": "degraded",
+      "required": false,
+      "requirement": "optional",
+      "applicable_roles": [],
+      "enabled": true,
+      "observed_at": "2026-07-13T12:00:00Z",
+      "collected_checkpoint": {
+        "cursor": "s=synthetic-l2;i=1",
+        "recorded_at": "2026-07-13T12:00:00Z"
+      },
+      "acknowledged_checkpoint": {
+        "cursor": "s=synthetic-l2;i=1",
+        "recorded_at": "2026-07-13T12:00:01Z"
+      },
+      "error_code": "package_manager_journal_visibility_unverified",
+      "prerequisite_statuses": {
+        "systemd_journal_readable": "satisfied",
+        "package_manager_journal_visibility": "unknown"
+      },
+      "event_family_statuses": {
+        "package_install": "not_observed",
+        "package_update": "not_observed",
+        "package_remove": "not_observed"
+      },
+      "details": {
+        "package_management_state": "supported_unverified"
+      },
+      "event_rate_per_minute": 0,
+      "gap_count": 0,
+      "transition_state": "degraded",
+      "transitioned_at": "2026-07-13T12:00:00Z",
       "dropped_events": 0,
       "poison_events": 0
     },

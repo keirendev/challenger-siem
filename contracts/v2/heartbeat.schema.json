@@ -318,7 +318,8 @@
         "source_id": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 128
+          "maxLength": 128,
+          "examples": ["linux-package-inventory-diff", "linux-package-management"]
         },
         "platform": {
           "$ref": "event-envelope.schema.json#/$defs/platform"
@@ -434,7 +435,8 @@
         "source_id": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 128
+          "maxLength": 128,
+          "examples": ["linux-package-inventory-diff", "linux-package-management"]
         },
         "platform": {
           "$ref": "event-envelope.schema.json#/$defs/platform"

@@ -11,6 +11,7 @@ public static class SourceHealthRules
 
     private static readonly IReadOnlySet<string> LinuxPassivePollingSourceIds = LinuxTelemetrySourceCatalog.L3Passive
         .Select(source => source.SourceId)
+        .Append(LinuxTelemetrySourceIds.PackageInventoryDiff)
         .Append(LinuxTelemetrySourceIds.PolicyPostureDrift)
         .Concat(LinuxTelemetrySourceCatalog.All
             .Where(source => source.CoverageLevel == CoverageLevel.L4

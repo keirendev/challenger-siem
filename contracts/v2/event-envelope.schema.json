@@ -44,7 +44,9 @@
     "source_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128
+      "maxLength": 128,
+      "description": "Stable producer identity. Package observation differences use linux-package-inventory-diff while direct package journal evidence uses linux-package-management.",
+      "examples": ["linux-package-inventory-diff", "linux-package-management"]
     },
     "event_code": {
       "type": "string",
