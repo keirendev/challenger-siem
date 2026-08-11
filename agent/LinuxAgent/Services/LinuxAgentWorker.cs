@@ -33,7 +33,7 @@ public sealed class LinuxAgentWorker(
     ILogger<LinuxAgentWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(1);
-    private static readonly TimeSpan BacklogDrainDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan BacklogDrainDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan IdleDrainDelay = TimeSpan.FromSeconds(5);
     private readonly LinuxAgentOptions options = configured.Value;
     private readonly RuntimeWarningThrottle failureLog = new(timeProvider, FailureLogInterval);

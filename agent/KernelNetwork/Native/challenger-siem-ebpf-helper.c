@@ -25,8 +25,9 @@
 #include "challenger_network_drain.h"
 #include "challenger_network_shared.h"
 #include "challenger_network_time.h"
+#include "challenger_network_tracking.h"
 
-#define HELPER_VERSION "challenger-siem-ebpf-helper-v2"
+#define HELPER_VERSION "challenger-siem-ebpf-helper-v3"
 #define DEFAULT_CGROUP "/sys/fs/cgroup"
 #define EXPECTED_CLIENT "challenger-siem"
 #define ACTIVE_SUMMARY_NS (60ULL * 1000000000ULL)
@@ -52,8 +53,11 @@ struct tracked_flow {
     uint32_t tcp_flags;
 };
 
-static struct tracked_flow tracked_flows[CHALLENGER_FLOW_MAP_ENTRIES];
+static struct tracked_flow tracked_flows[CHALLENGER_TRACKED_FLOW_ENTRIES];
 static size_t tracked_cursor;
+static uint64_t tracked_flow_records;
+static uint64_t tracked_flow_high_water;
+static uint64_t tracked_flow_pending_high_water;
 static struct challenger_kernel_drain_diagnostics kernel_drain_diagnostics;
 
 struct collect_result {
@@ -226,13 +230,16 @@ static struct tracked_flow *find_tracked_flow(
     const struct challenger_flow_key *key,
     int health_fd)
 {
-    size_t start = (size_t)(flow_hash(key) & (CHALLENGER_FLOW_MAP_ENTRIES - 1));
-    for (size_t offset = 0; offset < CHALLENGER_FLOW_MAP_ENTRIES; offset++) {
-        struct tracked_flow *candidate = &tracked_flows[(start + offset) & (CHALLENGER_FLOW_MAP_ENTRIES - 1)];
+    size_t start = (size_t)(flow_hash(key) & (CHALLENGER_TRACKED_FLOW_ENTRIES - 1));
+    for (size_t offset = 0; offset < CHALLENGER_TRACKED_FLOW_ENTRIES; offset++) {
+        struct tracked_flow *candidate = &tracked_flows[(start + offset) & (CHALLENGER_TRACKED_FLOW_ENTRIES - 1)];
         if (!candidate->occupied) {
             memset(candidate, 0, sizeof(*candidate));
             candidate->occupied = true;
             candidate->key = *key;
+            tracked_flow_records++;
+            if (tracked_flow_records > tracked_flow_high_water)
+                tracked_flow_high_water = tracked_flow_records;
             return candidate;
         }
         if (memcmp(&candidate->key, key, sizeof(*key)) == 0)
@@ -249,7 +256,7 @@ static int collect_flows(
 {
     memset(result, 0, sizeof(*result));
     int attempted = 0;
-    for (; attempted < CHALLENGER_MAX_DRAIN_RECORDS && !stopping; attempted++) {
+    for (; attempted < CHALLENGER_MAX_KERNEL_DRAIN_RECORDS && !stopping; attempted++) {
         struct challenger_flow_key key = {};
         struct challenger_flow_value value = {};
         if (bpf_map_get_next_key(flow_fd, NULL, &key) != 0) {
@@ -275,7 +282,7 @@ static int collect_flows(
         if (key.protocol == IPPROTO_TCP && (value.tcp_flags & (TCP_FIN_FLAG | TCP_RST_FLAG)) != 0)
             tracked->close_requested = true;
     }
-    result->capped = attempted == CHALLENGER_MAX_DRAIN_RECORDS;
+    result->capped = attempted == CHALLENGER_MAX_KERNEL_DRAIN_RECORDS;
     return 0;
 }
 
@@ -359,9 +366,76 @@ static int send_tracked_flow(
         tracked->packet_count = 0;
         tracked->byte_count = 0;
         tracked->tcp_flags = 0;
-        if (strcmp(event_code, "network_flow_closed") == 0)
+        if (strcmp(event_code, "network_flow_closed") == 0) {
             memset(tracked, 0, sizeof(*tracked));
+            if (tracked_flow_records > 0)
+                tracked_flow_records--;
+        }
         return 0;
+}
+
+static enum challenger_flow_event_kind tracked_flow_event(
+    struct tracked_flow *tracked,
+    uint64_t now_ns)
+{
+    if (now_ns >= tracked->last_seen_ns && now_ns - tracked->last_seen_ns >= ACTIVE_SUMMARY_NS)
+        tracked->close_requested = true;
+    return challenger_select_flow_event(
+        tracked->started_emitted,
+        tracked->close_requested,
+        tracked->packet_count,
+        tracked->last_seen_ns,
+        tracked->last_emitted_ns,
+        now_ns,
+        ACTIVE_SUMMARY_NS);
+}
+
+static const char *event_code_for(enum challenger_flow_event_kind kind)
+{
+    switch (kind) {
+        case CHALLENGER_FLOW_EVENT_STARTED: return "network_flow_started";
+        case CHALLENGER_FLOW_EVENT_SAMPLE: return "network_flow_sample";
+        case CHALLENGER_FLOW_EVENT_CLOSED: return "network_flow_closed";
+        default: return NULL;
+    }
+}
+
+static int emit_tracked_flow_kind(
+    int client,
+    int health_fd,
+    const char *epoch,
+    uint64_t *sequence,
+    uint64_t now_ns,
+    enum challenger_flow_event_kind requested,
+    int *emitted)
+{
+    size_t inspected = 0;
+    while (inspected < CHALLENGER_TRACKED_FLOW_ENTRIES
+        && *emitted < CHALLENGER_MAX_OUTPUT_RECORDS) {
+        size_t index = tracked_cursor++ & (CHALLENGER_TRACKED_FLOW_ENTRIES - 1);
+        inspected++;
+        struct tracked_flow *tracked = &tracked_flows[index];
+        if (!tracked->occupied || tracked_flow_event(tracked, now_ns) != requested)
+            continue;
+        const char *event_code = event_code_for(requested);
+        if (!event_code || send_tracked_flow(client, health_fd, epoch, sequence, tracked, event_code, now_ns) != 0)
+            return -1;
+        (*emitted)++;
+    }
+    return 0;
+}
+
+static uint64_t count_pending_tracked_flows(uint64_t now_ns)
+{
+    uint64_t pending = 0;
+    for (size_t index = 0; index < CHALLENGER_TRACKED_FLOW_ENTRIES; index++) {
+        struct tracked_flow *tracked = &tracked_flows[index];
+        if (tracked->occupied && tracked_flow_event(tracked, now_ns) != CHALLENGER_FLOW_EVENT_NONE)
+            pending++;
+    }
+    if (pending > tracked_flow_pending_high_water)
+        tracked_flow_pending_high_water = pending;
+    return pending;
 }
 
 static int emit_tracked_flows(
@@ -372,29 +446,11 @@ static int emit_tracked_flows(
     uint64_t now_ns)
 {
     int emitted = 0;
-    size_t inspected = 0;
-    while (inspected < CHALLENGER_FLOW_MAP_ENTRIES && emitted < CHALLENGER_MAX_DRAIN_RECORDS) {
-        size_t index = tracked_cursor++ & (CHALLENGER_FLOW_MAP_ENTRIES - 1);
-        inspected++;
-        struct tracked_flow *tracked = &tracked_flows[index];
-        if (!tracked->occupied)
-            continue;
-        if (now_ns >= tracked->last_seen_ns && now_ns - tracked->last_seen_ns >= ACTIVE_SUMMARY_NS)
-            tracked->close_requested = true;
-        const char *event_code = NULL;
-        if (!tracked->started_emitted)
-            event_code = "network_flow_started";
-        else if (tracked->close_requested)
-            event_code = "network_flow_closed";
-        else if (tracked->packet_count > 0 && now_ns >= tracked->last_emitted_ns
-            && now_ns - tracked->last_emitted_ns >= ACTIVE_SUMMARY_NS)
-            event_code = "network_flow_sample";
-        if (!event_code)
-            continue;
-        if (send_tracked_flow(client, health_fd, epoch, sequence, tracked, event_code, now_ns) != 0)
-            return -1;
-        emitted++;
-    }
+    (void)count_pending_tracked_flows(now_ns);
+    if (emit_tracked_flow_kind(client, health_fd, epoch, sequence, now_ns, CHALLENGER_FLOW_EVENT_CLOSED, &emitted) != 0
+        || emit_tracked_flow_kind(client, health_fd, epoch, sequence, now_ns, CHALLENGER_FLOW_EVENT_STARTED, &emitted) != 0
+        || emit_tracked_flow_kind(client, health_fd, epoch, sequence, now_ns, CHALLENGER_FLOW_EVENT_SAMPLE, &emitted) != 0)
+        return -1;
     return emitted;
 }
 
@@ -409,6 +465,11 @@ static int send_health(
     uint64_t health[CHALLENGER_COUNTER_MAX] = {};
     read_health(health_fd, health);
     uint64_t aggregate_loss = aggregate_flow_loss(health);
+    struct timespec now = {};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return -1;
+    uint64_t now_ns = (uint64_t)now.tv_sec * 1000000000ULL + (uint64_t)now.tv_nsec;
+    uint64_t tracked_pending = count_pending_tracked_flows(now_ns);
     int written = snprintf(frame, sizeof(frame),
         "{\"schema_version\":1,\"helper_version\":\"%s\",\"epoch\":\"%s\",\"sequence\":%llu,"
         "\"type\":\"health\",\"payload_capture\":false,\"parse_failures\":%llu,"
@@ -417,7 +478,9 @@ static int send_health(
         "\"owner_misses\":%llu,\"ring_losses\":%llu,\"ipc_send_failures\":%llu,"
         "\"kernel_drain_records\":%llu,\"kernel_drain_high_water\":%llu,"
         "\"kernel_drain_capped_ticks\":%llu,\"kernel_drain_backlog_ticks\":%llu,"
-        "\"kernel_drain_backlog\":%s}",
+        "\"kernel_drain_backlog\":%s,\"tracked_flow_records\":%llu,"
+        "\"tracked_flow_high_water\":%llu,\"tracked_flow_pending_records\":%llu,"
+        "\"tracked_flow_pending_high_water\":%llu,\"tracked_flow_backlog\":%s}",
         HELPER_VERSION, epoch, (unsigned long long)sequence,
         (unsigned long long)health[CHALLENGER_COUNTER_PARSE_FAILURE],
         (unsigned long long)health[CHALLENGER_COUNTER_UNSUPPORTED_HEADER],
@@ -431,7 +494,12 @@ static int send_health(
         (unsigned long long)diagnostics->high_water_interval_records,
         (unsigned long long)diagnostics->capped_ticks,
         (unsigned long long)diagnostics->backlog_ticks,
-        diagnostics->interval_backlog ? "true" : "false");
+        diagnostics->interval_backlog ? "true" : "false",
+        (unsigned long long)tracked_flow_records,
+        (unsigned long long)tracked_flow_high_water,
+        (unsigned long long)tracked_pending,
+        (unsigned long long)tracked_flow_pending_high_water,
+        tracked_pending > 0 ? "true" : "false");
     if (written <= 0 || written >= (int)sizeof(frame)) {
         errno = EMSGSIZE;
         return -1;
@@ -444,14 +512,16 @@ static int send_hello(int client, const char *epoch, uint64_t sequence)
     char frame[1024] = {};
     snprintf(frame, sizeof(frame),
         "{\"schema_version\":1,\"helper_version\":\"%s\",\"epoch\":\"%s\",\"sequence\":%llu,"
-        "\"type\":\"hello\",\"payload_capture\":false,\"flow_capacity\":%d,\"owner_capacity\":%d,"
-        "\"ring_bytes\":%d,\"drain_seconds\":%d,\"max_records_per_drain\":%d,"
+        "\"type\":\"hello\",\"payload_capture\":false,\"flow_capacity\":%d,\"tracked_flow_capacity\":%d,"
+        "\"owner_capacity\":%d,\"ring_bytes\":%d,\"drain_seconds\":%d,"
+        "\"max_output_records_per_health_interval\":%d,"
         "\"kernel_drain_interval_seconds\":%d,\"max_kernel_records_per_drain\":%d,"
         "\"max_kernel_records_per_health_interval\":%d}",
         HELPER_VERSION, epoch, (unsigned long long)sequence, CHALLENGER_FLOW_MAP_ENTRIES,
-        CHALLENGER_OWNER_MAP_ENTRIES, CHALLENGER_RING_BYTES, CHALLENGER_HEALTH_INTERVAL_SECONDS,
-        CHALLENGER_MAX_DRAIN_RECORDS, CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS,
-        CHALLENGER_MAX_DRAIN_RECORDS, CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
+        CHALLENGER_TRACKED_FLOW_ENTRIES, CHALLENGER_OWNER_MAP_ENTRIES, CHALLENGER_RING_BYTES,
+        CHALLENGER_HEALTH_INTERVAL_SECONDS, CHALLENGER_MAX_OUTPUT_RECORDS,
+        CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS, CHALLENGER_MAX_KERNEL_DRAIN_RECORDS,
+        CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
     return send_frame(client, frame);
 }
 

@@ -37,12 +37,12 @@ public sealed class LinuxKernelNetworkStateStore(string path)
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
             var state = await JsonSerializer.DeserializeAsync<LinuxKernelNetworkState>(stream, JsonDefaults.Options, cancellationToken);
-            if (state is not { SchemaVersion: 1 or 2, NextSequence: > 0 }) return new();
+            if (state is not { SchemaVersion: 1 or 2 or 3, NextSequence: > 0 }) return new();
             return state.CounterHelperEpoch is not null || state.LastHelperEpoch is null
-                ? state with { SchemaVersion = 2 }
+                ? state with { SchemaVersion = 3 }
                 : state with
                 {
-                    SchemaVersion = 2,
+                    SchemaVersion = 3,
                     CounterHelperEpoch = state.LastHelperEpoch,
                     RawParseFailures = state.ParseFailures,
                     RawUnsupportedHeaders = state.UnsupportedHeaders,

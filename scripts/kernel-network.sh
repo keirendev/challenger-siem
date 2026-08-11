@@ -135,7 +135,7 @@ PY
   echo 'identity: create or validate locked non-login challenger-siem-ebpf user and group; retain it on rollback'
   echo 'capabilities: helper receives exactly CAP_BPF CAP_PERFMON CAP_NET_ADMIN; the main agent receives no new capability'
   echo 'kernel attachments: fixed embedded cgroup v2 socket/bind/connect/sendmsg/recvmsg, sock-ops, accepted/closed socket-state raw tracepoint, and ingress/egress programs at /sys/fs/cgroup; additive BPF links with no replacement and no bpffs pins'
-  echo 'telemetry: 10-second bounded drains aggregate TCP/UDP IPv4/IPv6 headers into started, 60-second active, and closed/inactive records with tuple, direction, PID/UID, TCP flags, packet and SKB-byte interval counters only; no payload, DNS, TLS, process environment, memory, or file content'
+  echo 'telemetry: 262,144 kernel-flow and 524,288 helper-tracked bounds; at most 32,768 kernel transfers per second and 4,096 output records per 10-second interval; closed-before-start flows coalesce; TCP/UDP IPv4/IPv6 headers, tuple, direction, PID/UID, flags, packet and SKB-byte interval counters only; no payload, DNS, TLS, process environment, memory, or file content'
   echo "files: $helper_binary, $helper_service, $helper_socket, $agent_dropin, $trusted_key"
   echo 'service impact: daemon-reload and socket activation are staged; the agent is not restarted by this command'
   echo 'rollback: stop/disable helper socket and service to detach links, remove only fixed helper files/drop-in, daemon-reload, preserve agent queue/config/state and helper identity'

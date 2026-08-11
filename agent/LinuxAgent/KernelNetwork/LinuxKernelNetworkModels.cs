@@ -4,18 +4,21 @@ namespace Challenger.Siem.LinuxAgent.KernelNetwork;
 
 public static class LinuxKernelNetworkConstants
 {
-    public const string HelperVersion = "challenger-siem-ebpf-helper-v2";
-    public const string CollectorVersion = "linux-network-flow-summary-v3";
+    public const string HelperVersion = "challenger-siem-ebpf-helper-v3";
+    public const string CollectorVersion = "linux-network-flow-summary-v4";
     public const string SocketPath = "/run/challenger-siem-ebpf/challenger-siem-ebpf.sock";
     public const string StatePath = "/var/lib/challenger-siem-agent/kernel-network-state.json";
     public const int MaximumFrameBytes = 16_384;
-    public const int FlowMapEntries = 16_384;
+    public const int FlowMapEntries = 262_144;
+    public const int TrackedFlowEntries = 524_288;
     public const int OwnerMapEntries = 32_768;
-    public const int RingBytes = 1024 * 1024;
+    public const int RingBytes = 32 * 1024 * 1024;
     public const int HealthIntervalSeconds = 10;
     public const int KernelDrainIntervalSeconds = 1;
-    public const int MaximumRecordsPerDrain = 500;
-    public const int MaximumKernelRecordsPerHealthInterval = 5_000;
+    public const int MaximumKernelRecordsPerDrain = 32_768;
+    public const int MaximumOutputRecordsPerHealthInterval = 4_096;
+    public const int MaximumKernelRecordsPerHealthInterval = 327_680;
+    public const int MaximumProcessEnrichmentIdentitiesPerDrain = 256;
     public const int MaximumDurableBatchEvents = 100;
     public const int MaximumDurableBatchBytes = 1024 * 1024;
 }
@@ -31,10 +34,11 @@ public sealed record LinuxKernelNetworkFrame
     [JsonPropertyName("event_code")] public string? EventCode { get; init; }
     [JsonPropertyName("payload_capture")] public bool PayloadCapture { get; init; }
     [JsonPropertyName("flow_capacity")] public int FlowCapacity { get; init; }
+    [JsonPropertyName("tracked_flow_capacity")] public int TrackedFlowCapacity { get; init; }
     [JsonPropertyName("owner_capacity")] public int OwnerCapacity { get; init; }
     [JsonPropertyName("ring_bytes")] public int RingBytes { get; init; }
     [JsonPropertyName("drain_seconds")] public int DrainSeconds { get; init; }
-    [JsonPropertyName("max_records_per_drain")] public int MaxRecordsPerDrain { get; init; }
+    [JsonPropertyName("max_output_records_per_health_interval")] public int MaxOutputRecordsPerHealthInterval { get; init; }
     [JsonPropertyName("kernel_drain_interval_seconds")] public int KernelDrainIntervalSeconds { get; init; }
     [JsonPropertyName("max_kernel_records_per_drain")] public int MaxKernelRecordsPerDrain { get; init; }
     [JsonPropertyName("max_kernel_records_per_health_interval")] public int MaxKernelRecordsPerHealthInterval { get; init; }
@@ -67,6 +71,11 @@ public sealed record LinuxKernelNetworkFrame
     [JsonPropertyName("kernel_drain_capped_ticks")] public ulong KernelDrainCappedTicks { get; init; }
     [JsonPropertyName("kernel_drain_backlog_ticks")] public ulong KernelDrainBacklogTicks { get; init; }
     [JsonPropertyName("kernel_drain_backlog")] public bool KernelDrainBacklog { get; init; }
+    [JsonPropertyName("tracked_flow_records")] public ulong TrackedFlowRecords { get; init; }
+    [JsonPropertyName("tracked_flow_high_water")] public ulong TrackedFlowHighWater { get; init; }
+    [JsonPropertyName("tracked_flow_pending_records")] public ulong TrackedFlowPendingRecords { get; init; }
+    [JsonPropertyName("tracked_flow_pending_high_water")] public ulong TrackedFlowPendingHighWater { get; init; }
+    [JsonPropertyName("tracked_flow_backlog")] public bool TrackedFlowBacklog { get; init; }
 }
 
 public sealed record LinuxKernelNetworkPendingFrame(
@@ -87,6 +96,8 @@ public sealed record LinuxKernelNetworkDrainDiagnostics(
     int RecordCount,
     long SerializedBytes,
     int UniqueEnrichmentIdentities,
+    int ProcfsEnrichmentIdentities,
+    int SkippedEnrichmentIdentities,
     int EnrichmentCacheHits,
     long ReceiveDurationMilliseconds,
     long PersistDurationMilliseconds);
@@ -97,7 +108,7 @@ public sealed record LinuxKernelNetworkSequenceAssignment(
 
 public sealed record LinuxKernelNetworkState
 {
-    [JsonPropertyName("schema_version")] public int SchemaVersion { get; init; } = 2;
+    [JsonPropertyName("schema_version")] public int SchemaVersion { get; init; } = 3;
     [JsonPropertyName("next_sequence")] public long NextSequence { get; init; } = 1;
     [JsonPropertyName("collected_sequence")] public long CollectedSequence { get; init; }
     [JsonPropertyName("acknowledged_sequence")] public long AcknowledgedSequence { get; init; }
@@ -140,10 +151,17 @@ public sealed record LinuxKernelNetworkState
     [JsonPropertyName("kernel_drain_capped_ticks")] public ulong KernelDrainCappedTicks { get; init; }
     [JsonPropertyName("kernel_drain_backlog_ticks")] public ulong KernelDrainBacklogTicks { get; init; }
     [JsonPropertyName("kernel_drain_backlog")] public bool KernelDrainBacklog { get; init; }
+    [JsonPropertyName("last_tracked_flow_records")] public ulong LastTrackedFlowRecords { get; init; }
+    [JsonPropertyName("high_water_tracked_flow_records")] public ulong HighWaterTrackedFlowRecords { get; init; }
+    [JsonPropertyName("last_tracked_flow_pending_records")] public ulong LastTrackedFlowPendingRecords { get; init; }
+    [JsonPropertyName("high_water_tracked_flow_pending_records")] public ulong HighWaterTrackedFlowPendingRecords { get; init; }
+    [JsonPropertyName("tracked_flow_backlog")] public bool TrackedFlowBacklog { get; init; }
     [JsonPropertyName("last_drain_record_count")] public int LastDrainRecordCount { get; init; }
     [JsonPropertyName("high_water_drain_record_count")] public int HighWaterDrainRecordCount { get; init; }
     [JsonPropertyName("last_drain_serialized_bytes")] public long LastDrainSerializedBytes { get; init; }
     [JsonPropertyName("last_drain_unique_enrichment_identities")] public int LastDrainUniqueEnrichmentIdentities { get; init; }
+    [JsonPropertyName("last_drain_procfs_enrichment_identities")] public int LastDrainProcfsEnrichmentIdentities { get; init; }
+    [JsonPropertyName("last_drain_skipped_enrichment_identities")] public int LastDrainSkippedEnrichmentIdentities { get; init; }
     [JsonPropertyName("last_drain_enrichment_cache_hits")] public int LastDrainEnrichmentCacheHits { get; init; }
     [JsonPropertyName("last_drain_receive_duration_ms")] public long LastDrainReceiveDurationMilliseconds { get; init; }
     [JsonPropertyName("last_drain_persist_duration_ms")] public long LastDrainPersistDurationMilliseconds { get; init; }

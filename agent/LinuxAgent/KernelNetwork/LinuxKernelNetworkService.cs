@@ -23,19 +23,23 @@ public sealed class LinuxKernelNetworkService(
     private static readonly HashSet<string> AllowedFrameProperties = new(StringComparer.Ordinal)
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "event_code", "payload_capture",
-        "flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds", "max_records_per_drain",
+        "flow_capacity", "tracked_flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds",
+        "max_output_records_per_health_interval",
         "kernel_drain_interval_seconds", "max_kernel_records_per_drain", "max_kernel_records_per_health_interval",
         "family", "protocol", "direction", "local_ip", "local_port", "remote_ip", "remote_port",
         "process_id", "user_id", "process_name", "attribution_source", "first_seen_unix_ns", "last_seen_unix_ns",
         "packet_count_delta", "byte_count_delta", "tcp_flags_mask", "parse_failures",
         "unsupported_headers", "flow_map_full", "kernel_flow_map_update_failures", "tracked_flow_table_full",
         "owner_misses", "ring_losses", "ipc_send_failures", "kernel_drain_records", "kernel_drain_high_water",
-        "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog"
+        "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog",
+        "tracked_flow_records", "tracked_flow_high_water", "tracked_flow_pending_records",
+        "tracked_flow_pending_high_water", "tracked_flow_backlog"
     };
     private static readonly HashSet<string> HelloFrameProperties = new(StringComparer.Ordinal)
     {
         "schema_version", "helper_version", "epoch", "sequence", "type", "payload_capture",
-        "flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds", "max_records_per_drain",
+        "flow_capacity", "tracked_flow_capacity", "owner_capacity", "ring_bytes", "drain_seconds",
+        "max_output_records_per_health_interval",
         "kernel_drain_interval_seconds", "max_kernel_records_per_drain", "max_kernel_records_per_health_interval"
     };
     private static readonly HashSet<string> HealthFrameProperties = new(StringComparer.Ordinal)
@@ -43,7 +47,9 @@ public sealed class LinuxKernelNetworkService(
         "schema_version", "helper_version", "epoch", "sequence", "type", "payload_capture",
         "parse_failures", "unsupported_headers", "flow_map_full", "kernel_flow_map_update_failures",
         "tracked_flow_table_full", "owner_misses", "ring_losses", "ipc_send_failures", "kernel_drain_records",
-        "kernel_drain_high_water", "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog"
+        "kernel_drain_high_water", "kernel_drain_capped_ticks", "kernel_drain_backlog_ticks", "kernel_drain_backlog",
+        "tracked_flow_records", "tracked_flow_high_water", "tracked_flow_pending_records",
+        "tracked_flow_pending_high_water", "tracked_flow_backlog"
     };
     private static readonly HashSet<string> FlowFrameProperties = new(StringComparer.Ordinal)
     {
@@ -110,7 +116,7 @@ public sealed class LinuxKernelNetworkService(
         var queuePaused = false;
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (await queue.CountAsync(cancellationToken) >= options.KernelNetworkTelemetry.QueuePauseDepth - LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+            if (await queue.CountAsync(cancellationToken) >= options.KernelNetworkTelemetry.QueuePauseDepth - LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval)
             {
                 if (!queuePaused)
                 {
@@ -133,7 +139,7 @@ public sealed class LinuxKernelNetworkService(
     internal async Task<LinuxKernelNetworkDrain> ReceiveDrainAsync(Socket socket, CancellationToken cancellationToken)
     {
         var startedAt = timeProvider.GetTimestamp();
-        var flows = new List<LinuxKernelNetworkReceivedFlow>(LinuxKernelNetworkConstants.MaximumRecordsPerDrain);
+        var flows = new List<LinuxKernelNetworkReceivedFlow>(LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval);
         while (!cancellationToken.IsCancellationRequested)
         {
             var frame = await ReceiveFrameAsync(socket, cancellationToken);
@@ -143,7 +149,7 @@ public sealed class LinuxKernelNetworkService(
                 return new(flows, frame, ElapsedMilliseconds(startedAt));
             }
             ValidateFlow(frame);
-            if (flows.Count >= LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+            if (flows.Count >= LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval)
                 throw new InvalidDataException("helper_flow_batch_rejected");
             var firstSeen = FromUnixNanoseconds(frame.FirstSeenUnixNanoseconds);
             var lastSeen = FromUnixNanoseconds(frame.LastSeenUnixNanoseconds);
@@ -162,20 +168,38 @@ public sealed class LinuxKernelNetworkService(
         {
             await runtime.ObserveHealthAsync(
                 drain.Health,
-                new(0, 0, 0, 0, drain.ReceiveDurationMilliseconds, ElapsedMilliseconds(persistStartedAt)),
+                new(0, 0, 0, 0, 0, 0, drain.ReceiveDurationMilliseconds, ElapsedMilliseconds(persistStartedAt)),
                 cancellationToken);
             return;
         }
 
         var processCache = new Dictionary<ProcessIdentity, LinuxKernelProcessMetadata>();
         var processes = new LinuxKernelProcessMetadata[drain.Flows.Count];
+        var procfsEnrichmentIdentities = 0;
+        var skippedEnrichmentIdentities = 0;
         for (var index = 0; index < drain.Flows.Count; index++)
         {
             var frame = drain.Flows[index].Frame;
             var identity = new ProcessIdentity(frame.ProcessId, frame.UserId, frame.ProcessName!, frame.AttributionSource!);
             if (!processCache.TryGetValue(identity, out var process))
             {
-                process = await processEnricher.EnrichAsync(frame, cancellationToken);
+                if (procfsEnrichmentIdentities < LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain)
+                {
+                    process = await processEnricher.EnrichAsync(frame, cancellationToken);
+                    procfsEnrichmentIdentities++;
+                }
+                else
+                {
+                    process = SanitizeProcessMetadata(
+                        frame,
+                        executable: null,
+                        commandLine: null,
+                        frame.UserId == uint.MaxValue ? null : frame.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        truncated: false,
+                        maximumExecutableCharacters: 4096,
+                        maximumCommandLineCharacters: options.KernelNetworkTelemetry.MaxCommandLineBytes);
+                    skippedEnrichmentIdentities++;
+                }
                 processCache.Add(identity, process);
             }
             processes[index] = process;
@@ -212,6 +236,8 @@ public sealed class LinuxKernelNetworkService(
                             envelopes.Length,
                             serializedBytes,
                             processCache.Count,
+                            procfsEnrichmentIdentities,
+                            skippedEnrichmentIdentities,
                             envelopes.Length - processCache.Count,
                             drain.ReceiveDurationMilliseconds,
                             ElapsedMilliseconds(persistStartedAt))
@@ -257,12 +283,13 @@ public sealed class LinuxKernelNetworkService(
         if (!frame.PresentProperties.SetEquals(HelloFrameProperties)
             || frame.Type != "hello" || frame.PayloadCapture
             || frame.FlowCapacity != LinuxKernelNetworkConstants.FlowMapEntries
+            || frame.TrackedFlowCapacity != LinuxKernelNetworkConstants.TrackedFlowEntries
             || frame.OwnerCapacity != LinuxKernelNetworkConstants.OwnerMapEntries
             || frame.RingBytes != LinuxKernelNetworkConstants.RingBytes
             || frame.DrainSeconds != LinuxKernelNetworkConstants.HealthIntervalSeconds
-            || frame.MaxRecordsPerDrain != LinuxKernelNetworkConstants.MaximumRecordsPerDrain
+            || frame.MaxOutputRecordsPerHealthInterval != LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval
             || frame.KernelDrainIntervalSeconds != LinuxKernelNetworkConstants.KernelDrainIntervalSeconds
-            || frame.MaxKernelRecordsPerDrain != LinuxKernelNetworkConstants.MaximumRecordsPerDrain
+            || frame.MaxKernelRecordsPerDrain != LinuxKernelNetworkConstants.MaximumKernelRecordsPerDrain
             || frame.MaxKernelRecordsPerHealthInterval != LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval)
             throw new InvalidDataException("The helper hello frame does not match the fixed plan.");
     }
@@ -276,7 +303,14 @@ public sealed class LinuxKernelNetworkService(
             || frame.KernelDrainHighWater > LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval
             || frame.KernelDrainRecords > frame.KernelDrainHighWater
             || frame.KernelDrainBacklogTicks > frame.KernelDrainCappedTicks
-            || frame.KernelDrainBacklog && frame.KernelDrainBacklogTicks == 0)
+            || frame.KernelDrainBacklog && frame.KernelDrainBacklogTicks == 0
+            || frame.TrackedFlowRecords > LinuxKernelNetworkConstants.TrackedFlowEntries
+            || frame.TrackedFlowHighWater > LinuxKernelNetworkConstants.TrackedFlowEntries
+            || frame.TrackedFlowRecords > frame.TrackedFlowHighWater
+            || frame.TrackedFlowPendingRecords > frame.TrackedFlowRecords
+            || frame.TrackedFlowPendingHighWater > LinuxKernelNetworkConstants.TrackedFlowEntries
+            || frame.TrackedFlowPendingRecords > frame.TrackedFlowPendingHighWater
+            || frame.TrackedFlowBacklog != (frame.TrackedFlowPendingRecords > 0))
             throw new InvalidDataException("The helper health frame does not match the fixed protocol.");
         ValidateLossCounters(frame);
     }

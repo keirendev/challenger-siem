@@ -95,7 +95,7 @@ public sealed class LinuxKernelNetworkRuntime(
             Task> enqueueBeforeCheckpoint,
         CancellationToken cancellationToken)
     {
-        if (frames.Count is <= 0 or > LinuxKernelNetworkConstants.MaximumRecordsPerDrain)
+        if (frames.Count is <= 0 or > LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval)
             throw new ArgumentOutOfRangeException(nameof(frames));
         await InitializeAsync(cancellationToken);
         var assignments = new List<LinuxKernelNetworkSequenceAssignment>(frames.Count);
@@ -283,16 +283,14 @@ public sealed class LinuxKernelNetworkRuntime(
                 StringComparer.Ordinal),
             Details = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["payload_capture"] = "false",
-                ["helper_version"] = LinuxKernelNetworkConstants.HelperVersion,
                 ["flow_map_entries"] = LinuxKernelNetworkConstants.FlowMapEntries.ToString(CultureInfo.InvariantCulture),
+                ["tracked_flow_entries"] = LinuxKernelNetworkConstants.TrackedFlowEntries.ToString(CultureInfo.InvariantCulture),
                 ["parse_failures"] = current.ParseFailures.ToString(CultureInfo.InvariantCulture),
                 ["unsupported_headers"] = current.UnsupportedHeaders.ToString(CultureInfo.InvariantCulture),
                 ["flow_map_full"] = current.FlowMapFull.ToString(CultureInfo.InvariantCulture),
                 ["kernel_flow_map_update_failures"] = current.KernelFlowMapUpdateFailures.ToString(CultureInfo.InvariantCulture),
                 ["tracked_flow_table_full"] = current.TrackedFlowTableFull.ToString(CultureInfo.InvariantCulture),
                 ["owner_misses"] = current.OwnerMisses.ToString(CultureInfo.InvariantCulture),
-                ["attribution_status"] = current.OwnerMisses > 0 ? "partial" : "complete_for_observed_flows",
                 ["ring_losses"] = current.RingLosses.ToString(CultureInfo.InvariantCulture),
                 ["ipc_send_failures"] = current.IpcSendFailures.ToString(CultureInfo.InvariantCulture),
                 ["active_loss"] = current.ActiveLoss.ToString(CultureInfo.InvariantCulture).ToLowerInvariant(),
@@ -301,20 +299,22 @@ public sealed class LinuxKernelNetworkRuntime(
                 ["last_connection_error"] = current.LastConnectionError,
                 ["queue_pressure_count"] = current.QueuePressureCount.ToString(CultureInfo.InvariantCulture),
                 ["acknowledgement_gap"] = Math.Max(0, current.CollectedSequence - current.AcknowledgedSequence).ToString(CultureInfo.InvariantCulture),
-                ["queue_pause_depth"] = options.KernelNetworkTelemetry.QueuePauseDepth.ToString(CultureInfo.InvariantCulture),
                 ["last_kernel_drain_records"] = current.LastKernelDrainRecords.ToString(CultureInfo.InvariantCulture),
                 ["high_water_kernel_drain_records"] = current.HighWaterKernelDrainRecords.ToString(CultureInfo.InvariantCulture),
                 ["kernel_drain_capped_ticks"] = current.KernelDrainCappedTicks.ToString(CultureInfo.InvariantCulture),
                 ["kernel_drain_backlog_ticks"] = current.KernelDrainBacklogTicks.ToString(CultureInfo.InvariantCulture),
                 ["kernel_drain_backlog"] = current.KernelDrainBacklog.ToString(CultureInfo.InvariantCulture).ToLowerInvariant(),
+                ["last_tracked_flow_records"] = current.LastTrackedFlowRecords.ToString(CultureInfo.InvariantCulture),
+                ["high_water_tracked_flow_records"] = current.HighWaterTrackedFlowRecords.ToString(CultureInfo.InvariantCulture),
+                ["last_tracked_flow_pending_records"] = current.LastTrackedFlowPendingRecords.ToString(CultureInfo.InvariantCulture),
+                ["high_water_tracked_flow_pending_records"] = current.HighWaterTrackedFlowPendingRecords.ToString(CultureInfo.InvariantCulture),
+                ["tracked_flow_backlog"] = current.TrackedFlowBacklog.ToString(CultureInfo.InvariantCulture).ToLowerInvariant(),
                 ["last_drain_record_count"] = current.LastDrainRecordCount.ToString(CultureInfo.InvariantCulture),
                 ["high_water_drain_record_count"] = current.HighWaterDrainRecordCount.ToString(CultureInfo.InvariantCulture),
-                ["last_drain_serialized_bytes"] = current.LastDrainSerializedBytes.ToString(CultureInfo.InvariantCulture),
-                ["last_drain_unique_enrichment_identities"] = current.LastDrainUniqueEnrichmentIdentities.ToString(CultureInfo.InvariantCulture),
-                ["last_drain_enrichment_cache_hits"] = current.LastDrainEnrichmentCacheHits.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_procfs_enrichment_identities"] = current.LastDrainProcfsEnrichmentIdentities.ToString(CultureInfo.InvariantCulture),
+                ["last_drain_skipped_enrichment_identities"] = current.LastDrainSkippedEnrichmentIdentities.ToString(CultureInfo.InvariantCulture),
                 ["last_drain_receive_duration_ms"] = current.LastDrainReceiveDurationMilliseconds.ToString(CultureInfo.InvariantCulture),
-                ["last_drain_persist_duration_ms"] = current.LastDrainPersistDurationMilliseconds.ToString(CultureInfo.InvariantCulture),
-                ["abandoned_through_sequence"] = current.AbandonedThroughSequence.ToString(CultureInfo.InvariantCulture)
+                ["last_drain_persist_duration_ms"] = current.LastDrainPersistDurationMilliseconds.ToString(CultureInfo.InvariantCulture)
             }
         };
     }
@@ -399,7 +399,8 @@ public sealed class LinuxKernelNetworkRuntime(
         var counters = AccumulateHelperCounters(current, frame, includeDrainCounters: true);
         var counterIncrease = CountersIncreased(current, counters);
         var drainBacklog = frame.KernelDrainBacklog;
-        var cleanFrames = helperGap || counterIncrease || drainBacklog ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
+        var trackedBacklog = frame.TrackedFlowBacklog;
+        var cleanFrames = helperGap || counterIncrease || drainBacklog || trackedBacklog ? 0 : Math.Min(3, current.CleanHealthFrames + 1);
         var activeLoss = helperGap || counterIncrease || current.ActiveLoss && cleanFrames < 3;
         return counters with
         {
@@ -410,12 +411,19 @@ public sealed class LinuxKernelNetworkRuntime(
             LastKernelDrainRecords = frame.KernelDrainRecords,
             HighWaterKernelDrainRecords = Math.Max(current.HighWaterKernelDrainRecords, frame.KernelDrainHighWater),
             KernelDrainBacklog = drainBacklog,
+            LastTrackedFlowRecords = frame.TrackedFlowRecords,
+            HighWaterTrackedFlowRecords = Math.Max(current.HighWaterTrackedFlowRecords, frame.TrackedFlowHighWater),
+            LastTrackedFlowPendingRecords = frame.TrackedFlowPendingRecords,
+            HighWaterTrackedFlowPendingRecords = Math.Max(current.HighWaterTrackedFlowPendingRecords, frame.TrackedFlowPendingHighWater),
+            TrackedFlowBacklog = trackedBacklog,
             LastDrainRecordCount = diagnostics?.RecordCount ?? current.LastDrainRecordCount,
             HighWaterDrainRecordCount = diagnostics is null
                 ? current.HighWaterDrainRecordCount
                 : Math.Max(current.HighWaterDrainRecordCount, diagnostics.RecordCount),
             LastDrainSerializedBytes = diagnostics?.SerializedBytes ?? current.LastDrainSerializedBytes,
             LastDrainUniqueEnrichmentIdentities = diagnostics?.UniqueEnrichmentIdentities ?? current.LastDrainUniqueEnrichmentIdentities,
+            LastDrainProcfsEnrichmentIdentities = diagnostics?.ProcfsEnrichmentIdentities ?? current.LastDrainProcfsEnrichmentIdentities,
+            LastDrainSkippedEnrichmentIdentities = diagnostics?.SkippedEnrichmentIdentities ?? current.LastDrainSkippedEnrichmentIdentities,
             LastDrainEnrichmentCacheHits = diagnostics?.EnrichmentCacheHits ?? current.LastDrainEnrichmentCacheHits,
             LastDrainReceiveDurationMilliseconds = diagnostics?.ReceiveDurationMilliseconds ?? current.LastDrainReceiveDurationMilliseconds,
             LastDrainPersistDurationMilliseconds = diagnostics?.PersistDurationMilliseconds ?? current.LastDrainPersistDurationMilliseconds,
@@ -424,6 +432,7 @@ public sealed class LinuxKernelNetworkRuntime(
             LastError = helperGap ? "helper_sequence_gap"
                 : counterIncrease ? LossError(current, counters)
                 : drainBacklog ? (current.ActiveLoss ? current.LastError : "kernel_flow_map_drain_backlog")
+                : trackedBacklog ? (current.ActiveLoss ? current.LastError : "helper_tracked_flow_backlog")
                 : activeLoss ? current.LastError
                 : "none"
         };

@@ -411,7 +411,10 @@ app.MapPost("/api/v2/ingest/events", async Task<IResult> (
     var result = await events.StoreEventsAsync(request, cancellationToken);
     var detectionCandidates = result.AcceptedEventIds.Concat(result.DuplicateEventIds);
     var storedDetectionEvents = await events.LoadStoredEventsAsync(request.AgentId, detectionCandidates, cancellationToken);
-    await alerts.RunLinuxDetectionsAsync(storedDetectionEvents, detectionEngine, cancellationToken);
+    var potentialDetectionEvents = storedDetectionEvents
+        .Where(detectionEngine.HasPotentialLinuxDetection)
+        .ToArray();
+    await alerts.RunLinuxDetectionsAsync(potentialDetectionEvents, detectionEngine, cancellationToken);
     return Results.Ok(new IngestBatchResponse
     {
         BatchId = request.BatchId,

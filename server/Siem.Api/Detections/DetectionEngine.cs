@@ -85,6 +85,14 @@ public sealed class DetectionEngine
             .ToArray();
     }
 
+    public bool HasPotentialLinuxDetection(EventEnvelope envelope) =>
+        IsLinuxEvent(envelope)
+        && DetectionRuleCatalog.BuiltInRules.Any(rule =>
+            rule.Enabled
+            && DetectionRuleCatalog.IsLinuxRule(rule.RuleId)
+            && MatchingRequiredSource(rule, envelope) is not null
+            && LinuxRulePredicate(rule.RuleId, envelope));
+
     public IReadOnlyList<DetectionEvaluationResult> EvaluateLinux(
         EventEnvelope envelope,
         IReadOnlyDictionary<string, SourceHealthReport> sourceHealth)

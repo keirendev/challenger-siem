@@ -55,6 +55,38 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
     }
 
     [Fact]
+    public void DetectionDispatchSkipsCanonicalSourcesWithoutApplicableRules()
+    {
+        var engine = new DetectionEngine();
+        var flow = PortableEvent(
+            EventSources.InventoryDiff,
+            LinuxTelemetrySourceIds.NetworkFlowSummary,
+            "network_flow_summary",
+            new NormalizedEventFields
+            {
+                Category = "network",
+                Action = "summarize",
+                Outcome = "success"
+            });
+        var listener = PortableEvent(
+            EventSources.InventoryDiff,
+            LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff,
+            "network_socket_snapshot_diff",
+            new NormalizedEventFields
+            {
+                Category = "network_listener",
+                Action = "observed",
+                Outcome = "unknown",
+                SourceIp = "0.0.0.0",
+                SourcePort = "8443",
+                Protocol = "tcp"
+            });
+
+        Assert.False(engine.HasPotentialLinuxDetection(flow));
+        Assert.True(engine.HasPotentialLinuxDetection(listener));
+    }
+
+    [Fact]
     public void PackageInventoryDiffEventsMatchWithHealthyOrGappedConfidence()
     {
         var engine = new DetectionEngine();
@@ -670,6 +702,9 @@ public sealed class LinuxDetectionTests(IntegrationTestDatabase database)
         Assert.Contains("alerts", validator, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("using gin(normalized_json)", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("normalized_json @> @boot_marker", alerts, StringComparison.Ordinal);
+        Assert.Contains("with recent_journal as materialized", alerts, StringComparison.Ordinal);
+        Assert.Contains("event_time >= @window_start", alerts, StringComparison.Ordinal);
+        Assert.Contains("limit @max_candidates", alerts, StringComparison.Ordinal);
         Assert.DoesNotContain("normalized_json->'labels'->>'journal.boot_id' = @boot_id", alerts, StringComparison.Ordinal);
         Assert.DoesNotContain("alter table", schema, StringComparison.OrdinalIgnoreCase);
     }

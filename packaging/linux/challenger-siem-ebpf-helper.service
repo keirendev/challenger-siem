@@ -40,7 +40,7 @@ SystemCallArchitectures=native
 SystemCallFilter=~@clock @debug @keyring @module @mount @obsolete @raw-io @reboot @swap
 ReadOnlyPaths=/sys/fs/cgroup /sys/kernel/btf/vmlinux
 TasksMax=32
-MemoryMax=128M
+MemoryMax=192M
 
 [Install]
 WantedBy=multi-user.target

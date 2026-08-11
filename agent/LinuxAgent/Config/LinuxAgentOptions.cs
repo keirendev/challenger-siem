@@ -101,7 +101,7 @@ public sealed class LinuxAgentOptions : IAgentTransportConfiguration
 
     public bool HasValidKernelNetworkTelemetryBounds() =>
         KernelNetworkTelemetry.StartupDelaySeconds is >= 0 and <= 300
-        && KernelNetworkTelemetry.QueuePauseDepth is >= LinuxKernelNetworkConstants.MaximumRecordsPerDrain and <= 1_000_000
+        && KernelNetworkTelemetry.QueuePauseDepth is >= LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval and <= 1_000_000
         && KernelNetworkTelemetry.QueuePauseDepth <= PassiveTelemetry.QueuePauseDepth
         && KernelNetworkTelemetry.MaxCommandLineBytes is >= 256 and <= 4096
         && string.Equals(KernelNetworkTelemetry.SocketPath, LinuxKernelNetworkConstants.SocketPath, StringComparison.Ordinal)
