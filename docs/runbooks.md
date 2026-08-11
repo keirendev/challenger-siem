@@ -20,6 +20,18 @@ For a question such as “which process contacted an IP in China?”, call `siem
 
 Review storage accounting and perform a dry run before executing managed retention. Manual execution requires the exact `CONFIRM RETENTION DELETE` confirmation and is security-audited. The allowlist is limited to events, heartbeat history, inventory snapshots, and ingestion errors. Current source state, alerts/evidence, cases, graphs, detection metadata, audit, and agents are protected.
 
+Direct storage status uses exact live-row accounting. Normal scheduled retention reports
+`catalog_estimate`, uses allocated PostgreSQL relation sizes and catalog row estimates,
+and uses separate event-time-ordered phases with bounded primary shares for history,
+optional events, and mandatory L1 journal rows. Unused shares return to the existing
+optional-before-mandatory fallback, but a sustained optional backlog cannot consume every
+batch and pin the oldest mandatory event indefinitely. A capped pass with expired rows
+remaining reports `bounded_incomplete`. Reaching the managed-capacity boundary triggers
+an exact live-row check before emergency deletion. During an ingest-latency incident,
+correlate the retention run window and accounting mode with PostgreSQL statement and I/O
+latency; an available GET path does not prove that bounded ingest completed inside the
+agent's acknowledgement deadline.
+
 For the 2.2.0 deployment profile, keep `Storage:Retention:HostedServiceEnabled=false`
 until an execution dry run against the target database reports no unexpected eligible
 rows. Then enable the 60-minute scheduler while retaining the 30-day target and 100 GiB
@@ -126,15 +138,15 @@ A protected-host canary requires fresh exact approval for the target, window, ar
 
 Current sanitized status (2026-08-04): the exact 2.8.1 single-host agent-only rollout passed the initial 30-minute acceptance window and one additional complete healthy L4 rolling window. Strict L4 recovered, acknowledgement lag returned to zero, queue pressure and loss counters remained normal, and the unchanged helper did not restart. The 24-hour read-only soak is in progress; keep its private measurements outside the repository and update only the aggregate decision when it completes.
 
-## Kernel-flow map-loss mitigation and helper-v2 rollout
+## Kernel-flow burst-capacity correction and helper-v3 rollout
 
-Preparing or validating collector v3/helper v2 does not authorize a live helper replacement, detach, service restart, or agent restart. Keep the affected live source read-only until an exact protected-host activation and rollback window is separately approved.
+Preparing or validating collector v4/helper v3 does not authorize a live helper replacement, detach, service restart, or agent restart. Keep the affected live source read-only until an exact protected-host activation and rollback window is separately approved.
 
-1. Privately review bounded aggregate evidence around each `flow_map_full` boundary: unique flow-key cardinality, event count and serialized bytes, output drain count, queue depth/oldest age, acknowledgement lag, send outcome, helper epoch/sequence, parser/ring/IPC counters, and current counter stability. Treat `flow_map_entries=16384` as capacity, not measured occupancy. Do not print tuples, process identities, credentials, plan hashes, raw events, or state files.
-2. Build the 2.9.1 candidate and helper, pass native, focused/full managed, lifecycle, contract, repository-safety, and shell validations, and create a newly signed bundle. Generate and review the new kernel plan plus the dependent L4 plan/baseline. The changed helper/collector versions and one-second kernel pre-drain must invalidate the prior approvals.
-3. In an explicitly authorized disposable Linux x86_64 VM, exercise repeated greater-than-500-key one-second bursts while remaining below 5,000 kernel transfers per ten-second health interval for at least 30 minutes. Require the 500-event output ceiling, zero kernel-map and tracked-table loss growth, no residual backlog after the next health interval, queue age below 30 seconds without sustained growth, acknowledgement lag returning to zero, zero poison/drop/backoff, healthy API/database reads, and the existing CPU/RSS/write and strict-L4 gates. A separate bounded overload phase may exceed 5,000 only in this disposable VM to prove capped/backlog reporting and recovery; never reinterpret any resulting loss as reconstructed evidence.
+1. Privately review bounded aggregate evidence around each split-loss boundary: unique flow-key cardinality, event count and serialized bytes, output drain count, queue depth/oldest age, acknowledgement lag, send outcome, helper epoch/sequence, parser/ring/IPC counters, and current counter stability. Treat capacity fields as fixed bounds, not measured occupancy. Do not print tuples, process identities, credentials, plan hashes, raw events, or state files.
+2. Build the 2.11.0 candidate and helper, pass native, focused/full managed, lifecycle, contract, repository-safety, and shell validations, and create a newly signed bundle. Generate and review the new kernel plan plus dependent L4 plan/baseline. Helper/collector version, map, drain, output, coalescing, and enrichment changes invalidate prior approvals.
+3. In an explicitly authorized disposable Linux x86_64 VM, run the incident-shaped 120,000-distinct-key burst and bounded 18,000-per-minute steady phase from [Linux kernel network flow telemetry](linux-kernel-network.md). Require kernel-map, helper-table, parser, ring, and IPC loss counters to stay fixed, tracked backlog to be truthful and drain within six minutes after the burst, queue age below 30 seconds without sustained growth, acknowledgement lag returning to zero, zero poison/drop/backoff, healthy API/database reads, and the existing CPU/RSS/write and strict-L4 gates. Run the above-envelope overload case only in the disposable VM; any resulting loss remains real.
 4. Preserve exact private rollback copies and hashes of the prior signed helper/agent bundle and protected configuration. Stage the reviewed candidate without restarting the running helper or agent. Re-run the lifecycle plan against the staged files and stop if versions, signer, hashes, capabilities, attachment catalog, privacy boundary, or rollback materials differ.
-5. After separate approval naming the target, maintenance window, commands, verification duration, and rollback authority, stop the agent, restart the helper so the old links detach and the reviewed v2 object attaches, then start the compatible candidate agent. Do not change map capacity, capabilities, cgroup root, queue/checkpoint state, audit/firewall/authentication/kernel/MAC policy, or unrelated services.
+5. After separate approval naming the target, maintenance window, commands, verification duration, and rollback authority, stop the agent, restart the helper so the old links detach and the reviewed v3 object attaches, then start the compatible candidate agent. Do not make ad hoc runtime map, capability, cgroup, queue/checkpoint, audit/firewall/authentication/kernel/MAC, or unrelated service changes.
 6. Validate exact installed hashes and service identities, one expected helper epoch/restart boundary, the fixed attachment catalog with no leftover pins, source freshness, split loss counters, capped/backlog diagnostics, queue/acknowledgement recovery, delivery, and strict L4 after a complete warm-up window. Continue a 24-hour read-only soak.
 7. Stop and use the coordinated rollback on either split loss counter increasing, backlog persisting beyond one health interval after workload subsides, unexpected helper gaps/restarts, queue growth, acknowledgement failure, poison/drop/backoff, SLO breach, host impact, attachment mismatch, or inability to preserve state. Restore the exact prior helper and compatible agent; never delete, reset, vacuum, or edit queue/checkpoint/source state to make health appear clean.
 

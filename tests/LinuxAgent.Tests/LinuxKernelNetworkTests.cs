@@ -10,6 +10,10 @@ using Xunit;
 
 namespace Challenger.Siem.LinuxAgent.Tests;
 
+[CollectionDefinition("Kernel network resource bounds", DisableParallelization = true)]
+public sealed class LinuxKernelNetworkResourceBoundsCollection;
+
+[Collection("Kernel network resource bounds")]
 public sealed class LinuxKernelNetworkTests
 {
     [Fact]
@@ -33,10 +37,14 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("detach", first.Rollback, StringComparison.Ordinal);
         Assert.Contains("100 events", first.Bounds, StringComparison.Ordinal);
         Assert.Contains("1048576 bytes", first.Bounds, StringComparison.Ordinal);
-        Assert.Equal("linux-network-flow-summary-v3", first.CollectorVersion);
-        Assert.Equal("challenger-siem-ebpf-helper-v2", first.HelperVersion);
+        Assert.Equal("linux-network-flow-summary-v4", first.CollectorVersion);
+        Assert.Equal("challenger-siem-ebpf-helper-v3", first.HelperVersion);
         Assert.Contains("kernel pre-drain every 1 second", first.Bounds, StringComparison.Ordinal);
-        Assert.Contains("5000 per 10-second health interval", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("327680 per 10-second health interval", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("4096 emitted records", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("524288 helper-tracked flows", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("33554432 ring bytes", first.Bounds, StringComparison.Ordinal);
+        Assert.Contains("close-before-start coalescing", first.Bounds, StringComparison.Ordinal);
 
         options.KernelNetworkTelemetry.ApprovedPlanHash = first.PlanHash;
         Assert.True(LinuxKernelNetworkPlanBuilder.Build(options).ApprovalHashMatches);
@@ -92,6 +100,8 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("CHALLENGER_KERNEL_DRAIN_INTERVAL_SECONDS * 1000", helper, StringComparison.Ordinal);
         Assert.Contains("CHALLENGER_COUNTER_TRACKED_FLOW_TABLE_FULL", helper, StringComparison.Ordinal);
         Assert.Contains("kernel_drain_backlog", helper, StringComparison.Ordinal);
+        Assert.Contains("tracked_flow_backlog", helper, StringComparison.Ordinal);
+        Assert.Contains("CHALLENGER_FLOW_EVENT_CLOSED", helper, StringComparison.Ordinal);
         Assert.Contains("send_health", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("SOCK_RAW", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("AF_PACKET", helper, StringComparison.Ordinal);
@@ -340,6 +350,59 @@ public sealed class LinuxKernelNetworkTests
             Assert.False(runtime.Health().GapDetected);
             Assert.Equal(SourceHealthStatuses.Degraded, runtime.Health().Status);
             Assert.Equal("kernel_flow_map_drain_backlog", runtime.Health().ErrorCode);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TrackedFlowBacklogIsVisibleDegradationWithoutInventingLoss()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var options = CreateOptions();
+            options.KernelNetworkTelemetry.Enabled = true;
+            options.KernelNetworkTelemetry.ApprovedPlanHash = LinuxKernelNetworkPlanBuilder.Build(options).PlanHash;
+            var runtime = new LinuxKernelNetworkRuntime(
+                Options.Create(options),
+                new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json")),
+                new FixedTimeProvider(DateTimeOffset.Parse("2032-02-01T09:00:00Z")));
+            var epoch = new string('8', 32);
+            await runtime.ObserveHelloAsync(new LinuxKernelNetworkFrame { Epoch = epoch, Sequence = 1 }, default);
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = epoch,
+                Sequence = 1,
+                TrackedFlowRecords = 10_000,
+                TrackedFlowHighWater = 12_000,
+                TrackedFlowPendingRecords = 3_000,
+                TrackedFlowPendingHighWater = 4_000,
+                TrackedFlowBacklog = true
+            }, default);
+
+            Assert.False(runtime.Snapshot().ActiveLoss);
+            Assert.False(runtime.Health().GapDetected);
+            Assert.Equal(SourceHealthStatuses.Degraded, runtime.Health().Status);
+            Assert.Equal("helper_tracked_flow_backlog", runtime.Health().ErrorCode);
+            Assert.Equal("3000", runtime.Health().Details!["last_tracked_flow_pending_records"]);
+            Assert.Equal("true", runtime.Health().Details!["tracked_flow_backlog"]);
+            Assert.Equal(32, runtime.Health().Details!.Count);
+
+            await runtime.ObserveHealthAsync(new LinuxKernelNetworkFrame
+            {
+                Epoch = epoch,
+                Sequence = 2,
+                TrackedFlowRecords = 7_000,
+                TrackedFlowHighWater = 12_000,
+                TrackedFlowPendingHighWater = 4_000
+            }, default);
+
+            Assert.Equal(SourceHealthStatuses.Healthy, runtime.Health().Status);
+            Assert.Equal("none", runtime.Health().ErrorCode);
         }
         finally
         {
@@ -624,7 +687,7 @@ public sealed class LinuxKernelNetworkTests
     }
 
     [Fact]
-    public async Task FiveHundredFrameDrainCompletesBeforeSlowEnrichmentAndPersistsInOrderWithCaching()
+    public async Task MaximumFrameDrainCompletesBeforeSlowEnrichmentAndPersistsInOrderWithCaching()
     {
         if (!OperatingSystem.IsLinux()) return;
         var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
@@ -665,40 +728,102 @@ public sealed class LinuxKernelNetworkTests
             var receive = service.ReceiveDrainAsync(receiver, timeout.Token);
             var send = Task.Run(async () =>
             {
-                for (ulong sequence = 1; sequence <= 500; sequence++)
+                for (ulong sequence = 1; sequence <= 4_096; sequence++)
                     await sender.SendAsync(Encoding.UTF8.GetBytes(FlowJson("network_flow_sample", sequence: sequence)), SocketFlags.None, timeout.Token);
-                await sender.SendAsync(Encoding.UTF8.GetBytes(HealthJson(501)), SocketFlags.None, timeout.Token);
+                await sender.SendAsync(Encoding.UTF8.GetBytes(HealthJson(4_097)), SocketFlags.None, timeout.Token);
             }, timeout.Token);
 
             var drain = await receive;
             await send.WaitAsync(TimeSpan.FromSeconds(1));
 
-            Assert.Equal(500, drain.Flows.Count);
-            Assert.Equal((ulong)501, drain.Health.Sequence);
+            Assert.Equal(4_096, drain.Flows.Count);
+            Assert.Equal((ulong)4_097, drain.Health.Sequence);
             Assert.Equal(0, enricher.Calls);
 
             await service.PersistDrainAsync(drain, timeout.Token);
 
             Assert.Equal(1, enricher.Calls);
-            Assert.Equal([100, 100, 100, 100, 100], queue.BatchCounts);
-            Assert.Equal([0L, 100L, 200L, 300L, 400L], queue.CollectedBeforeBatch);
+            Assert.Equal(Enumerable.Repeat(100, 40).Append(96), queue.BatchCounts);
+            Assert.Equal(Enumerable.Range(0, 41).Select(value => value * 100L), queue.CollectedBeforeBatch);
             Assert.Equal(
-                Enumerable.Range(1, 500).Select(value => (ulong)value),
+                Enumerable.Range(1, 4_096).Select(value => (ulong)value),
                 queue.Events.Select(item => item.Raw.GetProperty("helper_sequence").GetUInt64()));
             var state = runtime.Snapshot();
-            Assert.Equal(500, state.CollectedSequence);
-            Assert.Equal((ulong)501, state.LastHelperSequence);
-            Assert.Equal(500, state.LastDrainRecordCount);
-            Assert.Equal(500, state.HighWaterDrainRecordCount);
+            Assert.Equal(4_096, state.CollectedSequence);
+            Assert.Equal((ulong)4_097, state.LastHelperSequence);
+            Assert.Equal(4_096, state.LastDrainRecordCount);
+            Assert.Equal(4_096, state.HighWaterDrainRecordCount);
             Assert.Equal(1, state.LastDrainUniqueEnrichmentIdentities);
-            Assert.Equal(499, state.LastDrainEnrichmentCacheHits);
+            Assert.Equal(1, state.LastDrainProcfsEnrichmentIdentities);
+            Assert.Equal(0, state.LastDrainSkippedEnrichmentIdentities);
+            Assert.Equal(4_095, state.LastDrainEnrichmentCacheHits);
             Assert.True(state.LastDrainSerializedBytes > 0);
             Assert.True(state.LastDrainPersistDurationMilliseconds >= 250);
-            Assert.Equal("500", runtime.Health().Details!["last_drain_record_count"]);
+            Assert.Equal("4096", runtime.Health().Details!["last_drain_record_count"]);
         }
         finally
         {
             if (File.Exists(socketPath)) File.Delete(socketPath);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcfsEnrichmentIsCappedPerDrainAndKernelMetadataIsPreservedForTheRemainder()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"challenger-kernel-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var options = CreateOptions();
+            options.AgentId = "synthetic-kernel-agent";
+            var store = new LinuxKernelNetworkStateStore(Path.Combine(directory, "state.json"));
+            var clock = new FixedTimeProvider(DateTimeOffset.Parse("2032-02-01T09:30:00Z"));
+            var runtime = new LinuxKernelNetworkRuntime(Options.Create(options), store, clock);
+            var queue = new RecordingQueue(store);
+            var enricher = new DelayedProcessEnricher(TimeSpan.Zero);
+            var service = new LinuxKernelNetworkService(
+                Options.Create(options),
+                queue,
+                runtime,
+                enricher,
+                clock,
+                NullLogger<LinuxKernelNetworkService>.Instance);
+            var epoch = new string('d', 32);
+            var flows = Enumerable.Range(1, 300).Select(index => new LinuxKernelNetworkReceivedFlow(
+                Flow(epoch, (ulong)index, "network_flow_closed") with
+                {
+                    Family = 4,
+                    Protocol = "tcp",
+                    Direction = "outbound",
+                    LocalIp = "192.0.2.10",
+                    LocalPort = 40_000 + index,
+                    RemoteIp = "198.51.100.20",
+                    RemotePort = 443,
+                    ProcessId = (uint)(10_000 + index),
+                    UserId = 1000,
+                    ProcessName = "probe",
+                    AttributionSource = "current_task",
+                    FirstSeenUnixNanoseconds = 1,
+                    LastSeenUnixNanoseconds = 2,
+                    PacketCountDelta = 1,
+                    ByteCountDelta = 64
+                },
+                clock.GetUtcNow(),
+                clock.GetUtcNow())).ToArray();
+
+            await service.PersistDrainAsync(new(flows, Health(epoch, 301), 1), default);
+
+            var state = runtime.Snapshot();
+            Assert.Equal(LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain, enricher.Calls);
+            Assert.Equal(300, state.LastDrainUniqueEnrichmentIdentities);
+            Assert.Equal(256, state.LastDrainProcfsEnrichmentIdentities);
+            Assert.Equal(44, state.LastDrainSkippedEnrichmentIdentities);
+            Assert.Contains(queue.Events, item =>
+                item.Raw.GetProperty("attribution_confidence").GetString() == "kernel_current_task_kernel_comm");
+        }
+        finally
+        {
             Directory.Delete(directory, recursive: true);
         }
     }
@@ -726,7 +851,7 @@ public sealed class LinuxKernelNetworkTests
         var hello = LinuxKernelNetworkService.ParseFrame(HelloJson(1));
         LinuxKernelNetworkService.ValidateHello(hello);
         var legacyHello = LinuxKernelNetworkService.ParseFrame(
-            HelloJson(1).Replace(",\"kernel_drain_interval_seconds\":1,\"max_kernel_records_per_drain\":500,\"max_kernel_records_per_health_interval\":5000", string.Empty, StringComparison.Ordinal));
+            HelloJson(1).Replace(",\"kernel_drain_interval_seconds\":1,\"max_kernel_records_per_drain\":32768,\"max_kernel_records_per_health_interval\":327680", string.Empty, StringComparison.Ordinal));
         Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHello(legacyHello));
 
         var health = LinuxKernelNetworkService.ParseFrame(HealthJson(1));
@@ -737,12 +862,16 @@ public sealed class LinuxKernelNetworkTests
         Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(inconsistentLoss));
 
         var oversizedDrain = LinuxKernelNetworkService.ParseFrame(
-            HealthJson(1).Replace("\"kernel_drain_records\":0", "\"kernel_drain_records\":5001", StringComparison.Ordinal));
+            HealthJson(1).Replace("\"kernel_drain_records\":0", "\"kernel_drain_records\":327681", StringComparison.Ordinal));
         Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(oversizedDrain));
 
         var uncountedBacklog = LinuxKernelNetworkService.ParseFrame(
             HealthJson(1).Replace("\"kernel_drain_backlog\":false", "\"kernel_drain_backlog\":true", StringComparison.Ordinal));
         Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(uncountedBacklog));
+
+        var uncountedTrackedBacklog = LinuxKernelNetworkService.ParseFrame(
+            HealthJson(1).Replace("\"tracked_flow_backlog\":false", "\"tracked_flow_backlog\":true", StringComparison.Ordinal));
+        Assert.Throws<InvalidDataException>(() => LinuxKernelNetworkService.ValidateHealth(uncountedTrackedBacklog));
     }
 
     [Fact]
@@ -772,7 +901,7 @@ public sealed class LinuxKernelNetworkTests
         options.KernelNetworkTelemetry.SocketPath = "/tmp/untrusted.sock";
         Assert.False(options.HasValidKernelNetworkTelemetryBounds());
         options = CreateOptions();
-        options.KernelNetworkTelemetry.QueuePauseDepth = LinuxKernelNetworkConstants.MaximumRecordsPerDrain - 1;
+        options.KernelNetworkTelemetry.QueuePauseDepth = LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval - 1;
         Assert.False(options.HasValidKernelNetworkTelemetryBounds());
         options = CreateOptions();
         options.KernelNetworkTelemetry.QueuePauseDepth = options.PassiveTelemetry.QueuePauseDepth + 1;
@@ -804,18 +933,18 @@ public sealed class LinuxKernelNetworkTests
     };
 
     private static LinuxKernelNetworkDrainDiagnostics Diagnostics(int count) =>
-        new(count, count * 1024L, count, 0, 1, 2);
+        new(count, count * 1024L, count, count, 0, 0, 1, 2);
 
     private static string FlowJson(string eventCode, ulong packetCount = 1, ulong sequence = 1) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v3","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"flow","event_code":"{{eventCode}}","family":4,"protocol":"udp","direction":"outbound","local_ip":"192.0.2.10","local_port":41000,"remote_ip":"198.51.100.53","remote_port":53,"process_id":4242,"user_id":1000,"process_name":"probe","attribution_source":"current_task","first_seen_unix_ns":1785722400000000000,"last_seen_unix_ns":1785722401000000000,"packet_count_delta":{{packetCount}},"byte_count_delta":28,"tcp_flags_mask":0,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0}
         """;
 
     private static string HealthJson(ulong sequence) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"health","payload_capture":false,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0,"kernel_drain_records":0,"kernel_drain_high_water":0,"kernel_drain_capped_ticks":0,"kernel_drain_backlog_ticks":0,"kernel_drain_backlog":false}
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v3","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"health","payload_capture":false,"parse_failures":0,"unsupported_headers":0,"flow_map_full":0,"kernel_flow_map_update_failures":0,"tracked_flow_table_full":0,"owner_misses":0,"ring_losses":0,"ipc_send_failures":0,"kernel_drain_records":0,"kernel_drain_high_water":0,"kernel_drain_capped_ticks":0,"kernel_drain_backlog_ticks":0,"kernel_drain_backlog":false,"tracked_flow_records":0,"tracked_flow_high_water":0,"tracked_flow_pending_records":0,"tracked_flow_pending_high_water":0,"tracked_flow_backlog":false}
         """;
 
     private static string HelloJson(ulong sequence) => $$"""
-        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v2","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"hello","payload_capture":false,"flow_capacity":16384,"owner_capacity":32768,"ring_bytes":1048576,"drain_seconds":10,"max_records_per_drain":500,"kernel_drain_interval_seconds":1,"max_kernel_records_per_drain":500,"max_kernel_records_per_health_interval":5000}
+        {"schema_version":1,"helper_version":"challenger-siem-ebpf-helper-v3","epoch":"ffffffffffffffffffffffffffffffff","sequence":{{sequence}},"type":"hello","payload_capture":false,"flow_capacity":262144,"tracked_flow_capacity":524288,"owner_capacity":32768,"ring_bytes":33554432,"drain_seconds":10,"max_output_records_per_health_interval":4096,"kernel_drain_interval_seconds":1,"max_kernel_records_per_drain":32768,"max_kernel_records_per_health_interval":327680}
         """;
 
     private static string FindRepositoryRoot()

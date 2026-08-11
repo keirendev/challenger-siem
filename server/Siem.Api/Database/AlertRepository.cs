@@ -15,6 +15,8 @@ public sealed class AlertRepository(
     IOptions<TrafficMapOptions>? trafficMapOptions = null)
 {
     public const int MaxEvidencePerAlert = 128;
+    private const int MaxBootWarmupCandidateEvents = 4096;
+    private static readonly TimeSpan BootWarmupDuration = TimeSpan.FromMinutes(5);
 
     public async Task<IReadOnlyList<AlertRecord>> SearchAlertsForRuleAsync(
         string ruleId,
@@ -493,30 +495,44 @@ public sealed class AlertRepository(
         var bootTime = await bootWarmupCache.GetOrLoadAsync(
             envelope.AgentId,
             bootId,
-            token => LoadBootTimeAsync(connection, envelope.AgentId, bootId, token),
+            token => LoadBootTimeAsync(connection, envelope.AgentId, bootId, envelope.EventTime, token),
             cancellationToken);
         return bootTime.HasValue
             && envelope.EventTime >= bootTime.Value
-            && envelope.EventTime - bootTime.Value <= TimeSpan.FromMinutes(5);
+            && envelope.EventTime - bootTime.Value <= BootWarmupDuration;
     }
 
     private static async Task<DateTimeOffset?> LoadBootTimeAsync(
         NpgsqlConnection connection,
         string agentId,
         string bootId,
+        DateTimeOffset eventTime,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            with recent_journal as materialized (
+                select event_time, event_category, normalized_json
+                from events
+                where agent_id = @agent_id
+                  and source = @journal_source
+                  and event_time >= @window_start
+                  and event_time <= @event_time
+                order by event_time asc
+                limit @max_candidates
+            )
             select event_time
-            from events
-            where agent_id = @agent_id
-              and event_category = 'boot'
+            from recent_journal
+            where event_category = 'boot'
               and normalized_json @> @boot_marker
             order by event_time asc
             limit 1;
             """;
         command.Parameters.AddWithValue("agent_id", agentId);
+        command.Parameters.AddWithValue("journal_source", EventSources.LinuxJournal);
+        command.Parameters.AddWithValue("window_start", eventTime.Subtract(BootWarmupDuration).ToUniversalTime());
+        command.Parameters.AddWithValue("event_time", eventTime.ToUniversalTime());
+        command.Parameters.AddWithValue("max_candidates", MaxBootWarmupCandidateEvents);
         Jsonb.Add(command, "boot_marker", new
         {
             labels = new Dictionary<string, string>(StringComparer.Ordinal)

@@ -29,14 +29,17 @@ public static class LinuxKernelNetworkPlanBuilder
             $"ipc_boundary={ipcBoundary}",
             $"signed_bundle={signedBundle}",
             $"flow_entries={LinuxKernelNetworkConstants.FlowMapEntries}",
+            $"tracked_flow_entries={LinuxKernelNetworkConstants.TrackedFlowEntries}",
             $"owner_entries={LinuxKernelNetworkConstants.OwnerMapEntries}",
             "owner_window_seconds=60",
             $"ring_bytes={LinuxKernelNetworkConstants.RingBytes}",
             $"health_interval_seconds={LinuxKernelNetworkConstants.HealthIntervalSeconds}",
             $"kernel_drain_interval_seconds={LinuxKernelNetworkConstants.KernelDrainIntervalSeconds}",
-            $"kernel_drain_max={LinuxKernelNetworkConstants.MaximumRecordsPerDrain}",
+            $"kernel_drain_max={LinuxKernelNetworkConstants.MaximumKernelRecordsPerDrain}",
             $"kernel_drain_health_max={LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval}",
-            $"emit_max={LinuxKernelNetworkConstants.MaximumRecordsPerDrain}",
+            $"emit_max={LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval}",
+            $"process_enrichment_identities_max={LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain}",
+            "closed_before_start=single_closed_record",
             $"durable_batch_events={LinuxKernelNetworkConstants.MaximumDurableBatchEvents}",
             $"durable_batch_bytes={LinuxKernelNetworkConstants.MaximumDurableBatchBytes}",
             "active_summary_seconds=60",
@@ -65,7 +68,7 @@ public static class LinuxKernelNetworkPlanBuilder
             "dedicated helper only: CAP_BPF,CAP_PERFMON,CAP_NET_ADMIN; agent receives no new capability",
             "IPv4/IPv6 TCP/UDP bounded headers, tuple, direction, PID/UID, TCP flags, packet and SKB-byte interval counters only; no payload, DNS, TLS, process environment, memory, or file content",
             "fixed embedded cgroup v2 socket/bind/connect/sendmsg/recvmsg, sock-ops, accepted/closed socket-state raw tracepoint, and ingress/egress programs with multi-attach; no arbitrary program path and no bpffs pinning",
-            $"{LinuxKernelNetworkConstants.FlowMapEntries} flows; {LinuxKernelNetworkConstants.OwnerMapEntries} owners; {LinuxKernelNetworkConstants.RingBytes} ring bytes; kernel pre-drain every {LinuxKernelNetworkConstants.KernelDrainIntervalSeconds} second at most {LinuxKernelNetworkConstants.MaximumRecordsPerDrain} records and {LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval} per {LinuxKernelNetworkConstants.HealthIntervalSeconds}-second health interval; at most {LinuxKernelNetworkConstants.MaximumRecordsPerDrain} emitted records per health interval; 60-second active summaries; durable queue transactions at most {LinuxKernelNetworkConstants.MaximumDurableBatchEvents} events or {LinuxKernelNetworkConstants.MaximumDurableBatchBytes} bytes; queue pauses at {kernel.QueuePauseDepth}",
+            $"{LinuxKernelNetworkConstants.FlowMapEntries} kernel flows; {LinuxKernelNetworkConstants.TrackedFlowEntries} helper-tracked flows; {LinuxKernelNetworkConstants.OwnerMapEntries} owners; {LinuxKernelNetworkConstants.RingBytes} ring bytes; kernel pre-drain every {LinuxKernelNetworkConstants.KernelDrainIntervalSeconds} second at most {LinuxKernelNetworkConstants.MaximumKernelRecordsPerDrain} records and {LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval} per {LinuxKernelNetworkConstants.HealthIntervalSeconds}-second health interval; at most {LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval} emitted records per health interval with close-before-start coalescing; at most {LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain} procfs enrichment identities per drain; 60-second active summaries; durable queue transactions at most {LinuxKernelNetworkConstants.MaximumDurableBatchEvents} events or {LinuxKernelNetworkConstants.MaximumDurableBatchBytes} bytes; queue pauses at {kernel.QueuePauseDepth}",
             rollback);
     }
 

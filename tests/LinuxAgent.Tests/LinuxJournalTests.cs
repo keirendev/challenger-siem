@@ -886,7 +886,7 @@ public sealed class LinuxJournalTests
         var drainer = new LinuxQueueDrainer(Options.Create(options), queue, new SiemIngestClient(http, options), runtime);
 
         Assert.True(await drainer.DrainAsync(default));
-        Assert.Equal(TimeSpan.FromMilliseconds(250), LinuxAgentWorker.DrainDelay(likelyBacklog: true));
+        Assert.Equal(TimeSpan.FromMilliseconds(100), LinuxAgentWorker.DrainDelay(likelyBacklog: true));
         Assert.Equal(1, await queue.CountAsync(default));
 
         Assert.False(await drainer.DrainAsync(default));

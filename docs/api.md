@@ -53,6 +53,19 @@ required.
 
 Manual `POST /api/v2/storage/retention/run` defaults to `dry_run: true`. An executing request with `dry_run: false` must also send the exact additive field `confirm_impact: "CONFIRM RETENTION DELETE"`; the service records a bounded mutation-specific audit outcome. This confirmation does not expand the managed-table allowlist or bypass batch/capacity/advisory-lock limits.
 
+Storage accounting includes `accounting_mode`. Direct storage-status review uses
+`exact_live_rows`. Normal scheduled retention uses `catalog_estimate` for its bounded
+before/after summaries so the scheduler does not scan every retained JSON row merely to
+measure the pass; if estimated allocation reaches the managed-capacity boundary, the
+server performs exact live-row accounting before entering emergency mode. Catalog row
+counts are PostgreSQL estimates and allocated table bytes may include reusable space.
+Within the unchanged per-run batch cap, scheduled passes reserve bounded primary shares
+for optional history, optional events, and mandatory L1 journal events. An unused share
+is reclaimed in the existing optional-before-mandatory fallback order, while a sustained
+optional backlog cannot indefinitely pin the oldest mandatory event. A pass that reaches
+its cap while expired telemetry remains reports `bounded_incomplete` rather than
+`completed`.
+
 The deployment profile targets 30 days under the existing 100 GiB ceiling. Its hourly
 hosted scheduler is enabled only after an execution dry run shows no unexpected eligible
 data; alert/evidence references remain protected.

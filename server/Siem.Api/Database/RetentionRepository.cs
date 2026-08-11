@@ -69,6 +69,8 @@ public sealed record RetentionRunRequest(
 
 public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventRepository events)
 {
+    private const string ExpiredTelemetryPresent = "expired_telemetry_present";
+
     public static readonly IReadOnlyList<string> ManagedTables = new[]
     {
         "events",
@@ -110,7 +112,15 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
         var mode = request.DryRun ? "dry_run" : "execute";
         var runId = Guid.NewGuid();
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var before = await events.GetManagedStorageAccountingAsync(options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays);
+        var before = await events.GetManagedStorageAccountingEstimateAsync(
+            options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays);
+        if (before.TotalBytes >= options.ManagedCapacityBytes)
+        {
+            // Catalog allocation is conservative and may include reusable/dead space.
+            // Pay for the exact live-row scan only when it could change emergency mode.
+            before = await events.GetManagedStorageAccountingAsync(
+                options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays);
+        }
         if (!options.Enabled)
         {
             return new RetentionRunSummary(runId, mode, "disabled", request.Emergency ? "emergency" : "scheduled", false, started, DateTimeOffset.UtcNow, cutoff, options.ManagedCapacityBytes, EmergencyTargetBytes(options), before, before, 0, 0, 0, before.WarningState, before.RetentionLagState, Array.Empty<RetentionCategorySummary>(), ManagedTables, ProtectedTables);
@@ -157,16 +167,62 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
                 removedRows += result.Rows;
                 removedEventRows += result.EventRows;
                 removedBytes += result.EstimatedBytes;
-                Merge(categories, result.Categories);
+                Merge(categories!, result.Categories);
                 return true;
             }
 
-            foreach (var table in new[] { "ingestion_errors", "agent_heartbeats", "asset_inventory_snapshots" })
+            async Task<int> DeleteBatches(int budget, Func<Task<DeleteBatchResult>> delete)
             {
-                while (await DeleteBatch(() => DeleteHistoryBatchAsync(connection, table, cutoff, options.CleanupBatchSize, cancellationToken))) { }
+                var deletedBatches = 0;
+                while (deletedBatches < budget && await DeleteBatch(delete))
+                {
+                    deletedBatches++;
+                }
+                return deletedBatches;
             }
 
-            while (await DeleteBatch(() => DeleteEventsBatchAsync(connection, runId, cutoff, includeMandatory: true, options.CleanupBatchSize, cancellationToken))) { }
+            async Task<int> DeleteHistoryBatches(int budget)
+            {
+                var deletedBatches = 0;
+                while (deletedBatches < budget && batches < maxBatches)
+                {
+                    var progressed = false;
+                    foreach (var table in new[] { "ingestion_errors", "agent_heartbeats", "asset_inventory_snapshots" })
+                    {
+                        if (deletedBatches >= budget || batches >= maxBatches) break;
+                        if (!await DeleteBatch(() => DeleteHistoryBatchAsync(
+                            connection, table, cutoff, options.CleanupBatchSize, cancellationToken))) continue;
+                        deletedBatches++;
+                        progressed = true;
+                    }
+                    if (!progressed) break;
+                }
+                return deletedBatches;
+            }
+
+            Task<int> DeleteEventBatches(int budget, bool mandatoryLinuxJournal) => DeleteBatches(
+                budget,
+                () => DeleteEventCategoryBatchAsync(
+                    connection, runId, cutoff, mandatoryLinuxJournal, options.CleanupBatchSize, cancellationToken));
+
+            // Give every managed event class a bounded chance to advance before any
+            // busy phase reclaims unused capacity. Without this reservation, a sustained
+            // optional backlog can consume the entire run budget forever and leave the
+            // oldest mandatory event—and therefore the retention boundary—unchanged.
+            var historyBatchBudget = maxBatches >= 4 ? Math.Max(1, maxBatches / 10) : 0;
+            var mandatoryEventBatchBudget = maxBatches >= 2 ? Math.Max(1, maxBatches / 4) : 0;
+            var optionalEventBatchBudget = maxBatches - historyBatchBudget - mandatoryEventBatchBudget;
+
+            await DeleteHistoryBatches(historyBatchBudget);
+            await DeleteEventBatches(optionalEventBatchBudget, mandatoryLinuxJournal: false);
+            await DeleteEventBatches(mandatoryEventBatchBudget, mandatoryLinuxJournal: true);
+
+            // Reclaim an unused primary share without widening the configured cap.
+            // Preserve the existing optional-before-mandatory fallback preference after
+            // mandatory progress has already received its reserved opportunity.
+            if (batches < maxBatches) await DeleteHistoryBatches(maxBatches - batches);
+            if (batches < maxBatches) await DeleteEventBatches(maxBatches - batches, mandatoryLinuxJournal: false);
+            if (batches < maxBatches) await DeleteEventBatches(maxBatches - batches, mandatoryLinuxJournal: true);
 
             if (emergency)
             {
@@ -188,8 +244,15 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
                 }
             }
 
-            var after = await events.GetManagedStorageAccountingAsync(options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays);
-            var status = batches >= maxBatches && removedRows > 0 && after.TotalBytes > EmergencyTargetBytes(options) ? "bounded_incomplete" : "completed";
+            var after = emergency
+                ? await events.GetManagedStorageAccountingAsync(options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays)
+                : await events.GetManagedStorageAccountingEstimateAsync(options.ManagedCapacityBytes, cancellationToken, options.TargetRetentionDays);
+            var status = batches >= maxBatches
+                && removedRows > 0
+                && (after.TotalBytes > EmergencyTargetBytes(options)
+                    || string.Equals(after.RetentionLagState, ExpiredTelemetryPresent, StringComparison.Ordinal))
+                    ? "bounded_incomplete"
+                    : "completed";
             var summary = new RetentionRunSummary(runId, mode, status, emergency ? "emergency" : "scheduled", true, started, DateTimeOffset.UtcNow, cutoff, options.ManagedCapacityBytes, EmergencyTargetBytes(options), before, after, removedRows, removedEventRows, removedBytes, after.WarningState, after.RetentionLagState, ToSummaries(categories), ManagedTables, ProtectedTables);
             await StoreRunAsync(connection, summary, cancellationToken);
             return summary;
@@ -316,27 +379,51 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
         return result;
     }
 
-    private static async Task<DeleteBatchResult> DeleteEventsBatchAsync(NpgsqlConnection connection, Guid runId, DateTimeOffset? cutoff, bool includeMandatory, int limit, CancellationToken cancellationToken)
+    private static async Task<DeleteBatchResult> DeleteEventsBatchAsync(
+        NpgsqlConnection connection,
+        Guid runId,
+        DateTimeOffset? cutoff,
+        bool includeMandatory,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var optional = await DeleteEventCategoryBatchAsync(
+            connection, runId, cutoff, mandatoryLinuxJournal: false, limit, cancellationToken);
+        if (optional.Rows > 0 || !includeMandatory)
+        {
+            return optional;
+        }
+
+        return await DeleteEventCategoryBatchAsync(
+            connection, runId, cutoff, mandatoryLinuxJournal: true, limit, cancellationToken);
+    }
+
+    private static async Task<DeleteBatchResult> DeleteEventCategoryBatchAsync(
+        NpgsqlConnection connection,
+        Guid runId,
+        DateTimeOffset? cutoff,
+        bool mandatoryLinuxJournal,
+        int limit,
+        CancellationToken cancellationToken)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
+        var sourcePredicate = mandatoryLinuxJournal
+            ? "source_id = 'linux-journal-l1'"
+            : "source_id <> 'linux-journal-l1'";
+        command.CommandText = $"""
             with candidate as (
                 select ctid, agent_id, event_id, event_time, pg_column_size(events.*) as row_bytes,
                        case
                          when source_id = 'linux-journal-l1' then 'mandatory_linux_journal'
                          when source in ('agent_health','inventory_diff') then 'optional_operational_events'
                          else 'optional_extended_events'
-                       end as retention_category,
-                       case
-                         when source_id = 'linux-journal-l1' then 1
-                         else 0
-                       end as priority
+                       end as retention_category
                 from events
                 where (@cutoff::timestamptz is null or event_time < @cutoff)
-                  and (@include_mandatory or source_id <> 'linux-journal-l1')
-                order by priority asc, event_time asc, id asc
+                  and {sourcePredicate}
+                order by event_time asc, id asc
                 limit @limit
                 for update skip locked
             ), retained_reference as (
@@ -353,7 +440,6 @@ public sealed class RetentionRepository(NpgsqlDataSource dataSource, EventReposi
             group by retention_category;
             """;
         command.Parameters.Add("cutoff", NpgsqlDbType.TimestampTz).Value = cutoff.HasValue ? cutoff.Value : DBNull.Value;
-        command.Parameters.AddWithValue("include_mandatory", includeMandatory);
         command.Parameters.AddWithValue("limit", limit);
         command.Parameters.AddWithValue("run_id", runId);
         var categories = new List<RetentionCategorySummary>();

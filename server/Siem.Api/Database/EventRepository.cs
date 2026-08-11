@@ -32,7 +32,8 @@ public sealed record ManagedStorageAccounting(
     long? OldestEventAgeSeconds,
     string RetentionLagState,
     long? RetentionLagSeconds,
-    IReadOnlyList<ManagedTelemetryTableAccounting> ManagedTables);
+    IReadOnlyList<ManagedTelemetryTableAccounting> ManagedTables,
+    string AccountingMode);
 
 public sealed record EventSearchPage(IReadOnlyList<EventEnvelope> Events, EventSearchPageInfo Page, IReadOnlyList<EventSearchFilterSummary> ActiveFilters, string ResultScope, string RedactionNotice);
 
@@ -42,121 +43,98 @@ public sealed record EventExportResult(byte[] Content, string FileName, int Rows
 
 public sealed class EventRepository(NpgsqlDataSource dataSource)
 {
+    private static readonly string[] EventInsertParameterNames =
+    [
+        "event_id", "agent_id", "hostname", "source", "platform", "source_id", "event_code", "facility", "unit",
+        "checkpoint_json", "deduplication_json", "data_handling_json", "event_time", "host_timezone", "severity", "message",
+        "raw_json", "event_category", "event_action", "normalized_json", "user_name", "target_user_name", "process_image",
+        "process_command_line", "source_ip", "destination_ip", "service_name", "file_path", "registry_key"
+    ];
+
     public async Task<StoreEventsResult> StoreEventsAsync(IngestBatchRequest batch, CancellationToken cancellationToken)
     {
-        var accepted = 0;
-        var duplicates = 0;
-        var acceptedEventIds = new List<Guid>();
-        var duplicateEventIds = new List<Guid>();
+        if (batch.Events.Count == 0)
+        {
+            return new StoreEventsResult(0, 0, Array.Empty<Guid>(), Array.Empty<Guid>());
+        }
+        if (batch.Events.Count > ContractLimits.MaxIngestEventsPerBatch)
+        {
+            throw new ArgumentOutOfRangeException(nameof(batch),
+                $"Event storage batch exceeds the {ContractLimits.MaxIngestEventsPerBatch}-event contract limit.");
+        }
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-
-        foreach (var envelope in batch.Events)
+        var requestedEventIds = batch.Events.Select(item => item.EventId).Distinct().ToArray();
+        var preexistingIds = new HashSet<Guid>();
+        await using (var lookup = connection.CreateCommand())
         {
-            await using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                insert into events (
-                    event_id,
-                    agent_id,
-                    hostname,
-                    source,
-                    platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
-                    event_time,
-                    host_timezone,
-                    severity,
-                    message,
-                    raw_json,
-                    event_category,
-                    event_action,
-                    normalized_json,
-                    user_name,
-                    target_user_name,
-                    process_image,
-                    process_command_line,
-                    source_ip,
-                    destination_ip,
-                    service_name,
-                    file_path,
-                    registry_key
-                )
-                values (
-                    @event_id,
-                    @agent_id,
-                    @hostname,
-                    @source,
-                    @platform, @source_id, @event_code, @facility, @unit, @checkpoint_json, @deduplication_json, @data_handling_json,
-                    @event_time,
-                    @host_timezone,
-                    @severity,
-                    @message,
-                    @raw_json,
-                    @event_category,
-                    @event_action,
-                    @normalized_json,
-                    @user_name,
-                    @target_user_name,
-                    @process_image,
-                    @process_command_line,
-                    @source_ip,
-                    @destination_ip,
-                    @service_name,
-                    @file_path,
-                    @registry_key
-                )
-                on conflict (agent_id, event_id) do nothing
-                returning id;
+            lookup.Transaction = transaction;
+            lookup.CommandText = """
+                select event_id
+                from events
+                where agent_id = @agent_id
+                  and event_id = any(@event_ids);
                 """;
-            command.Parameters.AddWithValue("event_id", envelope.EventId);
-            command.Parameters.AddWithValue("agent_id", envelope.AgentId);
-            command.Parameters.AddWithValue("hostname", envelope.Hostname);
-            command.Parameters.AddWithValue("source", envelope.Source);
-            command.Parameters.AddWithValue("platform", DbValue(envelope.Platform));
-            command.Parameters.AddWithValue("source_id", DbValue(envelope.SourceId));
-            command.Parameters.AddWithValue("event_code", DbValue(envelope.EventCode));
-            command.Parameters.AddWithValue("facility", DbValue(envelope.Facility));
-            command.Parameters.AddWithValue("unit", DbValue(envelope.Unit));
-            Jsonb.Add(command, "checkpoint_json", envelope.Checkpoint);
-            Jsonb.Add(command, "deduplication_json", envelope.Deduplication);
-            Jsonb.Add(command, "data_handling_json", envelope.DataHandling);
-            command.Parameters.AddWithValue("event_time", envelope.EventTime.ToUniversalTime());
-            Jsonb.Add(command, "host_timezone", envelope.HostTimezone);
-            command.Parameters.AddWithValue("severity", envelope.Severity);
-            command.Parameters.AddWithValue("message", envelope.Message);
-
-            var rawJson = envelope.Raw.ValueKind == JsonValueKind.Undefined ? "{}" : envelope.Raw.GetRawText();
-            var rawParameter = command.Parameters.Add("raw_json", NpgsqlDbType.Jsonb);
-            rawParameter.Value = rawJson;
-            command.Parameters.AddWithValue("event_category", DbValue(envelope.Normalized?.Category));
-            command.Parameters.AddWithValue("event_action", DbValue(envelope.Normalized?.Action));
-            var normalizedParameter = command.Parameters.Add("normalized_json", NpgsqlDbType.Jsonb);
-            normalizedParameter.Value = envelope.Normalized is null ? DBNull.Value : JsonSerializer.Serialize(envelope.Normalized, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            command.Parameters.AddWithValue("user_name", DbValue(envelope.Normalized?.UserName));
-            command.Parameters.AddWithValue("target_user_name", DbValue(envelope.Normalized?.TargetUserName));
-            command.Parameters.AddWithValue("process_image", DbValue(envelope.Normalized?.ProcessImage ?? envelope.Normalized?.Process?.Executable));
-            command.Parameters.AddWithValue("process_command_line", DbValue(Truncate(envelope.Normalized?.ProcessCommandLine ?? envelope.Normalized?.Process?.CommandLine, 4096)));
-            command.Parameters.AddWithValue("source_ip", DbValue(envelope.Normalized?.SourceIp ?? envelope.Normalized?.Network?.SourceIp));
-            command.Parameters.AddWithValue("destination_ip", DbValue(envelope.Normalized?.DestinationIp ?? envelope.Normalized?.Network?.DestinationIp));
-            command.Parameters.AddWithValue("service_name", DbValue(envelope.Normalized?.ServiceName));
-            command.Parameters.AddWithValue("file_path", DbValue(envelope.Normalized?.FilePath ?? envelope.Normalized?.File?.Path));
-            command.Parameters.AddWithValue("registry_key", DbValue(envelope.Normalized?.RegistryKey));
-
-            var result = await command.ExecuteScalarAsync(cancellationToken);
-            if (result is null || result == DBNull.Value)
+            lookup.Parameters.AddWithValue("agent_id", batch.AgentId);
+            lookup.Parameters.AddWithValue("event_ids", requestedEventIds);
+            await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
             {
-                duplicates++;
-                duplicateEventIds.Add(envelope.EventId);
-            }
-            else
-            {
-                accepted++;
-                acceptedEventIds.Add(envelope.EventId);
+                preexistingIds.Add(reader.GetGuid(0));
             }
         }
 
+        var pendingEvents = batch.Events.Where(item => !preexistingIds.Contains(item.EventId)).ToArray();
+        var insertedIds = new HashSet<Guid>();
+        if (pendingEvents.Length > 0)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+
+            var sql = new StringBuilder("""
+                insert into events (
+                    event_id, agent_id, hostname, source,
+                    platform, source_id, event_code, facility, unit, checkpoint_json, deduplication_json, data_handling_json,
+                    event_time, host_timezone, severity, message, raw_json, event_category, event_action, normalized_json,
+                    user_name, target_user_name, process_image, process_command_line, source_ip, destination_ip, service_name,
+                    file_path, registry_key
+                )
+                values
+                """);
+            for (var index = 0; index < pendingEvents.Length; index++)
+            {
+                if (index > 0) sql.Append(',');
+                sql.AppendLine();
+                sql.Append('(');
+                sql.AppendJoin(',', EventInsertParameterNames.Select(name => $"@{name}_{index}"));
+                sql.Append(')');
+                AddEventInsertParameters(command, pendingEvents[index], index);
+            }
+            sql.AppendLine();
+            sql.Append("""
+                on conflict (agent_id, event_id) do nothing
+                returning event_id;
+                """);
+            command.CommandText = sql.ToString();
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                insertedIds.Add(reader.GetGuid(0));
+            }
+        }
         await transaction.CommitAsync(cancellationToken);
-        return new StoreEventsResult(accepted, duplicates, acceptedEventIds, duplicateEventIds);
+
+        var acceptedEventIds = new List<Guid>();
+        var duplicateEventIds = new List<Guid>();
+        foreach (var envelope in batch.Events)
+        {
+            if (insertedIds.Remove(envelope.EventId)) acceptedEventIds.Add(envelope.EventId);
+            else duplicateEventIds.Add(envelope.EventId);
+        }
+
+        return new StoreEventsResult(acceptedEventIds.Count, duplicateEventIds.Count, acceptedEventIds, duplicateEventIds);
     }
 
     public async Task<IReadOnlyList<EventEnvelope>> SearchEventsAsync(EventSearchQuery query, CancellationToken cancellationToken, int offset = 0)
@@ -691,6 +669,69 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             ) managed
             order by table_name;
             """;
+        return await ReadManagedStorageAccountingAsync(
+            command, boundedCapacityBytes, targetRetentionDays, "exact_live_rows", cancellationToken);
+    }
+
+    public async Task<ManagedStorageAccounting> GetManagedStorageAccountingEstimateAsync(
+        long capacityBytes,
+        CancellationToken cancellationToken,
+        int targetRetentionDays = 30)
+    {
+        var boundedCapacityBytes = Math.Clamp(capacityBytes, 1024, ManagedRetentionOptions.HardManagedCapacityBytes);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select * from (
+                select 'events' as table_name,
+                       coalesce((select n_live_tup::bigint from pg_stat_user_tables where schemaname = 'public' and relname = 'events'), 0) as row_count,
+                       pg_table_size('public.events')::bigint as live_bytes,
+                       pg_relation_size('public.events')::bigint as relation_bytes,
+                       pg_indexes_size('public.events')::bigint as index_bytes,
+                       pg_total_relation_size('public.events')::bigint as total_relation_bytes,
+                       (select event_time from events order by event_time asc limit 1) as oldest_time,
+                       (select event_time from events order by event_time desc limit 1) as newest_time
+                union all
+                select 'agent_heartbeats',
+                       coalesce((select n_live_tup::bigint from pg_stat_user_tables where schemaname = 'public' and relname = 'agent_heartbeats'), 0),
+                       pg_table_size('public.agent_heartbeats')::bigint,
+                       pg_relation_size('public.agent_heartbeats')::bigint,
+                       pg_indexes_size('public.agent_heartbeats')::bigint,
+                       pg_total_relation_size('public.agent_heartbeats')::bigint,
+                       min(heartbeat_time), max(heartbeat_time)
+                from agent_heartbeats
+                union all
+                select 'asset_inventory_snapshots',
+                       coalesce((select n_live_tup::bigint from pg_stat_user_tables where schemaname = 'public' and relname = 'asset_inventory_snapshots'), 0),
+                       pg_table_size('public.asset_inventory_snapshots')::bigint,
+                       pg_relation_size('public.asset_inventory_snapshots')::bigint,
+                       pg_indexes_size('public.asset_inventory_snapshots')::bigint,
+                       pg_total_relation_size('public.asset_inventory_snapshots')::bigint,
+                       min(collected_at), max(collected_at)
+                from asset_inventory_snapshots
+                union all
+                select 'ingestion_errors',
+                       coalesce((select n_live_tup::bigint from pg_stat_user_tables where schemaname = 'public' and relname = 'ingestion_errors'), 0),
+                       pg_table_size('public.ingestion_errors')::bigint,
+                       pg_relation_size('public.ingestion_errors')::bigint,
+                       pg_indexes_size('public.ingestion_errors')::bigint,
+                       pg_total_relation_size('public.ingestion_errors')::bigint,
+                       min(error_time), max(error_time)
+                from ingestion_errors
+            ) managed
+            order by table_name;
+            """;
+        return await ReadManagedStorageAccountingAsync(
+            command, boundedCapacityBytes, targetRetentionDays, "catalog_estimate", cancellationToken);
+    }
+
+    private static async Task<ManagedStorageAccounting> ReadManagedStorageAccountingAsync(
+        NpgsqlCommand command,
+        long boundedCapacityBytes,
+        int targetRetentionDays,
+        string accountingMode,
+        CancellationToken cancellationToken)
+    {
         var tables = new List<ManagedTelemetryTableAccounting>();
         DateTimeOffset? oldest = null;
         DateTimeOffset? newest = null;
@@ -732,7 +773,8 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             oldest.HasValue ? Math.Max(0, (long)Math.Floor((measuredAt - oldest.Value).TotalSeconds)) : null,
             retentionLagState,
             retentionLagSeconds,
-            tables);
+            tables,
+            accountingMode);
     }
 
     public static string CalculateStorageWarningState(long totalBytes, long capacityBytes)
@@ -825,6 +867,45 @@ public sealed class EventRepository(NpgsqlDataSource dataSource)
             where.Add($"({indexedExpression} ilike @{parameterName} escape '\\' or ({indexedExpression} is null and {legacyFallbackExpression} ilike @{parameterName} escape '\\'))");
             command.Parameters.AddWithValue(parameterName, $"%{EscapeLike(value.Trim())}%");
         }
+    }
+
+    private static void AddEventInsertParameters(NpgsqlCommand command, EventEnvelope envelope, int index)
+    {
+        var suffix = $"_{index}";
+        command.Parameters.AddWithValue($"event_id{suffix}", envelope.EventId);
+        command.Parameters.AddWithValue($"agent_id{suffix}", envelope.AgentId);
+        command.Parameters.AddWithValue($"hostname{suffix}", envelope.Hostname);
+        command.Parameters.AddWithValue($"source{suffix}", envelope.Source);
+        command.Parameters.AddWithValue($"platform{suffix}", DbValue(envelope.Platform));
+        command.Parameters.AddWithValue($"source_id{suffix}", DbValue(envelope.SourceId));
+        command.Parameters.AddWithValue($"event_code{suffix}", DbValue(envelope.EventCode));
+        command.Parameters.AddWithValue($"facility{suffix}", DbValue(envelope.Facility));
+        command.Parameters.AddWithValue($"unit{suffix}", DbValue(envelope.Unit));
+        Jsonb.Add(command, $"checkpoint_json{suffix}", envelope.Checkpoint);
+        Jsonb.Add(command, $"deduplication_json{suffix}", envelope.Deduplication);
+        Jsonb.Add(command, $"data_handling_json{suffix}", envelope.DataHandling);
+        command.Parameters.AddWithValue($"event_time{suffix}", envelope.EventTime.ToUniversalTime());
+        Jsonb.Add(command, $"host_timezone{suffix}", envelope.HostTimezone);
+        command.Parameters.AddWithValue($"severity{suffix}", envelope.Severity);
+        command.Parameters.AddWithValue($"message{suffix}", envelope.Message);
+
+        var rawParameter = command.Parameters.Add($"raw_json{suffix}", NpgsqlDbType.Jsonb);
+        rawParameter.Value = envelope.Raw.ValueKind == JsonValueKind.Undefined ? "{}" : envelope.Raw.GetRawText();
+        command.Parameters.AddWithValue($"event_category{suffix}", DbValue(envelope.Normalized?.Category));
+        command.Parameters.AddWithValue($"event_action{suffix}", DbValue(envelope.Normalized?.Action));
+        var normalizedParameter = command.Parameters.Add($"normalized_json{suffix}", NpgsqlDbType.Jsonb);
+        normalizedParameter.Value = envelope.Normalized is null
+            ? DBNull.Value
+            : JsonSerializer.Serialize(envelope.Normalized, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        command.Parameters.AddWithValue($"user_name{suffix}", DbValue(envelope.Normalized?.UserName));
+        command.Parameters.AddWithValue($"target_user_name{suffix}", DbValue(envelope.Normalized?.TargetUserName));
+        command.Parameters.AddWithValue($"process_image{suffix}", DbValue(envelope.Normalized?.ProcessImage ?? envelope.Normalized?.Process?.Executable));
+        command.Parameters.AddWithValue($"process_command_line{suffix}", DbValue(Truncate(envelope.Normalized?.ProcessCommandLine ?? envelope.Normalized?.Process?.CommandLine, 4096)));
+        command.Parameters.AddWithValue($"source_ip{suffix}", DbValue(envelope.Normalized?.SourceIp ?? envelope.Normalized?.Network?.SourceIp));
+        command.Parameters.AddWithValue($"destination_ip{suffix}", DbValue(envelope.Normalized?.DestinationIp ?? envelope.Normalized?.Network?.DestinationIp));
+        command.Parameters.AddWithValue($"service_name{suffix}", DbValue(envelope.Normalized?.ServiceName));
+        command.Parameters.AddWithValue($"file_path{suffix}", DbValue(envelope.Normalized?.FilePath ?? envelope.Normalized?.File?.Path));
+        command.Parameters.AddWithValue($"registry_key{suffix}", DbValue(envelope.Normalized?.RegistryKey));
     }
 
     private static object DbValue(string? value)

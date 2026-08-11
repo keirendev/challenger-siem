@@ -6,6 +6,7 @@
 #include "challenger_network_parser.h"
 #include "challenger_network_time.h"
 #include "challenger_network_shared.h"
+#include "challenger_network_tracking.h"
 
 static void ipv4_tcp_and_udp(void)
 {
@@ -90,10 +91,29 @@ static void direction_limits_and_payload_exclusion(void)
     challenger_normalize_addresses(&parsed, 0, local, remote);
     assert(local[0] == 198 && remote[0] == 192);
     assert(memmem(&parsed, sizeof(parsed), "SYNTHETIC_PAYLOAD_MUST_NOT_COPY", 31) == NULL);
-    assert(CHALLENGER_FLOW_MAP_ENTRIES == 16384);
+    assert(CHALLENGER_FLOW_MAP_ENTRIES == 262144);
+    assert(CHALLENGER_TRACKED_FLOW_ENTRIES == 524288);
     assert(CHALLENGER_OWNER_MAP_ENTRIES == 32768);
-    assert(CHALLENGER_RING_BYTES == 1024 * 1024);
-    assert(CHALLENGER_MAX_DRAIN_RECORDS == 500);
+    assert(CHALLENGER_RING_BYTES == 32 * 1024 * 1024);
+    assert(CHALLENGER_RING_BYTES
+        >= CHALLENGER_FLOW_MAP_ENTRIES * ((sizeof(struct challenger_ring_notice) + 15) & ~7));
+    assert(CHALLENGER_MAX_KERNEL_DRAIN_RECORDS == 32768);
+    assert(CHALLENGER_MAX_OUTPUT_RECORDS == 4096);
+    assert(CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL >= CHALLENGER_FLOW_MAP_ENTRIES);
+    assert(CHALLENGER_TRACKED_FLOW_ENTRIES >= CHALLENGER_FLOW_MAP_ENTRIES * 2);
+    assert(challenger_select_flow_event(false, true, 1, 1, 0, 2, 60) == CHALLENGER_FLOW_EVENT_CLOSED);
+    assert(challenger_select_flow_event(false, false, 1, 1, 0, 2, 60) == CHALLENGER_FLOW_EVENT_STARTED);
+    assert(challenger_select_flow_event(true, false, 1, 1, 1, 61, 60) == CHALLENGER_FLOW_EVENT_SAMPLE);
+    uint64_t pending = 120000;
+    int catch_up_intervals = 0;
+    while (pending > 0) {
+        uint64_t emitted = pending < CHALLENGER_MAX_OUTPUT_RECORDS
+            ? pending : CHALLENGER_MAX_OUTPUT_RECORDS;
+        pending -= emitted;
+        catch_up_intervals++;
+    }
+    assert(catch_up_intervals == 30);
+    assert(catch_up_intervals * CHALLENGER_HEALTH_INTERVAL_SECONDS <= 6 * 60);
 }
 
 int main(void)
@@ -120,7 +140,7 @@ int main(void)
     struct challenger_kernel_drain_diagnostics diagnostics = {};
     challenger_begin_kernel_drain_interval(&diagnostics);
     for (int tick = 0; tick < CHALLENGER_HEALTH_INTERVAL_SECONDS; tick++)
-        challenger_record_kernel_drain_tick(&diagnostics, CHALLENGER_MAX_DRAIN_RECORDS, true, tick == 0);
+        challenger_record_kernel_drain_tick(&diagnostics, CHALLENGER_MAX_KERNEL_DRAIN_RECORDS, true, tick == 0);
     assert(diagnostics.interval_records == CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
     assert(diagnostics.high_water_interval_records == CHALLENGER_MAX_KERNEL_RECORDS_PER_HEALTH_INTERVAL);
     assert(diagnostics.capped_ticks == CHALLENGER_HEALTH_INTERVAL_SECONDS);
