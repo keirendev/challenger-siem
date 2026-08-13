@@ -3,6 +3,7 @@ using System.Text;
 using Challenger.Siem.Agent.Core.Queue;
 using Challenger.Siem.LinuxAgent.Config;
 using Challenger.Siem.LinuxAgent.KernelNetwork;
+using Challenger.Siem.LinuxAgent.Passive;
 using Challenger.Siem.Contracts.V2;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,23 @@ public sealed class LinuxKernelNetworkResourceBoundsCollection;
 [Collection("Kernel network resource bounds")]
 public sealed class LinuxKernelNetworkTests
 {
+    [Fact]
+    public void KernelProcessIdentityResolutionIsStableAndFailsClosedOnPidReuseOrExit()
+    {
+        const string bootHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var first = new LinuxProcfsProcessSource.ParsedProcessStat(4242, 1, 100, "S", "synthetic", 0);
+        var same = first with { State = "R" };
+        var reused = first with { StartTicks = 101 };
+
+        var stable = LinuxKernelProcessEnricher.ResolveIdentity(bootHash, first, same);
+        Assert.True(ProcessInstanceIdentity.IsValid(stable.ProcessInstanceId));
+        Assert.Equal("observed_stable_procfs_identity", stable.Status);
+        Assert.Equal((null, "process_identity_race"), LinuxKernelProcessEnricher.ResolveIdentity(bootHash, first, reused));
+        Assert.Equal((null, "process_exited_during_enrichment"), LinuxKernelProcessEnricher.ResolveIdentity(bootHash, first, null));
+        Assert.Equal((null, "process_exited_before_enrichment"), LinuxKernelProcessEnricher.ResolveIdentity(bootHash, null, null));
+        Assert.Equal((null, "boot_identity_unavailable"), LinuxKernelProcessEnricher.ResolveIdentity(null, first, same));
+    }
+
     [Fact]
     public void PlanIsStableBoundedAndApprovalGated()
     {
@@ -37,7 +55,7 @@ public sealed class LinuxKernelNetworkTests
         Assert.Contains("detach", first.Rollback, StringComparison.Ordinal);
         Assert.Contains("100 events", first.Bounds, StringComparison.Ordinal);
         Assert.Contains("1048576 bytes", first.Bounds, StringComparison.Ordinal);
-        Assert.Equal("linux-network-flow-summary-v4", first.CollectorVersion);
+        Assert.Equal("linux-network-flow-summary-v5", first.CollectorVersion);
         Assert.Equal("challenger-siem-ebpf-helper-v3", first.HelperVersion);
         Assert.Contains("kernel pre-drain every 1 second", first.Bounds, StringComparison.Ordinal);
         Assert.Contains("327680 per 10-second health interval", first.Bounds, StringComparison.Ordinal);
@@ -820,7 +838,9 @@ public sealed class LinuxKernelNetworkTests
             Assert.Equal(256, state.LastDrainProcfsEnrichmentIdentities);
             Assert.Equal(44, state.LastDrainSkippedEnrichmentIdentities);
             Assert.Contains(queue.Events, item =>
-                item.Raw.GetProperty("attribution_confidence").GetString() == "kernel_current_task_kernel_comm");
+                item.Raw.GetProperty("attribution_confidence").GetString() == "kernel_current_task_kernel_comm"
+                && item.Raw.GetProperty("process_identity_status").GetString() == "enrichment_limit_reached"
+                && item.Normalized?.ProcessInstanceId is null);
         }
         finally
         {

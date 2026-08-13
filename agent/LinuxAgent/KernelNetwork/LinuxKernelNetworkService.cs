@@ -180,7 +180,13 @@ public sealed class LinuxKernelNetworkService(
         for (var index = 0; index < drain.Flows.Count; index++)
         {
             var frame = drain.Flows[index].Frame;
-            var identity = new ProcessIdentity(frame.ProcessId, frame.UserId, frame.ProcessName!, frame.AttributionSource!);
+            var identity = new ProcessIdentity(
+                frame.ProcessId,
+                frame.UserId,
+                frame.ProcessName!,
+                frame.AttributionSource!,
+                frame.FirstSeenUnixNanoseconds,
+                frame.LastSeenUnixNanoseconds);
             if (!processCache.TryGetValue(identity, out var process))
             {
                 if (procfsEnrichmentIdentities < LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain)
@@ -197,7 +203,9 @@ public sealed class LinuxKernelNetworkService(
                         frame.UserId == uint.MaxValue ? null : frame.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         truncated: false,
                         maximumExecutableCharacters: 4096,
-                        maximumCommandLineCharacters: options.KernelNetworkTelemetry.MaxCommandLineBytes);
+                        maximumCommandLineCharacters: options.KernelNetworkTelemetry.MaxCommandLineBytes,
+                        processInstanceId: null,
+                        identityStatus: "enrichment_limit_reached");
                     skippedEnrichmentIdentities++;
                 }
                 processCache.Add(identity, process);
@@ -443,7 +451,10 @@ public sealed class LinuxKernelNetworkService(
         string? userId,
         bool truncated,
         int maximumExecutableCharacters,
-        int maximumCommandLineCharacters)
+        int maximumCommandLineCharacters,
+        string? processInstanceId = null,
+        string identityStatus = "unavailable",
+        DateTimeOffset? observedAt = null)
     {
         var executableText = TelemetryTextSanitizer.SanitizeAndRedact(executable, maximumExecutableCharacters);
         var commandText = TelemetryTextSanitizer.SanitizeAndRedact(commandLine, maximumCommandLineCharacters);
@@ -461,7 +472,18 @@ public sealed class LinuxKernelNetworkService(
         var confidence = procfsEnriched ? basis + "_procfs_enriched"
             : processName is not null ? basis + "_kernel_comm"
             : basis + "_pid_only";
-        return new(executable, commandLine, userId, redacted, truncated, confidence);
+        return new(
+            executable,
+            commandLine,
+            userId,
+            redacted,
+            truncated,
+            confidence,
+            processInstanceId,
+            identityStatus,
+            procfsEnriched ? "kernel_flow_procfs_enrichment" : processName is not null ? "kernel_task_comm" : "unavailable",
+            commandLine is not null ? "kernel_flow_procfs_enrichment" : "unavailable",
+            observedAt);
     }
 
     private EventEnvelope BuildEvent(
@@ -494,12 +516,18 @@ public sealed class LinuxKernelNetworkService(
             ["remote_ip"] = frame.RemoteIp,
             ["remote_port"] = frame.RemotePort,
             ["process_id"] = frame.ProcessId == 0 ? null : frame.ProcessId,
+            ["process_instance_id"] = process.ProcessInstanceId,
             ["process_name"] = frame.ProcessName,
             ["process_image"] = process.Executable,
             ["process_command_line"] = process.CommandLine,
             ["user_id"] = process.UserId,
             ["attribution_source"] = frame.AttributionSource,
             ["attribution_confidence"] = process.Confidence,
+            ["process_identity_status"] = process.IdentityStatus,
+            ["process_image_observation_source"] = process.ImageObservationSource,
+            ["process_command_line_observation_source"] = process.CommandLineObservationSource,
+            ["process_observed_at_utc"] = process.ObservedAt,
+            ["exact_execution_evidence"] = false,
             ["first_seen_utc"] = firstSeen,
             ["last_seen_utc"] = lastSeen,
             ["packet_count_delta"] = Clamp(frame.PacketCountDelta),
@@ -547,13 +575,19 @@ public sealed class LinuxKernelNetworkService(
                 DestinationPort = frame.RemotePort.ToString(),
                 Protocol = frame.Protocol,
                 ProcessId = frame.ProcessId == 0 ? null : frame.ProcessId.ToString(),
+                ProcessInstanceId = process.ProcessInstanceId,
                 ProcessImage = process.Executable,
                 ProcessCommandLine = process.CommandLine,
                 Process = frame.ProcessId == 0 ? null : new ProcessTelemetryConcept
                 {
+                    InstanceId = process.ProcessInstanceId,
                     Pid = frame.ProcessId.ToString(),
                     Executable = process.Executable,
-                    CommandLine = process.CommandLine
+                    CommandLine = process.CommandLine,
+                    ImageObservationSource = process.ImageObservationSource,
+                    CommandLineObservationSource = process.CommandLineObservationSource,
+                    ObservedAt = process.ObservedAt,
+                    ExactExecutionEvidence = false
                 },
                 User = process.UserId is null ? null : new UserTelemetryConcept { Id = process.UserId },
                 Network = new NetworkTelemetryConcept
@@ -574,7 +608,9 @@ public sealed class LinuxKernelNetworkService(
                     IntervalEndedAt = lastSeen,
                     TcpFlags = flags,
                     EvidenceMode = "kernel_flow",
-                    AttributionConfidence = process.Confidence
+                    AttributionConfidence = process.Confidence,
+                    AttributionSource = frame.AttributionSource,
+                    ProcessIdentityStatus = process.IdentityStatus
                 },
                 Labels = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
@@ -639,5 +675,7 @@ public sealed class LinuxKernelNetworkService(
         uint ProcessId,
         uint UserId,
         string KernelCommand,
-        string AttributionBasis);
+        string AttributionBasis,
+        ulong FirstSeenUnixNanoseconds,
+        ulong LastSeenUnixNanoseconds);
 }

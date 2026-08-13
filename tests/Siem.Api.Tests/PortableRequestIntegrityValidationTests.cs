@@ -18,6 +18,8 @@ public sealed class PortableRequestIntegrityValidationTests
         var sha256 = new string('a', 64);
         var normalized = new NormalizedEventFields
         {
+            ProcessInstanceId = sha256,
+            ParentProcessInstanceId = new string('b', 64),
             ProcessId = "4242",
             ParentProcessId = "41",
             ProcessImage = "/usr/bin/synthetic-worker",
@@ -33,6 +35,8 @@ public sealed class PortableRequestIntegrityValidationTests
             Hash = $"SHA256:{sha256.ToUpperInvariant()}",
             Process = new ProcessTelemetryConcept
             {
+                InstanceId = sha256,
+                ParentInstanceId = new string('b', 64),
                 Pid = "4242",
                 ParentPid = "41",
                 Executable = "/usr/bin/synthetic-worker",
@@ -67,6 +71,8 @@ public sealed class PortableRequestIntegrityValidationTests
     {
         var normalized = new NormalizedEventFields
         {
+            ProcessInstanceId = new string('a', 64),
+            ParentProcessInstanceId = new string('b', 64),
             ProcessId = "4242",
             ParentProcessId = "41",
             ProcessImage = "/usr/bin/synthetic-a",
@@ -82,6 +88,8 @@ public sealed class PortableRequestIntegrityValidationTests
             Hash = new string('a', 64),
             Process = new ProcessTelemetryConcept
             {
+                InstanceId = new string('c', 64),
+                ParentInstanceId = new string('d', 64),
                 Pid = "4243",
                 ParentPid = "42",
                 Executable = "/usr/bin/synthetic-b",
@@ -110,6 +118,8 @@ public sealed class PortableRequestIntegrityValidationTests
 
         var expectedKeys = new[]
         {
+            "events[0].normalized.process.instance_id",
+            "events[0].normalized.process.parent_instance_id",
             "events[0].normalized.process.pid",
             "events[0].normalized.process.parent_pid",
             "events[0].normalized.process.executable",
@@ -126,6 +136,53 @@ public sealed class PortableRequestIntegrityValidationTests
         };
         Assert.All(expectedKeys, key => Assert.Contains(key, errors.Keys));
         Assert.Equal(expectedKeys.Length, errors.Count);
+    }
+
+    [Fact]
+    public void PortableEventsRejectMalformedProcessInstanceIdentities()
+    {
+        var normalized = new NormalizedEventFields
+        {
+            ProcessInstanceId = new string('A', 64),
+            Process = new ProcessTelemetryConcept { InstanceId = "not-a-process-instance" }
+        };
+
+        var errors = RequestValidation.ValidateBatch(
+            CreateBatch(CreatePortableEvent(normalized: normalized)),
+            maxEventsPerBatch: 500,
+            receivedAt: ReceivedAt);
+
+        Assert.Contains("events[0].normalized.process_instance_id", errors.Keys);
+        Assert.Contains("events[0].normalized.process.instance_id", errors.Keys);
+    }
+
+    [Fact]
+    public void PollingAndNetworkSourcesCannotClaimExactExecutionEvidence()
+    {
+        var normalized = new NormalizedEventFields
+        {
+            Process = new ProcessTelemetryConcept
+            {
+                Pid = "4242",
+                ExactExecutionEvidence = true
+            },
+            ProcessId = "4242"
+        };
+
+        foreach (var sourceId in new[]
+                 {
+                     LinuxTelemetrySourceIds.ProcessSnapshotDiff,
+                     LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff,
+                     LinuxTelemetrySourceIds.NetworkFlowSummary
+                 })
+        {
+            var errors = RequestValidation.ValidateBatch(
+                CreateBatch(CreatePortableEvent(normalized: normalized, sourceId: sourceId)),
+                maxEventsPerBatch: 500,
+                receivedAt: ReceivedAt);
+
+            Assert.Contains("events[0].normalized.process.exact_execution_evidence", errors.Keys);
+        }
     }
 
     [Fact]

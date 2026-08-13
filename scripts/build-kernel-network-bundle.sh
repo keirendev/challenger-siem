@@ -60,7 +60,7 @@ manifest = {
     'plan_hash': sys.argv[2],
     'signer_public_key_sha256': sys.argv[3],
     'helper_version': 'challenger-siem-ebpf-helper-v3',
-    'collector_version': 'linux-network-flow-summary-v4',
+    'collector_version': 'linux-network-flow-summary-v5',
     'privacy_boundary': 'tcp_udp_ipv4_ipv6_headers_and_aggregate_counters_only_no_payload',
     'required_capabilities': ['CAP_BPF', 'CAP_PERFMON', 'CAP_NET_ADMIN'],
     'files': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},

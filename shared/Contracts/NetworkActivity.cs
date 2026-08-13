@@ -76,6 +76,9 @@ public sealed record NetworkActivityRecord
     [JsonPropertyName("process_id")]
     public int? ProcessId { get; init; }
 
+    [JsonPropertyName("process_instance_id")]
+    public string? ProcessInstanceId { get; init; }
+
     [JsonPropertyName("process_image")]
     public string? ProcessImage { get; init; }
 
@@ -87,6 +90,27 @@ public sealed record NetworkActivityRecord
 
     [JsonPropertyName("attribution_confidence")]
     public string AttributionConfidence { get; init; } = "unattributed";
+
+    [JsonPropertyName("attribution_source")]
+    public string AttributionSource { get; init; } = "unavailable";
+
+    [JsonPropertyName("attribution_limitations")]
+    public IReadOnlyList<string> AttributionLimitations { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("process_identity_status")]
+    public string ProcessIdentityStatus { get; init; } = "unknown";
+
+    [JsonPropertyName("process_image_observation_source")]
+    public string ProcessImageObservationSource { get; init; } = "unavailable";
+
+    [JsonPropertyName("process_command_line_observation_source")]
+    public string ProcessCommandLineObservationSource { get; init; } = "unavailable";
+
+    [JsonPropertyName("process_observed_at_utc")]
+    public DateTimeOffset? ProcessObservedAtUtc { get; init; }
+
+    [JsonPropertyName("exact_execution_evidence")]
+    public bool ExactExecutionEvidence { get; init; }
 
     [JsonPropertyName("first_seen_utc")]
     public DateTimeOffset? FirstSeenUtc { get; init; }

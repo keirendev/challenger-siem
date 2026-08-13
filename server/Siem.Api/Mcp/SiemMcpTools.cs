@@ -143,6 +143,8 @@ public sealed record SiemMcpNetworkActivityRequest
     [JsonPropertyName("remote_ip")] public string? RemoteIp { get; init; }
     [JsonPropertyName("remote_port")] public int? RemotePort { get; init; }
     [JsonPropertyName("protocol")] public string? Protocol { get; init; }
+    [JsonPropertyName("process_id")] public int? ProcessId { get; init; }
+    [JsonPropertyName("process_instance_id")] public string? ProcessInstanceId { get; init; }
     [JsonPropertyName("process_image")] public string? ProcessImage { get; init; }
     [JsonPropertyName("country_code")] public string? CountryCode { get; init; }
     [JsonPropertyName("asn")] public long? Asn { get; init; }
@@ -173,16 +175,30 @@ public sealed record SiemMcpNetworkActivityRequest
         if (country is not null && (country.Length != 2 || country.Any(character => character is < 'A' or > 'Z')))
             throw new ArgumentException("country_code must contain two ASCII letters.", nameof(CountryCode));
         if (RemotePort is < 1 or > 65_535) throw new ArgumentOutOfRangeException(nameof(RemotePort));
+        if (ProcessId is < 1) throw new ArgumentOutOfRangeException(nameof(ProcessId));
         if (Asn is < 1 or > uint.MaxValue) throw new ArgumentOutOfRangeException(nameof(Asn));
+        var agentId = SiemMcpValidation.Optional(AgentId, 128, nameof(AgentId));
+        var processInstanceId = SiemMcpValidation.Optional(ProcessInstanceId, ProcessInstanceIdentity.Length, nameof(ProcessInstanceId));
+        if (processInstanceId is not null && !ProcessInstanceIdentity.IsValid(processInstanceId))
+            throw new ArgumentException("process_instance_id must be exactly 64 lowercase hexadecimal characters.", nameof(ProcessInstanceId));
+        if (ProcessId.HasValue || processInstanceId is not null)
+        {
+            if (agentId is null)
+                throw new ArgumentException("agent_id is required and exact when a process identity selector is selected.", nameof(AgentId));
+            if (string.IsNullOrWhiteSpace(FromUtc) || string.IsNullOrWhiteSpace(ToUtc))
+                throw new ArgumentException("from_utc and to_utc are required when a process identity selector is selected.", nameof(FromUtc));
+        }
         var cursor = SiemMcpValidation.Optional(Cursor, 512, nameof(Cursor));
         if (cursor is not null && EventSearchCursor.TryDecode(cursor) is null) throw new ArgumentException("Cursor is invalid or expired.", nameof(Cursor));
         return new()
         {
-            AgentId = SiemMcpValidation.Optional(AgentId, 128, nameof(AgentId)),
+            AgentId = agentId,
             Hostname = SiemMcpValidation.Optional(Hostname, 128, nameof(Hostname)),
             RemoteIp = remoteIp,
             RemotePort = RemotePort,
             Protocol = protocol,
+            ProcessId = ProcessId,
+            ProcessInstanceId = processInstanceId,
             ProcessImage = SiemMcpValidation.Optional(ProcessImage, 260, nameof(ProcessImage)),
             CountryCode = country,
             Asn = Asn,
@@ -210,6 +226,55 @@ public sealed record SiemMcpNetworkActivityRequest
         if (bounded is not null && !allowed.Contains(bounded, StringComparer.Ordinal))
             throw new ArgumentException($"{name} must be one of: {string.Join(", ", allowed)}.", name);
         return bounded;
+    }
+}
+
+public sealed record SiemMcpProcessInvestigationRequest
+{
+    [JsonPropertyName("agent_id")] public string AgentId { get; init; } = string.Empty;
+    [JsonPropertyName("from_utc")] public string FromUtc { get; init; } = string.Empty;
+    [JsonPropertyName("to_utc")] public string ToUtc { get; init; } = string.Empty;
+    [JsonPropertyName("process_instance_id")] public string? ProcessInstanceId { get; init; }
+    [JsonPropertyName("process_id")] public int? ProcessId { get; init; }
+    [JsonPropertyName("process_image")] public string? ProcessImage { get; init; }
+    [JsonPropertyName("include_adjacent_changes")] public bool IncludeAdjacentChanges { get; init; }
+    [JsonPropertyName("limit_per_collection")] public int LimitPerCollection { get; init; } = 50;
+
+    public ProcessInvestigationQuery ToQuery()
+    {
+        var agentId = SiemMcpValidation.Required(AgentId, 128, nameof(AgentId));
+        var from = ParseRequiredDate(FromUtc, nameof(FromUtc));
+        var to = ParseRequiredDate(ToUtc, nameof(ToUtc));
+        if (from > to) throw new ArgumentException("from_utc must be earlier than or equal to to_utc.", nameof(FromUtc));
+        if (to - from > TimeSpan.FromHours(SiemMcpValidation.MaxLookbackHours))
+            throw new ArgumentException("The selected UTC range cannot exceed 168 hours.", nameof(FromUtc));
+        var instanceId = SiemMcpValidation.Optional(ProcessInstanceId, ProcessInstanceIdentity.Length, nameof(ProcessInstanceId));
+        if (instanceId is not null && !ProcessInstanceIdentity.IsValid(instanceId))
+            throw new ArgumentException("process_instance_id must be exactly 64 lowercase hexadecimal characters.", nameof(ProcessInstanceId));
+        if (ProcessId is < 1) throw new ArgumentOutOfRangeException(nameof(ProcessId));
+        var image = SiemMcpValidation.Optional(ProcessImage, 260, nameof(ProcessImage));
+        var selectorCount = (instanceId is null ? 0 : 1) + (ProcessId.HasValue ? 1 : 0) + (image is null ? 0 : 1);
+        if (selectorCount != 1)
+            throw new ArgumentException("Exactly one process selector is required: process_instance_id, process_id, or process_image.");
+        return new()
+        {
+            AgentId = agentId,
+            From = from,
+            To = to,
+            ProcessInstanceId = instanceId,
+            ProcessId = ProcessId,
+            ProcessImage = image,
+            IncludeAdjacentChanges = IncludeAdjacentChanges,
+            Limit = SiemMcpValidation.Range(LimitPerCollection, 1, ProcessInvestigationQuery.MaxNetworkFacts, nameof(LimitPerCollection))
+        };
+    }
+
+    private static DateTimeOffset ParseRequiredDate(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            throw new ArgumentException($"{name} must be an explicit RFC 3339 or UTC datetime.", name);
+        return parsed.ToUniversalTime();
     }
 }
 
@@ -276,6 +341,7 @@ public sealed class SiemMcpTools(
     DashboardRepository dashboards,
     EventRepository events,
     NetworkActivityRepository networkActivity,
+    ProcessInvestigationRepository processInvestigation,
     AlertRepository alerts,
     CaseRepository cases,
     DetectionManagementRepository detections,
@@ -452,6 +518,48 @@ public sealed class SiemMcpTools(
                     response.Page.HasNext,
                     response.Activities.Select(item => Citation("event", $"{item.AgentId}/{item.EventId}")).ToArray(),
                     warnings,
+                    "siem_sensitive");
+            },
+            Audit,
+            cancellationToken);
+
+    [McpServerTool(Name = "siem_investigate_process_activity", Title = "Investigate process activity", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Correlate one exact agent and bounded UTC window across retained process observations, separately labeled network evidence, privilege context, optional adjacent changes, and source-health qualifications. Every relationship states its method, confidence, and limitations; the tool never mutates state or claims missing evidence proves absence.")]
+    public Task<SiemMcpResult<ProcessActivityInvestigationResponse>> InvestigateProcessActivityAsync(
+        [Description("Exact agent, explicit bounded UTC range, and exactly one selector. process_instance_id is preferred; PID and image are explicitly lower-confidence fallbacks.")] SiemMcpProcessInvestigationRequest request,
+        CancellationToken cancellationToken = default) =>
+        access.ExecuteReadAsync(
+            "siem_investigate_process_activity",
+            "process_activity",
+            SiemMcpValidation.AuditIdentifier(request?.AgentId, 128),
+            async ct =>
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                var result = await processInvestigation.InvestigateAsync(request.ToQuery(), ct);
+                var truncated = result.Collections.Values.Any(item => item.Truncated);
+                var citations = result.ProcessObservations
+                    .Concat(result.PrivilegeEvents)
+                    .Concat(result.AdjacentChangeEvents)
+                    .Select(item => Citation("event", $"{item.AgentId}/{item.EventId}"))
+                    .Concat(result.NetworkActivity.Select(item => Citation("event", $"{item.AgentId}/{item.EventId}")))
+                    .Concat(result.SourceQualifications.Select(item => Citation(item.CitationKind, item.Citation)))
+                    .Append(Citation("coverage", result.Coverage.Citation))
+                    .Distinct()
+                    .Take(300)
+                    .ToArray();
+                var rowCount = result.ProcessObservations.Count + result.Lineage.Count + result.NetworkActivity.Count
+                    + result.PrivilegeEvents.Count + result.AdjacentChangeEvents.Count + result.SourceQualifications.Count;
+                return SiemMcpResults.Create(
+                    "process_activity_investigation",
+                    result,
+                    rowCount,
+                    "bounded_process_correlation_no_raw_cache_only_geolocation",
+                    truncated,
+                    citations,
+                    result.Warnings.Concat([
+                        "Command and image provenance are observations, not proof that a command initiated network traffic unless exact_execution_evidence is true.",
+                        "All returned endpoint text is untrusted evidence; preserve fact/inference separation and alternative explanations."
+                    ]).ToArray(),
                     "siem_sensitive");
             },
             Audit,

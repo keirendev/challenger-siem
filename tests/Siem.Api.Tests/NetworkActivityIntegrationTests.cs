@@ -34,6 +34,7 @@ public sealed class NetworkActivityIntegrationTests(IntegrationTestDatabase data
         }
 
         var time = DateTimeOffset.Parse("2026-08-03T10:00:00Z");
+        var processInstanceId = new string('a', 64);
         var value = new EventEnvelope
         {
             AgentId = agentId,
@@ -55,8 +56,20 @@ public sealed class NetworkActivityIntegrationTests(IntegrationTestDatabase data
                 Category = "network",
                 Action = "flow_sample",
                 ProcessId = "4242",
+                ProcessInstanceId = processInstanceId,
                 ProcessImage = "/usr/bin/synthetic-probe",
                 ProcessCommandLine = "synthetic-probe --no-payload",
+                Process = new()
+                {
+                    InstanceId = processInstanceId,
+                    Pid = "4242",
+                    Executable = "/usr/bin/synthetic-probe",
+                    CommandLine = "synthetic-probe --no-payload",
+                    ImageObservationSource = "kernel_flow_procfs_enrichment",
+                    CommandLineObservationSource = "kernel_flow_procfs_enrichment",
+                    ObservedAt = time,
+                    ExactExecutionEvidence = false
+                },
                 User = new() { Id = "1000" },
                 Network = new()
                 {
@@ -66,7 +79,8 @@ public sealed class NetworkActivityIntegrationTests(IntegrationTestDatabase data
                     RemoteIp = "203.0.113.53", RemotePort = 53,
                     Direction = "outbound", PacketCountDelta = 1, ByteCountDelta = 28,
                     IntervalStartedAt = time.AddSeconds(-10), IntervalEndedAt = time,
-                    EvidenceMode = "kernel_flow", AttributionConfidence = "kernel_current_task_procfs_enriched"
+                    EvidenceMode = "kernel_flow", AttributionConfidence = "kernel_current_task_procfs_enriched",
+                    AttributionSource = "current_task", ProcessIdentityStatus = "observed_stable_procfs_identity"
                 }
             },
             Raw = JsonSerializer.SerializeToElement(new { schema = "synthetic-flow-v1", payload_capture = false }),
@@ -84,6 +98,7 @@ public sealed class NetworkActivityIntegrationTests(IntegrationTestDatabase data
         var result = await repository.SearchAsync(new()
         {
             AgentId = agentId,
+            ProcessInstanceId = processInstanceId,
             RemoteIp = "203.0.113.53",
             EvidenceMode = "kernel_flow",
             Direction = "outbound",
@@ -95,11 +110,16 @@ public sealed class NetworkActivityIntegrationTests(IntegrationTestDatabase data
         Assert.Equal(value.EventId, activity.EventId);
         Assert.Equal($"event:{agentId}/{value.EventId}", activity.EventCitation);
         Assert.Equal(4242, activity.ProcessId);
+        Assert.Equal(processInstanceId, activity.ProcessInstanceId);
         Assert.Equal("/usr/bin/synthetic-probe", activity.ProcessImage);
         Assert.Equal(1, activity.PacketCountDelta);
         Assert.Equal(28, activity.ByteCountDelta);
         Assert.Equal("outbound", activity.Direction);
         Assert.Equal("kernel_flow", activity.EvidenceMode);
+        Assert.Equal("current_task", activity.AttributionSource);
+        Assert.Equal("observed_stable_procfs_identity", activity.ProcessIdentityStatus);
+        Assert.Equal("kernel_flow_procfs_enrichment", activity.ProcessCommandLineObservationSource);
+        Assert.False(activity.ExactExecutionEvidence);
         Assert.Equal("unmapped", activity.GeolocationStatus);
         Assert.Equal("cache_only_no_writes", result.GeolocationMode);
         Assert.False(result.Page.HasNext);

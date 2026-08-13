@@ -178,12 +178,13 @@ public sealed class LinuxProcfsNetworkSource : ILinuxNetworkSnapshotSource
                     Count = count,
                     Owners = owners,
                     AttributionStatus = owners.Length > 1 ? "ambiguous_shared_socket" : attributionStatus,
+                    AttributionObservedAt = attributionFresh ? ownership!.ObservedAt : null,
                     Signature = HashSignature(
                         first.Key,
                         first.State,
                         first.UserId,
                         count.ToString(CultureInfo.InvariantCulture),
-                        string.Join(',', owners.Select(owner => owner.ProcessId.ToString(CultureInfo.InvariantCulture))))
+                        string.Join(',', owners.Select(owner => $"{owner.ProcessId}:{owner.ProcessInstanceId}")))
                 };
             })
             .OrderBy(item => item.Key, StringComparer.Ordinal)

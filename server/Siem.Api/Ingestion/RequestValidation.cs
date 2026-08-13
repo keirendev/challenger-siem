@@ -425,6 +425,14 @@ public static class RequestValidation
         }
 
         ValidateNormalized(errors, prefix, envelope.Normalized, enforcePortableBounds: portableEvent);
+        if (envelope.SourceId is LinuxTelemetrySourceIds.ProcessSnapshotDiff
+                or LinuxTelemetrySourceIds.NetworkSocketSnapshotDiff
+                or LinuxTelemetrySourceIds.NetworkFlowSummary
+            && envelope.Normalized?.Process?.ExactExecutionEvidence == true)
+        {
+            Add(errors, $"{prefix}.normalized.process.exact_execution_evidence",
+                "Polling and network-attribution sources cannot claim exact process execution evidence.");
+        }
         ValidateDataHandling(errors, prefix, envelope.DataHandling, rawSizeBytes);
     }
 
@@ -606,6 +614,8 @@ public static class RequestValidation
             ("category", normalized.Category, 128), ("action", normalized.Action, 128), ("outcome", normalized.Outcome, 128),
             ("user_name", normalized.UserName, 512), ("user_sid", normalized.UserSid, 512), ("target_user_name", normalized.TargetUserName, 512),
             ("logon_type", normalized.LogonType, 64), ("process_id", normalized.ProcessId, 64), ("parent_process_id", normalized.ParentProcessId, 64),
+            ("process_instance_id", normalized.ProcessInstanceId, ProcessInstanceIdentity.Length),
+            ("parent_process_instance_id", normalized.ParentProcessInstanceId, ProcessInstanceIdentity.Length),
             ("process_image", normalized.ProcessImage, 2048), ("parent_process_image", normalized.ParentProcessImage, 2048),
             ("process_command_line", normalized.ProcessCommandLine, 4096), ("source_ip", normalized.SourceIp, 128),
             ("source_port", normalized.SourcePort, 64), ("destination_ip", normalized.DestinationIp, 128),
@@ -619,6 +629,8 @@ public static class RequestValidation
         {
             OptionalMaxLength(errors, $"{prefix}.normalized.{field.Name}", field.Value, field.Max);
         }
+        ValidateProcessInstanceId(errors, $"{prefix}.normalized.process_instance_id", normalized.ProcessInstanceId);
+        ValidateProcessInstanceId(errors, $"{prefix}.normalized.parent_process_instance_id", normalized.ParentProcessInstanceId);
 
         if (normalized.Entities is null || normalized.Labels is null)
         {
@@ -673,6 +685,10 @@ public static class RequestValidation
     {
         ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.pid", "process_id",
             normalized.ProcessId, normalized.Process?.Pid, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.instance_id", "process_instance_id",
+            normalized.ProcessInstanceId, normalized.Process?.InstanceId, EquivalentOrdinal);
+        ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.parent_instance_id", "parent_process_instance_id",
+            normalized.ParentProcessInstanceId, normalized.Process?.ParentInstanceId, EquivalentOrdinal);
         ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.parent_pid", "parent_process_id",
             normalized.ParentProcessId, normalized.Process?.ParentPid, EquivalentOrdinal);
         ValidateDuplicateRepresentation(errors, $"{eventPrefix}.normalized.process.executable", "process_image",
@@ -770,9 +786,21 @@ public static class RequestValidation
     {
         if (process is null) return;
         OptionalMaxLength(errors, $"{prefix}.pid", process.Pid, 64);
+        OptionalMaxLength(errors, $"{prefix}.instance_id", process.InstanceId, ProcessInstanceIdentity.Length);
+        OptionalMaxLength(errors, $"{prefix}.parent_instance_id", process.ParentInstanceId, ProcessInstanceIdentity.Length);
+        ValidateProcessInstanceId(errors, $"{prefix}.instance_id", process.InstanceId);
+        ValidateProcessInstanceId(errors, $"{prefix}.parent_instance_id", process.ParentInstanceId);
         OptionalMaxLength(errors, $"{prefix}.parent_pid", process.ParentPid, 64);
         OptionalMaxLength(errors, $"{prefix}.executable", process.Executable, 2048);
         OptionalMaxLength(errors, $"{prefix}.command_line", process.CommandLine, 4096);
+        OptionalMaxLength(errors, $"{prefix}.image_observation_source", process.ImageObservationSource, 64);
+        OptionalMaxLength(errors, $"{prefix}.command_line_observation_source", process.CommandLineObservationSource, 64);
+    }
+
+    private static void ValidateProcessInstanceId(Dictionary<string, List<string>> errors, string key, string? value)
+    {
+        if (value is not null && !ProcessInstanceIdentity.IsValid(value))
+            Add(errors, key, "Process instance identity must be exactly 64 lowercase hexadecimal characters.");
     }
 
     private static void ValidateUser(Dictionary<string, List<string>> errors, string prefix, UserTelemetryConcept? user)
@@ -789,6 +817,8 @@ public static class RequestValidation
         OptionalMaxLength(errors, $"{prefix}.source_ip", network.SourceIp, 128);
         OptionalMaxLength(errors, $"{prefix}.destination_ip", network.DestinationIp, 128);
         OptionalMaxLength(errors, $"{prefix}.protocol", network.Protocol, 64);
+        OptionalMaxLength(errors, $"{prefix}.attribution_source", network.AttributionSource, 64);
+        OptionalMaxLength(errors, $"{prefix}.process_identity_status", network.ProcessIdentityStatus, 64);
         if (network.SourcePort is < 0 or > 65_535) Add(errors, $"{prefix}.source_port", "Port must be between zero and 65535.");
         if (network.DestinationPort is < 0 or > 65_535) Add(errors, $"{prefix}.destination_port", "Port must be between zero and 65535.");
     }

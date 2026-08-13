@@ -147,6 +147,12 @@ public sealed record DataHandlingMetadata
 
 public sealed record ProcessTelemetryConcept
 {
+    [JsonPropertyName("instance_id")]
+    public string? InstanceId { get; init; }
+
+    [JsonPropertyName("parent_instance_id")]
+    public string? ParentInstanceId { get; init; }
+
     [JsonPropertyName("pid")]
     public string? Pid { get; init; }
 
@@ -158,6 +164,45 @@ public sealed record ProcessTelemetryConcept
 
     [JsonPropertyName("command_line")]
     public string? CommandLine { get; init; }
+
+    [JsonPropertyName("image_observation_source")]
+    public string? ImageObservationSource { get; init; }
+
+    [JsonPropertyName("command_line_observation_source")]
+    public string? CommandLineObservationSource { get; init; }
+
+    [JsonPropertyName("observed_at")]
+    public DateTimeOffset? ObservedAt { get; init; }
+
+    [JsonPropertyName("exact_execution_evidence")]
+    public bool? ExactExecutionEvidence { get; init; }
+}
+
+/// <summary>
+/// Public representation of the Linux passive collector's opaque boot-scoped process key.
+/// The input boot identity is already SHA-256 hashed and the start ticks are never emitted.
+/// </summary>
+public static class ProcessInstanceIdentity
+{
+    public const int Length = 64;
+
+    public static string DeriveSha256(string bootIdentitySha256, int processId, long startTicks)
+    {
+        if (!IsLowerHexSha256(bootIdentitySha256))
+            throw new ArgumentException("Boot identity must be a lowercase SHA-256 value.", nameof(bootIdentitySha256));
+        if (processId <= 0) throw new ArgumentOutOfRangeException(nameof(processId));
+        if (startTicks < 0) throw new ArgumentOutOfRangeException(nameof(startTicks));
+        var value = string.Join('\u001f',
+            bootIdentitySha256,
+            processId.ToString(CultureInfo.InvariantCulture),
+            startTicks.ToString(CultureInfo.InvariantCulture));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    }
+
+    public static bool IsValid(string? value) => IsLowerHexSha256(value);
+
+    private static bool IsLowerHexSha256(string? value) =>
+        value is { Length: Length } && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 }
 
 public sealed record UserTelemetryConcept
@@ -224,6 +269,12 @@ public sealed record NetworkTelemetryConcept
 
     [JsonPropertyName("attribution_confidence")]
     public string? AttributionConfidence { get; init; }
+
+    [JsonPropertyName("attribution_source")]
+    public string? AttributionSource { get; init; }
+
+    [JsonPropertyName("process_identity_status")]
+    public string? ProcessIdentityStatus { get; init; }
 }
 
 public sealed record FileTelemetryConcept

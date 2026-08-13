@@ -58,6 +58,7 @@ builder.Services.AddScoped<AgentAuthenticator>();
 builder.Services.AddScoped<EventRepository>();
 builder.Services.AddScoped<NetworkGeographyRepository>();
 builder.Services.AddScoped<NetworkActivityRepository>();
+builder.Services.AddScoped<ProcessInvestigationRepository>();
 builder.Services.AddScoped<RetentionRepository>();
 builder.Services.AddScoped<HeartbeatRepository>();
 builder.Services.AddScoped<AgentLivenessMonitorRepository>();
