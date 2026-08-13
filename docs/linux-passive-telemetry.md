@@ -8,6 +8,8 @@ The collector reads bounded procfs files that already exist. Its default profile
 
 The pack is complementary to the L1/L2 journal path. It does not claim the exactness of kernel exec/exit or socket hooks: every event name and health record identifies snapshot/polling evidence and reports gaps, truncation, pressure, and incomplete visibility.
 
+Collector `linux-passive-snapshot-v6` exposes the existing opaque boot-scoped process key as `process_instance_id` and propagates same-scan parent/socket-owner identities. That compatible output change invalidates older passive approval hashes; it does not enable the pack, add a reader, or widen procfs permissions. Because the socket baseline signature now binds an owner's process instance as well as its PID, the first complete approved v6 ownership scan after preserved v5 state may emit bounded `socket_changed` evidence for retained attributed sockets. That transition is not a claim that a new connection occurred.
+
 ## Sources and v2 contracts
 
 The pack uses Linux source IDs inside the v2 event envelope:
@@ -27,7 +29,7 @@ The process source first reads bounded `/proc/self/mountinfo` evidence so restri
 - PID and parent PID;
 - numeric user/group identity;
 - executable and bounded command line with common credential-pattern redaction when readable;
-- an opaque boot-scoped process key derived from PID and start ticks so PID reuse is distinct; start ticks are not sent as a separate field;
+- a public nullable `process_instance_id`, preserving the existing lowercase 64-character boot-scoped SHA-256 key derived from the already-hashed boot identity, PID, and start ticks so PID reuse is distinct; start ticks and the boot identifier are not sent as separate fields;
 - kernel-thread and zombie classification from fixed process flags/state, plus eligible-process command-line and executable readability ratios;
 - deleted, memfd, and temporary executable markers and a fixed decoded subset of dangerous effective capabilities;
 - selected capability, seccomp, no-new-privileges, tracer, login-user, and hashed cgroup metadata;
@@ -41,7 +43,7 @@ Linux applies ptrace access checks to cross-user `/proc/<pid>/exe` and descripto
 
 The network source parses bounded `/proc/net/tcp`, `tcp6`, `udp`, and `udp6` snapshots. It reports canonical local/remote addresses and ports, protocol, socket state, listener category, inode identity, numeric socket UID when available, coalesced tuple count, and polling lifecycle actions including non-alertable baseline/baseline-disappeared evidence followed by observed, disappeared, or changed differences.
 
-It does not capture packets, payloads, DNS contents, Unix-domain socket paths, TLS material, or unrelated `/proc/<pid>/fd` targets. Ownership is `not_collected` unless the passive approval binds `CollectSocketOwnership=true`. Enabled ownership inspects at most 256 descriptors per process and 32,768 links per scan, retains no more than four PID/executable/command/UID owner summaries per inode, and labels stale, capped, denied, or ambiguous attribution as partial instead of fabricating certainty. Socket baseline establishment uses the same potentially multi-poll, non-alertable boundary as processes. Snapshot polling can miss short connections, and a truncated or partial scan must not generate false disappearance events.
+It does not capture packets, payloads, DNS contents, Unix-domain socket paths, TLS material, or unrelated `/proc/<pid>/fd` targets. Ownership is `not_collected` unless the passive approval binds `CollectSocketOwnership=true`. Enabled ownership inspects at most 256 descriptors per process and 32,768 links per scan, retains no more than four PID/process-instance/executable/command/UID owner summaries per inode, and labels stale, capped, denied, or ambiguous attribution as partial instead of fabricating certainty. A unique owner carries its process-instance identity only from the same bounded process scan, with `snapshot_inode_owner` provenance and the process-scan observation time. Socket baseline establishment uses the same potentially multi-poll, non-alertable boundary as processes. Snapshot polling can miss short connections, and a truncated or partial scan must not generate false disappearance events.
 
 ## Host behaviour samples
 

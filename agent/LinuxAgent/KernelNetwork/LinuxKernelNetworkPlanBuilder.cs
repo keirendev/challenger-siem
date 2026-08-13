@@ -13,6 +13,7 @@ public static class LinuxKernelNetworkPlanBuilder
         const string dependencies = "Linux x86_64, systemd, cgroup v2 root, readable kernel BTF, libbpf.so.1, libelf, and zlib; no endpoint compiler";
         const string ipcBoundary = "versioned SOCK_SEQPACKET, 16 KiB frame maximum, SO_PEERCRED both ways, fixed property/type allowlists, epochs, and monotonic sequences";
         const string signedBundle = "detached Ed25519 manifest; approved signer public-key and embedded fixed-helper SHA-256 values are plan-bound";
+        const string processIdentityEnrichment = "bounded /proc/<pid>/stat before/after enrichment plus /proc/sys/kernel/random/boot_id; boot-scoped SHA-256 identity only after stable match; null with explicit reason on race, exit, denial, invalid text, unavailable boot identity, or enrichment cap";
         const string rollback = "disable the kernel source, stop challenger-siem-ebpf-helper.socket and .service to detach links, preserve queue/state and the locked identity, and verify no Challenger SIEM pins or cgroup programs remain";
         var canonical = string.Join('\n',
             LinuxKernelNetworkConstants.HelperVersion,
@@ -39,6 +40,7 @@ public static class LinuxKernelNetworkPlanBuilder
             $"kernel_drain_health_max={LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval}",
             $"emit_max={LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval}",
             $"process_enrichment_identities_max={LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain}",
+            $"process_identity_enrichment={processIdentityEnrichment}",
             "closed_before_start=single_closed_record",
             $"durable_batch_events={LinuxKernelNetworkConstants.MaximumDurableBatchEvents}",
             $"durable_batch_bytes={LinuxKernelNetworkConstants.MaximumDurableBatchBytes}",
@@ -66,7 +68,7 @@ public static class LinuxKernelNetworkPlanBuilder
             "/sys/fs/cgroup",
             kernel.SocketPath,
             "dedicated helper only: CAP_BPF,CAP_PERFMON,CAP_NET_ADMIN; agent receives no new capability",
-            "IPv4/IPv6 TCP/UDP bounded headers, tuple, direction, PID/UID, TCP flags, packet and SKB-byte interval counters only; no payload, DNS, TLS, process environment, memory, or file content",
+            $"IPv4/IPv6 TCP/UDP bounded headers, tuple, direction, PID/UID, TCP flags, packet and SKB-byte interval counters plus {processIdentityEnrichment}; no payload, DNS, TLS, process environment, memory, or file content",
             "fixed embedded cgroup v2 socket/bind/connect/sendmsg/recvmsg, sock-ops, accepted/closed socket-state raw tracepoint, and ingress/egress programs with multi-attach; no arbitrary program path and no bpffs pinning",
             $"{LinuxKernelNetworkConstants.FlowMapEntries} kernel flows; {LinuxKernelNetworkConstants.TrackedFlowEntries} helper-tracked flows; {LinuxKernelNetworkConstants.OwnerMapEntries} owners; {LinuxKernelNetworkConstants.RingBytes} ring bytes; kernel pre-drain every {LinuxKernelNetworkConstants.KernelDrainIntervalSeconds} second at most {LinuxKernelNetworkConstants.MaximumKernelRecordsPerDrain} records and {LinuxKernelNetworkConstants.MaximumKernelRecordsPerHealthInterval} per {LinuxKernelNetworkConstants.HealthIntervalSeconds}-second health interval; at most {LinuxKernelNetworkConstants.MaximumOutputRecordsPerHealthInterval} emitted records per health interval with close-before-start coalescing; at most {LinuxKernelNetworkConstants.MaximumProcessEnrichmentIdentitiesPerDrain} procfs enrichment identities per drain; 60-second active summaries; durable queue transactions at most {LinuxKernelNetworkConstants.MaximumDurableBatchEvents} events or {LinuxKernelNetworkConstants.MaximumDurableBatchBytes} bytes; queue pauses at {kernel.QueuePauseDepth}",
             rollback);

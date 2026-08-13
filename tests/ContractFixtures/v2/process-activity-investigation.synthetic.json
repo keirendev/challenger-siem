@@ -1,0 +1,76 @@
+{
+  "schema_version": "challenger-siem.process-activity-investigation.v2",
+  "generated_at_utc": "2026-08-13T01:00:00Z",
+  "agent_id": "synthetic-linux-agent",
+  "from_utc": "2026-08-13T00:00:00Z",
+  "to_utc": "2026-08-13T01:00:00Z",
+  "selector": {
+    "kind": "process_instance_id",
+    "process_instance_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "process_id": null,
+    "process_image": null,
+    "include_adjacent_changes": false
+  },
+  "process_observations": [{
+    "agent_id": "synthetic-linux-agent",
+    "event_id": "aaaaaaaa-1111-4111-8111-111111111111",
+    "event_citation": "event:synthetic-linux-agent/aaaaaaaa-1111-4111-8111-111111111111",
+    "event_time_utc": "2026-08-13T00:10:00Z",
+    "source_id": "linux-process-snapshot-diff",
+    "event_code": "process_observed",
+    "category": "process",
+    "action": "observed",
+    "message": "Synthetic process snapshot observation.",
+    "process_instance_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "parent_process_instance_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "process_id": 4242,
+    "parent_process_id": 1,
+    "process_image": "/usr/bin/synthetic-probe",
+    "process_command_line": "synthetic-probe --documentation-only",
+    "image_observation_source": "process_snapshot_poll",
+    "image_observed_at_utc": "2026-08-13T00:10:00Z",
+    "command_observation_source": "process_snapshot_poll",
+    "command_observed_at_utc": "2026-08-13T00:10:00Z",
+    "exact_execution_evidence": false,
+    "correlation_method": "exact_process_instance_id",
+    "correlation_confidence": "high",
+    "limitations": ["Synthetic polling evidence only."]
+  }],
+  "lineage": [{
+    "child_process_instance_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "child_process_id": 4242,
+    "parent_process_instance_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "parent_process_id": 1,
+    "event_citation": "event:synthetic-linux-agent/aaaaaaaa-1111-4111-8111-111111111111",
+    "method": "same_snapshot_process_instance",
+    "confidence": "polling_observation",
+    "limitations": ["Synthetic polling evidence only."]
+  }],
+  "network_activity": [],
+  "privilege_events": [],
+  "adjacent_change_events": [],
+  "source_qualifications": [{
+    "source_id": "linux-process-snapshot-diff",
+    "status": "healthy",
+    "observed_at_utc": "2026-08-13T01:00:00Z",
+    "active_gap": false,
+    "historical_gap_or_drop": false,
+    "gap_count": 0,
+    "dropped_events": 0,
+    "citation": "source-health:synthetic-linux-agent/linux-process-snapshot-diff",
+    "citation_kind": "source_health",
+    "limitations": ["Synthetic source-health state only."]
+  }],
+  "coverage": {
+    "status": "healthy",
+    "has_gap": false,
+    "history_ready_for_window": true,
+    "citation": "agent:synthetic-linux-agent",
+    "limitations": ["Synthetic coverage qualification only."]
+  },
+  "collections": {
+    "process_observations": { "limit": 50, "returned": 1, "truncated": false, "next_cursor": null }
+  },
+  "warnings": [],
+  "limitations": ["Synthetic fixture only."]
+}

@@ -541,6 +541,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "instance_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "parent_instance_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "pid": {
           "type": [
             "string",
@@ -568,6 +576,21 @@
             "null"
           ],
           "maxLength": 4096
+        },
+        "image_observation_source": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "command_line_observation_source": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "observed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "exact_execution_evidence": {
+          "type": ["boolean", "null"]
         }
       }
     },
@@ -689,6 +712,14 @@
         "attribution_confidence": {
           "type": ["string", "null"],
           "maxLength": 64
+        },
+        "attribution_source": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "process_identity_status": {
+          "type": ["string", "null"],
+          "maxLength": 64
         }
       }
     },
@@ -781,6 +812,14 @@
             "null"
           ],
           "maxLength": 64
+        },
+        "process_instance_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "parent_process_instance_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
         },
         "parent_process_id": {
           "type": [

@@ -955,6 +955,12 @@ public sealed record NormalizedEventFields
     [JsonPropertyName("process_id")]
     public string? ProcessId { get; init; }
 
+    [JsonPropertyName("process_instance_id")]
+    public string? ProcessInstanceId { get; init; }
+
+    [JsonPropertyName("parent_process_instance_id")]
+    public string? ParentProcessInstanceId { get; init; }
+
     [JsonPropertyName("parent_process_id")]
     public string? ParentProcessId { get; init; }
 

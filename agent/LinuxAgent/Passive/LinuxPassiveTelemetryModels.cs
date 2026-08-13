@@ -74,7 +74,8 @@ public sealed record LinuxSocketOwner(
     string Command,
     string? UserId,
     string Confidence,
-    string? CommandLine = null);
+    string? CommandLine = null,
+    string? ProcessInstanceId = null);
 
 public sealed record LinuxProcessBaseline
 {
@@ -98,7 +99,8 @@ public sealed record LinuxSocketObservation(
     string? UserId,
     int Count,
     IReadOnlyList<LinuxSocketOwner>? Owners = null,
-    string AttributionStatus = "not_collected");
+    string AttributionStatus = "not_collected",
+    DateTimeOffset? AttributionObservedAt = null);
 
 public sealed record LinuxSocketBaseline
 {

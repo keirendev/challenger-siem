@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://challenger-siem.local/contracts/v2/process-activity-investigation.schema.json",
+  "title": "Challenger SIEM Process Activity Investigation Response v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_utc", "agent_id", "from_utc", "to_utc", "selector", "process_observations", "lineage", "network_activity", "privilege_events", "adjacent_change_events", "source_qualifications", "coverage", "collections", "warnings", "limitations"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "challenger-siem.process-activity-investigation.v2" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "agent_id": { "$ref": "#/$defs/id128" },
+    "from_utc": { "type": "string", "format": "date-time" },
+    "to_utc": { "type": "string", "format": "date-time" },
+    "selector": { "$ref": "#/$defs/selector" },
+    "process_observations": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/event_fact" } },
+    "lineage": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/lineage" } },
+    "network_activity": { "type": "array", "maxItems": 100, "items": { "$ref": "network-activity.schema.json#/properties/activities/items" } },
+    "privilege_events": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/event_fact" } },
+    "adjacent_change_events": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/event_fact" } },
+    "source_qualifications": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/source_qualification" } },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "collections": {
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": { "$ref": "#/$defs/collection_state" }
+    },
+    "warnings": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 500 } },
+    "limitations": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 500 } }
+  },
+  "$defs": {
+    "id128": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "nullable_instance": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "nullable_text4096": { "type": ["string", "null"], "maxLength": 4096 },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "include_adjacent_changes"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["process_instance_id", "process_id", "process_image"] },
+        "process_instance_id": { "$ref": "#/$defs/nullable_instance" },
+        "process_id": { "type": ["integer", "null"], "minimum": 1 },
+        "process_image": { "type": ["string", "null"], "maxLength": 260 },
+        "include_adjacent_changes": { "type": "boolean" }
+      }
+    },
+    "event_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "event_id", "event_citation", "event_time_utc", "source_id", "message", "image_observation_source", "command_observation_source", "exact_execution_evidence", "correlation_method", "correlation_confidence", "limitations"],
+      "properties": {
+        "agent_id": { "$ref": "#/$defs/id128" },
+        "event_id": { "type": "string", "format": "uuid" },
+        "event_citation": { "type": "string", "minLength": 8, "maxLength": 300 },
+        "event_time_utc": { "type": "string", "format": "date-time" },
+        "source_id": { "$ref": "#/$defs/id128" },
+        "event_code": { "type": ["string", "null"], "maxLength": 128 },
+        "category": { "type": ["string", "null"], "maxLength": 128 },
+        "action": { "type": ["string", "null"], "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 20000 },
+        "process_instance_id": { "$ref": "#/$defs/nullable_instance" },
+        "parent_process_instance_id": { "$ref": "#/$defs/nullable_instance" },
+        "process_id": { "type": ["integer", "null"], "minimum": 1 },
+        "parent_process_id": { "type": ["integer", "null"], "minimum": 0 },
+        "process_image": { "$ref": "#/$defs/nullable_text4096" },
+        "process_command_line": { "$ref": "#/$defs/nullable_text4096" },
+        "image_observation_source": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "image_observed_at_utc": { "type": ["string", "null"], "format": "date-time" },
+        "command_observation_source": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "command_observed_at_utc": { "type": ["string", "null"], "format": "date-time" },
+        "exact_execution_evidence": { "type": "boolean" },
+        "correlation_method": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "correlation_confidence": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_citation", "method", "confidence", "limitations"],
+      "properties": {
+        "child_process_instance_id": { "$ref": "#/$defs/nullable_instance" },
+        "child_process_id": { "type": ["integer", "null"], "minimum": 1 },
+        "parent_process_instance_id": { "$ref": "#/$defs/nullable_instance" },
+        "parent_process_id": { "type": ["integer", "null"], "minimum": 0 },
+        "event_citation": { "type": "string", "minLength": 8, "maxLength": 300 },
+        "method": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "confidence": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "source_qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "status", "active_gap", "historical_gap_or_drop", "citation", "citation_kind", "limitations"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/id128" },
+        "status": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "observed_at_utc": { "type": ["string", "null"], "format": "date-time" },
+        "active_gap": { "type": "boolean" },
+        "historical_gap_or_drop": { "type": "boolean" },
+        "gap_count": { "type": ["integer", "null"], "minimum": 0 },
+        "dropped_events": { "type": ["integer", "null"], "minimum": 0 },
+        "citation": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "citation_kind": { "type": "string", "enum": ["heartbeat", "source_health"] },
+        "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "has_gap", "history_ready_for_window", "citation", "limitations"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "has_gap": { "type": "boolean" },
+        "history_ready_for_window": { "type": "boolean" },
+        "citation": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "collection_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit", "returned", "truncated"],
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "returned": { "type": "integer", "minimum": 0, "maximum": 512 },
+        "truncated": { "type": "boolean" },
+        "next_cursor": { "type": ["string", "null"], "maxLength": 512 }
+      }
+    }
+  }
+}

@@ -505,7 +505,7 @@ if maximum_passive_batch_bytes > passive_byte_limit:
     )
 
 canonical = '\n'.join([
-    'linux-passive-snapshot-v5',
+    'linux-passive-snapshot-v6',
     *(f'{name}={value}' for name, value in values.items()),
     'partial_baseline_miss_limit=12',
     f'cleanup_on_disable={cleanup}',

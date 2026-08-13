@@ -242,6 +242,10 @@ public sealed class LinuxPassiveTelemetryTests
             "42 (synthetic worker (one)) R 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 98766 0 0",
             out var reused));
         Assert.False(LinuxProcfsProcessSource.SameIdentity(parsed, reused));
+        var firstInstance = ProcessInstanceIdentity.DeriveSha256(SyntheticBootHash, parsed.ProcessId, parsed.StartTicks);
+        var reusedInstance = ProcessInstanceIdentity.DeriveSha256(SyntheticBootHash, reused.ProcessId, reused.StartTicks);
+        Assert.True(ProcessInstanceIdentity.IsValid(firstInstance));
+        Assert.NotEqual(firstInstance, reusedInstance);
         Assert.Equal("restricted", LinuxProcfsProcessSource.DetermineProcVisibility(
             "24 22 0:21 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=2\n"));
 
@@ -620,6 +624,10 @@ public sealed class LinuxPassiveTelemetryTests
             Assert.Equal(LinuxTelemetrySourceIds.ProcessSnapshotDiff, item.SourceId);
             Assert.Equal(item.EventId, DeterministicEventIdentity.ComputeSha256Uuid(item));
             Assert.Equal("process_baseline", item.EventCode);
+            Assert.True(ProcessInstanceIdentity.IsValid(item.Normalized?.ProcessInstanceId));
+            Assert.Equal(item.Normalized?.ProcessInstanceId, item.Normalized?.Process?.InstanceId);
+            Assert.Equal("process_snapshot_poll", item.Normalized?.Process?.CommandLineObservationSource);
+            Assert.False(item.Normalized?.Process?.ExactExecutionEvidence);
         });
         var serialized = JsonSerializer.Serialize(first.Events);
         Assert.DoesNotContain("synthetic-secret", serialized, StringComparison.Ordinal);
@@ -660,6 +668,24 @@ public sealed class LinuxPassiveTelemetryTests
         sources.Processes = Successful(Process(10, 1, 100, "/usr/bin/synthetic-a", "--token synthetic-secret"));
         var complete = await collector.CollectProcessesAsync(partial.NewState, "synthetic-agent", "synthetic-host", default);
         Assert.Contains(complete.Events, item => item.EventCode == "process_disappeared");
+    }
+
+    [Fact]
+    public async Task ProcessDiffLinksOnlyParentIdentityObservedInTheSameScan()
+    {
+        var options = CreateAgentOptions(enabled: true);
+        var parent = Process(100, 1, 1000, "/usr/bin/synthetic-parent", null);
+        var child = Process(101, 100, 1001, "/usr/bin/synthetic-child", null);
+        var sources = new SyntheticSources { Processes = Successful(parent, child) };
+        var collector = Collector(options, sources);
+        options.PassiveTelemetry.ApprovedPlanHash = collector.PlanHash;
+
+        var result = await collector.CollectProcessesAsync(new(), "synthetic-agent", "synthetic-host", default);
+
+        var childEvent = Assert.Single(result.Events, item => item.Normalized?.ProcessId == "101");
+        Assert.Equal(parent.Key, childEvent.Normalized?.ParentProcessInstanceId);
+        Assert.Equal(parent.Key, childEvent.Normalized?.Process?.ParentInstanceId);
+        Assert.Equal(parent.Key, childEvent.Raw.GetProperty("parent_process_instance_id").GetString());
     }
 
     [Fact]
@@ -939,7 +965,8 @@ public sealed class LinuxPassiveTelemetryTests
             "synthetic-owner",
             "1001",
             "exact_inode_current_scan",
-            "synthetic-owner --bounded");
+            "synthetic-owner --bounded",
+            ProcessInstanceIdentity.DeriveSha256(SyntheticBootHash, 41, 100));
         var socket = Socket("unique-owner-socket", "established", "192.0.2.10", 50000, "198.51.100.20", 443) with
         {
             Owners = [owner],
@@ -953,6 +980,10 @@ public sealed class LinuxPassiveTelemetryTests
         var envelope = Assert.Single(result.Events);
 
         Assert.Equal("synthetic-owner --bounded", envelope.Normalized!.ProcessCommandLine);
+        Assert.Equal(owner.ProcessInstanceId, envelope.Normalized.ProcessInstanceId);
+        Assert.Equal(owner.ProcessInstanceId, envelope.Normalized.Process?.InstanceId);
+        Assert.Equal("snapshot_inode_owner", envelope.Normalized.Network?.AttributionSource);
+        Assert.Equal("observed_same_process_scan", envelope.Normalized.Network?.ProcessIdentityStatus);
         var retainedOwner = Assert.Single(envelope.Raw.GetProperty("owners").EnumerateArray());
         Assert.Equal("synthetic-owner --bounded", retainedOwner.GetProperty("command_line").GetString());
     }
@@ -1524,7 +1555,7 @@ public sealed class LinuxPassiveTelemetryTests
         var handled = TelemetryTextSanitizer.SanitizeAndRedact(commandLine, 4096);
         var signature = Sha256($"{pid}:{parent}:{start}:{executable}:{handled.Value}");
         return new(
-            Sha256($"synthetic-boot:{pid}:{start}"),
+            ProcessInstanceIdentity.DeriveSha256(SyntheticBootHash, pid, start),
             signature,
             pid,
             parent,

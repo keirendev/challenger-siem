@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Challenger.Siem.Agent.Core.Security;
+using Challenger.Siem.Contracts.V2;
 using Challenger.Siem.LinuxAgent.Config;
 
 namespace Challenger.Siem.LinuxAgent.Passive;
@@ -329,10 +330,10 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                 if (cgroupResult.ErrorCode == "invalid_utf8") RecordFailureClass(failureClasses, "cgroup_invalid_text");
                 if (command.InvalidText || command.Truncated || command.Dropped)
                     RecordFailureClass(failureClasses, "stat_command_invalid");
-                var key = HashSignature(
+                var key = ProcessInstanceIdentity.DeriveSha256(
                     bootIdentitySha256,
-                    verified.ProcessId.ToString(CultureInfo.InvariantCulture),
-                    verified.StartTicks.ToString(CultureInfo.InvariantCulture));
+                    verified.ProcessId,
+                    verified.StartTicks);
                 var signature = HashSignature(
                     verified.ParentProcessId.ToString(CultureInfo.InvariantCulture),
                     command.Value,
@@ -413,7 +414,8 @@ public sealed class LinuxProcfsProcessSource : ILinuxProcessSnapshotSource
                             command.Value,
                             userId,
                             "exact_inode_current_scan",
-                            commandLine.Dropped ? null : EmptyToNull(commandLine.Value)),
+                            commandLine.Dropped ? null : EmptyToNull(commandLine.Value),
+                            key),
                         socketOwners,
                         ref descriptorLinksInspected,
                         ref descriptorCapReached,

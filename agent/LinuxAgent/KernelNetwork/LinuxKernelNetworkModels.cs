@@ -5,7 +5,7 @@ namespace Challenger.Siem.LinuxAgent.KernelNetwork;
 public static class LinuxKernelNetworkConstants
 {
     public const string HelperVersion = "challenger-siem-ebpf-helper-v3";
-    public const string CollectorVersion = "linux-network-flow-summary-v4";
+    public const string CollectorVersion = "linux-network-flow-summary-v5";
     public const string SocketPath = "/run/challenger-siem-ebpf/challenger-siem-ebpf.sock";
     public const string StatePath = "/var/lib/challenger-siem-agent/kernel-network-state.json";
     public const int MaximumFrameBytes = 16_384;
@@ -199,4 +199,9 @@ public sealed record LinuxKernelProcessMetadata(
     string? UserId,
     bool Redacted,
     bool Truncated,
-    string Confidence);
+    string Confidence,
+    string? ProcessInstanceId = null,
+    string IdentityStatus = "unknown",
+    string ImageObservationSource = "unavailable",
+    string CommandLineObservationSource = "unavailable",
+    DateTimeOffset? ObservedAt = null);

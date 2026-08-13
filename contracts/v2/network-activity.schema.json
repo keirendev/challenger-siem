@@ -12,7 +12,7 @@
       "type": "array", "maxItems": 500,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["agent_id", "event_id", "event_citation", "event_time_utc", "hostname", "source_id", "evidence_mode", "direction", "attribution_confidence", "tcp_flags", "geolocation_status"],
+        "required": ["agent_id", "event_id", "event_citation", "event_time_utc", "hostname", "source_id", "evidence_mode", "direction", "attribution_confidence", "attribution_source", "attribution_limitations", "process_identity_status", "process_image_observation_source", "process_command_line_observation_source", "exact_execution_evidence", "tcp_flags", "geolocation_status"],
         "properties": {
           "agent_id": { "$ref": "#/$defs/id128" },
           "event_id": { "type": "string", "format": "uuid" },
@@ -29,10 +29,18 @@
           "remote_port": { "$ref": "#/$defs/port" },
           "protocol": { "type": "string", "enum": ["tcp", "udp"] },
           "process_id": { "type": "integer", "minimum": 1 },
+          "process_instance_id": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
           "process_image": { "type": "string", "maxLength": 4096 },
           "process_command_line": { "type": "string", "maxLength": 4096 },
           "user_id": { "type": "string", "maxLength": 128 },
           "attribution_confidence": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "attribution_source": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "attribution_limitations": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 500 } },
+          "process_identity_status": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "process_image_observation_source": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "process_command_line_observation_source": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "process_observed_at_utc": { "type": ["string", "null"], "format": "date-time" },
+          "exact_execution_evidence": { "type": "boolean" },
           "first_seen_utc": { "type": "string", "format": "date-time" },
           "last_seen_utc": { "type": "string", "format": "date-time" },
           "packet_count_delta": { "type": "integer", "minimum": 0 },
@@ -62,7 +70,7 @@
       }
     },
     "active_filters": {
-      "type": "array", "maxItems": 16,
+      "type": "array", "maxItems": 20,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["name", "value", "protected"],

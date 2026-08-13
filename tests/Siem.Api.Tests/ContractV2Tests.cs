@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Challenger.Siem.Api.Ingestion;
 using Challenger.Siem.Contracts.V2;
 using Json.Schema;
@@ -60,6 +61,36 @@ public sealed class ContractV2Tests
         var json = File.ReadAllText(Path.Combine(FixturesRoot, "network-activity.synthetic.json"));
         AssertSchemaValid("network-activity.schema.json", JsonNode.Parse(json)!);
         Assert.NotNull(JsonSerializer.Deserialize<NetworkActivityResponse>(json, JsonOptions));
+    }
+
+    [Fact]
+    public void ProcessActivityInvestigationFixtureValidatesAndDeserializes()
+    {
+        var json = File.ReadAllText(Path.Combine(FixturesRoot, "process-activity-investigation.synthetic.json"));
+        AssertSchemaValid("process-activity-investigation.schema.json", JsonNode.Parse(json)!);
+        Assert.NotNull(JsonSerializer.Deserialize<ProcessActivityInvestigationResponse>(json, JsonOptions));
+    }
+
+    [Fact]
+    public void ProcessActivityInvestigationSchemaAcceptsRuntimeNullOmission()
+    {
+        var options = new JsonSerializerOptions(JsonOptions)
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+        var response = new ProcessActivityInvestigationResponse
+        {
+            GeneratedAtUtc = DateTimeOffset.Parse("2026-08-13T01:00:00Z"),
+            AgentId = "synthetic-agent",
+            FromUtc = DateTimeOffset.Parse("2026-08-13T00:00:00Z"),
+            ToUtc = DateTimeOffset.Parse("2026-08-13T01:00:00Z"),
+            Selector = new() { Kind = "process_id", ProcessId = 4242 },
+            Coverage = new() { Citation = "agent:synthetic-agent" }
+        };
+
+        AssertSchemaValid(
+            "process-activity-investigation.schema.json",
+            JsonSerializer.SerializeToNode(response, options)!);
     }
 
     [Fact]

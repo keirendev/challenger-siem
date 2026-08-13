@@ -27,7 +27,7 @@ Collected events, messages, inventory, alert context, case notes, graph content,
 
 ## Tools and limits
 
-All 18 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
+All 19 tools are declared read-only, non-destructive, idempotent, closed-world, and structured.
 
 | Tool | Purpose | Principal bound |
 | --- | --- | --- |
@@ -49,18 +49,29 @@ All 18 tools are declared read-only, non-destructive, idempotent, closed-world, 
 | `siem_get_graph` | One existing graph and collections | 1–100 records per nested collection; never applies proposals |
 | `siem_get_traffic_map_link` | Credential-free link to the configured local traffic UI with coverage warnings | Validated UTC range and bounded search/filter values; never queries geolocation or SIEM data |
 | `siem_search_network_activity` | Correlate retained remote IP/port activity with process, direction, counters, evidence mode, and cached country/ASN, with event citations | 168-hour/100-row maximum and cursor; geolocation is strictly cache-only and cannot initialize/write the cache, enqueue a lookup, update quota, or contact a provider |
+| `siem_investigate_process_activity` | Correlate one exact agent/process selector across process observations and lineage, separately labeled network activity, privilege evidence, optional adjacent changes, and source/coverage qualifications | Explicit UTC range no wider than 168 hours; exactly one instance-ID, PID, or image selector; independent 50/100-row collection caps and truncation metadata; no raw payloads or geolocation writes |
 
 Identifiers and filters have independent length/control-character validation. Prompt arguments use a stricter ASCII identifier allowlist. Invalid cursors, UUIDs, ranges, or identifiers fail before repository work.
 
 For a country-to-host-to-process investigation, use the `investigate_network_country` prompt or follow the same closed workflow: call `siem_search_network_activity` with the cached two-letter country code, preserve each returned event citation, review only selected records with `siem_get_event`, and then check `siem_get_source_health` plus `siem_get_coverage` for every affected agent. Report kernel-flow and snapshot evidence separately, including attribution confidence, unknown or pending geography, and active coverage gaps. MCP never initializes or writes the geography cache and never contacts the provider.
 
+For a process-centric investigation, prefer the exact boot-scoped `process_instance_id` with `siem_investigate_process_activity`. PID and bounded image are explicit lower-confidence fallbacks and still require one exact agent plus an explicit UTC window. The tool keeps process observations, lineage, `snapshot_diff`, `kernel_flow`, privilege records, optional same-agent change context, and current/historical source qualifications separate. Each event fact retains its citation; current source state and retained heartbeat qualifications use their own citation kinds. Every correlation states its method, confidence, and limitations, all collections report caps/truncation, and null/unknown identity or command provenance is preserved rather than guessed.
+
 ## Resources and prompts
 
 Resources provide bounded reads for `siem://environment/overview`, exact events, alerts, cases, detection reviews, agent coverage/source health, and investigation graphs. They call the same tools and inherit authentication, auditing, filtering, and limits.
 
-Prompts are `triage_alert`, `investigate_asset`, `improve_detection`, and `review_coverage`. They require source-health/coverage context, citations, fact/inference separation, and human-reviewed recommendations. Detection improvement is advisory only.
+Prompts are `triage_alert`, `investigate_asset`, `improve_detection`, `review_coverage`, `investigate_network_country`, and `investigate_process_activity`. They require source-health/coverage context, citations, fact/inference separation, alternative explanations, and human-reviewed recommendations. Detection improvement is advisory only.
 
 ## Codex workflows
+
+### Investigate a process instance
+
+1. Use `siem_investigate_process_activity` with an exact agent, explicit UTC range, and exactly one selector; prefer `process_instance_id`.
+2. Preserve every event citation and review collection truncation before drawing conclusions.
+3. Keep polling lineage, snapshot socket ownership, kernel-flow attribution, privilege records, and temporal package/service/posture context separate.
+4. Report command/image observation source and time. Unless `exact_execution_evidence` is true, do not claim that an observed command executed at that moment or initiated network traffic.
+5. Treat active/historical gaps, loss, source status, heartbeat qualification truncation, and history readiness as part of the result. Missing evidence remains unknown.
 
 ### Investigate an alert
 
